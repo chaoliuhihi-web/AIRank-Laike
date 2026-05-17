@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Activity,
@@ -47,14 +47,18 @@ import {
 } from "lucide-react";
 import { consoleRoutes } from "./console/routes/console-routes";
 import {
+  fallbackConsoleOverview,
+  fetchConsoleOverview,
+  type ConsoleMetricCard,
+  type ConsoleOverview,
+} from "./console/api";
+import {
   assetCards,
   assistantMessages,
   factGroups,
   gapItems,
-  metricCards,
   nextActions,
   opportunities,
-  project,
   providerResults,
   publishingRows,
   questionRows,
@@ -103,14 +107,28 @@ const iconMap: Record<string, LucideIcon> = {
 };
 
 const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
+const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
+
+function useConsoleOverview() {
+  return useContext(ConsoleOverviewContext);
+}
 
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
+  const [overview, setOverview] = useState<ConsoleOverview>(fallbackConsoleOverview);
 
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname));
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchConsoleOverview(controller.signal)
+      .then(setOverview)
+      .catch(() => setOverview(fallbackConsoleOverview));
+    return () => controller.abort();
   }, []);
 
   const navigate = (nextPath: string) => {
@@ -120,14 +138,16 @@ function App() {
   };
 
   return (
-    <main className="airank-console">
-      <div className="airank-console-shell">
-        <Sidebar activePath={path} onNavigate={navigate} />
-        <section className="airank-console-main">
-          <ConsolePage path={path} onNavigate={navigate} />
-        </section>
-      </div>
-    </main>
+    <ConsoleOverviewContext.Provider value={overview}>
+      <main className="airank-console">
+        <div className="airank-console-shell">
+          <Sidebar activePath={path} onNavigate={navigate} />
+          <section className="airank-console-main">
+            <ConsolePage path={path} onNavigate={navigate} />
+          </section>
+        </div>
+      </main>
+    </ConsoleOverviewContext.Provider>
   );
 }
 
@@ -139,6 +159,8 @@ function normalizePath(path: string) {
 }
 
 function Sidebar({ activePath, onNavigate }: { activePath: string; onNavigate: (path: string) => void }) {
+  const { project } = useConsoleOverview();
+
   return (
     <aside className="airank-console-sidebar">
       <div className="brand-lockup">
@@ -225,6 +247,8 @@ function PageHeader({
 }
 
 function ProjectStrip() {
+  const { project } = useConsoleOverview();
+
   return (
     <section className="project-strip">
       <StripItem icon={Globe2} label="官网" value={project.website} />
@@ -249,7 +273,7 @@ function StripItem({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
   );
 }
 
-function MetricCard({ item }: { item: (typeof metricCards)[number] }) {
+function MetricCard({ item }: { item: ConsoleMetricCard }) {
   const Icon = iconMap[item.icon] ?? Activity;
   return (
     <article className="airank-console-card metric-card">
@@ -280,6 +304,8 @@ function IconTile({ tone = "primary", children }: { tone?: Tone; children: React
 }
 
 function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { metricCards } = useConsoleOverview();
+
   return (
     <>
       <PageHeader
@@ -348,6 +374,8 @@ function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function DatePill() {
+  const { project } = useConsoleOverview();
+
   return (
     <button className="date-pill" type="button">
       <CalendarDays size={18} />
@@ -827,6 +855,8 @@ function ReportsPage() {
 }
 
 function SettingsPage() {
+  const { project } = useConsoleOverview();
+
   return (
     <>
       <PageHeader title="设置中心" subtitle="管理品牌项目、官网域名、AI 平台接入、通知和成员权限。" action={<button className="airank-console-primary-button" type="button">保存设置</button>} />

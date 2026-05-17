@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/console_overview.schema.json",
+  "title": "AIRank Console Overview",
+  "type": "object",
+  "required": ["project", "metric_cards"],
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "website", "industry", "competitors", "audience", "date"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "website": { "type": "string", "minLength": 1 },
+        "industry": { "type": "string", "minLength": 1 },
+        "competitors": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "date": { "type": "string", "format": "date" }
+      }
+    },
+    "metric_cards": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["label", "value", "suffix", "delta", "tone", "icon"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "minLength": 1 },
+          "value": { "type": "string", "minLength": 1 },
+          "suffix": { "type": "string" },
+          "delta": { "type": "string", "minLength": 1 },
+          "tone": { "type": "string", "enum": ["primary", "success", "warning", "danger", "muted"] },
+          "icon": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
