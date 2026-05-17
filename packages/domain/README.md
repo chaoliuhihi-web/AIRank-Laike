@@ -47,3 +47,18 @@ src/
 ## 依赖规则
 
 本包不依赖 `packages/xinghe-adapter`，保证 AIRank 领域模型独立。
+
+## M2 async job domain
+
+`packages/domain/src/airank_domain/async_job.py` defines the first AIRank async
+job state machine used by worker tests:
+
+```text
+queued -> running -> succeeded
+queued -> running -> failed
+queued -> running -> timeout
+```
+
+Worker code must not leave failed provider calls in `queued`. Retries are explicit
+state transitions so later MySQL persistence can distinguish fresh work from
+failed or timed-out work.

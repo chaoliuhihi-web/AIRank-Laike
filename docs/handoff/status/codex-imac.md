@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | M1-IMAC-001 | review_env_blocked | ac2f8d5 | Alembic files/sql/parity passed; local MySQL access denied. |
 | M1-IMAC-002 | review | ea56c7c | Tenant/project query fields, index coverage, sensitive fields, and no-cross-db-FK policy documented; `git diff --check` passed. |
+| M2-IMAC-001 | review | pending | Async job lease/heartbeat state machine covers queued/running/succeeded/failed/timeout; `python3 -m pytest` passed in apps/worker. |
 
 ## Run Log
 
@@ -11,3 +12,5 @@
 - 2026-05-17: Rebased Alembic migration onto `origin/main`; kept central handoff files from origin. `cd apps/api && python3 -m alembic upgrade head --sql` and 22/22 bootstrap table parity passed; real upgrade remains environment-blocked by local MySQL access denied.
 - 2026-05-17: Started `M1-IMAC-002` schema/index tenant review after `M1-IMAC-001` entered `review_env_blocked` with Alembic code and offline validation in main.
 - 2026-05-17: Completed `M1-IMAC-002` docs review in `docs/architecture/mysql-schema-plan.md`; validation `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
+- 2026-05-17: Started `M2-IMAC-001` async job lease/heartbeat baseline using pure domain transitions and an in-memory worker store before MySQL persistence.
+- 2026-05-17: Completed `M2-IMAC-001` worker baseline. Direct `cd apps/worker && pytest` is environment-blocked because `pytest` is not in PATH, but `cd apps/worker && python3 -m pytest` passed 4 tests and `python3 -m pytest tests/acceptance` passed 1 test.

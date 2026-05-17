@@ -17,3 +17,21 @@ AIRank 异步任务。
 - **report** — 高管报告生成
 
 任务失败必须有结构化原因，不能长期停留在 `queued`。
+
+## M2 worker lease baseline
+
+`airank_worker.InMemoryJobLeaseStore` is the first testable lease implementation.
+It is intentionally in-memory until MySQL persistence is wired on top of
+`airank_async_jobs`.
+
+State transitions covered by tests:
+
+- `queued -> running` by `claim_next(worker_id, now)`
+- `running -> running` by heartbeat refresh
+- `running -> succeeded` when the handler completes
+- `running -> failed` with structured `error_code` and `error_message`
+- `running -> timeout` when `heartbeat_at + timeout_seconds <= now`
+
+Failed and timed-out jobs are terminal by default. They do not silently return to
+`queued`; retry requires an explicit `requeue_for_retry` call and remaining
+attempts.
