@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
 
-from apps.api.main import app
+from apps.api.main import InMemoryProjectRepository, MySQLProjectRepository, app, build_project_repository
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,3 +104,14 @@ def test_project_child_dev_repository_is_tenant_scoped() -> None:
     assert body["error"]["trace_id"] == "trc_missing_project"
     assert body["error"]["details"]["repository"] == "in_memory_dev"
     validate_response("error_response.schema.json", body)
+
+
+def test_project_repository_factory_selects_persistence_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AIRANK_DATABASE_URL", raising=False)
+    assert isinstance(build_project_repository(), InMemoryProjectRepository)
+
+    monkeypatch.setenv(
+        "AIRANK_DATABASE_URL",
+        "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike",
+    )
+    assert isinstance(build_project_repository(), MySQLProjectRepository)

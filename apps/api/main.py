@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import json
 import os
 from typing import Any, Literal, Optional, Protocol
 from urllib.parse import urlparse
@@ -10,6 +11,7 @@ from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 API_PREFIX = "/api/v1"
@@ -381,7 +383,218 @@ class InMemoryProjectRepository:
         return data
 
 
-PROJECT_REPOSITORY: ProjectRepository = InMemoryProjectRepository()
+class MySQLProjectRepository:
+    def __init__(self, database_url: str) -> None:
+        self._engine = create_engine(database_url, pool_pre_ping=True)
+
+    def _ensure_project(self, conn: Any, tenant_id: str, project_id: str) -> None:
+        row = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                  AND deleted_at IS NULL
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).first()
+        if row is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={
+                    "code": "PROJECT_NOT_FOUND",
+                    "details": {"project_id": project_id, "repository": "mysql"},
+                },
+            )
+
+    def create_project(self, tenant_id: str, payload: ProjectCreateRequest) -> ProjectData:
+        now = utc_now()
+        project_id = f"project_{uuid4().hex[:12]}"
+        brand_name = payload.brand_name_hint or infer_brand_name(payload.website_url)
+        data = ProjectData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            website_url=payload.website_url,
+            brand_name=brand_name,
+            company_name=payload.company_name_hint,
+            industry=payload.industry_hint or "unknown",
+            products=["AI visibility diagnosis"],
+            audiences=["B2B growth leader"],
+            status="needs_confirmation",
+            automation_level="A1",
+            source_refs=[
+                SourceRef(
+                    url=payload.website_url,
+                    title=f"{brand_name} website seed",
+                    source_type="owned",
+                    captured_at=now,
+                    confidence=0.6,
+                )
+            ],
+            created_at=now,
+            updated_at=now,
+        )
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_projects (
+                      id, tenant_id, name, brand_name, website_url, industry,
+                      products_services_json, target_audience_json, status,
+                      created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :name, :brand_name, :website_url, :industry,
+                      :products_services_json, :target_audience_json, :status,
+                      :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": data.project_id,
+                    "tenant_id": data.tenant_id,
+                    "name": data.brand_name,
+                    "brand_name": data.brand_name,
+                    "website_url": data.website_url,
+                    "industry": data.industry,
+                    "products_services_json": json.dumps(data.products, ensure_ascii=False),
+                    "target_audience_json": json.dumps(data.audiences, ensure_ascii=False),
+                    "status": data.status,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        return data
+
+    def create_competitor(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: CompetitorCreateRequest,
+    ) -> CompetitorData:
+        now = utc_now()
+        data = CompetitorData(
+            competitor_id=f"competitor_{uuid4().hex[:12]}",
+            project_id=project_id,
+            tenant_id=tenant_id,
+            name=payload.name,
+            website_url=payload.website_url,
+            reason=payload.reason,
+            evidence_urls=payload.evidence_urls,
+            confidence=payload.confidence,
+            status=payload.status,
+            source=payload.source,
+            created_at=now,
+            updated_at=now,
+        )
+        metadata = {
+            "status": data.status,
+            "source": data.source,
+            "evidence_urls": data.evidence_urls,
+            "confidence": data.confidence,
+        }
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_competitors (
+                      id, tenant_id, project_id, name, website_url, notes,
+                      metadata_json, created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :name, :website_url, :notes,
+                      :metadata_json, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": data.competitor_id,
+                    "tenant_id": data.tenant_id,
+                    "project_id": data.project_id,
+                    "name": data.name,
+                    "website_url": data.website_url,
+                    "notes": data.reason,
+                    "metadata_json": json.dumps(metadata, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        return data
+
+    def create_buyer_question(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: BuyerQuestionCreateRequest,
+    ) -> BuyerQuestionData:
+        now = utc_now()
+        data = BuyerQuestionData(
+            question_id=f"question_{uuid4().hex[:12]}",
+            project_id=project_id,
+            tenant_id=tenant_id,
+            question_text=payload.question_text,
+            question_type=payload.question_type,
+            intent_level=payload.intent_level,
+            buyer_stage=payload.buyer_stage,
+            source_reason=payload.source_reason,
+            recommended_providers=payload.recommended_providers,
+            coverage_status="needs_scan",
+            status=payload.status,
+            source=payload.source,
+            created_at=now,
+            updated_at=now,
+        )
+        metadata = {
+            "source_reason": data.source_reason,
+            "recommended_providers": data.recommended_providers,
+            "coverage_status": data.coverage_status,
+        }
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_buyer_questions (
+                      id, tenant_id, project_id, question_text, question_type,
+                      intent, funnel_stage, source, status, metadata_json,
+                      created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :question_text, :question_type,
+                      :intent, :funnel_stage, :source, :status, :metadata_json,
+                      :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": data.question_id,
+                    "tenant_id": data.tenant_id,
+                    "project_id": data.project_id,
+                    "question_text": data.question_text,
+                    "question_type": data.question_type,
+                    "intent": data.intent_level,
+                    "funnel_stage": data.buyer_stage,
+                    "source": data.source,
+                    "status": data.status,
+                    "metadata_json": json.dumps(metadata, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        return data
+
+
+def build_project_repository() -> ProjectRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLProjectRepository(database_url)
+    return InMemoryProjectRepository()
+
+
+PROJECT_REPOSITORY: ProjectRepository = build_project_repository()
 
 
 app = FastAPI(title="AIRank API", version="0.1.0")

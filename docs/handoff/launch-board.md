@@ -67,7 +67,7 @@ git push gitee main
 | 错误码和 trace_id 落地 | CodexWin | review | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
 | 项目/竞品/问题 contract skeleton | CodexWin | todo | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
 | 项目/竞品/问题 dev repository | CodexWin | dev_only | repository interface + in-memory/dev-only adapter 已打通 API；不作为生产持久化 |
-| 项目/竞品/问题 CRUD | CodexWin | todo | Alembic/MySQL 持久化、tenant 过滤，contract test 通过 |
+| 项目/竞品/问题 CRUD | CodexWin | review_env_blocked | MySQL repository code path 已实现；真实 MySQL 验证受本机 `airank` 授权拒绝阻塞 |
 | 数据库 schema review | CodexMacPro | todo | tenant、索引、迁移、敏感字段检查通过 |
 
 ## Milestone 2：扫描和评分闭环
