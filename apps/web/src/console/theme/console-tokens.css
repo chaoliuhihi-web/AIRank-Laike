@@ -47,6 +47,7 @@
 
 .airank-console {
   min-height: 100vh;
+  overflow-x: hidden;
   background: var(--console-page-bg);
   color: var(--console-text);
   font: var(--console-font-body);
@@ -60,7 +61,9 @@
 .airank-console-shell {
   display: grid;
   grid-template-columns: var(--console-sidebar-width) minmax(0, 1fr);
+  width: 100%;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 .airank-console-sidebar {
@@ -89,6 +92,7 @@
 }
 
 .airank-console-main {
+  min-width: 0;
   padding: var(--console-page-padding-y) var(--console-page-padding-x);
 }
 

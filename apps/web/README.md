@@ -2,6 +2,20 @@
 
 AIRank 前端应用。
 
+## 本地启动
+
+```bash
+cd /Users/bruce/Developer/work/AIRank/apps/web
+npm install
+npm run dev -- --port 5173
+```
+
+访问：
+
+```text
+http://localhost:5173/console
+```
+
 第一版保留一个 Web 应用，内部拆两类路由：
 
 - `marketing`：官网、免费测一测、案例、报价、留资。

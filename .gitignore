@@ -8,6 +8,8 @@ coverage/
 .turbo/
 .next/
 .vite/
+.playwright-mcp/
+*.tsbuildinfo
 
 .env
 .env.*
