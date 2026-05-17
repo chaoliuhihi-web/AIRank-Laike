@@ -114,14 +114,20 @@ const iconMap: Record<string, LucideIcon> = {
 
 const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
 const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
+const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
 
 function useConsoleOverview() {
   return useContext(ConsoleOverviewContext);
 }
 
+function useConsoleOverviewStatus() {
+  return useContext(ConsoleOverviewStatusContext);
+}
+
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   const [overview, setOverview] = useState<ConsoleOverview>(fallbackConsoleOverview);
+  const [overviewStatus, setOverviewStatus] = useState<"loading" | "api" | "fallback">("loading");
 
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname));
@@ -132,8 +138,14 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
     fetchConsoleOverview(controller.signal)
-      .then(setOverview)
-      .catch(() => setOverview(fallbackConsoleOverview));
+      .then((nextOverview) => {
+        setOverview(nextOverview);
+        setOverviewStatus("api");
+      })
+      .catch(() => {
+        setOverview(fallbackConsoleOverview);
+        setOverviewStatus("fallback");
+      });
     return () => controller.abort();
   }, []);
 
@@ -145,14 +157,16 @@ function App() {
 
   return (
     <ConsoleOverviewContext.Provider value={overview}>
-      <main className="airank-console">
-        <div className="airank-console-shell">
-          <Sidebar activePath={path} onNavigate={navigate} />
-          <section className="airank-console-main">
-            <ConsolePage path={path} onNavigate={navigate} />
-          </section>
-        </div>
-      </main>
+      <ConsoleOverviewStatusContext.Provider value={overviewStatus}>
+        <main className="airank-console">
+          <div className="airank-console-shell">
+            <Sidebar activePath={path} onNavigate={navigate} />
+            <section className="airank-console-main">
+              <ConsolePage path={path} onNavigate={navigate} />
+            </section>
+          </div>
+        </main>
+      </ConsoleOverviewStatusContext.Provider>
     </ConsoleOverviewContext.Provider>
   );
 }
@@ -311,6 +325,7 @@ function IconTile({ tone = "primary", children }: { tone?: Tone; children: React
 
 function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { metricCards } = useConsoleOverview();
+  const overviewStatus = useConsoleOverviewStatus();
 
   return (
     <>
@@ -319,6 +334,14 @@ function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         subtitle="老板驾驶舱：AI 当前更容易推荐竞品，而不是你。先补齐推荐证据，再启动发布复测。"
         action={<DatePill />}
       />
+      {overviewStatus === "fallback" && (
+        <AlertBanner
+          title="当前显示 fallback 数据"
+          desc="控制台概览 API 暂不可用，页面已切换到本地兜底数据；恢复 API 后刷新即可读取实时项目数据。"
+          action="重新加载"
+          onClick={() => window.location.reload()}
+        />
+      )}
       <section className="metric-grid">
         {metricCards.map((item) => (
           <MetricCard key={item.label} item={item} />
