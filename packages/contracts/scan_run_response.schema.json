@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/scan_run_response.schema.json",
+  "title": "AIRank Scan Run Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "tenant_id",
+        "project_id",
+        "run_type",
+        "status",
+        "provider_scope",
+        "question_scope",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^scan_run_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "run_type": { "type": "string", "enum": ["baseline", "retest", "manual"] },
+        "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "canceled"] },
+        "provider_scope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+          },
+          "uniqueItems": true
+        },
+        "question_scope": { "$ref": "#/$defs/question_scope" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "integer", "string", "boolean", "null"] }
+        },
+        "error": { "$ref": "#/$defs/scan_error" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "question_scope": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["all_active", "selected"] },
+        "question_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "scan_error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/scan_task_response.schema.json",
+  "title": "AIRank Scan Task Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "run_id",
+        "tenant_id",
+        "project_id",
+        "question_id",
+        "provider",
+        "status",
+        "attempt_count",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "type": "string", "pattern": "^scan_task_[A-Za-z0-9_-]+$" },
+        "run_id": { "type": "string", "pattern": "^scan_run_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "question_id": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
+        "provider": {
+          "type": "string",
+          "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+        },
+        "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "skipped"] },
+        "attempt_count": { "type": "integer", "minimum": 0 },
+        "scheduled_at": { "type": "string", "format": "date-time" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "error": { "$ref": "#/$defs/scan_error" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "scan_error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

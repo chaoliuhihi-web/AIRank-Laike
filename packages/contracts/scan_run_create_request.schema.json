@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/scan_run_create_request.schema.json",
+  "title": "AIRank Scan Run Create Request",
+  "type": "object",
+  "required": ["project_id", "provider_scope", "question_scope"],
+  "additionalProperties": false,
+  "properties": {
+    "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "run_type": { "type": "string", "enum": ["baseline", "retest", "manual"], "default": "baseline" },
+    "provider_scope": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+      },
+      "uniqueItems": true
+    },
+    "question_scope": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["all_active", "selected"] },
+        "question_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "selected" } }, "required": ["mode"] },
+          "then": { "required": ["question_ids"] }
+        }
+      ]
+    }
+  }
+}

@@ -16,10 +16,12 @@ M1 已冻结的 API schema：
 - `competitor_response.schema.json`
 - `buyer_question_create_request.schema.json`
 - `buyer_question_response.schema.json`
+- `scan_run_create_request.schema.json`
+- `scan_run_response.schema.json`
+- `scan_task_response.schema.json`
 
 后续领域 schema：
 
-- `ai_scan_run.schema.json`
 - `ai_answer_snapshot.schema.json`
 - `fact_atom.schema.json` — 可信事实卡的内部最小事实单元（FactAtom）
 - `fact_store.schema.json` — 企业事实库条目

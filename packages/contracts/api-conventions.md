@@ -85,6 +85,18 @@ GET /api/v1/projects?limit=50&cursor=...
 
 `tenant_id` 必须来自认证上下文或 `tenant-id` header，不能从 request body 接收。当前 in-memory adapter 仅用于开发串联，进程重启后数据会丢失。
 
+## M2 扫描契约
+
+`M2-WIN-000` 只冻结 scan run / scan task 的 request、response 和 status schema，不实现 worker 调度：
+
+| Schema | 说明 |
+| --- | --- |
+| `scan_run_create_request.schema.json` | 创建一次扫描批次，指定项目、平台范围和问题范围 |
+| `scan_run_response.schema.json` | 查询或创建后返回 run 状态 |
+| `scan_task_response.schema.json` | 查询单个 provider/question 扫描任务状态 |
+
+scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`canceled`。scan task 状态只允许 `queued`、`running`、`completed`、`failed`、`skipped`。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：
