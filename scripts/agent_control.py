@@ -55,7 +55,15 @@ TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
 
 
 def run(command: list[str]) -> tuple[int, str]:
-    proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+    proc = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 

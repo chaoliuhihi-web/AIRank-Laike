@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Iterable
 
@@ -117,9 +117,10 @@ def parse_json_value(value: object, fallback: object) -> object:
 
 def coerce_datetime(value: object) -> datetime:
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     raise TypeError(f"Unsupported datetime value: {value!r}")
 
 

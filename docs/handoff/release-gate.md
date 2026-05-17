@@ -128,3 +128,38 @@ Minimum fix before beta PASS:
 
 - Re-run `ops/deployment/mysql-bootstrap.sql`; it now repairs common local/Docker Desktop dev-user credentials and grants. If MySQL still reports access denied, inspect `mysql.user` for a more-specific `airank` host record and fix that grant, then rerun `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
 - Provide real yudao/Xinghe/Hermes configuration or explicitly accept a dev_only beta scope before tagging.
+
+## 2026-05-17 18:34 +08:00 Execution
+
+Release Gate: BLOCKED
+
+Commit: current handoff/gate update rebased on `9ca4fc9`
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- GitHub `main`, Gitee `main`, and local HEAD matched at `45b6981` before this verification pass.
+- The handoff/gate update was then rebased over remote `9ca4fc9 feat: add mysql worker lease store`.
+- Local Docker service `yudao-mysql` is running and exposes MySQL on `127.0.0.1:3306`.
+- Bootstrap grant repair was applied inside `yudao-mysql`; the subsequent application-user probe passed for `airank:airank_dev_password`.
+- Real migration passed with `cd apps/api && AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike_release_gate?charset=utf8mb4 alembic upgrade head`, using a temporary PyMySQL target for the Python 3.10 Alembic CLI against a fresh release-gate database.
+- MySQL-backed Product/API CRUD passed after rebase via FastAPI TestClient with `AIRANK_DATABASE_URL` set to the fresh release-gate database: project create `201`, competitor create `201`, buyer question create `201`.
+- MySQL-backed scan persistence passed after rebasing over `fa55f9f`: scan run create `201`, scan task list returned 2 tasks, and `airank_async_jobs` contained 2 queued provider jobs.
+- MySQL-backed asset/report persistence passed after rebasing over `46987b8`: asset bundle returned 1 DB-derived asset, report list returned 1 DB report, download receipt returned `201`, and `airank_audit_events` contained 1 receipt event.
+- MySQL-backed worker lease passed after rebasing over `9ca4fc9`: claim, heartbeat, succeed, timeout sweep, and explicit retry all passed against `airank_async_jobs`.
+- `git diff --check`, `python -m pytest tests/contracts -q` (56 tests), `python -m pytest tests/acceptance -q` (9 tests), `cd apps/worker && python -m pytest -q` (11 tests), `cd apps/web && npm run build`, and `python scripts/agent_control.py gate --write` passed after the rebase.
+- Local optional Xinghe probes found creator marketing, workflow runner, and Hermes `/health` endpoints returning `200`.
+
+Still blocked:
+
+- No `YUDAO_BEARER_TOKEN` / `YUDAO_TOKEN` is present in this shell. yudao auth and tenant/user probes therefore remain `dev_only`, not release-ready.
+- Crawler and KB configured local endpoints are reachable but do not pass the adapter's configured readiness paths (`/api/crawler-gateway/runtime-status` and `/internal/kb/store-topology` returned non-ready results).
+- AI asset bundle and report APIs are MySQL-backed when data exists, but upstream content/report generation still depends on dev/manual seed data until the real yudao/Xinghe/Hermes integration is configured.
+- Product has not explicitly accepted a `dev_only` beta scope. Per this gate, do not tag beta or claim release-ready until that approval or real yudao capability is available.
+
+Minimum fix before beta PASS:
+
+- Provide a real yudao bearer token and rerun the capability probe with `AIRANK_AUTH_MODE=yudao`, `YUDAO_PERMISSION_INFO_URL`, and `YUDAO_BEARER_TOKEN`.
+- Either map crawler/KB health paths to real service readiness endpoints, or document them as optional `partial` capabilities for the beta scope.
+- If product accepts a dev-only beta, record the approval and change the conclusion to `PASS_WITH_RISK` instead of `PASS`.

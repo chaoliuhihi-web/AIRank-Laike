@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from airank_domain import AsyncJob, AsyncJobStatus, JobOwnershipError
 from airank_worker import InMemoryJobLeaseStore, MySQLJobLeaseStore
+from airank_worker.lease import coerce_datetime
 
 
 NOW = datetime(2026, 5, 17, 8, 0, tzinfo=timezone.utc)
@@ -229,3 +230,10 @@ def test_mysql_lease_store_preserves_owner_checks() -> None:
 
     with pytest.raises(JobOwnershipError):
         store.succeed("job_db_owner", "worker-b", NOW + timedelta(seconds=1), None)
+
+
+def test_mysql_datetime_coercion_normalizes_naive_values_to_utc() -> None:
+    coerced = coerce_datetime(datetime(2026, 5, 17, 8, 0))
+
+    assert coerced.tzinfo == timezone.utc
+    assert coerced <= NOW

@@ -6,10 +6,11 @@
 | M4-MACPRO-DIRECTOR | review | this commit | Synced launch-board with CodexiMac status through `M4-IMAC-002 dev_only`; next critical path is CodexWin `M1-WIN-001C`. |
 | M2-MACPRO-001 | review | this commit | Added acceptance coverage from project creation through scan run/task status to deterministic score calculation. |
 | M3-MACPRO-001 | review | this commit | Added evidence-chain gate coverage rejecting unsourced confirmed facts and report conclusions missing snapshot/citation/FactAtom refs. |
-| M4-MACPRO-001 | blocked | this commit | Beta release gate executed; tests pass, but real MySQL migration is blocked by local 1045 access denied and external capabilities remain dev_only. |
+| M4-MACPRO-001 | blocked | this commit | Beta release gate executed; DB blocker is now cleared by `M4-MACPRO-DBVERIFY`, but external capabilities/dev-only scope still block release-ready status. |
 | M4-MACPRO-DIRECTOR2 | review | this commit | Fixed stale launch-board fallback so completed Win packets are not re-issued when execution-packet status overrides leave no open tasks. |
 | M4-MACPRO-DBGRANT | review_env_blocked | this commit | Bootstrap now repairs common stale local dev MySQL user grants; root MySQL access is still required to rerun it and prove real migration. |
 | M4-MACPRO-CODE-REVIEW | review | this commit | Reviewed CodexWin/CodexiMac code and patched API/scan contract enforcement, MySQL contract alignment, registered worker error codes, evidence-chain consistency checks, and invalid rank scoring. |
+| M4-MACPRO-DBVERIFY | review | this commit | Local Docker MySQL grant repair, real Alembic upgrade, MySQL-backed project/competitor/question/scan/assets/reports/worker lease paths are verified; release remains blocked only by external capability/dev-only scope. |
 
 ## Run Log
 
@@ -25,3 +26,4 @@
 - 2026-05-17: After rebasing over CodexWin scan run status API, review found scan request validation weaker than schema and scan task 404 using `JOB_NOT_FOUND`; patched strict request validation, `SCAN_TASK_NOT_FOUND`, and focused contract tests.
 - 2026-05-17: After rebasing over fact review and asset bundle APIs, review found path IDs and request bodies weaker than the contracts; patched fact/source validation, duplicate source rejection, and asset project ID validation.
 - 2026-05-17: After rebasing over report download receipt API, review found report list project path validation missing; patched route validation and contract coverage.
+- 2026-05-17: `M4-MACPRO-DBVERIFY` used the running `yudao-mysql` Docker container to apply the bootstrap grant repair, verified `airank` app-user connectivity, ran real `alembic upgrade head`, and proved MySQL-backed project/competitor/buyer-question API writes through FastAPI TestClient. After rebasing over `9ca4fc9`, validation was rerun against a fresh `airank_laike_release_gate` database and also proved scan run/task creation plus `airank_async_jobs` enqueue, asset bundle DB derivation, report listing, download receipt audit logging, and worker MySQL lease claim/heartbeat/succeed/timeout/retry. Contracts 56, acceptance 9, worker 11, web build, diff check, and `agent_control.py gate --write` passed. `agent_control.py` was hardened for Windows UTF-8 subprocess decoding after `gate --write` crashed on `git ls-files`; worker lease now normalizes naive MySQL datetimes to UTC. Remaining release blocker: no yudao bearer token or explicit dev-only beta approval.

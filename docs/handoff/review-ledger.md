@@ -76,6 +76,8 @@ Scope:
 - 按用户要求升级协作机制：CodexMacPro 对整体方向负责，自动生成三台 AI 下一轮 prompt，减少手动复制粘贴。
 
 Changed:
+- `apps/worker/airank_worker/lease.py`
+- `apps/worker/tests/test_async_job_lease.py`
 - `scripts/agent_control.py`
 - `.github/workflows/ci.yml`
 - `.gitignore`
@@ -971,3 +973,64 @@ Risks:
 
 Next owner:
 - CodexWin should preserve route-level validation when replacing seeded report payloads with real repository-backed data.
+## 2026-05-17 18:34 +08:00 - CodexMacPro
+
+Scope:
+- Took over the release blocker path and pushed the DB side from documented grant repair to real verification.
+- Kept the release gate strict: dev-only external capabilities are recorded but not treated as release-ready.
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/release-gate.md`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/status/codex-win.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `git fetch origin && git merge --ff-only origin/main && git rev-parse --short HEAD`
+- result: pass, initial HEAD `45b6981`; rebased this verification update over remote `9ca4fc9`
+- command: `Get-Content ops/deployment/mysql-bootstrap.sql | docker exec -i yudao-mysql sh -lc 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'`
+- result: grant repair applied far enough to fix `airank` app-user access; later SQL hit a PowerShell UTF-8 piping issue, so schema readiness was proven by Alembic instead of by bootstrap seeding
+- command: `python -c "import pymysql; ..."`
+- result: pass, `airank` app user connected to `127.0.0.1:3306/airank_laike`
+- command: `cd apps/api && AIRANK_DATABASE_URL=... alembic upgrade head`
+- result: pass, upgraded fresh `airank_laike_release_gate` database to `20260517_0001` using a temporary PyMySQL target for the Python 3.10 Alembic CLI
+- command: FastAPI TestClient with `AIRANK_DATABASE_URL` set
+- result: pass after rebase, MySQL-backed project create `201`, competitor create `201`, buyer question create `201`
+- command: FastAPI TestClient scan run flow with `AIRANK_DATABASE_URL` set after rebasing over `fa55f9f`
+- result: pass, project create `201`, buyer question create `201`, scan run create `201`, scan task list returned 2 tasks, and `airank_async_jobs` contained 2 queued provider jobs
+- command: FastAPI TestClient asset/report flow with `AIRANK_DATABASE_URL` set after rebasing over `46987b8`
+- result: pass, asset bundle returned 1 DB-derived asset, report list returned 1 DB report, download receipt returned `201`, and `airank_audit_events` contained 1 receipt event
+- command: `MySQLJobLeaseStore` real MySQL flow with `AIRANK_DATABASE_URL`-equivalent worker URL after rebasing over `9ca4fc9`
+- result: pass, claim, heartbeat, succeed, timeout sweep, and explicit retry all persisted correctly in `airank_async_jobs`; fixed naive MySQL datetimes by normalizing to UTC
+- command: local capability endpoint probes
+- result: yudao permission endpoint reachable but unauthenticated without token; creator marketing/workflow/Hermes health endpoints returned `200`; crawler/KB readiness paths did not pass
+- command: `python -m py_compile scripts/agent_control.py apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `python -m pytest tests/contracts -q`
+- result: pass, 56 tests
+- command: `python -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `cd apps/worker && python -m pytest -q`
+- result: pass, 11 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python scripts/agent_control.py gate --write`
+- result: pass; Windows UTF-8 subprocess decoding issue is fixed
+
+Review:
+- status: BLOCKED
+- reviewer: CodexMacPro
+- notes: The previous MySQL migration/CRUD/scan/assets/reports/worker lease blockers are cleared in this local Docker environment. Release is still blocked by missing yudao bearer token or explicit approval to ship a dev-only beta scope.
+
+Risks:
+- yudao auth and tenant/user remain `dev_only` because no `YUDAO_BEARER_TOKEN` / `YUDAO_TOKEN` is configured.
+- Crawler and KB local services need either correct readiness paths or an explicit optional/partial beta decision.
+- Asset bundle and report APIs are MySQL-backed when data exists, but upstream content/report generation still depends on dev/manual seed data until real yudao/Xinghe/Hermes integration is configured.
+
+Next owner:
+- Integration owner should provide a real yudao bearer token and confirmed Xinghe/Hermes endpoint mapping.
+- Product/CodexMacPro can move release gate to `PASS_WITH_RISK` only after explicit dev-only beta scope approval is recorded.
