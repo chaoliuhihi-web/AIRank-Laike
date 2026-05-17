@@ -15,6 +15,7 @@ SCAN_SCHEMAS = [
     "scan_run_create_request.schema.json",
     "scan_run_response.schema.json",
     "scan_task_response.schema.json",
+    "scan_task_list_response.schema.json",
 ]
 
 
@@ -89,6 +90,30 @@ def test_scan_task_response_status_contract() -> None:
                 "created_at": "2026-05-17T09:00:00Z",
                 "updated_at": "2026-05-17T09:00:00Z",
             },
+            "meta": response_meta(),
+        },
+    )
+
+
+def test_scan_task_list_response_status_contract() -> None:
+    validate_payload(
+        "scan_task_list_response.schema.json",
+        {
+            "data": [
+                {
+                    "task_id": "scan_task_demo",
+                    "run_id": "scan_run_demo",
+                    "tenant_id": "tenant_demo",
+                    "project_id": "project_demo",
+                    "question_id": "question_demo",
+                    "provider": "chatgpt",
+                    "status": "queued",
+                    "attempt_count": 0,
+                    "scheduled_at": "2026-05-17T09:00:00Z",
+                    "created_at": "2026-05-17T09:00:00Z",
+                    "updated_at": "2026-05-17T09:00:00Z",
+                }
+            ],
             "meta": response_meta(),
         },
     )

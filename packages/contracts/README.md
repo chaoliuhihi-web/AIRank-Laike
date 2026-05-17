@@ -19,6 +19,7 @@ M1 已冻结的 API schema：
 - `scan_run_create_request.schema.json`
 - `scan_run_response.schema.json`
 - `scan_task_response.schema.json`
+- `scan_task_list_response.schema.json`
 
 后续领域 schema：
 

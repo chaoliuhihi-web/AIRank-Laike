@@ -94,6 +94,7 @@ GET /api/v1/projects?limit=50&cursor=...
 | `scan_run_create_request.schema.json` | 创建一次扫描批次，指定项目、平台范围和问题范围 |
 | `scan_run_response.schema.json` | 查询或创建后返回 run 状态 |
 | `scan_task_response.schema.json` | 查询单个 provider/question 扫描任务状态 |
+| `scan_task_list_response.schema.json` | 查询 scan run 下的任务状态列表 |
 
 scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`canceled`。scan task 状态只允许 `queued`、`running`、`completed`、`failed`、`skipped`。
 

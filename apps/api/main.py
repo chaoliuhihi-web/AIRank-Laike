@@ -208,6 +208,76 @@ class BuyerQuestionResponse(BaseModel):
     meta: ResponseMeta
 
 
+Provider = Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+
+
+class QuestionScope(BaseModel):
+    mode: Literal["all_active", "selected"]
+    question_ids: list[str] = Field(default_factory=list)
+
+
+class ScanRunCreateRequest(BaseModel):
+    project_id: str
+    name: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    run_type: Literal["baseline", "retest", "manual"] = "baseline"
+    provider_scope: list[Provider] = Field(min_length=1, max_length=8)
+    question_scope: QuestionScope
+
+
+class ScanError(BaseModel):
+    code: str
+    message: str
+
+
+class ScanRunData(BaseModel):
+    run_id: str
+    tenant_id: str
+    project_id: str
+    name: Optional[str] = None
+    run_type: Literal["baseline", "retest", "manual"]
+    status: Literal["queued", "running", "completed", "failed", "canceled"]
+    provider_scope: list[Provider]
+    question_scope: QuestionScope
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    error: Optional[ScanError] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScanTaskData(BaseModel):
+    task_id: str
+    run_id: str
+    tenant_id: str
+    project_id: str
+    question_id: str
+    provider: Provider
+    status: Literal["queued", "running", "completed", "failed", "skipped"]
+    attempt_count: int = Field(ge=0)
+    scheduled_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[ScanError] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScanRunResponse(BaseModel):
+    data: ScanRunData
+    meta: ResponseMeta
+
+
+class ScanTaskResponse(BaseModel):
+    data: ScanTaskData
+    meta: ResponseMeta
+
+
+class ScanTaskListResponse(BaseModel):
+    data: list[ScanTaskData]
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -266,6 +336,20 @@ class ProjectRepository(Protocol):
         project_id: str,
         payload: BuyerQuestionCreateRequest,
     ) -> BuyerQuestionData:
+        ...
+
+
+class ScanRepository(Protocol):
+    def create_run(self, tenant_id: str, payload: ScanRunCreateRequest) -> ScanRunData:
+        ...
+
+    def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
+        ...
+
+    def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
+        ...
+
+    def list_tasks(self, tenant_id: str, run_id: str) -> list[ScanTaskData]:
         ...
 
 
@@ -597,6 +681,78 @@ def build_project_repository() -> ProjectRepository:
 PROJECT_REPOSITORY: ProjectRepository = build_project_repository()
 
 
+class InMemoryScanRepository:
+    def __init__(self) -> None:
+        self._runs: dict[tuple[str, str], ScanRunData] = {}
+        self._tasks: dict[tuple[str, str], ScanTaskData] = {}
+
+    def create_run(self, tenant_id: str, payload: ScanRunCreateRequest) -> ScanRunData:
+        now = utc_now()
+        run_id = f"scan_run_{uuid4().hex[:12]}"
+        question_ids = payload.question_scope.question_ids
+        if payload.question_scope.mode == "all_active" and not question_ids:
+            question_ids = ["question_auto_seed"]
+        question_scope = QuestionScope(mode=payload.question_scope.mode, question_ids=question_ids)
+        task_count = len(payload.provider_scope) * len(question_ids)
+        data = ScanRunData(
+            run_id=run_id,
+            tenant_id=tenant_id,
+            project_id=payload.project_id,
+            name=payload.name,
+            run_type=payload.run_type,
+            status="queued",
+            provider_scope=payload.provider_scope,
+            question_scope=question_scope,
+            metrics={"task_count": task_count},
+            created_at=now,
+            updated_at=now,
+        )
+        self._runs[(tenant_id, run_id)] = data
+
+        for provider in payload.provider_scope:
+            for question_id in question_ids:
+                task = ScanTaskData(
+                    task_id=f"scan_task_{uuid4().hex[:12]}",
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    project_id=payload.project_id,
+                    question_id=question_id,
+                    provider=provider,
+                    status="queued",
+                    attempt_count=0,
+                    scheduled_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._tasks[(tenant_id, task.task_id)] = task
+        return data
+
+    def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
+        run = self._runs.get((tenant_id, run_id))
+        if run is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "SCAN_RUN_NOT_FOUND", "details": {"run_id": run_id}},
+            )
+        return run
+
+    def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
+        task = self._tasks.get((tenant_id, task_id))
+        if task is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "JOB_NOT_FOUND", "details": {"task_id": task_id}},
+            )
+        return task
+
+    def list_tasks(self, tenant_id: str, run_id: str) -> list[ScanTaskData]:
+        self.get_run(tenant_id, run_id)
+        return [task for (task_tenant_id, _), task in self._tasks.items() if task_tenant_id == tenant_id and task.run_id == run_id]
+
+
+SCAN_REPOSITORY: ScanRepository = InMemoryScanRepository()
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -793,6 +949,59 @@ def create_buyer_question(
         data=PROJECT_REPOSITORY.create_buyer_question(tenant_id, project_id, payload),
         meta=build_meta(trace_id),
     )
+
+
+@app.post(
+    f"{API_PREFIX}/scan-runs",
+    response_model=ScanRunResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_scan_run(
+    payload: ScanRunCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ScanRunResponse:
+    return ScanRunResponse(data=SCAN_REPOSITORY.create_run(tenant_id, payload), meta=build_meta(trace_id))
+
+
+@app.get(
+    f"{API_PREFIX}/scan-runs/{{run_id}}",
+    response_model=ScanRunResponse,
+    response_model_exclude_none=True,
+)
+def get_scan_run(
+    run_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ScanRunResponse:
+    return ScanRunResponse(data=SCAN_REPOSITORY.get_run(tenant_id, run_id), meta=build_meta(trace_id))
+
+
+@app.get(
+    f"{API_PREFIX}/scan-runs/{{run_id}}/tasks",
+    response_model=ScanTaskListResponse,
+    response_model_exclude_none=True,
+)
+def list_scan_tasks(
+    run_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ScanTaskListResponse:
+    return ScanTaskListResponse(data=SCAN_REPOSITORY.list_tasks(tenant_id, run_id), meta=build_meta(trace_id))
+
+
+@app.get(
+    f"{API_PREFIX}/scan-tasks/{{task_id}}",
+    response_model=ScanTaskResponse,
+    response_model_exclude_none=True,
+)
+def get_scan_task(
+    task_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ScanTaskResponse:
+    return ScanTaskResponse(data=SCAN_REPOSITORY.get_task(tenant_id, task_id), meta=build_meta(trace_id))
 
 
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)

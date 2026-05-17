@@ -74,7 +74,7 @@ git push gitee main
 
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
-| scan run / scan task API | CodexWin | review | scan run / scan task schema 已冻结；API 行为待 `M2-WIN-001` |
+| scan run / scan task API | CodexWin | dev_only | 可创建 scan run 并查询 run/task 状态；当前为 in-memory dev repository，不触发 worker |
 | worker job 领取和 heartbeat | CodexiMac | review | queued/running/succeeded/failed/timeout 状态可复测 |
 | mock/manual provider | CodexiMac | review | 可生成 answer snapshot 和 citation |
 | AIRank Score 纯函数 | CodexiMac | review | 同一输入重复计算一致 |
