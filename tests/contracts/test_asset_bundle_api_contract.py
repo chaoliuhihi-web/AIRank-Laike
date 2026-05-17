@@ -30,3 +30,17 @@ def test_asset_bundle_api_matches_contract() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(body)
+
+
+def test_asset_bundle_api_rejects_invalid_project_id() -> None:
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/projects/not_a_project_id/asset-bundle",
+        headers={"tenant-id": "tenant_assets", "X-AIRank-Trace-Id": "trc_asset_bad_project"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_asset_bad_project"

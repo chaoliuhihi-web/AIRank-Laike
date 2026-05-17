@@ -698,3 +698,51 @@ Risks:
 Next owner:
 - CodexWin should continue the Product/API/Web critical path by wiring scan run persistence/worker queue behind the now stricter API contract.
 - CodexMacPro should keep reviewing each API-to-worker bridge before it becomes release baseline.
+
+## 2026-05-17 18:02 +08:00 - CodexMacPro
+
+Scope:
+- Review and corrective patch after CodexWin/CodexiMac remote advanced with fact review and asset bundle APIs.
+- Keep API path/body validation aligned with `additionalProperties: false`, ID patterns, and traceable-source contract rules.
+
+Changed:
+- `apps/api/main.py`
+- `tests/contracts/test_fact_review_api_contract.py`
+- `tests/contracts/test_asset_bundle_api_contract.py`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 42 tests
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 7 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 7 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `cd apps/api && python3 -m alembic upgrade head --sql`
+- result: pass; generated SQL keeps project/competitor `website_url VARCHAR(2048)`
+- command: `python3 -m py_compile apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: Fact review request/source models now forbid extra fields, enforce source ID/title/url lengths, reject duplicate `source_refs`, and keep fact/project path IDs contract-shaped. Asset bundle now rejects invalid project IDs instead of returning a contract-invalid payload.
+
+Risks:
+- Fact review and asset bundle APIs are still development/in-memory slices; they do not yet read or persist real FactAtom/asset records.
+- These endpoints are acceptable for frontend/API contract wiring, but not a release-ready evidence workflow until backed by MySQL and evidence stores.
+
+Next owner:
+- CodexWin should wire these endpoints to real repositories only after preserving the current validation and error-envelope behavior.
+- CodexMacPro should continue reviewing every new API surface for schema/runtime drift before it reaches release gate.

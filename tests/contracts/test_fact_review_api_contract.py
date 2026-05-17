@@ -105,3 +105,45 @@ def test_fact_review_rejects_confirm_without_source() -> None:
             "fact_review_request.schema.json",
             {"action": "confirmed", "reviewed_by": "reviewer_demo"},
         )
+
+
+def test_fact_review_rejects_extra_fields_and_duplicate_sources() -> None:
+    client = TestClient(app)
+
+    duplicate_source = {
+        "source_type": "web",
+        "support_type": "supports",
+        "source_url": "https://example.com/fact",
+    }
+    response = client.patch(
+        "/api/v1/projects/project_demo/facts/fact_duplicate/review",
+        headers={"tenant-id": "tenant_fact", "X-AIRank-Trace-Id": "trc_fact_duplicate"},
+        json={
+            "action": "confirmed",
+            "reviewed_by": "reviewer_demo",
+            "tenant_id": "tenant_other",
+            "source_refs": [duplicate_source, duplicate_source],
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_fact_duplicate"
+    validate_payload("error_response.schema.json", body)
+
+
+def test_fact_review_rejects_invalid_path_ids() -> None:
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/v1/projects/project_demo/facts/not_a_fact_id/review",
+        headers={"tenant-id": "tenant_fact", "X-AIRank-Trace-Id": "trc_fact_bad_path"},
+        json={"action": "rejected", "reviewed_by": "reviewer_demo"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_fact_bad_path"
+    validate_payload("error_response.schema.json", body)

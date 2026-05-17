@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, Optional, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Path, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -255,6 +255,10 @@ class BuyerQuestionResponse(BaseModel):
 Provider = Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
 ProjectId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
 QuestionId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^question_[A-Za-z0-9_-]+$")]
+FactId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^fact_[A-Za-z0-9_-]+$")]
+SourceRefId = Annotated[str, Field(min_length=1, max_length=64)]
+ProjectIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
+FactIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^fact_[A-Za-z0-9_-]+$")]
 
 
 class QuestionScope(BaseModel):
@@ -345,13 +349,15 @@ class ScanTaskListResponse(BaseModel):
 
 
 class FactReviewSourceRef(BaseModel):
-    source_type: str
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: str = Field(min_length=1, max_length=64)
     support_type: Literal["supports", "contradicts", "context"] = "supports"
-    citation_id: Optional[str] = None
-    snapshot_id: Optional[str] = None
-    object_ref_id: Optional[str] = None
-    source_url: Optional[str] = None
-    source_title: Optional[str] = None
+    citation_id: Optional[SourceRefId] = None
+    snapshot_id: Optional[SourceRefId] = None
+    object_ref_id: Optional[SourceRefId] = None
+    source_url: Optional[UrlText] = None
+    source_title: Optional[str] = Field(default=None, min_length=1, max_length=240)
 
     def has_traceable_source(self) -> bool:
         return bool(self.citation_id or self.object_ref_id or self.source_url)
@@ -364,11 +370,24 @@ class FactReviewSourceRef(BaseModel):
 
 
 class FactReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: Literal["confirmed", "rejected", "needs_redaction", "private"]
     reviewed_by: str = Field(min_length=1, max_length=64)
     trust_level: Literal["A", "B", "C", "D"] = "B"
     review_note: Optional[str] = Field(default=None, min_length=1, max_length=1000)
     source_refs: list[FactReviewSourceRef] = Field(default_factory=list)
+
+    @field_validator("source_refs")
+    @classmethod
+    def source_refs_must_be_unique(cls, value: list[FactReviewSourceRef]) -> list[FactReviewSourceRef]:
+        seen = set()
+        for source_ref in value:
+            key = tuple(sorted(source_ref.model_dump(mode="json", exclude_none=True).items()))
+            if key in seen:
+                raise ValueError("source_refs must contain unique values")
+            seen.add(key)
+        return value
 
     @model_validator(mode="after")
     def require_source_for_confirmed(self) -> "FactReviewRequest":
@@ -378,9 +397,9 @@ class FactReviewRequest(BaseModel):
 
 
 class FactReviewData(BaseModel):
-    fact_id: str
+    fact_id: FactId
     tenant_id: str
-    project_id: str
+    project_id: ProjectId
     review_status: Literal["confirmed", "rejected", "needs_redaction", "private"]
     fact_status: Literal["draft", "confirmed", "rejected", "stale"]
     disclosure: Literal["public", "redacted", "internal", "forbidden", "pending_approval"]
@@ -405,11 +424,11 @@ class AssetBundleItem(BaseModel):
 
 
 class AssetBundleData(BaseModel):
-    project_id: str
+    project_id: ProjectId
     tenant_id: str
     completeness: int = Field(ge=0, le=100)
     recommendation: str
-    assets: list[AssetBundleItem]
+    assets: list[AssetBundleItem] = Field(min_length=1)
 
 
 class AssetBundleResponse(BaseModel):
@@ -1285,8 +1304,8 @@ def get_scan_task(
     response_model_exclude_none=True,
 )
 def review_fact(
-    project_id: str,
-    fact_id: str,
+    project_id: ProjectIdPath,
+    fact_id: FactIdPath,
     payload: FactReviewRequest,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
@@ -1302,7 +1321,7 @@ def review_fact(
     response_model=AssetBundleResponse,
 )
 def get_asset_bundle(
-    project_id: str,
+    project_id: ProjectIdPath,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> AssetBundleResponse:
