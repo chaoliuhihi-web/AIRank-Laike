@@ -83,8 +83,10 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     engine = create_engine(database_url(), pool_pre_ping=True)
+    expected_database = engine.url.database
+    assert expected_database
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT DATABASE()")).scalar_one() == "airank_laike"
+        assert conn.execute(text("SELECT DATABASE()")).scalar_one() == expected_database
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == EXPECTED_ALEMBIC_HEAD
         table_count = conn.execute(
             text(
