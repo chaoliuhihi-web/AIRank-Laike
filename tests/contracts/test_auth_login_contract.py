@@ -66,6 +66,8 @@ def test_auth_login_bridges_to_yudao_and_permission_info(monkeypatch: Any) -> No
     monkeypatch.setenv("AIRANK_AUTH_MODE", "yudao")
     monkeypatch.setenv("YUDAO_BASE_URL", "http://yudao.local")
     monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_demo")
+    monkeypatch.delenv("YUDAO_LOGIN_URL", raising=False)
+    monkeypatch.delenv("YUDAO_PERMISSION_INFO_URL", raising=False)
     monkeypatch.setattr(api_main, "request_external_json", fake_request_external_json)
     client = TestClient(api_main.app)
 
