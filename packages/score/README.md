@@ -15,3 +15,19 @@ v0 指标：
 ```
 
 输出要能解释每一分从哪里来，并能关联扫描快照、引用来源和事实卡。
+
+## M2 pure function baseline
+
+`packages/score/src/airank_score` exposes `calculate_airank_score(snapshot)`.
+The function is deterministic and has no I/O, clock, random or database access.
+
+Current M2 inputs:
+
+- answer snapshot id
+- brand mention flag
+- brand rank
+- source citation ids
+
+Future inputs that are not available yet, such as FactAtom consistency and
+competitor suppression, score `0` with `pending_input` rather than inventing a
+conclusion. Every non-pending component carries snapshot/citation evidence refs.

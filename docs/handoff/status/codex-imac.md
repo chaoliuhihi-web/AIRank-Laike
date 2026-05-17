@@ -6,6 +6,7 @@
 | M1-IMAC-002 | review | ea56c7c | Tenant/project query fields, index coverage, sensitive fields, and no-cross-db-FK policy documented; `git diff --check` passed. |
 | M2-IMAC-001 | review | 182f5c6 | Async job lease/heartbeat state machine covers queued/running/succeeded/failed/timeout; `python3 -m pytest` passed in apps/worker. |
 | M2-IMAC-002 | review | 3ad8bdd | Mock provider generates answer snapshot with required source citations; worker marks missing-citation jobs failed. |
+| M2-IMAC-003 | review | pending | Deterministic score pure function returns identical results for identical snapshot/citation input. |
 
 ## Run Log
 
@@ -17,3 +18,5 @@
 - 2026-05-17: Completed `M2-IMAC-001` worker baseline. Direct `cd apps/worker && pytest` is environment-blocked because `pytest` is not in PATH, but `cd apps/worker && python3 -m pytest` passed 4 tests and `python3 -m pytest tests/acceptance` passed 1 test.
 - 2026-05-17: Started `M2-IMAC-002` mock provider snapshot/citation path using `packages/evidence` models and worker scan handler.
 - 2026-05-17: Completed `M2-IMAC-002`; validation `cd apps/worker && python3 -m pytest` passed 6 tests, `python3 -m pytest tests/acceptance` passed 2 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
+- 2026-05-17: Started `M2-IMAC-003` deterministic AIRank Score pure function based on answer snapshot and citation inputs.
+- 2026-05-17: Completed `M2-IMAC-003`; validation `cd packages/score && python3 -m pytest` passed 2 tests, `python3 -m pytest tests/acceptance` passed 3 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
