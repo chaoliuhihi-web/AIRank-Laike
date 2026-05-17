@@ -253,7 +253,9 @@ def parse_tasks_from_launch_board(owner: str) -> list[dict[str, str]]:
 
 def parse_tasks(owner: str) -> list[dict[str, str]]:
     packet_tasks = parse_tasks_from_packets(owner)
-    return packet_tasks if packet_tasks else parse_tasks_from_launch_board(owner)
+    if any(task["owner"] == owner for task in parse_packet_rows()):
+        return packet_tasks
+    return parse_tasks_from_launch_board(owner)
 
 
 def recent_review_lines() -> str:

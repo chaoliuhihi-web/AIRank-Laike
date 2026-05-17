@@ -5,7 +5,7 @@
 当前产品基线：
 
 - 前端原型提交：`622b1f7 feat: implement console frontend prototype`
-- 最新远端阶段提交：`c7a878e docs: record CodexiMac capability status`
+- 最新远端阶段提交：`1a56c75 docs: record blocked beta release gate`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
 - Worker：`apps/worker` 已有 in-memory async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；生产 MySQL 队列持久化仍未完成。
@@ -65,10 +65,10 @@ git push gitee main
 | Console overview API loop | CodexWin | done | `GET /api/v1/console/overview`、schema、contract test、web fallback 已有 |
 | 建立 SQLAlchemy + Alembic | CodexiMac | review_env_blocked | migration SQL/parity 已通过；本机 MySQL 拒绝 `airank` dev credentials，release 前需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
 | 错误码和 trace_id 落地 | CodexWin | review | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
-| 项目/竞品/问题 contract skeleton | CodexWin | todo | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
+| 项目/竞品/问题 contract skeleton | CodexWin | review | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
 | 项目/竞品/问题 dev repository | CodexWin | dev_only | repository interface + in-memory/dev-only adapter 已打通 API；不作为生产持久化 |
 | 项目/竞品/问题 CRUD | CodexWin | review_env_blocked | MySQL repository code path 已实现；真实 MySQL 验证受本机 `airank` 授权拒绝阻塞 |
-| 数据库 schema review | CodexMacPro | todo | tenant、索引、迁移、敏感字段检查通过 |
+| 数据库 schema review | CodexiMac | review | tenant、索引、迁移、敏感字段检查通过 |
 
 ## Milestone 2：扫描和评分闭环
 
@@ -103,6 +103,6 @@ git push gitee main
 
 ## 当前下一个推荐动作
 
-1. CodexWin：领取 `M1-WIN-001C project-question-contract-skeleton`，之后继续 `M1-WIN-001D`，不要再等 DB。
-2. CodexMacPro：持续审核 CodexiMac 的 `dev_only` / `review_env_blocked` 输出，release gate 中继续把真实 MySQL、yudao/Xinghe/Hermes 验证列为上线 blocker。
-3. CodexiMac：当前 Data/Worker/Evidence packet 已推进到 `M4-IMAC-002 dev_only`；等待 CodexMacPro 拆分新的后续 packet，不要重复执行 capability probe。
+1. CodexMacPro：当前无新的可执行开发 packet；保持 release gate `blocked`，直到真实 MySQL migration 和外部 yudao/Xinghe/Hermes 能力验证完成，或产品明确批准 dev_only beta scope。
+2. CodexWin：当前 Product/API/Web packet 已推进到 `M4-WIN-002 review/dev_only`；不要重复执行 `M1-WIN-001C` / `M1-WIN-001D`。
+3. CodexiMac：当前 Data/Worker/Evidence packet 已推进到 `M4-IMAC-002 dev_only`；等待真实外部环境或 CodexMacPro 拆分新的后续 packet，不要重复执行 capability probe。

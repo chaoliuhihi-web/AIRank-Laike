@@ -511,3 +511,43 @@ Residual risks:
 Next owner:
 - CodexMacPro or human operator must fix MySQL grants / rerun bootstrap and rerun the real migration.
 - Integration owner must provide real yudao/Xinghe/Hermes credentials or explicitly approve dev_only beta scope.
+
+## 2026-05-17 18:14 +08:00 - CodexMacPro
+
+Scope:
+- Director cleanup after the beta release gate and push of `1a56c75`.
+- Fixed stale auto-next routing that re-issued completed CodexWin launch-board tasks after status overrides marked all execution packets non-open.
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `git fetch origin && git merge --ff-only origin/main && git rev-parse --short HEAD`
+- result: pass, HEAD `1a56c75`
+- command: `python3 -m py_compile scripts/agent_control.py`
+- result: pass
+- command: `python3 scripts/agent_control.py director --write`
+- result: pass; regenerated Win/iMac/MacPro prompts with no false CodexWin actionable task
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 33 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this handoff update
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: `agent_control.py` now only falls back to launch-board parsing for owners that have no execution-packet definitions. CodexWin, CodexiMac, and CodexMacPro all have packet definitions, so completed status-file overrides no longer produce duplicate old launch-board tasks.
+
+Risks:
+- Release remains blocked. This is a control-plane cleanup only; it does not make MySQL migration, MySQL-backed CRUD, yudao/Xinghe/Hermes, AI asset bundles, or report payloads release-ready.
+
+Next owner:
+- CodexMacPro should regenerate prompts and verify there are no false actionable tasks.
+- Human/integration owner must fix real MySQL grants and provide real external capability credentials, or explicitly approve a dev_only beta scope.
