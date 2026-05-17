@@ -554,6 +554,11 @@ class FactReviewRepository(Protocol):
         ...
 
 
+class AssetBundleRepository(Protocol):
+    def get_bundle(self, tenant_id: str, project_id: str) -> AssetBundleData:
+        ...
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1319,24 +1324,165 @@ class InMemoryFactReviewRepository:
 FACT_REVIEW_REPOSITORY: FactReviewRepository = InMemoryFactReviewRepository()
 
 
-def build_asset_bundle(tenant_id: str, project_id: str) -> AssetBundleData:
-    assets = [
-        AssetBundleItem(asset_id="asset_fact_page", title="企业事实页", desc="把已确认事实卡发布为 AI 易读页面", progress=86, status="可发布"),
-        AssetBundleItem(asset_id="asset_service_page", title="服务介绍页", desc="结构化呈现核心服务、流程与优势", progress=72, status="待补证据"),
-        AssetBundleItem(asset_id="asset_case_page", title="客户案例页", desc="承接案例、成效、行业场景与客户评价", progress=58, status="待确认"),
-        AssetBundleItem(asset_id="asset_faq", title="FAQ 页", desc="覆盖高频买家问题和官方回答", progress=64, status="可生成"),
-        AssetBundleItem(asset_id="asset_compare", title="竞品对比页", desc="形成差异化选型依据和对比证据", progress=45, status="缺证据"),
-        AssetBundleItem(asset_id="asset_solution", title="行业解决方案页", desc="沉淀本地行业和高价值场景方案", progress=52, status="可生成"),
-        AssetBundleItem(asset_id="asset_jsonld", title="JSON-LD", desc="让 AI 和搜索引擎识别品牌事实", progress=80, status="可发布"),
-        AssetBundleItem(asset_id="asset_sitemap", title="sitemap.xml", desc="发布后提交抓取和复测", progress=92, status="可发布"),
-    ]
-    return AssetBundleData(
-        project_id=project_id,
-        tenant_id=tenant_id,
-        completeness=68,
-        recommendation="建议先补齐竞品对比页和客户案例页，再发布复测。",
-        assets=assets,
-    )
+class InMemoryAssetBundleRepository:
+    """Development fallback for local web work when no database URL is configured."""
+
+    def get_bundle(self, tenant_id: str, project_id: str) -> AssetBundleData:
+        assets = [
+            AssetBundleItem(asset_id="asset_fact_page", title="企业事实页", desc="把已确认事实卡发布为 AI 易读页面", progress=86, status="可发布"),
+            AssetBundleItem(asset_id="asset_service_page", title="服务介绍页", desc="结构化呈现核心服务、流程与优势", progress=72, status="待补证据"),
+            AssetBundleItem(asset_id="asset_case_page", title="客户案例页", desc="承接案例、成效、行业场景与客户评价", progress=58, status="待确认"),
+            AssetBundleItem(asset_id="asset_faq", title="FAQ 页", desc="覆盖高频买家问题和官方回答", progress=64, status="可生成"),
+            AssetBundleItem(asset_id="asset_compare", title="竞品对比页", desc="形成差异化选型依据和对比证据", progress=45, status="缺证据"),
+            AssetBundleItem(asset_id="asset_solution", title="行业解决方案页", desc="沉淀本地行业和高价值场景方案", progress=52, status="可生成"),
+            AssetBundleItem(asset_id="asset_jsonld", title="JSON-LD", desc="让 AI 和搜索引擎识别品牌事实", progress=80, status="可发布"),
+            AssetBundleItem(asset_id="asset_sitemap", title="sitemap.xml", desc="发布后提交抓取和复测", progress=92, status="可发布"),
+        ]
+        return AssetBundleData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            completeness=68,
+            recommendation="建议先补齐竞品对比页和客户案例页，再发布复测。",
+            assets=assets,
+        )
+
+
+def asset_progress(status: str, package_status: Optional[str]) -> int:
+    if package_status in {"published", "crawling", "crawled", "indexed", "pending_retest", "retested"}:
+        return 100
+    return {
+        "draft": 25,
+        "generated": 45,
+        "reviewing": 60,
+        "approved": 80,
+        "published": 100,
+    }.get(status, 35)
+
+
+class MySQLAssetBundleRepository:
+    def __init__(self, database_url: str) -> None:
+        self._engine = create_engine(database_url, pool_pre_ping=True)
+
+    def _ensure_project(self, conn: Any, tenant_id: str, project_id: str) -> None:
+        row = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                  AND deleted_at IS NULL
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).first()
+        if row is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}},
+            )
+
+    def get_bundle(self, tenant_id: str, project_id: str) -> AssetBundleData:
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            asset_rows = conn.execute(
+                text(
+                    """
+                    SELECT
+                      a.id,
+                      a.asset_type,
+                      a.title,
+                      a.body_md,
+                      a.status,
+                      a.updated_at,
+                      p.status AS package_status
+                    FROM airank_content_assets a
+                    LEFT JOIN airank_publish_packages p
+                      ON p.tenant_id = a.tenant_id
+                     AND p.project_id = a.project_id
+                     AND p.asset_id = a.id
+                     AND p.deleted_at IS NULL
+                    WHERE a.tenant_id = :tenant_id
+                      AND a.project_id = :project_id
+                      AND a.deleted_at IS NULL
+                    ORDER BY a.updated_at DESC, a.id ASC
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().all()
+            gap_rows = conn.execute(
+                text(
+                    """
+                    SELECT id, title, severity, suggested_asset_type, status
+                    FROM airank_content_gaps
+                    WHERE tenant_id = :tenant_id
+                      AND project_id = :project_id
+                      AND deleted_at IS NULL
+                      AND status <> 'closed'
+                    ORDER BY severity ASC, updated_at DESC
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().all()
+
+        assets = [
+            AssetBundleItem(
+                asset_id=row["id"],
+                title=row["title"],
+                desc=(row["body_md"] or f"{row['asset_type']} content asset")[:240],
+                progress=asset_progress(row["status"], row["package_status"]),
+                status=row["package_status"] or row["status"],
+            )
+            for row in asset_rows
+        ]
+        if not assets:
+            assets = [
+                AssetBundleItem(
+                    asset_id=f"gap_{row['id']}",
+                    title=row["title"],
+                    desc=f"建议生成 {row['suggested_asset_type'] or 'content_asset'} 以补齐 {row['severity']} 缺口",
+                    progress=0,
+                    status="待生成",
+                )
+                for row in gap_rows[:8]
+            ]
+        if not assets:
+            assets = [
+                AssetBundleItem(
+                    asset_id="asset_empty_state",
+                    title="待生成资产",
+                    desc="当前项目还没有可发布资产或内容缺口记录",
+                    progress=0,
+                    status="待生成",
+                )
+            ]
+
+        completeness = round(sum(asset.progress for asset in assets) / len(assets))
+        open_gap_count = len(gap_rows)
+        if open_gap_count:
+            recommendation = f"优先补齐 {open_gap_count} 个内容缺口，再发布 AI 收录包。"
+        elif completeness < 100:
+            recommendation = "继续审核并发布未完成资产，然后触发复测。"
+        else:
+            recommendation = "资产包已具备发布基础，建议提交抓取并安排复测。"
+
+        return AssetBundleData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            completeness=completeness,
+            recommendation=recommendation,
+            assets=assets,
+        )
+
+
+def build_asset_bundle_repository() -> AssetBundleRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLAssetBundleRepository(database_url)
+    return InMemoryAssetBundleRepository()
+
+
+ASSET_BUNDLE_REPOSITORY: AssetBundleRepository = build_asset_bundle_repository()
 
 
 def build_report_list(tenant_id: str, project_id: str) -> ReportListData:
@@ -1629,7 +1775,7 @@ def get_asset_bundle(
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> AssetBundleResponse:
-    return AssetBundleResponse(data=build_asset_bundle(tenant_id, project_id), meta=build_meta(trace_id))
+    return AssetBundleResponse(data=ASSET_BUNDLE_REPOSITORY.get_bundle(tenant_id, project_id), meta=build_meta(trace_id))
 
 
 @app.get(

@@ -99,6 +99,10 @@ Validation:
 - result: pass
 - command: `git diff --check`
 - result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this packet
 
 Review:
 - status: PASS_WITH_RISK
@@ -641,6 +645,43 @@ Risks:
 Next owner:
 - CodexMacPro should continue eliminating dev_only report/asset paths or run the real MySQL gate once credentials are fixed.
 - CodexiMac/worker owner should verify DB-backed worker claim/complete behavior against `airank_async_jobs` after MySQL access is available.
+
+## 2026-05-17 18:45 +08:00 - CodexMacPro
+
+Scope:
+- Continued release hardening for `M3-WIN-002 AI 收录包 API`.
+- Replaced the production code path for asset bundles with a MySQL-backed repository while keeping no-env fallback for local web development.
+
+Changed:
+- `apps/api/main.py`
+- `tests/contracts/test_asset_bundle_api_contract.py`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/codex-win.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts/test_asset_bundle_api_contract.py -q`
+- result: pass, 6 tests
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 52 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `python3 -m py_compile apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: REVIEW_ENV_BLOCKED
+- reviewer: CodexMacPro
+- notes: When `AIRANK_DATABASE_URL` is configured, `GET /projects/{project_id}/asset-bundle` now verifies tenant/project scope and derives assets from `airank_content_assets`, `airank_content_gaps`, and `airank_publish_packages`. It returns a real empty/gap state when no generated assets exist instead of fixed production seed content.
+
+Risks:
+- Real MySQL execution remains blocked by the same `airank` access denied issue.
+- Asset generation itself still depends on upstream evidence/content generation and publication jobs; this patch only makes the API read the production tables.
+
+Next owner:
+- Continue with `M4-WIN-001 report API` production hardening, then rerun the full release gate once MySQL grants are fixed.
 
 ## 2026-05-17 17:38 +08:00 - CodexMacPro
 
