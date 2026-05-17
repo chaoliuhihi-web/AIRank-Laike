@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required architecture files
+        run: |
+          test -f docs/architecture/overall-architecture-review.md
+          test -f docs/architecture/observability.md
+          test -f docs/architecture/security.md
+          test -f docs/architecture/migration-strategy.md
+          test -f docs/architecture/eventing-outbox.md
+          test -f packages/contracts/api-conventions.md
+          test -f packages/contracts/error-codes.md
+          test -f ops/deployment/mysql-bootstrap.sql
+
+      - name: Check terminology drift
+        run: |
+          ! grep -R "FactCard\|fact_card\|ready_for_pattern" README.md docs packages ops --exclude="ci-quality-gates.md"
+
+      - name: Check bootstrap schema essentials
+        run: |
+          grep -q "CREATE TABLE IF NOT EXISTS airank_projects" ops/deployment/mysql-bootstrap.sql
+          grep -q "CREATE TABLE IF NOT EXISTS airank_fact_atoms" ops/deployment/mysql-bootstrap.sql
+          grep -q "CREATE TABLE IF NOT EXISTS airank_async_jobs" ops/deployment/mysql-bootstrap.sql
+          grep -q "CREATE TABLE IF NOT EXISTS airank_outbox_events" ops/deployment/mysql-bootstrap.sql
+          grep -q "heartbeat_at" ops/deployment/mysql-bootstrap.sql
+          grep -q "timeout_seconds" ops/deployment/mysql-bootstrap.sql
