@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/buyer_question_response.schema.json",
+  "title": "AIRank Buyer Question Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": [
+        "question_id",
+        "project_id",
+        "tenant_id",
+        "question_text",
+        "question_type",
+        "intent_level",
+        "buyer_stage",
+        "recommended_providers",
+        "status",
+        "source",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "question_id": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "question_text": { "type": "string", "minLength": 4, "maxLength": 500 },
+        "question_type": {
+          "type": "string",
+          "enum": ["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"]
+        },
+        "intent_level": { "type": "string", "enum": ["high", "medium", "low"] },
+        "buyer_stage": { "type": "string", "enum": ["awareness", "consideration", "decision"] },
+        "source_reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "recommended_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+          },
+          "uniqueItems": true
+        },
+        "coverage_status": { "type": "string", "enum": ["unknown", "covered", "gap", "needs_scan"] },
+        "status": { "type": "string", "enum": ["suggested", "confirmed", "archived"] },
+        "source": { "type": "string", "enum": ["hermes_generated", "manual", "imported"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

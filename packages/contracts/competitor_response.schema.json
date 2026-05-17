@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/competitor_response.schema.json",
+  "title": "AIRank Competitor Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": [
+        "competitor_id",
+        "project_id",
+        "tenant_id",
+        "name",
+        "status",
+        "source",
+        "evidence_urls",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "competitor_id": { "type": "string", "pattern": "^competitor_[A-Za-z0-9_-]+$" },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "website_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "evidence_urls": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "uniqueItems": true
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "status": { "type": "string", "enum": ["suggested", "confirmed", "rejected"] },
+        "source": { "type": "string", "enum": ["hermes_discovered", "manual", "imported"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

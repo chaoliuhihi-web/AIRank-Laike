@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/buyer_question_create_request.schema.json",
+  "title": "AIRank Buyer Question Create Request",
+  "type": "object",
+  "required": ["question_text"],
+  "additionalProperties": false,
+  "properties": {
+    "question_text": { "type": "string", "minLength": 4, "maxLength": 500 },
+    "question_type": {
+      "type": "string",
+      "enum": ["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"]
+    },
+    "intent_level": { "type": "string", "enum": ["high", "medium", "low"], "default": "medium" },
+    "buyer_stage": { "type": "string", "enum": ["awareness", "consideration", "decision"] },
+    "source_reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "recommended_providers": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+      },
+      "uniqueItems": true
+    },
+    "status": { "type": "string", "enum": ["suggested", "confirmed", "archived"], "default": "suggested" },
+    "source": { "type": "string", "enum": ["hermes_generated", "manual", "imported"], "default": "manual" }
+  }
+}

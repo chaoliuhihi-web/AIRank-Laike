@@ -4,11 +4,21 @@ AIRank 的机器契约层。
 
 本包定义 AIRank 自有领域对象、API 输入输出、异步事件和与 `XingheAI2026V2` 的跨仓边界。任何跨应用、跨 worker、跨仓调用都应先在这里固化契约。
 
-第一批 schema：
+M1 已冻结的 API schema：
 
-- `airank_project.schema.json`
-- `competitor.schema.json`
-- `buyer_question.schema.json`
+- `health_response.schema.json`
+- `version_response.schema.json`
+- `console_overview.schema.json`
+- `error_response.schema.json`
+- `project_create_request.schema.json`
+- `project_response.schema.json`
+- `competitor_create_request.schema.json`
+- `competitor_response.schema.json`
+- `buyer_question_create_request.schema.json`
+- `buyer_question_response.schema.json`
+
+后续领域 schema：
+
 - `ai_scan_run.schema.json`
 - `ai_answer_snapshot.schema.json`
 - `fact_atom.schema.json` — 可信事实卡的内部最小事实单元（FactAtom）

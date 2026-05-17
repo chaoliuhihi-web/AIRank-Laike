@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/competitor_create_request.schema.json",
+  "title": "AIRank Competitor Create Request",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "website_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "evidence_urls": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 },
+      "uniqueItems": true
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "status": { "type": "string", "enum": ["suggested", "confirmed", "rejected"], "default": "suggested" },
+    "source": { "type": "string", "enum": ["hermes_discovered", "manual", "imported"], "default": "manual" }
+  }
+}

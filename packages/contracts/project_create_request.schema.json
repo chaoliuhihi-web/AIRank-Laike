@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/project_create_request.schema.json",
+  "title": "AIRank Project Create Request",
+  "type": "object",
+  "required": ["website_url"],
+  "additionalProperties": false,
+  "properties": {
+    "website_url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "User-entered website or normalized URL. Hermes should normalize before persistence."
+    },
+    "brand_name_hint": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "company_name_hint": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "industry_hint": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "mobile": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "wechat": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 }
+      }
+    },
+    "competitor_hints": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+      "uniqueItems": true
+    },
+    "automation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed_from_website": { "type": "boolean", "default": true },
+        "discover_competitors": { "type": "boolean", "default": true },
+        "generate_question_map": { "type": "boolean", "default": true },
+        "source": { "type": "string", "enum": ["free_check", "console", "imported", "manual"] }
+      }
+    }
+  }
+}
