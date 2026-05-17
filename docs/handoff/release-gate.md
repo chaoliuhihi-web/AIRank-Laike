@@ -211,3 +211,23 @@ Still blocked:
 
 - yudao auth / tenant-user capability still needs a real `AIRANK_AUTH_MODE=yudao`, `YUDAO_PERMISSION_INFO_URL`, and bearer token.
 - Object storage still reports local `dev_only` unless a production storage driver/configuration is supplied.
+
+## 2026-05-17 19:03 +08:00 Execution
+
+Release Gate: PASS_WITH_RISK
+
+Commit: filesystem object-storage probe pending commit
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- Local yudao login with tenant `1` and admin credentials returned a real access token; token was used only in process memory and not written to files.
+- Capability probe with `AIRANK_AUTH_MODE=yudao`, `YUDAO_PERMISSION_INFO_URL=http://127.0.0.1:48080/admin-api/system/auth/get-permission-info`, and the temporary bearer token reported `yudao_auth=ready` and `yudao_tenant_user=ready`.
+- Added `AIRANK_OBJECT_STORAGE_DRIVER=filesystem`; its probe creates the root directory, writes a probe object, reads it back, and deletes it.
+- Capability probe with `AIRANK_OBJECT_STORAGE_DRIVER=filesystem` and `AIRANK_OBJECT_STORAGE_ROOT=/tmp/airank-release-objects` reported `object_storage=ready`.
+
+Residual risks:
+
+- Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities still report `dev_only` unless real endpoints are configured. They are not required for the MVP gate by the current capability metadata.
+- Filesystem object storage is acceptable only for a single-node beta with a mounted persistent directory; multi-node production still needs S3/OSS/minio-class storage integration and probe.

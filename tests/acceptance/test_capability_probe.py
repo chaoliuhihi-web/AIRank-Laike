@@ -30,3 +30,22 @@ def test_capability_probe_acceptance_dev_only_matrix() -> None:
     assert matrix["object_storage"]["status"] == CapabilityStatus.DEV_ONLY
     assert matrix["xinghe_hermes"]["status"] == CapabilityStatus.DEV_ONLY
     assert matrix["xinghe_crawler_gateway"]["fallback"] == "packages/crawler-lite"
+
+
+def test_capability_probe_acceptance_filesystem_object_storage_ready(tmp_path: Path) -> None:
+    config = ProbeConfig.from_env(
+        {
+            "AIRANK_AUTH_MODE": "dev",
+            "AIRANK_OBJECT_STORAGE_DRIVER": "filesystem",
+            "AIRANK_OBJECT_STORAGE_ROOT": str(tmp_path / "objects"),
+        }
+    )
+
+    results = CapabilityProbe(
+        config,
+        now=datetime(2026, 5, 17, 9, 45, tzinfo=timezone.utc),
+    ).run()
+    matrix = {result.capability: result.to_record() for result in results}
+
+    assert matrix["object_storage"]["status"] == CapabilityStatus.READY
+    assert matrix["object_storage"]["metadata"]["probe"] == "write-read-delete"

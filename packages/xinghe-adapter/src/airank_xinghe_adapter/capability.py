@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+from uuid import uuid4
 from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -219,7 +220,7 @@ class CapabilityProbe:
     def _probe_object_storage(self) -> CapabilityResult:
         driver = self.config.object_storage_driver
         root = self.config.object_storage_root
-        if driver == "local":
+        if driver in {"filesystem", "local"}:
             if not root:
                 return self._result(
                     "object_storage",
@@ -232,6 +233,8 @@ class CapabilityProbe:
                     {"driver": driver},
                 )
             path = Path(root)
+            if driver == "filesystem":
+                return self._probe_filesystem_object_storage(path)
             parent_exists = path.parent.exists()
             return self._result(
                 "object_storage",
@@ -252,6 +255,47 @@ class CapabilityProbe:
             f"object storage driver {driver} requires deployment-specific credentials",
             None,
             {"driver": driver},
+        )
+
+    def _probe_filesystem_object_storage(self, path: Path) -> CapabilityResult:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe_path = path / f".airank-probe-{uuid4().hex}.txt"
+            probe_payload = "airank object storage probe"
+            probe_path.write_text(probe_payload, encoding="utf-8")
+            read_back = probe_path.read_text(encoding="utf-8")
+            probe_path.unlink()
+            if read_back != probe_payload:
+                return self._result(
+                    "object_storage",
+                    CapabilityStatus.BLOCKED,
+                    "airank",
+                    True,
+                    str(path),
+                    "filesystem object storage probe readback mismatch",
+                    None,
+                    {"driver": "filesystem", "root": str(path)},
+                )
+        except Exception as exc:
+            return self._result(
+                "object_storage",
+                CapabilityStatus.BLOCKED,
+                "airank",
+                True,
+                str(path),
+                f"{type(exc).__name__}: {exc}",
+                None,
+                {"driver": "filesystem", "root": str(path)},
+            )
+        return self._result(
+            "object_storage",
+            CapabilityStatus.READY,
+            "airank",
+            True,
+            str(path),
+            "",
+            None,
+            {"driver": "filesystem", "root": str(path), "probe": "write-read-delete"},
         )
 
     def _probe_optional_http(

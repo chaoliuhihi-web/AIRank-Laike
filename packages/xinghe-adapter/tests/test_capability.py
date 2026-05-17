@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
@@ -57,3 +58,19 @@ def test_probe_can_report_ready_and_partial_external_capabilities() -> None:
     assert results["yudao_tenant_user"].status == CapabilityStatus.READY
     assert results["xinghe_crawler_gateway"].status == CapabilityStatus.PARTIAL
     assert results["xinghe_hermes"].status == CapabilityStatus.PARTIAL
+
+
+def test_probe_reports_ready_for_writable_filesystem_object_storage(tmp_path: Path) -> None:
+    storage_root = tmp_path / "objects"
+    config = ProbeConfig.from_env(
+        {
+            "AIRANK_AUTH_MODE": "dev",
+            "AIRANK_OBJECT_STORAGE_DRIVER": "filesystem",
+            "AIRANK_OBJECT_STORAGE_ROOT": str(storage_root),
+        }
+    )
+
+    results = {result.capability: result for result in CapabilityProbe(config, now=NOW).run()}
+
+    assert results["object_storage"].status == CapabilityStatus.READY
+    assert results["object_storage"].metadata["probe"] == "write-read-delete"
