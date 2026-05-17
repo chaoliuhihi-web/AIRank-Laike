@@ -97,3 +97,34 @@ Residual risks:
 ```
 
 只有 `PASS` 或经用户明确接受的 `PASS_WITH_RISK` 可以打 beta tag。
+
+## 2026-05-17 18:08 +08:00 Execution
+
+Release Gate: BLOCKED
+
+Commit: `1a1def6`
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- GitHub and Gitee `main` both match local HEAD.
+- CI workflow includes diff check, static checks, contract tests, and web build.
+- `git diff --check` and tracked runtime artifact checks pass.
+- `python3 -m pytest tests/contracts -q` passed 33 tests.
+- `python3 -m pytest tests/acceptance -q` passed 9 tests.
+- `cd apps/web && npm run build` passed.
+- Worker, score, evidence, and xinghe-adapter package tests passed.
+- API health/version passed via FastAPI TestClient with trace_id.
+- `cd apps/api && python3 -m alembic upgrade head --sql` generated offline SQL.
+
+Blocked:
+
+- Real `alembic upgrade head` against local MySQL failed with `(1045) Access denied for user 'airank'@'192.168.65.1'`.
+- yudao/Xinghe/Hermes capability probe remains `dev_only`; no real external readiness signal is available.
+- Git secret grep only matched symbolic names such as `AUTH_TOKEN_*`, `YUDAO_BEARER_TOKEN`, and the release-gate pattern itself; no real secret value was identified in this pass.
+
+Minimum fix before beta PASS:
+
+- Re-run `ops/deployment/mysql-bootstrap.sql` or fix local/prod MySQL grants for the `airank` user, then rerun `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
+- Provide real yudao/Xinghe/Hermes configuration or explicitly accept a dev_only beta scope before tagging.

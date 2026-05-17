@@ -6,6 +6,7 @@
 | M4-MACPRO-DIRECTOR | review | this commit | Synced launch-board with CodexiMac status through `M4-IMAC-002 dev_only`; next critical path is CodexWin `M1-WIN-001C`. |
 | M2-MACPRO-001 | review | this commit | Added acceptance coverage from project creation through scan run/task status to deterministic score calculation. |
 | M3-MACPRO-001 | review | this commit | Added evidence-chain gate coverage rejecting unsourced confirmed facts and report conclusions missing snapshot/citation/FactAtom refs. |
+| M4-MACPRO-001 | blocked | this commit | Beta release gate executed; tests pass, but real MySQL migration is blocked by local 1045 access denied and external capabilities remain dev_only. |
 
 ## Run Log
 
@@ -14,3 +15,4 @@
 - 2026-05-17: Director review confirmed CodexiMac has no remaining open packet in the current board; `M4-IMAC-002` is `dev_only`, not release-ready. After `M1-WIN-001B`, CodexWin `M1-WIN-001C` is the active blocker chain.
 - 2026-05-17: `M2-MACPRO-001` added `tests/acceptance/test_scan_score_chain.py` to verify project/question API, scan run/task status API, evidence snapshot, and deterministic scoring connect without worker scheduling. Validation: `python3 -m pytest tests/acceptance -q` passed 8 tests; `python3 -m pytest tests/contracts -q` passed 33 tests; `git diff --check` passed; `python3 scripts/agent_control.py gate --write` passed.
 - 2026-05-17: `M3-MACPRO-001` added `tests/acceptance/test_evidence_chain_gate.py` to make unsourced confirmed facts and report conclusions without snapshot/citation/FactAtom evidence fail fast. Validation: `python3 -m pytest tests/acceptance -q` passed 9 tests; `python3 -m pytest tests/contracts -q` passed 33 tests; `git diff --check` passed; `python3 scripts/agent_control.py gate --write` passed.
+- 2026-05-17: `M4-MACPRO-001` release gate executed. PASS: GitHub/Gitee refs match local `1a1def6`, CI workflow exists, runtime artifact check passes, web build passes, contract tests pass 33, acceptance tests pass 9, worker/score/evidence/xinghe-adapter package tests pass, API health/version pass via TestClient, Alembic offline SQL generation passes. BLOCKED: real `alembic upgrade head` fails with MySQL `(1045) Access denied for user 'airank'@'192.168.65.1'`; yudao/Xinghe/Hermes remain `dev_only` and not release-ready.

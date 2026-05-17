@@ -482,3 +482,32 @@ Risks:
 Next owner:
 - CodexWin should execute `M1-WIN-001C project-question-contract-skeleton`, then `M1-WIN-001D`.
 - CodexMacPro should keep release gate strict and split new work only when a same-lane dev-only or contract slice is needed.
+
+## 2026-05-17 18:08 +08:00 - CodexMacPro
+
+Release Gate: BLOCKED
+Commit: `1a1def6`
+Reviewer: CodexMacPro
+
+Scope:
+- Executed v0.1 beta release gate after CodexWin, CodexiMac, and MacPro packets reached review/dev_only/review_env_blocked.
+
+Validation:
+- `python3 -m pytest tests/contracts -q`: pass, 33 tests
+- `python3 -m pytest tests/acceptance -q`: pass, 9 tests
+- `cd apps/web && npm run build`: pass
+- `cd apps/worker && python3 -m pytest -q`: pass, 6 tests
+- `cd packages/score && python3 -m pytest -q`: pass, 2 tests
+- `cd packages/evidence && python3 -m pytest -q`: pass, 6 tests
+- `cd packages/xinghe-adapter && python3 -m pytest -q`: pass, 2 tests
+- `cd apps/api && python3 -m alembic upgrade head --sql`: pass, offline SQL generated
+- real `alembic upgrade head`: blocked by MySQL `(1045) Access denied for user 'airank'@'192.168.65.1'`
+
+Residual risks:
+- Real MySQL migration and MySQL-backed CRUD are not verified.
+- yudao/Xinghe/Hermes capability matrix remains `dev_only`; no authenticated external integration readiness is proven.
+- AI 收录包 and report payloads are API-backed but still dev-only seed content, not production-generated assets.
+
+Next owner:
+- CodexMacPro or human operator must fix MySQL grants / rerun bootstrap and rerun the real migration.
+- Integration owner must provide real yudao/Xinghe/Hermes credentials or explicitly approve dev_only beta scope.

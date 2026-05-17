@@ -99,7 +99,7 @@ git push gitee main
 | report API + download receipt | CodexWin | dev_only | 报告中心读取 reports API，并记录 download receipt；报告内容为 dev-only seed |
 | 前端 fixture 切 API | CodexWin | review | 控制台主页面 API-first；API 不可用时显示明确 fallback 状态 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
-| v0.1 beta release gate | CodexMacPro | todo | `docs/handoff/release-gate.md` 全部通过 |
+| v0.1 beta release gate | CodexMacPro | blocked | 自动化测试通过；真实 MySQL migration 1045 access denied，外部 capability 仍为 dev_only，不能声明可上线 |
 
 ## 当前下一个推荐动作
 
