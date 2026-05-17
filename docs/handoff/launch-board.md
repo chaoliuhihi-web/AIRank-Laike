@@ -78,7 +78,7 @@ git push gitee main
 | worker job 领取和 heartbeat | CodexiMac | review | queued/running/succeeded/failed/timeout 状态可复测 |
 | mock/manual provider | CodexiMac | review | 可生成 answer snapshot 和 citation |
 | AIRank Score 纯函数 | CodexiMac | review | 同一输入重复计算一致 |
-| scan/score acceptance | CodexMacPro | todo | 从项目到 score 的测试通过 |
+| scan/score acceptance | CodexMacPro | review | 从项目到 question、scan run/task、snapshot、score 的 acceptance 测试通过 |
 
 ## Milestone 3：事实卡、缺口、AI 收录包
 
