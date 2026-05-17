@@ -283,3 +283,23 @@ Residual risks:
 
 - Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities remain `dev_only` warnings because endpoints are not configured; current MVP metadata marks them not required.
 - Filesystem object storage is acceptable for this single-node beta gate only when backed by a mounted persistent directory. Multi-node production still needs S3/OSS/minio-class storage and probe.
+
+## 2026-05-17 19:28 +08:00 Browser QA
+
+Release Gate: PASS
+
+Commit: this Web QA commit
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- Started real FastAPI on `127.0.0.1:8000` with MySQL `airank_laike`.
+- Started Vite on `127.0.0.1:5173` with `/api` dev proxy to the real API.
+- Desktop `/console` rendered meaningful AIRank content, no framework overlay, no fallback banner, and no fresh browser console warnings/errors.
+- Clicked required routes: `工作台`, `推荐缺口分析`, `AI 收录包`, `报表中心`; URL and page content changed for each route, with no fallback banner and no fresh console warnings/errors.
+- Mobile 390x844 `/console` rendered with `documentElement.scrollWidth == innerWidth == 390`, so there is no page-level horizontal overflow.
+
+Residual risks:
+
+- Browser QA covers the Vite dev build and local FastAPI/MySQL path. Production reverse-proxy/CDN headers still need environment-specific verification during deployment.

@@ -1079,3 +1079,40 @@ Risks:
 Next owner:
 - CodexMacPro should keep `scripts/release_readiness.py` as the final gate before any beta tag.
 - CodexWin/CodexiMac can continue feature work, but any release claim must preserve this PASS gate or explicitly document new blockers.
+
+## 2026-05-17 19:28 +08:00 - CodexMacPro
+
+Scope:
+- Closed the remaining non-scripted frontend gate for local beta QA.
+- Prevented Web dev QA from silently falling back to fixture data by adding a Vite `/api` proxy to real FastAPI.
+- Fixed local HMR host configuration so browser console health can be checked without Vite websocket errors.
+
+Changed:
+- `apps/web/vite.config.ts`
+- `docs/handoff/release-gate.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `AIRANK_DATABASE_URL=... python3 -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000`
+- result: pass, API served real local requests
+- command: `cd apps/web && npm run dev -- --host 127.0.0.1`
+- result: pass, Vite served `http://127.0.0.1:5173/`
+- command: Browser QA on `http://127.0.0.1:5173/console`
+- result: pass, desktop rendered AIRank content with real API data, no fallback banner, no framework overlay, and no fresh console warnings/errors
+- command: Browser route clicks
+- result: pass, `工作台`, `推荐缺口分析`, `AI 收录包`, `报表中心` changed URL/content and stayed free of fresh console warnings/errors
+- command: Playwright mobile viewport 390x844
+- result: pass, `documentElement.scrollWidth == innerWidth == 390`, so no page-level horizontal overflow
+- command: `cd apps/web && npm run build`
+- result: pass
+
+Review:
+- status: PASS
+- reviewer: CodexMacPro
+- notes: Frontend local QA now exercises the real API path instead of relying on fallback fixture data. The browser console is clean after the HMR host fix.
+
+Risks:
+- This covers local Vite + FastAPI + MySQL beta QA. Production reverse proxy, TLS, CDN/cache headers, and production object storage should still be verified in the deployment environment.
+
+Next owner:
+- Deployment owner should map production `/api` to the FastAPI service and rerun the same browser smoke test against the deployed URL.
