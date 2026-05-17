@@ -53,6 +53,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | --- | --- | --- |
 | `SCAN_RUN_NOT_FOUND` | 404 | 扫描批次不存在 |
 | `SCAN_RUN_ALREADY_RUNNING` | 409 | 扫描已在运行 |
+| `SCAN_TASK_NOT_FOUND` | 404 | 扫描任务不存在 |
 | `SCAN_PROVIDER_TIMEOUT` | 502 | provider 超时 |
 | `SCAN_PROVIDER_BLOCKED` | 502 | provider 拒绝或阻断 |
 | `JOB_NOT_FOUND` | 404 | job 不存在 |

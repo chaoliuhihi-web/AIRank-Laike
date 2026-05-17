@@ -648,3 +648,53 @@ Risks:
 Next owner:
 - CodexWin should continue `M1-WIN-001D project-question-dev-repository`.
 - CodexMacPro should review CodexWin's first API repository implementation before it becomes the base for CRUD and scan APIs.
+
+## 2026-05-17 17:57 +08:00 - CodexMacPro
+
+Scope:
+- Review and corrective patch after CodexWin/CodexiMac remote advanced with scan run contract/status API.
+- Keep scan API behavior aligned with JSON Schema contracts before worker scheduling depends on it.
+
+Changed:
+- `apps/api/main.py`
+- `packages/contracts/scan_run_create_request.schema.json`
+- `packages/contracts/scan_run_response.schema.json`
+- `packages/contracts/error-codes.md`
+- `packages/contracts/error_response.schema.json`
+- `tests/contracts/test_scan_run_api_contract.py`
+- `docs/handoff/status/codex-macpro.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 32 tests
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 7 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 7 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `cd apps/api && python3 -m alembic upgrade head --sql`
+- result: pass; generated SQL keeps project/competitor `website_url VARCHAR(2048)`
+- command: `python3 -m py_compile apps/api/main.py scripts/agent_control.py packages/domain/src/airank_domain/*.py packages/evidence/src/airank_evidence/*.py packages/score/src/airank_score/*.py apps/worker/airank_worker/*.py packages/xinghe-adapter/src/airank_xinghe_adapter/*.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: Scan run request models now forbid extra fields, enforce project/question ID patterns, reject duplicate provider/question scopes, and require non-empty selected question scope. Scan task lookup now uses registered `SCAN_TASK_NOT_FOUND` instead of unrelated `JOB_NOT_FOUND`.
+
+Risks:
+- Scan run API is still in-memory development status; it does not yet persist to MySQL or enqueue real worker jobs.
+- Live MySQL `alembic upgrade head` still depends on valid local DB credentials; SQL generation is verified.
+
+Next owner:
+- CodexWin should continue the Product/API/Web critical path by wiring scan run persistence/worker queue behind the now stricter API contract.
+- CodexMacPro should keep reviewing each API-to-worker bridge before it becomes release baseline.

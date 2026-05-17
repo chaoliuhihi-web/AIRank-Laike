@@ -58,6 +58,7 @@
         "mode": { "type": "string", "enum": ["all_active", "selected"] },
         "question_ids": {
           "type": "array",
+          "minItems": 1,
           "items": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
           "uniqueItems": true
         }

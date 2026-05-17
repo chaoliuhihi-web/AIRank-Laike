@@ -85,3 +85,59 @@ def test_scan_run_api_is_tenant_scoped() -> None:
     assert body["error"]["code"] == "SCAN_RUN_NOT_FOUND"
     assert body["error"]["trace_id"] == "trc_scan_missing"
     validate_response("error_response.schema.json", body)
+
+
+def test_scan_run_api_rejects_extra_fields_and_duplicate_scopes() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/scan-runs",
+        headers={"tenant-id": "tenant_scan", "X-AIRank-Trace-Id": "trc_scan_invalid"},
+        json={
+            "project_id": "project_demo",
+            "provider_scope": ["chatgpt", "chatgpt"],
+            "question_scope": {"mode": "selected", "question_ids": ["question_demo"]},
+            "tenant_id": "tenant_other",
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_scan_invalid"
+    validate_response("error_response.schema.json", body)
+
+
+def test_scan_run_api_rejects_selected_scope_without_questions() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/scan-runs",
+        headers={"tenant-id": "tenant_scan", "X-AIRank-Trace-Id": "trc_scan_selected_empty"},
+        json={
+            "project_id": "project_demo",
+            "provider_scope": ["chatgpt"],
+            "question_scope": {"mode": "selected"},
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_scan_selected_empty"
+    validate_response("error_response.schema.json", body)
+
+
+def test_scan_task_api_uses_scan_task_not_found_error() -> None:
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/scan-tasks/scan_task_missing",
+        headers={"tenant-id": "tenant_scan", "X-AIRank-Trace-Id": "trc_scan_task_missing"},
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["error"]["code"] == "SCAN_TASK_NOT_FOUND"
+    assert body["error"]["trace_id"] == "trc_scan_task_missing"
+    validate_response("error_response.schema.json", body)

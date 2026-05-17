@@ -9,7 +9,7 @@
 | M4-MACPRO-001 | blocked | this commit | Beta release gate executed; tests pass, but real MySQL migration is blocked by local 1045 access denied and external capabilities remain dev_only. |
 | M4-MACPRO-DIRECTOR2 | review | this commit | Fixed stale launch-board fallback so completed Win packets are not re-issued when execution-packet status overrides leave no open tasks. |
 | M4-MACPRO-DBGRANT | review_env_blocked | this commit | Bootstrap now repairs common stale local dev MySQL user grants; root MySQL access is still required to rerun it and prove real migration. |
-| M4-MACPRO-CODE-REVIEW | review | this commit | Reviewed CodexWin/CodexiMac code and patched API contract enforcement, MySQL contract alignment, registered worker error codes, evidence-chain consistency checks, and invalid rank scoring. |
+| M4-MACPRO-CODE-REVIEW | review | this commit | Reviewed CodexWin/CodexiMac code and patched API/scan contract enforcement, MySQL contract alignment, registered worker error codes, evidence-chain consistency checks, and invalid rank scoring. |
 
 ## Run Log
 
@@ -22,3 +22,4 @@
 - 2026-05-17: `M4-MACPRO-DIRECTOR2` corrected the director control loop after the release gate. `agent_control.py` now avoids falling back to stale launch-board todo rows when execution packets exist for an owner but all are already review/dev_only/review_env_blocked/done through status overrides. Launch-board next actions now reflect that Win and iMac lanes should not repeat completed packets; release remains blocked only by real MySQL/external capability readiness or explicit dev_only beta approval. Validation: `py_compile`, `director --write`, `git diff --check`, `tests/contracts` 33 passed, `apps/web npm run build`, and `gate --write` passed.
 - 2026-05-17: `M4-MACPRO-DBGRANT` made `ops/deployment/mysql-bootstrap.sql` repair stale local dev credentials for common host patterns (`%`, `localhost`, `127.0.0.1`, Docker Desktop `192.168.65.%`) and documented how to inspect more-specific `airank` host records. Validation: CI bootstrap grep checks passed, `git diff --check` passed, contracts 33 passed, acceptance 9 passed; local `mysql` client is not installed, so real grant repair still needs a root-capable MySQL environment.
 - 2026-05-17: Code review found API request models weaker than JSON Schema contracts, MySQL URL columns narrower than API contracts, unregistered worker failure codes, and weak evidence-chain validation in the worker/evidence/score slices; patched and added focused tests.
+- 2026-05-17: After rebasing over CodexWin scan run status API, review found scan request validation weaker than schema and scan task 404 using `JOB_NOT_FOUND`; patched strict request validation, `SCAN_TASK_NOT_FOUND`, and focused contract tests.

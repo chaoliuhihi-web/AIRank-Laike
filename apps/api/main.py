@@ -38,6 +38,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "QUESTION_LIMIT_EXCEEDED": (400, "Question limit exceeded"),
     "SCAN_RUN_NOT_FOUND": (404, "Scan run not found"),
     "SCAN_RUN_ALREADY_RUNNING": (409, "Scan run is already running"),
+    "SCAN_TASK_NOT_FOUND": (404, "Scan task not found"),
     "SCAN_PROVIDER_TIMEOUT": (502, "Scan provider timed out"),
     "SCAN_PROVIDER_BLOCKED": (502, "Scan provider is blocked"),
     "JOB_NOT_FOUND": (404, "Job not found"),
@@ -252,19 +253,41 @@ class BuyerQuestionResponse(BaseModel):
 
 
 Provider = Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+ProjectId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
+QuestionId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^question_[A-Za-z0-9_-]+$")]
 
 
 class QuestionScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: Literal["all_active", "selected"]
-    question_ids: list[str] = Field(default_factory=list)
+    question_ids: list[QuestionId] = Field(default_factory=list)
+
+    @field_validator("question_ids")
+    @classmethod
+    def question_ids_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("question_ids", value)
+
+    @model_validator(mode="after")
+    def selected_scope_requires_questions(self) -> "QuestionScope":
+        if self.mode == "selected" and not self.question_ids:
+            raise ValueError("question_scope.question_ids is required when mode is selected")
+        return self
 
 
 class ScanRunCreateRequest(BaseModel):
-    project_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: ProjectId
     name: Optional[str] = Field(default=None, min_length=1, max_length=160)
     run_type: Literal["baseline", "retest", "manual"] = "baseline"
     provider_scope: list[Provider] = Field(min_length=1, max_length=8)
     question_scope: QuestionScope
+
+    @field_validator("provider_scope")
+    @classmethod
+    def provider_scope_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("provider_scope", value)
 
 
 class ScanError(BaseModel):
@@ -906,7 +929,7 @@ class InMemoryScanRepository:
         if task is None:
             raise StarletteHTTPException(
                 status_code=404,
-                detail={"code": "JOB_NOT_FOUND", "details": {"task_id": task_id}},
+                detail={"code": "SCAN_TASK_NOT_FOUND", "details": {"task_id": task_id}},
             )
         return task
 
