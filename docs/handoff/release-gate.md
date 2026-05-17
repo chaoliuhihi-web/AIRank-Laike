@@ -259,3 +259,27 @@ Residual risks:
 
 - Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities remain `dev_only` warnings because endpoints are not configured; current MVP metadata marks them not required.
 - Filesystem object storage is a valid single-node beta gate only when backed by a mounted persistent directory. Multi-node production still needs S3/OSS/minio-class storage and probe.
+
+## 2026-05-17 19:19 +08:00 Execution
+
+Release Gate: PASS
+
+Commit: `2d91ab4`
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- `python3 scripts/release_readiness.py` returned `Result: PASS` from a clean worktree.
+- GitHub and Gitee `main` matched local HEAD `2d91ab4`.
+- `python3 -m pytest -q` passed 99 tests with 6 opt-in real integration tests skipped by default.
+- Real release-gate MySQL integration passed against `airank_laike_release_gate`: 5 tests passed, yudao test skipped by flag.
+- Full real integration passed against local yudao and MySQL: 6 tests passed.
+- `python3 scripts/release_readiness.py` passed contracts 56, acceptance 15, worker 11, score 3, evidence 9, xinghe-adapter 5, Web build, real integration 6, Alembic offline SQL, real Alembic migration, and capability probe.
+- Required MVP capabilities were ready: `yudao_auth=ready`, `yudao_tenant_user=ready`, `object_storage=ready`.
+- Release-gate DB grants now include Docker bridge host `172.20.%`, and real integration tests now assert the configured database name instead of hard-coding `airank_laike`.
+
+Residual risks:
+
+- Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities remain `dev_only` warnings because endpoints are not configured; current MVP metadata marks them not required.
+- Filesystem object storage is acceptable for this single-node beta gate only when backed by a mounted persistent directory. Multi-node production still needs S3/OSS/minio-class storage and probe.

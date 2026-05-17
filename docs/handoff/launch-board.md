@@ -5,13 +5,13 @@
 当前产品基线：
 
 - 前端原型提交：`622b1f7 feat: implement console frontend prototype`
-- 最新远端阶段提交：`c2ceae4 feat: verify filesystem object storage capability`
+- 最新远端阶段提交：`2d91ab4 fix: unblock real release gate tests`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
-- Worker：`apps/worker` 已有 in-memory 和 MySQL-backed async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；scan API 已能在 MySQL 路径写入 `airank_async_jobs`，真实 worker DB 消费仍需实库验证。
-- 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；2026-05-17 已在本机 `yudao-mysql` 容器验证 `airank` 应用用户、真实 `alembic upgrade head` 和 MySQL-backed 项目/竞品/问题/scan/assets/reports API。
+- Worker：`apps/worker` 已有 in-memory 和 MySQL-backed async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；scan API 已能在 MySQL 路径写入 `airank_async_jobs`，真实 worker DB claim/heartbeat/succeed 已在 release-gate 库验证。
+- 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；2026-05-17 已在本机 `yudao-mysql` 容器验证 `airank` 应用用户、真实 `alembic upgrade head` 和 MySQL-backed 项目/竞品/问题/scan/assets/reports/worker API。
 - Contracts：`packages/contracts/console_overview.schema.json` 已有首个 dashboard slice contract。
-- 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；本机单节点 beta release readiness 已通过，仍带可选 Xinghe 服务 dev_only 风险。
+- 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；`2d91ab4` 本机单节点 beta release readiness 已在真实 MySQL、真实 yudao、filesystem object storage 下通过。可选 Xinghe 服务仍为 `dev_only` 警告，不阻塞当前 MVP gate。
 
 ## 协作规则
 

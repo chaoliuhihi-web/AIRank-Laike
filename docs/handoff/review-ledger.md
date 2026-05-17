@@ -1034,3 +1034,48 @@ Risks:
 Next owner:
 - Integration owner should provide a real yudao bearer token and confirmed Xinghe/Hermes endpoint mapping.
 - Product/CodexMacPro can move release gate to `PASS_WITH_RISK` only after explicit dev-only beta scope approval is recorded.
+
+## 2026-05-17 19:19 +08:00 - CodexMacPro
+
+Scope:
+- Re-ran the release gate as an executable, true dependency check rather than a document-only review.
+- Fixed the two blockers exposed by the real gate: Docker bridge grant for the release-gate database and a hard-coded integration-test database assertion.
+- Added a repository-level pytest entry so root `python3 -m pytest -q` is a valid quality gate instead of failing on package import paths.
+
+Changed:
+- `ops/deployment/mysql-bootstrap.sql`
+- `tests/integration/test_real_services.py`
+- `pytest.ini`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/release-gate.md`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest -q`
+- result: pass, 99 tests passed and 6 opt-in real integration tests skipped by default
+- command: `AIRANK_RUN_REAL_MYSQL=1 AIRANK_DATABASE_URL=...airank_laike_release_gate... python3 -m pytest tests/integration -q`
+- result: pass, 5 tests passed and yudao test skipped by flag
+- command: `AIRANK_RUN_REAL_MYSQL=1 AIRANK_RUN_REAL_YUDAO=1 AIRANK_DATABASE_URL=...airank_laike... YUDAO_BASE_URL=... python3 -m pytest tests/integration -q`
+- result: pass, 6 tests
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `git push origin main && git push gitee main`
+- result: pass, both remotes moved to `2d91ab4`
+- command: `python3 scripts/release_readiness.py`
+- result: pass, `Result: PASS`; clean worktree, GitHub/Gitee refs, contracts 56, acceptance 15, worker 11, score 3, evidence 9, xinghe-adapter 5, web build, real integration 6, Alembic offline SQL, real Alembic migration, and capability probe all passed
+
+Review:
+- status: PASS
+- reviewer: CodexMacPro
+- notes: Current single-node beta gate is now executable and passing with real MySQL, real yudao auth/tenant-user, and filesystem object storage. The gate no longer relies on dev-only yudao status or unverified migration claims.
+
+Risks:
+- Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities remain `dev_only` because endpoints are not configured; current MVP metadata marks them non-blocking.
+- Filesystem object storage is suitable only for single-node beta with a mounted persistent directory. Multi-node production still needs S3/OSS/minio-class storage and probe.
+
+Next owner:
+- CodexMacPro should keep `scripts/release_readiness.py` as the final gate before any beta tag.
+- CodexWin/CodexiMac can continue feature work, but any release claim must preserve this PASS gate or explicitly document new blockers.
