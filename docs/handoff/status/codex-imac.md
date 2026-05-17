@@ -2,8 +2,8 @@
 
 | Packet | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| M1-IMAC-001 | review_env_blocked | eba3578 | Alembic files/sql/parity passed; local MySQL access denied. |
-| M1-IMAC-002 | review | bd3d33c | Tenant/project query fields, index coverage, sensitive fields, and no-cross-db-FK policy documented; `git diff --check` passed. |
+| M1-IMAC-001 | review_env_blocked | ac2f8d5 | Alembic files/sql/parity passed; local MySQL access denied. |
+| M1-IMAC-002 | review | ea56c7c | Tenant/project query fields, index coverage, sensitive fields, and no-cross-db-FK policy documented; `git diff --check` passed. |
 
 ## Run Log
 
