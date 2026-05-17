@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,9 @@ AGENTS = {
 }
 
 OPEN_TASK_STATUSES = {"todo", "in_progress", "blocked", "review", "partial"}
+TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
+    r"(^|/)(node_modules|dist|\.runtime)(/|$)|(^|/)\.env(\..*)?$|\.sqlite3?$|tsbuildinfo$"
+)
 
 
 def run(command: list[str]) -> tuple[int, str]:
@@ -49,6 +53,14 @@ def read(path: Path) -> str:
 def git_line(args: list[str]) -> str:
     _, output = run(["git", *args])
     return output.splitlines()[0] if output else ""
+
+
+def tracked_runtime_artifacts() -> tuple[int, str]:
+    code, output = run(["git", "ls-files"])
+    if code != 0:
+        return code, output
+    matches = [line for line in output.splitlines() if TRACKED_RUNTIME_ARTIFACT_RE.search(line)]
+    return (1 if matches else 0), "\n".join(matches)
 
 
 def parse_open_tasks_from_packets(owner: str) -> list[dict[str, str]]:
@@ -246,10 +258,6 @@ def gate(write_files: bool) -> str:
     checks = [
         ("working_tree", ["git", "status", "--short", "--branch"]),
         ("diff_check", ["git", "diff", "--check"]),
-        (
-            "tracked_runtime_artifacts",
-            ["bash", "-lc", "git ls-files | rg 'node_modules|dist|\\.runtime|\\.env|\\.sqlite|tsbuildinfo' || true"],
-        ),
     ]
     lines = ["# Agent Gate Report", "", f"Generated: {dt.datetime.now().isoformat(timespec='seconds')}", ""]
     for name, command in checks:
@@ -257,11 +265,23 @@ def gate(write_files: bool) -> str:
         if name == "working_tree":
             dirty_lines = [line for line in output.splitlines() if line and not line.startswith("## ")]
             result = "PASS_WITH_CHANGES" if dirty_lines else "PASS"
-        elif name == "tracked_runtime_artifacts":
-            result = "PASS" if code == 0 and output == "" else "BLOCKED"
         else:
             result = "PASS" if code == 0 else "BLOCKED"
         lines.extend([f"## {name}", "", f"Result: {result}", "", "```text", output or "<empty>", "```", ""])
+    code, output = tracked_runtime_artifacts()
+    result = "PASS" if code == 0 and output == "" else "BLOCKED"
+    lines.extend(
+        [
+            "## tracked_runtime_artifacts",
+            "",
+            f"Result: {result}",
+            "",
+            "```text",
+            output or "<empty>",
+            "```",
+            "",
+        ]
+    )
     report = "\n".join(lines)
     if write_files:
         path = ROOT / "docs/handoff/agent-gate-report.md"

@@ -149,3 +149,33 @@ Next owner:
 - CodexWin 领取 `M1-WIN-001`。
 - CodexiMac 领取 `M1-IMAC-001`。
 - CodexMacPro 领取 `M1-MACPRO-001`。
+
+## 2026-05-17 - Codex
+
+Scope:
+- 处理 CodexWin Windows/PowerShell 环境反馈，修复 `agent_control.py gate` 依赖 `/bin/bash` 的跨平台问题。
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this change
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts`
+- result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+
+Review:
+- status: PASS
+- reviewer: Codex
+- notes: `tracked_runtime_artifacts` 检查已改为 Python 原生实现，不再依赖 `bash` 或 `rg`，适合 Windows、macOS、Linux。
+
+Risks:
+- CodexWin 当前 Windows 工作区有未提交 Web 官网改动，执行 `M1-WIN-001` 时必须 path-limited add/commit，不能把旧 Web 改动混入 API baseline 提交。
+
+Next owner:
+- CodexWin 先同步到包含 execution packets 和 Windows gate fix 的最新 HEAD，再执行 `M1-WIN-001`。
