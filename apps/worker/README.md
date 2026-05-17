@@ -20,9 +20,10 @@ AIRank 异步任务。
 
 ## M2 worker lease baseline
 
-`airank_worker.InMemoryJobLeaseStore` is the first testable lease implementation.
-It is intentionally in-memory until MySQL persistence is wired on top of
-`airank_async_jobs`.
+`airank_worker.InMemoryJobLeaseStore` is the deterministic local test
+implementation. `airank_worker.MySQLJobLeaseStore` uses the production
+`airank_async_jobs` table for claim, heartbeat, success, failure, timeout, and
+explicit retry transitions.
 
 State transitions covered by tests:
 

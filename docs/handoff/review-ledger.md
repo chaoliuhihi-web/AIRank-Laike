@@ -725,6 +725,51 @@ Next owner:
 - Fix MySQL grants and rerun real migration/API DB-path smoke tests.
 - Continue external yudao/Xinghe/Hermes capability verification.
 
+## 2026-05-17 19:08 +08:00 - CodexMacPro
+
+Scope:
+- Continued release hardening for worker queue persistence after scan API started enqueuing `airank_async_jobs`.
+- Added a MySQL-backed worker lease store so production workers can consume the same queue table.
+
+Changed:
+- `apps/worker/airank_worker/lease.py`
+- `apps/worker/airank_worker/__init__.py`
+- `apps/worker/tests/test_async_job_lease.py`
+- `apps/worker/README.md`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/codex-imac.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 10 tests
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 56 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: REVIEW_ENV_BLOCKED
+- reviewer: CodexMacPro
+- notes: `MySQLJobLeaseStore` now implements claim, heartbeat, succeed, fail, timeout sweep, and explicit retry on `airank_async_jobs`, preserving structured payload/result/error fields and lock owner checks.
+
+Risks:
+- Real MySQL execution remains blocked by the same `airank` access denied issue, so this is not yet a real environment PASS.
+
+Next owner:
+- Once MySQL grants are fixed, run API scan creation and worker lease claim/complete against the same database.
+- Continue external yudao/Xinghe/Hermes capability verification.
+
 ## 2026-05-17 17:38 +08:00 - CodexMacPro
 
 Scope:

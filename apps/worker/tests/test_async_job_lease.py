@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 
 from airank_domain import AsyncJob, AsyncJobStatus, JobOwnershipError
-from airank_worker import InMemoryJobLeaseStore
+from airank_worker import InMemoryJobLeaseStore, MySQLJobLeaseStore
 
 
 NOW = datetime(2026, 5, 17, 8, 0, tzinfo=timezone.utc)
@@ -127,3 +128,104 @@ def test_exhausted_job_uses_registered_error_code() -> None:
     assert exhausted is not None
     assert exhausted.status == AsyncJobStatus.FAILED
     assert exhausted.error_code == "JOB_MAX_ATTEMPTS_EXCEEDED"
+
+
+def create_mysql_lease_table(store: MySQLJobLeaseStore) -> None:
+    with store._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_async_jobs (
+                  id VARCHAR(64) PRIMARY KEY,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  project_id VARCHAR(64) NULL,
+                  job_type VARCHAR(64) NOT NULL,
+                  status VARCHAR(32) NOT NULL,
+                  priority INT NOT NULL,
+                  scheduled_at DATETIME NOT NULL,
+                  locked_by VARCHAR(128) NULL,
+                  locked_at DATETIME NULL,
+                  heartbeat_at DATETIME NULL,
+                  timeout_seconds INT NOT NULL,
+                  attempt_count INT NOT NULL,
+                  max_attempts INT NOT NULL,
+                  payload_json TEXT NULL,
+                  result_json TEXT NULL,
+                  error_code VARCHAR(128) NULL,
+                  error_message TEXT NULL,
+                  started_at DATETIME NULL,
+                  finished_at DATETIME NULL,
+                  created_at DATETIME NOT NULL,
+                  updated_at DATETIME NOT NULL
+                )
+                """
+            )
+        )
+
+
+def test_mysql_lease_store_claim_heartbeat_and_succeed_job() -> None:
+    store = MySQLJobLeaseStore("sqlite+pysqlite:///:memory:")
+    create_mysql_lease_table(store)
+    store.add(
+        AsyncJob(
+            id="job_db_1",
+            tenant_id="tenant_1",
+            project_id="project_1",
+            job_type="scan.provider",
+            priority=10,
+            scheduled_at=NOW,
+            payload={"provider": "chatgpt"},
+        )
+    )
+
+    claimed = store.claim_next("worker-db", NOW)
+    assert claimed is not None
+    assert claimed.status == AsyncJobStatus.RUNNING
+    assert claimed.locked_by == "worker-db"
+    assert claimed.attempt_count == 1
+    assert claimed.payload == {"provider": "chatgpt"}
+
+    heartbeat_at = NOW + timedelta(seconds=10)
+    heartbeat = store.heartbeat("job_db_1", "worker-db", heartbeat_at)
+    assert heartbeat.heartbeat_at == heartbeat_at
+
+    finished = store.succeed("job_db_1", "worker-db", heartbeat_at, {"snapshots": 1})
+    assert finished.status == AsyncJobStatus.SUCCEEDED
+    assert finished.result == {"snapshots": 1}
+    assert store.get("job_db_1").status == AsyncJobStatus.SUCCEEDED
+    assert store.claim_next("worker-other", heartbeat_at) is None
+
+
+def test_mysql_lease_store_sweeps_timeouts_and_retries_explicitly() -> None:
+    store = MySQLJobLeaseStore("sqlite+pysqlite:///:memory:")
+    create_mysql_lease_table(store)
+    store.add(
+        AsyncJob(
+            id="job_db_timeout",
+            tenant_id="tenant_1",
+            job_type="scan.provider",
+            scheduled_at=NOW,
+            timeout_seconds=30,
+        )
+    )
+
+    store.claim_next("worker-db", NOW)
+    timed_out = store.sweep_timeouts(NOW + timedelta(seconds=31))
+    assert [job.id for job in timed_out] == ["job_db_timeout"]
+    assert store.get("job_db_timeout").status == AsyncJobStatus.TIMEOUT
+
+    retried = store.requeue_for_retry("job_db_timeout", NOW + timedelta(seconds=40))
+    assert retried.status == AsyncJobStatus.QUEUED
+    assert retried.locked_by is None
+    assert store.claim_next("worker-db-2", NOW + timedelta(seconds=40)) is not None
+
+
+def test_mysql_lease_store_preserves_owner_checks() -> None:
+    store = MySQLJobLeaseStore("sqlite+pysqlite:///:memory:")
+    create_mysql_lease_table(store)
+    store.add(AsyncJob(id="job_db_owner", tenant_id="tenant_1", job_type="scan.provider", scheduled_at=NOW))
+
+    store.claim_next("worker-a", NOW)
+
+    with pytest.raises(JobOwnershipError):
+        store.succeed("job_db_owner", "worker-b", NOW + timedelta(seconds=1), None)

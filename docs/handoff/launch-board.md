@@ -8,7 +8,7 @@
 - 最新远端阶段提交：`1a56c75 docs: record blocked beta release gate`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
-- Worker：`apps/worker` 已有 in-memory async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；scan API 已能在 MySQL 路径写入 `airank_async_jobs`，真实 worker DB 消费仍需实库验证。
+- Worker：`apps/worker` 已有 in-memory 和 MySQL-backed async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；scan API 已能在 MySQL 路径写入 `airank_async_jobs`，真实 worker DB 消费仍需实库验证。
 - 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；真实 MySQL `alembic upgrade head` 仍受本机授权环境阻塞。
 - Contracts：`packages/contracts/console_overview.schema.json` 已有首个 dashboard slice contract。
 - 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；Release Gate 尚未执行完整通过。
@@ -75,7 +75,7 @@ git push gitee main
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | scan run / scan task API | CodexWin | review_env_blocked | MySQL 路径可创建 scan run/task 并写入 `airank_async_jobs`；真实实库验证仍受本机 MySQL 授权阻塞 |
-| worker job 领取和 heartbeat | CodexiMac | review | queued/running/succeeded/failed/timeout 状态可复测 |
+| worker job 领取和 heartbeat | CodexiMac | review_env_blocked | queued/running/succeeded/failed/timeout 状态在 in-memory 和 MySQL-backed store 可复测；真实实库验证仍受本机 MySQL 授权阻塞 |
 | mock/manual provider | CodexiMac | review | 可生成 answer snapshot 和 citation |
 | AIRank Score 纯函数 | CodexiMac | review | 同一输入重复计算一致 |
 | scan/score acceptance | CodexMacPro | review | 从项目到 question、scan run/task、snapshot、score 的 acceptance 测试通过 |

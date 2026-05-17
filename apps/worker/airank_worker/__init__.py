@@ -1,5 +1,5 @@
 """AIRank worker runtime helpers."""
 
-from .lease import InMemoryJobLeaseStore
+from .lease import InMemoryJobLeaseStore, MySQLJobLeaseStore
 
-__all__ = ["InMemoryJobLeaseStore"]
+__all__ = ["InMemoryJobLeaseStore", "MySQLJobLeaseStore"]
