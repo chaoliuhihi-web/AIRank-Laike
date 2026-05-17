@@ -7,7 +7,7 @@
 | M2-IMAC-001 | review | 182f5c6 | Async job lease/heartbeat state machine covers queued/running/succeeded/failed/timeout; `python3 -m pytest` passed in apps/worker. |
 | M2-IMAC-002 | review | 3ad8bdd | Mock provider generates answer snapshot with required source citations; worker marks missing-citation jobs failed. |
 | M2-IMAC-003 | review | 6e6c615 | Deterministic score pure function returns identical results for identical snapshot/citation input. |
-| M3-IMAC-001 | review | pending | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
+| M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
 
 ## Run Log
 
