@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/error_response.schema.json",
+  "title": "AIRank Error Response",
+  "type": "object",
+  "required": ["error"],
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "details", "trace_id"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "BAD_REQUEST",
+            "VALIDATION_FAILED",
+            "RESOURCE_NOT_FOUND",
+            "METHOD_NOT_ALLOWED",
+            "STATE_CONFLICT",
+            "RATE_LIMITED",
+            "INTERNAL_ERROR",
+            "AUTH_TOKEN_MISSING",
+            "AUTH_TOKEN_INVALID",
+            "AUTH_YUDAO_UNAVAILABLE",
+            "TENANT_MISMATCH",
+            "TENANT_FORBIDDEN",
+            "PROJECT_NOT_FOUND",
+            "PROJECT_ARCHIVED",
+            "QUESTION_NOT_FOUND",
+            "QUESTION_LIMIT_EXCEEDED",
+            "SCAN_RUN_NOT_FOUND",
+            "SCAN_RUN_ALREADY_RUNNING",
+            "SCAN_PROVIDER_TIMEOUT",
+            "SCAN_PROVIDER_BLOCKED",
+            "JOB_NOT_FOUND",
+            "JOB_TIMEOUT",
+            "JOB_MAX_ATTEMPTS_EXCEEDED",
+            "FACT_NOT_FOUND",
+            "FACT_SOURCE_REQUIRED",
+            "FACT_DISCLOSURE_FORBIDDEN",
+            "ASSET_NOT_FOUND",
+            "ASSET_REVIEW_REQUIRED",
+            "REPORT_NOT_FOUND",
+            "REPORT_EVIDENCE_MISSING",
+            "OBJECT_REF_NOT_FOUND",
+            "INTEGRATION_CAPABILITY_BLOCKED",
+            "INTEGRATION_CAPABILITY_DISABLED",
+            "YUDAO_MODEL_RESOLVE_FAILED",
+            "XINGHE_CRAWLER_FAILED",
+            "XINGHE_KB_FAILED"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" },
+        "trace_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

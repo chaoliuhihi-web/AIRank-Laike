@@ -20,8 +20,10 @@ FACT_DISCLOSURE_FORBIDDEN
 
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
+| `BAD_REQUEST` | 400 | 请求格式或业务参数错误 |
 | `VALIDATION_FAILED` | 422 | 字段校验失败 |
 | `RESOURCE_NOT_FOUND` | 404 | 资源不存在 |
+| `METHOD_NOT_ALLOWED` | 405 | HTTP 方法不支持 |
 | `STATE_CONFLICT` | 409 | 状态冲突 |
 | `RATE_LIMITED` | 429 | 被限流 |
 | `INTERNAL_ERROR` | 500 | 未预期错误 |
