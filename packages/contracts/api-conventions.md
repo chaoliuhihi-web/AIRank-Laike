@@ -164,6 +164,16 @@ GET /api/v1/projects/{project_id}/asset-bundle
 - 必须写 `airank_integration_capabilities` 或 adapter status。
 - 如果有 fallback，应返回 fallback 结果并在 `meta` 中标记 `degraded=true`。
 
+## 外部 AI 网页 Provider 预检
+
+```text
+GET /api/v1/provider-readiness
+```
+
+响应使用 `provider_readiness_response.schema.json`。该接口是部署前和巡检使用的慢速预检，会打开每个消费端网页 Provider 的持久浏览器 profile，确认是否能进入可输入问题的状态。`status=blocked` 不会自动降级为 mock；生产环境必须先修复登录态、真人验证或入口 URL，再允许品牌检测生成报告。
+
+`AIRANK_PROVIDER_MODE=browser` 时，品牌检测默认要求当前 scope 的 provider 全部完成；`AIRANK_MIN_PROVIDER_SUCCESS_COUNT` 只能用于已声明的部分平台 beta。真实采样未达到门槛时，接口返回 `INTEGRATION_CAPABILITY_BLOCKED`，不得生成可下载报告和发布包。
+
 ## 安全
 
 - API 不返回密钥。

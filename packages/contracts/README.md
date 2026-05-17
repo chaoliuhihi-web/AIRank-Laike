@@ -8,6 +8,7 @@ M1 已冻结的 API schema：
 
 - `health_response.schema.json`
 - `version_response.schema.json`
+- `provider_readiness_response.schema.json`
 - `auth_login_request.schema.json`
 - `auth_login_response.schema.json`
 - `console_action_request.schema.json`

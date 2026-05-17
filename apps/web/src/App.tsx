@@ -750,6 +750,7 @@ function BrandCheckCard({
     event.preventDefault();
     setSubmitting(true);
     setLastError(null);
+    setLastResult(null);
     try {
       const result = await runBrandCheck({
         brandName: brandName.trim(),

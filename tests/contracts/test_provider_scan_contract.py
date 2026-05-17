@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from apps.api.provider_scan import browser_provider_config, parse_provider_answer, provider_execution_mode, strip_prompt_echo
+from apps.api.provider_scan import browser_provider_config, is_login_input, parse_provider_answer, provider_execution_mode, strip_prompt_echo
+
+
+class FakeLocator:
+    def __init__(self, attrs: dict[str, str | None]) -> None:
+        self.attrs = attrs
+
+    def get_attribute(self, attr_name: str, timeout: int = 500) -> str | None:
+        return self.attrs.get(attr_name)
 
 
 def test_browser_provider_config_uses_persistent_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -57,3 +65,9 @@ def test_strip_prompt_echo_removes_user_prompt_before_parsing_answer() -> None:
     page_delta = f"最近对话\n{prompt}\n综合推荐排序：\n1. 火山引擎\n2. 星河卓越"
 
     assert strip_prompt_echo(page_delta, prompt) == "综合推荐排序：\n1. 火山引擎\n2. 星河卓越"
+
+
+def test_login_placeholder_is_not_treated_as_prompt_input() -> None:
+    locator = FakeLocator({"placeholder": "请登录后输入内容", "type": None})
+
+    assert is_login_input(locator) is True

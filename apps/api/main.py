@@ -22,6 +22,7 @@ try:
         ProviderScanResult,
         ProviderUnavailable,
         call_provider_for_brand_rank,
+        probe_provider_readiness,
         provider_execution_mode,
     )
 except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
         ProviderScanResult,
         ProviderUnavailable,
         call_provider_for_brand_rank,
+        probe_provider_readiness,
         provider_execution_mode,
     )
 
@@ -613,6 +615,28 @@ class BrandCheckData(BaseModel):
 
 class BrandCheckResponse(BaseModel):
     data: BrandCheckData
+    meta: ResponseMeta
+
+
+class ProviderReadinessItem(BaseModel):
+    provider: Provider
+    label: str
+    status: Literal["ready", "blocked"]
+    url: str
+    profile_dir: str
+    headless: bool
+    reason: Optional[str] = None
+    screenshot_path: Optional[str] = None
+
+
+class ProviderReadinessData(BaseModel):
+    mode: Literal["browser", "mock"]
+    minimum_success_count: int
+    providers: list[ProviderReadinessItem]
+
+
+class ProviderReadinessResponse(BaseModel):
+    data: ProviderReadinessData
     meta: ResponseMeta
 
 
@@ -1909,6 +1933,30 @@ def build_default_brand_questions(brand_name: str, industry: str) -> list[str]:
     ]
 
 
+def minimum_provider_success_count(provider_scope: list[Provider]) -> int:
+    if not provider_scope:
+        return 0
+
+    raw_value = os.getenv("AIRANK_MIN_PROVIDER_SUCCESS_COUNT") or os.getenv("AIRANK_BROWSER_MIN_SUCCESS_COUNT")
+    if raw_value:
+        try:
+            return min(max(1, int(raw_value)), len(provider_scope))
+        except ValueError:
+            pass
+
+    if provider_execution_mode() == "browser":
+        return len(provider_scope)
+    return 1
+
+
+def minimum_scan_success_count(provider_scope: list[Provider], question_count: int, task_count: int) -> int:
+    if task_count <= 0:
+        return 0
+    provider_minimum = minimum_provider_success_count(provider_scope)
+    question_multiplier = max(1, question_count)
+    return min(task_count, max(1, provider_minimum * question_multiplier))
+
+
 def build_competitor_payloads(brand_name: str, competitor_hints: list[str]) -> list[CompetitorCreateRequest]:
     names = competitor_hints or ["火山引擎", "阿里云通义", "百度智能云"]
     return [
@@ -2024,7 +2072,7 @@ def build_real_scan_metrics(
         "recommend_rate": recommend_rate,
         "first_rank_rate": first_rank_rate,
         "summary": (
-            f"真实调用外部 AI 平台完成 {success_count}/{total_count} 个检测任务；"
+            f"通过消费端网页完成 {success_count}/{total_count} 个真实检测任务；"
             f"品牌提及率 {mention_rate}%，前三推荐率 {recommend_rate}%，首推率 {first_rank_rate}%。"
         ),
     }
@@ -2370,6 +2418,9 @@ def complete_mysql_real_brand_scan(
     finished_at = utc_now()
     failed_count = len(failures)
     blocked_count = sum(1 for failure in failures if failure.get("blocked"))
+    provider_minimum_success_count = minimum_provider_success_count(run.provider_scope)
+    minimum_success_count = minimum_scan_success_count(run.provider_scope, len(questions), len(task_rows))
+    success_count = len(successes)
     metrics = build_real_scan_metrics(
         [result for _, result in successes],
         failed_count=failed_count,
@@ -2377,12 +2428,22 @@ def complete_mysql_real_brand_scan(
         total_count=len(task_rows),
         provider_count=len(run.provider_scope),
     )
-    run_status = "completed" if successes else "failed"
+    metrics.update(
+        {
+            "provider_minimum_success_count": provider_minimum_success_count,
+            "minimum_success_count": minimum_success_count,
+            "provider_mode": provider_execution_mode(),
+        }
+    )
+    run_status = "completed" if success_count >= minimum_success_count else "failed"
     run_error_message = None
-    if not successes:
+    if run_status == "failed" and provider_execution_mode() == "browser":
+        run_error_message = (
+            f"Only {success_count}/{minimum_success_count} required consumer web scan tasks completed; "
+            "browser login or human verification may be required."
+        )
+    elif run_status == "failed":
         run_error_message = "No configured external AI provider completed successfully; AIRank did not generate ranking results."
-    if provider_execution_mode() == "browser":
-        run_error_message = "No consumer web provider completed successfully; browser login or verification may be required."
 
     with engine.begin() as conn:
         for row, result in successes:
@@ -2605,7 +2666,7 @@ def complete_mysql_real_brand_scan(
             },
         )
 
-        if successes:
+        if run_status == "completed":
             conn.execute(
                 text(
                     """
@@ -2620,16 +2681,19 @@ def complete_mysql_real_brand_scan(
             )
             insert_mysql_brand_assets(conn, tenant_id, project, competitors, questions, run, metrics, finished_at)
 
-    if not successes:
+    if run_status != "completed":
         raise StarletteHTTPException(
             status_code=503,
             detail={
                 "code": "INTEGRATION_CAPABILITY_BLOCKED",
-                "message": "没有任何外部 AI 网页完成真实采样，请先为浏览器 profile 完成网页登录态或处理真人验证。",
+                "message": "外部 AI 消费端网页真实采样未达到生产门槛，请先为浏览器 profile 完成网页登录态或处理真人验证。",
                 "details": {
                     "run_id": run.run_id,
                     "provider_mode": provider_execution_mode(),
                     "providers": run.provider_scope,
+                    "success_count": success_count,
+                    "minimum_success_count": minimum_success_count,
+                    "provider_minimum_success_count": provider_minimum_success_count,
                     "failed_count": failed_count,
                     "blocked_count": blocked_count,
                     "failures": [
@@ -3538,6 +3602,53 @@ def get_version(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADE
             api_version=API_VERSION,
             api_prefix=API_PREFIX,
             commit=os.getenv("AIRANK_BUILD_COMMIT", "local"),
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/provider-readiness",
+    response_model=ProviderReadinessResponse,
+    response_model_exclude_none=True,
+)
+def get_provider_readiness(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> ProviderReadinessResponse:
+    items: list[ProviderReadinessItem] = []
+    for provider in DEFAULT_PROVIDER_SCOPE:
+        try:
+            result = probe_provider_readiness(provider)
+        except ProviderUnavailable as exc:
+            items.append(
+                ProviderReadinessItem(
+                    provider=provider,
+                    label=PROVIDER_LABELS.get(provider, provider),
+                    status="blocked",
+                    url="",
+                    profile_dir="",
+                    headless=True,
+                    reason=exc.reason,
+                )
+            )
+            continue
+
+        items.append(
+            ProviderReadinessItem(
+                provider=result.provider,  # type: ignore[arg-type]
+                label=result.label,
+                status=result.status,  # type: ignore[arg-type]
+                url=result.url,
+                profile_dir=result.profile_dir,
+                headless=result.headless,
+                reason=result.reason,
+                screenshot_path=result.screenshot_path,
+            )
+        )
+
+    return ProviderReadinessResponse(
+        data=ProviderReadinessData(
+            mode=provider_execution_mode(),  # type: ignore[arg-type]
+            minimum_success_count=minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE),
+            providers=items,
         ),
         meta=build_meta(trace_id),
     )

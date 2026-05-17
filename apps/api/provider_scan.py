@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -48,6 +49,8 @@ LOGIN_BLOCK_PATTERNS = (
 
 ANSWER_STABLE_SECONDS = 3.0
 DEFAULT_BROWSER_TIMEOUT_SECONDS = 90.0
+PROVIDER_LOCKS: dict[str, threading.Lock] = {}
+PROVIDER_LOCKS_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,18 @@ class BrowserProviderConfig:
             "headless": self.headless,
             "timeout_seconds": self.timeout_seconds,
         }
+
+
+@dataclass(frozen=True)
+class ProviderReadinessResult:
+    provider: str
+    label: str
+    status: str
+    url: str
+    profile_dir: str
+    headless: bool
+    reason: str | None = None
+    screenshot_path: str | None = None
 
 
 class ProviderUnavailable(RuntimeError):
@@ -142,7 +157,8 @@ def call_provider_for_brand_rank(
     config = browser_provider_config(provider)
     prompt = build_brand_rank_prompt(brand_name, website_url, industry, competitor_names, question_text)
     try:
-        browser_result = run_browser_probe(config, prompt)
+        with provider_lock(provider):
+            browser_result = run_browser_probe(config, prompt)
     except PlaywrightTimeoutError as exc:
         raise ProviderCallError(provider, f"browser timeout: {str(exc)[:500]}") from exc
     except PlaywrightError as exc:
@@ -176,6 +192,112 @@ def call_provider_for_brand_rank(
     )
 
 
+def provider_lock(provider: str) -> threading.Lock:
+    with PROVIDER_LOCKS_LOCK:
+        lock = PROVIDER_LOCKS.get(provider)
+        if lock is None:
+            lock = threading.Lock()
+            PROVIDER_LOCKS[provider] = lock
+        return lock
+
+
+def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
+    config = browser_provider_config(provider)
+    try:
+        with provider_lock(provider):
+            return run_browser_readiness_probe(config)
+    except ProviderUnavailable:
+        raise
+    except PlaywrightTimeoutError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            reason=f"browser timeout: {str(exc)[:300]}",
+        )
+    except PlaywrightError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            reason=f"browser automation failed: {str(exc)[:300]}",
+        )
+    except RuntimeError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            reason=str(exc)[:300],
+        )
+
+
+def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadinessResult:
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(config.profile_dir),
+            headless=config.headless,
+            viewport={"width": 1440, "height": 1000},
+            locale="zh-CN",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+        page.set_default_timeout(int(config.timeout_seconds * 1000))
+        try:
+            try:
+                page.goto(config.url, wait_until="domcontentloaded", timeout=int(config.timeout_seconds * 1000))
+                page.wait_for_load_state("networkidle", timeout=min(10000, int(config.timeout_seconds * 1000)))
+            except PlaywrightTimeoutError:
+                pass
+
+            body_text = normalized_body_text(page)
+            prompt_input_found = find_prompt_input(page) is not None
+            screenshot_path = save_page_screenshot(page, config.provider)
+            page_url = page.url
+        finally:
+            context.close()
+
+    if looks_login_blocked(body_text):
+        return ProviderReadinessResult(
+            provider=config.provider,
+            label=config.label,
+            status="blocked",
+            url=page_url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            reason="login or human verification is visible",
+            screenshot_path=screenshot_path,
+        )
+    if not prompt_input_found:
+        return ProviderReadinessResult(
+            provider=config.provider,
+            label=config.label,
+            status="blocked",
+            url=page_url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            reason="prompt input was not found",
+            screenshot_path=screenshot_path,
+        )
+    return ProviderReadinessResult(
+        provider=config.provider,
+        label=config.label,
+        status="ready",
+        url=page_url,
+        profile_dir=str(config.profile_dir),
+        headless=config.headless,
+        screenshot_path=screenshot_path,
+    )
+
+
 def build_brand_rank_prompt(
     brand_name: str,
     website_url: str,
@@ -206,37 +328,36 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, s
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(int(config.timeout_seconds * 1000))
         try:
-            page.goto(config.url, wait_until="domcontentloaded", timeout=int(config.timeout_seconds * 1000))
-            page.wait_for_load_state("networkidle", timeout=min(15000, int(config.timeout_seconds * 1000)))
-        except PlaywrightTimeoutError:
-            pass
+            try:
+                page.goto(config.url, wait_until="domcontentloaded", timeout=int(config.timeout_seconds * 1000))
+                page.wait_for_load_state("networkidle", timeout=min(15000, int(config.timeout_seconds * 1000)))
+            except PlaywrightTimeoutError:
+                pass
 
-        before_text = normalized_body_text(page)
-        if looks_login_blocked(before_text) and not find_prompt_input(page):
+            before_text = normalized_body_text(page)
+            if looks_login_blocked(before_text) and not find_prompt_input(page):
+                screenshot_path = save_page_screenshot(page, config.provider)
+                raise RuntimeError(f"{config.label} web page requires login or human verification; screenshot={screenshot_path}")
+
+            input_locator = find_prompt_input(page)
+            if input_locator is None:
+                screenshot_path = save_page_screenshot(page, config.provider)
+                raise RuntimeError(f"{config.label} web page prompt input was not found; screenshot={screenshot_path}")
+
+            input_locator.click()
+            fill_prompt(input_locator, prompt)
+            submit_prompt(page, input_locator)
+            answer_text = wait_for_answer_text(page, before_text, prompt, deadline)
             screenshot_path = save_page_screenshot(page, config.provider)
+            return {
+                "trace_id": trace_id,
+                "page_url": page.url,
+                "title": page.title(),
+                "answer_text": answer_text,
+                "screenshot_path": screenshot_path,
+            }
+        finally:
             context.close()
-            raise RuntimeError(f"{config.label} web page requires login or human verification; screenshot={screenshot_path}")
-
-        input_locator = find_prompt_input(page)
-        if input_locator is None:
-            screenshot_path = save_page_screenshot(page, config.provider)
-            context.close()
-            raise RuntimeError(f"{config.label} web page prompt input was not found; screenshot={screenshot_path}")
-
-        input_locator.click()
-        fill_prompt(input_locator, prompt)
-        submit_prompt(page, input_locator)
-        answer_text = wait_for_answer_text(page, before_text, prompt, deadline)
-        screenshot_path = save_page_screenshot(page, config.provider)
-        result = {
-            "trace_id": trace_id,
-            "page_url": page.url,
-            "title": page.title(),
-            "answer_text": answer_text,
-            "screenshot_path": screenshot_path,
-        }
-        context.close()
-        return result
 
 
 def find_prompt_input(page: Any) -> Any | None:
@@ -253,13 +374,45 @@ def find_prompt_input(page: Any) -> Any | None:
         for index in range(count):
             candidate = locator.nth(index)
             try:
-                if candidate.is_visible() and candidate.is_enabled():
+                if candidate.is_visible() and candidate.is_enabled() and not is_login_input(candidate):
                     box = candidate.bounding_box()
                     if box and box["width"] >= 80 and box["height"] >= 18:
                         return candidate
             except PlaywrightError:
                 continue
     return None
+
+
+def is_login_input(locator: Any) -> bool:
+    attrs = []
+    for attr_name in ("type", "placeholder", "aria-label", "name", "autocomplete"):
+        try:
+            attr_value = locator.get_attribute(attr_name, timeout=500)
+        except PlaywrightError:
+            attr_value = None
+        if attr_value:
+            attrs.append(str(attr_value).lower())
+    joined = " ".join(attrs)
+    login_markers = (
+        "phone",
+        "mobile",
+        "手机号",
+        "手机",
+        "验证码",
+        "verification code",
+        "sms code",
+        "captcha",
+        "login",
+        "登录",
+        "password",
+        "密码",
+        "email",
+        "邮箱",
+        "account",
+        "账号",
+        "username",
+    )
+    return any(marker in joined for marker in login_markers)
 
 
 def fill_prompt(input_locator: Any, prompt: str) -> None:

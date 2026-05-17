@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_readiness_response.schema.json",
+  "title": "AIRank Provider Readiness Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["mode", "minimum_success_count", "providers"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["browser", "mock"] },
+        "minimum_success_count": { "type": "integer", "minimum": 0 },
+        "providers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["provider", "label", "status", "url", "profile_dir", "headless"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao"]
+              },
+              "label": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "enum": ["ready", "blocked"] },
+              "url": { "type": "string" },
+              "profile_dir": { "type": "string" },
+              "headless": { "type": "boolean" },
+              "reason": { "type": "string" },
+              "screenshot_path": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

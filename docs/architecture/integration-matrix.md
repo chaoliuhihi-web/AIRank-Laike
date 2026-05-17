@@ -52,7 +52,17 @@ adapter 内部可以调用星河 API，但 `apps/api`、`apps/worker` 和 `packa
 
 ## 外部 AI Provider 执行规则
 
-`AIRANK_PROVIDER_MODE=browser` 是 MySQL 环境的默认生产策略。品牌检测不能用模型 API 代替 C 端网页结果；必须通过 Playwright 持久浏览器 profile 打开各平台消费端页面，像用户一样输入问题，读取页面回答，再落库为 `answer_snapshot`。如果网页要求登录、真人验证、验证码，或找不到输入框，对应 `scan_task` 标记为 `failed`，错误码为 `SCAN_PROVIDER_BLOCKED`。如果没有任何 provider 成功，`/api/v1/brand-checks` 返回 `INTEGRATION_CAPABILITY_BLOCKED`，不生成排名、资产和报告。
+`AIRANK_PROVIDER_MODE=browser` 是 MySQL 环境的默认生产策略。品牌检测不能用模型 API 代替 C 端网页结果；必须通过 Playwright 持久浏览器 profile 打开各平台消费端页面，像用户一样输入问题，读取页面回答，再落库为 `answer_snapshot`。如果网页要求登录、真人验证、验证码，或找不到输入框，对应 `scan_task` 标记为 `failed`，错误码为 `SCAN_PROVIDER_BLOCKED`。
+
+生产模式默认要求当前 provider scope 全部完成，`AIRANK_MIN_PROVIDER_SUCCESS_COUNT` 只允许在明确标注“部分平台 beta”的环境下下调。未达到门槛时，`/api/v1/brand-checks` 返回 `INTEGRATION_CAPABILITY_BLOCKED`，不生成可下载报告、发布资料包或项目 active 状态，避免把不完整网页采样包装成上线结果。
+
+部署前必须调用：
+
+```text
+GET /api/v1/provider-readiness
+```
+
+该接口会逐个打开消费端网页，检查当前持久浏览器 profile 是否具备可输入问题的状态。返回 `blocked` 时需人工在对应 `profile_dir` 登录、通过真人验证或更新 provider URL 后再发布。
 
 | Provider | 默认网页入口 | 真实运行要求 |
 | --- | --- | --- |

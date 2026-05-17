@@ -7,7 +7,9 @@ import re
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
+from apps.api import main as api_main
 from apps.api.main import ERROR_REGISTRY, app
+from apps.api.provider_scan import ProviderReadinessResult
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +57,51 @@ def test_version_returns_enveloped_contract() -> None:
     assert body["meta"]["trace_id"] == "trc_test_version"
     assert body["data"]["api_prefix"] == "/api/v1"
     validate_response("version_response.schema.json", body)
+
+
+def test_provider_readiness_returns_enveloped_contract(monkeypatch) -> None:
+    def fake_probe(provider: str) -> ProviderReadinessResult:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=api_main.PROVIDER_LABELS[provider],
+            status="blocked",
+            url=f"https://{provider}.example.test/",
+            profile_dir=f"/tmp/airank/{provider}",
+            headless=True,
+            reason="login required",
+        )
+
+    monkeypatch.delenv("AIRANK_PROVIDER_MODE", raising=False)
+    monkeypatch.delenv("AIRANK_MIN_PROVIDER_SUCCESS_COUNT", raising=False)
+    monkeypatch.setattr(api_main, "probe_provider_readiness", fake_probe)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/provider-readiness", headers={"X-AIRank-Trace-Id": "trc_test_provider"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["trace_id"] == "trc_test_provider"
+    assert body["data"]["mode"] == "browser"
+    assert body["data"]["minimum_success_count"] == len(api_main.DEFAULT_PROVIDER_SCOPE)
+    assert len(body["data"]["providers"]) == len(api_main.DEFAULT_PROVIDER_SCOPE)
+    assert {item["status"] for item in body["data"]["providers"]} == {"blocked"}
+    validate_response("provider_readiness_response.schema.json", body)
+
+
+def test_minimum_provider_success_count_defaults_to_full_browser_scope(monkeypatch) -> None:
+    monkeypatch.delenv("AIRANK_PROVIDER_MODE", raising=False)
+    monkeypatch.delenv("AIRANK_MIN_PROVIDER_SUCCESS_COUNT", raising=False)
+
+    assert api_main.minimum_provider_success_count(api_main.DEFAULT_PROVIDER_SCOPE) == len(api_main.DEFAULT_PROVIDER_SCOPE)
+    assert api_main.minimum_scan_success_count(api_main.DEFAULT_PROVIDER_SCOPE, question_count=3, task_count=21) == 21
+
+
+def test_minimum_provider_success_count_can_be_lowered_for_partial_beta(monkeypatch) -> None:
+    monkeypatch.delenv("AIRANK_PROVIDER_MODE", raising=False)
+    monkeypatch.setenv("AIRANK_MIN_PROVIDER_SUCCESS_COUNT", "3")
+
+    assert api_main.minimum_provider_success_count(api_main.DEFAULT_PROVIDER_SCOPE) == 3
+    assert api_main.minimum_scan_success_count(api_main.DEFAULT_PROVIDER_SCOPE, question_count=2, task_count=14) == 6
 
 
 def test_error_schema_codes_match_registry_doc_and_api() -> None:
