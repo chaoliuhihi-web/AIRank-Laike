@@ -110,3 +110,42 @@ Risks:
 
 Next owner:
 - CodexMacPro 按生成的下一轮 prompt 审核 `cf20229` / `a4de530` 阶段提交，并继续推进 release gate。
+
+## 2026-05-17 - Codex
+
+Scope:
+- 复核当前资料是否足够支撑三 AI 同步推进，并补齐最小执行包粒度。
+
+Changed:
+- `docs/handoff/execution-packets.md`
+- `.gitignore`
+- `docs/handoff/agent-control.md`
+- `docs/handoff/launch-board.md`
+- `scripts/agent_control.py`
+- `docs/handoff/director-brief.md` removed from tracked generated files
+- `docs/handoff/next-prompts/*.md` removed from tracked generated files
+
+Validation:
+- command: `python3 scripts/agent_control.py director --write`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this change
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts`
+- result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: Codex
+- notes: 原有资料能约束方向，但任务颗粒度仍偏粗；已新增 packet ID、owner、depends、file scope、acceptance、validation，并让自动 prompt 从 execution packets 读取。生成 prompt 已改为本地缓存，不再作为入库事实源，避免提交后 HEAD 过期。
+
+Risks:
+- 仍不是后台 daemon；需要三台 Codex 每轮执行固定启动命令。跨 packet 依赖完成情况还需要 owner 手动把 status 改为 `done`。
+
+Next owner:
+- CodexWin 领取 `M1-WIN-001`。
+- CodexiMac 领取 `M1-IMAC-001`。
+- CodexMacPro 领取 `M1-MACPRO-001`。

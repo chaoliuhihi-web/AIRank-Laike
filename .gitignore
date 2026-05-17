@@ -25,5 +25,7 @@ tmp/
 temp/
 
 docs/handoff/agent-gate-report.md
+docs/handoff/director-brief.md
+docs/handoff/next-prompts/*.md
 
 AIRank素材/废弃/

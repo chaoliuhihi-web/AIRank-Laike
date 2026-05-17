@@ -34,9 +34,10 @@ git push gitee main
 自动协作机制见：
 
 - `docs/handoff/agent-control.md`
+- `docs/handoff/execution-packets.md`
 - `scripts/agent_control.py`
-- `docs/handoff/director-brief.md`
-- `docs/handoff/next-prompts/`
+- `docs/handoff/director-brief.md`（本地生成）
+- `docs/handoff/next-prompts/`（本地生成）
 
 ## Owner Lanes
 
@@ -98,6 +99,6 @@ git push gitee main
 
 ## 当前下一个推荐动作
 
-1. CodexWin：补 `/api/v1/health`、`/api/v1/version`，再推进项目/竞品/问题 CRUD。
-2. CodexiMac：建立 Alembic 初始迁移，和 `ops/deployment/mysql-bootstrap.sql` 对齐。
-3. CodexMacPro：运行 `python3 scripts/agent_control.py director --write`，审核 `cf20229` / `a4de530` 阶段提交，并补 GitHub Actions。
+1. CodexWin：领取 `M1-WIN-001 health-version-envelope`。
+2. CodexiMac：领取 `M1-IMAC-001 alembic-initial-schema`。
+3. CodexMacPro：领取 `M1-MACPRO-001 stage-review-current-head`。

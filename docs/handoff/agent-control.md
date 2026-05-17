@@ -5,11 +5,12 @@
 ## 控制原则
 
 1. `docs/handoff/launch-board.md` 是唯一任务事实源。
-2. CodexMacPro 是总控，不只是 reviewer；它必须分析 Win/iMac 阶段性提交，更新方向和下一轮任务。
-3. CodexWin / CodexiMac 只能执行自己 lane 的任务，不能自行扩大范围。
-4. 所有阶段性结论必须写入 `docs/handoff/review-ledger.md`。
-5. 上线判断只看 `docs/handoff/release-gate.md`，不能凭感觉说可上线。
-6. 自动 prompt 由脚本生成，避免每轮从聊天记录复制旧提示词。
+2. `docs/handoff/execution-packets.md` 是最小可执行任务包清单，包含 owner、依赖、写入范围、验收和验证命令。
+3. CodexMacPro 是总控，不只是 reviewer；它必须分析 Win/iMac 阶段性提交，更新方向和下一轮任务。
+4. CodexWin / CodexiMac 只能执行自己 lane 的任务，不能自行扩大范围。
+5. 所有阶段性结论必须写入 `docs/handoff/review-ledger.md`。
+6. 上线判断只看 `docs/handoff/release-gate.md`，不能凭感觉说可上线。
+7. 自动 prompt 由脚本生成，避免每轮从聊天记录复制旧提示词。
 
 ## 自动生成下一轮 Prompt
 
@@ -51,6 +52,8 @@ docs/handoff/director-brief.md
 docs/handoff/next-prompts/codex-macpro.md
 ```
 
+这些文件是本地生成缓存，不作为长期事实源入库；长期事实源是 `launch-board`、`execution-packets`、`review-ledger` 和 `release-gate`。
+
 ## CodexMacPro 总控职责
 
 CodexMacPro 每轮必须：
@@ -82,7 +85,7 @@ CodexMacPro 每轮必须：
 
 - 自动生成下一轮 prompt。
 - 自动读取当前任务看板。
-- 自动把 owner task、验证命令、最近风险写进 prompt。
+- 自动把 owner task、依赖、写入范围、验收、验证命令和最近风险写进 prompt。
 - 自动生成 MacPro director brief。
 - 自动跑基础 gate report。
 
