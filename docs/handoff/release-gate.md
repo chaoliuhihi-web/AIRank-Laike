@@ -191,3 +191,23 @@ Still blocked:
 
 - Release remains blocked by missing real yudao bearer token / tenant-user capability or explicit product approval for a dev-only beta scope.
 - The new script must be run from a clean worktree after this commit lands; it intentionally fails on uncommitted files.
+
+## 2026-05-17 19:00 +08:00 Execution
+
+Release Gate: BLOCKED
+
+Commit: release-gate DB grant fix pending commit
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- `ops/deployment/mysql-bootstrap.sql` now creates and grants the local `airank_laike_release_gate` database used by the real release-readiness DB gate.
+- Re-applied bootstrap with `docker exec -i yudao-mysql sh -lc 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < ops/deployment/mysql-bootstrap.sql`.
+- Verified PyMySQL application-user connectivity to `airank_laike_release_gate`; `current_user()` resolved to `airank@192.168.65.%`.
+- Verified real migration: `cd apps/api && AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike_release_gate?charset=utf8mb4 python3 -m alembic upgrade head` passed.
+
+Still blocked:
+
+- yudao auth / tenant-user capability still needs a real `AIRANK_AUTH_MODE=yudao`, `YUDAO_PERMISSION_INFO_URL`, and bearer token.
+- Object storage still reports local `dev_only` unless a production storage driver/configuration is supplied.
