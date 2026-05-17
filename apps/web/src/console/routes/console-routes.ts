@@ -69,7 +69,7 @@ export const consoleRoutes: ConsoleRoute[] = [
   {
     id: "publishing",
     path: "/console/publishing",
-    label: "发布与复测",
+    label: "发布提交",
     icon: "SquarePen",
     sourceImage: "AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_08 (3).png",
     priority: "M1.5",

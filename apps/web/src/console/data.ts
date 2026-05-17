@@ -78,28 +78,31 @@ export const gapItems = [
 ];
 
 export const assetCards = [
-  { title: "企业事实页", desc: "把已确认事实卡发布为 AI 易读页面", progress: 86, status: "可发布" },
-  { title: "服务介绍页", desc: "结构化呈现核心服务、流程与优势", progress: 72, status: "待补证据" },
-  { title: "客户案例页", desc: "承接案例、成效、行业场景与客户评价", progress: 58, status: "待确认" },
-  { title: "FAQ 页", desc: "覆盖高频买家问题和官方回答", progress: 64, status: "可生成" },
-  { title: "竞品对比页", desc: "形成差异化选型依据和对比证据", progress: 45, status: "缺证据" },
-  { title: "行业解决方案页", desc: "沉淀本地行业和高价值场景方案", progress: 52, status: "可生成" },
-  { title: "JSON-LD", desc: "让 AI 和搜索引擎识别品牌事实", progress: 80, status: "可发布" },
-  { title: "sitemap.xml", desc: "发布后提交抓取和复测", progress: 92, status: "可发布" },
+  { title: "企业事实页", desc: "介绍企业基本信息、主营业务、核心优势与发展历程。", progress: 92, status: "已生成" },
+  { title: "服务介绍页", desc: "详细说明产品/服务能力、功能模块与服务流程。", progress: 90, status: "已生成" },
+  { title: "客户案例页", desc: "真实客户案例展示，突出应用场景与客户价值。", progress: 88, status: "已生成" },
+  { title: "FAQ页", desc: "整理常见问题与专业解答，提升 AI 问答引用概率。", progress: 62, status: "待确认" },
+  { title: "竞品对比页", desc: "对比竞品优势，突出差异化价值与核心竞争力。", progress: 91, status: "已生成" },
+  { title: "行业解决方案页", desc: "针对行业痛点，提供场景化解决方案与实施路径。", progress: 88, status: "已生成" },
+  { title: "JSON-LD 结构化数据", desc: "构建结构化数据，帮助 AI 更好理解与提取关键信息。", progress: 92, status: "已生成" },
+  { title: "sitemap.xml", desc: "生成网站地图，提升页面发现效率与抓取覆盖。", progress: 85, status: "已生成" },
 ];
 
 export const publishingRows = [
-  { page: "企业事实页", channel: "官网", crawl: "已抓取", index: "已收录", time: "2024-05-20 10:30" },
-  { page: "服务介绍页", channel: "官网", crawl: "已抓取", index: "待收录", time: "2024-05-20 10:28" },
-  { page: "客户案例页", channel: "AI 获客页", crawl: "排队中", index: "未提交", time: "2024-05-20 10:25" },
-  { page: "FAQ 页", channel: "官网", crawl: "已抓取", index: "已收录", time: "2024-05-20 10:18" },
-  { page: "竞品对比页", channel: "AI 获客页", crawl: "失败", index: "未提交", time: "2024-05-20 10:11" },
+  { page: "AI 收录包首页", channel: "官网", crawl: "已抓取", index: "已索引", time: "2024-05-20 10:15" },
+  { page: "智能营销自动化平台", channel: "官网", crawl: "已抓取", index: "待索引", time: "2024-05-20 09:48" },
+  { page: "AI 收录体检解决方案", channel: "AI 获客页", crawl: "已抓取", index: "已索引", time: "2024-05-20 09:32" },
+  { page: "推荐缺口分析方法论", channel: "AI 获客页", crawl: "已提交", index: "未索引", time: "2024-05-20 09:10" },
+  { page: "营销自动化 CRM 区别解析", channel: "AI 获客页", crawl: "已抓取", index: "待索引", time: "2024-05-20 08:55" },
+  { page: "平台价格与版本说明", channel: "官网", crawl: "未抓取", index: "未索引", time: "2024-05-20 08:20" },
+  { page: "客户案例与效果展示", channel: "AI 获客页", crawl: "抓取失败", index: "未索引", time: "2024-05-20 07:58" },
 ];
 
 export const reportCards = [
-  { title: "AI 来客诊断报告", desc: "覆盖平台表现、竞品压制、引用来源和优化建议", date: "2024-05-20", status: "已生成" },
-  { title: "推荐缺口复测报告", desc: "对比发布前后推荐率、首推率和引用变化", date: "2024-05-18", status: "可下载" },
-  { title: "高管月报", desc: "面向管理层的 AI 可见性和线索增长摘要", date: "2024-05-01", status: "已归档" },
+  { title: "周报", desc: "2024-05-13 ~ 2024-05-19", date: "查看本周 AI 表现与来客线索变化", status: "下载报告" },
+  { title: "月报", desc: "2024 年 5 月", date: "查看本月整体表现与趋势分析", status: "下载报告" },
+  { title: "老板报告", desc: "2024 年 5 月", date: "一句话结论 + 关键数据摘要", status: "导出 PPT" },
+  { title: "竞品压制报告", desc: "2024 年 5 月", date: "对比竞品表现与压制机会点", status: "下载报告" },
 ];
 
 export const assistantMessages = [

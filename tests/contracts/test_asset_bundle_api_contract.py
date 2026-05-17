@@ -77,6 +77,7 @@ def create_asset_bundle_tables(repository: MySQLAssetBundleRepository) -> None:
                   title VARCHAR(255) NOT NULL,
                   body_md TEXT NULL,
                   status VARCHAR(32) NOT NULL,
+                  metadata_json TEXT NULL,
                   updated_at DATETIME NOT NULL,
                   deleted_at DATETIME NULL
                 )
@@ -185,6 +186,34 @@ def test_mysql_asset_bundle_uses_content_assets_and_publish_state() -> None:
     assert {asset.asset_id for asset in bundle.assets} == {"asset_fact_page", "asset_faq"}
     assert {asset.asset_id: asset.progress for asset in bundle.assets}["asset_fact_page"] == 100
     assert "1 个内容缺口" in bundle.recommendation
+
+
+def test_mysql_asset_bundle_uses_display_metadata_when_present() -> None:
+    repository = MySQLAssetBundleRepository("sqlite+pysqlite:///:memory:")
+    create_asset_bundle_tables(repository)
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_content_assets (
+                  id, tenant_id, project_id, asset_type, title, body_md,
+                  status, metadata_json, updated_at
+                )
+                VALUES (
+                  'asset_display', 'tenant_asset', 'project_asset',
+                  'fact_page', '企业事实页', '已确认事实卡页面', 'approved',
+                  '{"display_status": "可发布", "progress": 86}',
+                  '2026-05-17 10:00:00'
+                )
+                """
+            )
+        )
+
+    bundle = repository.get_bundle("tenant_asset", "project_asset")
+
+    assert bundle.assets[0].asset_id == "asset_display"
+    assert bundle.assets[0].status == "可发布"
+    assert bundle.assets[0].progress == 86
 
 
 def test_mysql_asset_bundle_uses_gap_empty_state_without_seed_assets() -> None:

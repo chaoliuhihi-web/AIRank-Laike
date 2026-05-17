@@ -27,8 +27,9 @@ python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_UR
 | --- | --- | --- |
 | Web 构建 | `cd apps/web && npm run build` | 通过 |
 | 控制台桌面渲染 | 浏览器访问 `http://localhost:5173/console`，1491x1055 截图 | 无白屏、无 overlay、无明显布局断裂 |
+| 效果图逐页还原 | 固定 1491x1055，对照 `AIRank素材/操作台/*.png` 的 11 张参考图 | 所有控制台页面必须严格贴近参考图的色彩、图标、字体、间距、卡片数量和首屏结构；不得用“功能通过”替代视觉通过 |
 | 控制台移动渲染 | 390x844 截图 | 无横向溢出、主内容可读 |
-| 路由切换 | 点击工作台、推荐缺口、AI 收录包、报告中心 | URL 和页面内容变化 |
+| 路由切换 | 点击侧栏：工作台、AI 收录体检、企业事实库、买家问题地图、推荐缺口分析、AI 收录包、发布提交、AI 来客助手、报表中心、设置中心；直达 `/console/gaps/questions` | URL 和页面内容变化 |
 | Console health | 浏览器 console | 无 error/warning |
 
 ## Gate 2：API

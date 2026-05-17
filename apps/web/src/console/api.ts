@@ -125,8 +125,8 @@ export const fallbackConsoleOverview: ConsoleOverview = {
 export const fallbackAssetBundle: AssetBundle = {
   project_id: "project_demo",
   tenant_id: "tenant_demo",
-  completeness: 68,
-  recommendation: "建议先补齐竞品对比页和客户案例页，再发布复测。",
+  completeness: 86,
+  recommendation: "基于全面性、结构化、可验证性、AI 友好度等维度综合评估",
   assets: assetCards,
 };
 

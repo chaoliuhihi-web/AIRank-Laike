@@ -1434,6 +1434,7 @@ class MySQLAssetBundleRepository:
                       a.title,
                       a.body_md,
                       a.status,
+                      a.metadata_json,
                       a.updated_at,
                       p.status AS package_status
                     FROM airank_content_assets a
@@ -1465,16 +1466,27 @@ class MySQLAssetBundleRepository:
                 {"tenant_id": tenant_id, "project_id": project_id},
             ).mappings().all()
 
-        assets = [
-            AssetBundleItem(
-                asset_id=row["id"],
-                title=row["title"],
-                desc=(row["body_md"] or f"{row['asset_type']} content asset")[:240],
-                progress=asset_progress(row["status"], row["package_status"]),
-                status=row["package_status"] or row["status"],
+        assets = []
+        for row in asset_rows:
+            metadata = parse_json_value(row["metadata_json"], {})
+            display_status = None
+            display_progress = None
+            if isinstance(metadata, dict):
+                raw_status = metadata.get("display_status")
+                if isinstance(raw_status, str) and raw_status.strip():
+                    display_status = raw_status.strip()
+                raw_progress = metadata.get("progress")
+                if isinstance(raw_progress, int) and 0 <= raw_progress <= 100:
+                    display_progress = raw_progress
+            assets.append(
+                AssetBundleItem(
+                    asset_id=row["id"],
+                    title=row["title"],
+                    desc=(row["body_md"] or f"{row['asset_type']} content asset")[:240],
+                    progress=display_progress if display_progress is not None else asset_progress(row["status"], row["package_status"]),
+                    status=display_status or row["package_status"] or row["status"],
+                )
             )
-            for row in asset_rows
-        ]
         if not assets:
             assets = [
                 AssetBundleItem(

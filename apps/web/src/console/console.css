@@ -331,6 +331,14 @@ button:disabled {
   min-width: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .page-subtitle {
   margin: 8px 0 0;
   color: var(--console-text);
@@ -361,6 +369,11 @@ button:disabled {
   color: var(--console-text);
   font: 600 14px / 20px var(--console-font-family);
   box-shadow: var(--console-shadow-card);
+}
+
+.compact-pill {
+  min-height: 34px;
+  padding: 0 12px;
 }
 
 .step-counter {
@@ -799,6 +812,12 @@ button:disabled {
   box-shadow: var(--console-shadow-card);
 }
 
+.process-steps.publishing-flow {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 18px;
+  padding: 28px 26px 24px;
+}
+
 .step-card {
   position: relative;
   display: grid;
@@ -813,6 +832,29 @@ button:disabled {
   color: #9da8c2;
   content: "-->";
   font: 700 16px / 20px var(--console-font-family);
+}
+
+.publishing-flow .step-card {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.publishing-flow .step-card:not(:last-child)::after {
+  top: 29px;
+  right: -18px;
+  width: 36px;
+  overflow: hidden;
+  color: #b8c1d7;
+  content: "------>";
+  letter-spacing: 1px;
+}
+
+.publishing-flow .step-card .airank-console-icon-tile {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
 }
 
 .step-card .airank-console-icon-tile {
@@ -1067,6 +1109,35 @@ button:disabled {
   border-radius: var(--console-radius-panel);
   background: #ffffff;
   box-shadow: var(--console-shadow-card);
+}
+
+.opportunity-intro-card {
+  margin-bottom: 18px;
+  padding: 20px 20px 16px;
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-panel);
+  background: #ffffff;
+  box-shadow: var(--console-shadow-card);
+}
+
+.opportunity-intro-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  color: var(--console-text-strong);
+  font: var(--console-font-section-title);
+}
+
+.opportunity-intro-card p {
+  margin: 10px 0 16px;
+  color: var(--console-text);
+  font: 600 14px / 22px var(--console-font-family);
+}
+
+.opportunity-intro-card .project-strip {
+  margin-bottom: 0;
+  box-shadow: none;
 }
 
 .strip-item {
@@ -1366,6 +1437,16 @@ button:disabled {
   min-height: 230px;
 }
 
+.reference-asset-grid {
+  margin-top: 0;
+}
+
+.reference-asset-card {
+  display: grid;
+  min-height: 270px;
+  padding: 26px 22px 22px;
+}
+
 .asset-card-head {
   display: flex;
   align-items: center;
@@ -1382,18 +1463,13 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 14px;
+  margin-top: auto;
   color: var(--console-text-muted);
   font: 600 13px / 18px var(--console-font-family);
 }
 
-.asset-footer button {
-  display: flex;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--console-primary);
-  font: 700 13px / 18px var(--console-font-family);
+.asset-footer .outline-button {
+  min-height: 44px;
 }
 
 .progress-bar {
@@ -1414,6 +1490,44 @@ button:disabled {
 .package-footer {
   border-color: var(--console-border);
   background: #ffffff;
+}
+
+.reference-package-footer {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 360px;
+  align-items: center;
+  gap: 34px;
+  min-height: 160px;
+}
+
+.reference-package-footer .donut-chart {
+  width: 132px;
+  height: 132px;
+}
+
+.package-check-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 28px;
+  margin-top: 16px;
+}
+
+.package-check-grid .check-line {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.package-check-grid .check-line strong {
+  display: none;
+}
+
+.package-next {
+  padding-left: 34px;
+  border-left: 1px solid var(--console-border);
+}
+
+.package-next .airank-console-primary-button {
+  width: 210px;
+  margin-top: 16px;
 }
 
 .package-footer .progress-bar {
@@ -1457,8 +1571,13 @@ button:disabled {
 
 .assistant-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 540px;
   gap: var(--console-card-gap);
+}
+
+.assistant-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
 }
 
 .chat-window {
@@ -1547,6 +1666,56 @@ button:disabled {
   gap: var(--console-card-gap);
 }
 
+.report-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--console-card-gap);
+  margin-bottom: 18px;
+}
+
+.report-metric-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 112px;
+}
+
+.report-metric-card span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--console-text);
+  font: 700 15px / 21px var(--console-font-family);
+}
+
+.report-metric-card strong {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--console-text-strong);
+  font: 800 30px / 36px var(--console-font-family);
+}
+
+.report-metric-card em {
+  margin-left: 10px;
+  color: var(--console-success);
+  font: normal 700 14px / 20px var(--console-font-family);
+}
+
+.report-metric-card small {
+  display: block;
+  margin-top: 10px;
+  color: var(--console-text-muted);
+  font: 600 13px / 18px var(--console-font-family);
+}
+
+.reports-reference-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: var(--console-card-gap);
+  align-items: start;
+}
+
 .conclusion-list {
   display: grid;
   gap: 16px;
@@ -1556,22 +1725,57 @@ button:disabled {
   font: 600 14px / 24px var(--console-font-family);
 }
 
+.reference-conclusions {
+  padding: 0;
+  list-style: none;
+}
+
+.reference-conclusions li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--console-text-strong);
+  font: 800 14px / 21px var(--console-font-family);
+}
+
+.reference-conclusions li svg {
+  color: var(--console-primary);
+}
+
+.reference-conclusions li span {
+  grid-column: 2;
+  color: var(--console-text);
+  font: 600 13px / 21px var(--console-font-family);
+}
+
+.report-action-list {
+  display: grid;
+  gap: 8px;
+}
+
+.report-action-list .table-action {
+  justify-content: space-between;
+  width: 100%;
+  min-height: 38px;
+}
+
 .report-card-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--console-card-gap);
   margin-top: 18px;
 }
 
 .report-card {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
-.report-card > svg {
-  color: var(--console-primary);
+.report-card .outline-button {
+  grid-column: 1 / -1;
+  min-height: 40px;
 }
 
 .report-card span:not(.airank-console-badge) {
@@ -1582,7 +1786,11 @@ button:disabled {
 }
 
 .settings-section {
-  min-height: 270px;
+  min-height: 232px;
+}
+
+.settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .settings-head {
@@ -1592,10 +1800,32 @@ button:disabled {
   margin-bottom: 20px;
 }
 
+.settings-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
 .settings-head h2 {
   margin: 0;
   color: var(--console-text-strong);
   font: var(--console-font-section-title);
+}
+
+.settings-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  font: 600 13px / 18px var(--console-font-family);
+}
+
+.settings-edit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--console-primary);
+  font: 700 13px / 18px var(--console-font-family);
 }
 
 .settings-row {
@@ -1639,7 +1869,8 @@ button:disabled {
   .dashboard-grid,
   .content-with-rail,
   .assistant-grid,
-  .reports-layout {
+  .reports-layout,
+  .reports-reference-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1648,12 +1879,27 @@ button:disabled {
   }
 
   .metric-grid,
-  .asset-grid {
+  .asset-grid,
+  .report-metric-grid,
+  .report-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .provider-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .process-steps.publishing-flow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .reference-package-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .package-next {
+    padding-left: 0;
+    border-left: 0;
   }
 }
 
@@ -1746,10 +1992,12 @@ button:disabled {
   .three-column,
   .fact-grid,
   .settings-grid,
+  .report-metric-grid,
   .report-card-grid,
   .summary-band,
   .project-strip,
-  .two-panel-wide {
+  .two-panel-wide,
+  .process-steps.publishing-flow {
     grid-template-columns: 1fr;
   }
 

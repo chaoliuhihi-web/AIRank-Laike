@@ -7,7 +7,9 @@ import {
   BadgeCheck,
   BarChart3,
   Bell,
+  BookOpen,
   Bot,
+  Box,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -16,23 +18,32 @@ import {
   ChevronRight,
   CircleUserRound,
   ClipboardList,
+  CloudUpload,
+  Code2,
+  Crown,
+  Download,
+  Eye,
   ExternalLink,
   FileChartColumn,
+  FileText,
   Globe2,
   HelpCircle,
   Home,
   Info,
   Link2,
   ListChecks,
-  LockKeyhole,
+  Lightbulb,
   LucideIcon,
   Map,
+  MessageCircle,
   NotebookTabs,
   PackageCheck,
   Phone,
   PieChart,
+  Play,
   Rocket,
   RotateCw,
+  Scale,
   SearchCheck,
   Send,
   Settings,
@@ -40,9 +51,12 @@ import {
   ShieldCheck,
   Sparkles,
   SquarePen,
+  Share2,
   Target,
+  ThumbsUp,
   UserRound,
   UsersRound,
+  Workflow,
   Zap,
 } from "lucide-react";
 import { consoleRoutes } from "./console/routes/console-routes";
@@ -53,7 +67,6 @@ import {
   fetchConsoleOverview,
   fallbackReportList,
   fetchReports,
-  clearAuthSession,
   getStoredAuthSession,
   loginToAirank,
   recordDownloadReceipt,
@@ -97,7 +110,6 @@ const iconMap: Record<string, LucideIcon> = {
   Home,
   Link2,
   ListChecks,
-  LockKeyhole,
   Map,
   NotebookTabs,
   PackageCheck,
@@ -121,6 +133,29 @@ const iconMap: Record<string, LucideIcon> = {
 const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
 const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
 const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
+const assetCardIcons: LucideIcon[] = [FileText, Box, UsersRound, MessageCircle, Scale, Lightbulb, Code2, Workflow];
+const reportCardIcons: LucideIcon[] = [CalendarDays, NotebookTabs, Crown, FileChartColumn];
+const publishingSteps: [string, string][] = [
+  ["发布到官网", "将 AI 收录包发布到官网"],
+  ["生成 AI 获客页", "生成可被引用的获客页"],
+  ["提交 sitemap", "提交 sitemap.xml"],
+  ["提交 Google", "Google Search Console"],
+  ["提交 Bing", "Bing Webmaster Tools"],
+  ["提交百度", "百度搜索资源平台"],
+  ["加入复测队列", "定期复测与效果追踪"],
+];
+const reportMetrics = [
+  { label: "AI 提及率", value: "56.8%", delta: "↑ 12.6%", previous: "较上月 44.2%", icon: BarChart3, tone: "primary" as Tone },
+  { label: "推荐率", value: "38.7%", delta: "↑ 9.8%", previous: "较上月 28.9%", icon: ThumbsUp, tone: "primary" as Tone },
+  { label: "首推率", value: "21.4%", delta: "↑ 6.3%", previous: "较上月 15.1%", icon: Crown, tone: "primary" as Tone },
+  { label: "线索增长", value: "+68.3%", delta: "↑ 23.6%", previous: "较上月 +44.7%", icon: UsersRound, tone: "success" as Tone },
+];
+const reportDescriptions: Record<string, string> = {
+  周报: "查看本周 AI 表现与来客线索变化",
+  月报: "查看本月整体表现与趋势分析",
+  老板报告: "一句话结论 + 关键数据摘要",
+  竞品压制报告: "对比竞品表现与压制机会点",
+};
 
 type FeedbackTone = "success" | "warning" | "danger" | "primary";
 type ToastState = {
@@ -218,12 +253,6 @@ function App() {
     navigate("/console");
   };
 
-  const handleLogout = () => {
-    clearAuthSession();
-    setAuthSession(null);
-    navigate("/login");
-  };
-
   const notify = (nextToast: Omit<ToastState, "id">) => {
     const id = Date.now();
     setToast({ ...nextToast, id });
@@ -248,7 +277,7 @@ function App() {
         >
           <main className="airank-console">
             <div className="airank-console-shell">
-              <Sidebar activePath={path} onNavigate={navigate} session={authSession} onLogout={handleLogout} />
+              <Sidebar activePath={path} onNavigate={navigate} />
               <section className="airank-console-main">
                 <ConsolePage path={path} onNavigate={navigate} />
               </section>
@@ -399,17 +428,12 @@ function normalizePath(path: string) {
 function Sidebar({
   activePath,
   onNavigate,
-  session,
-  onLogout,
 }: {
   activePath: string;
   onNavigate: (path: string) => void;
-  session: AuthSession;
-  onLogout: () => void;
 }) {
   const { project } = useConsoleOverview();
   const { openPanel } = useActionFeedback();
-  const displayName = session.user.nickname || session.user.username || project.name;
 
   return (
     <aside className="airank-console-sidebar">
@@ -457,17 +481,13 @@ function Sidebar({
           <HelpCircle size={22} />
           <span>帮助中心</span>
         </button>
-        <button className="help-link" type="button" onClick={onLogout}>
-          <LockKeyhole size={22} />
-          <span>退出登录</span>
-        </button>
         <div className="tenant-switcher">
           <div className="tenant-avatar">
             <CircleUserRound size={23} />
           </div>
           <div>
-            <div className="tenant-name">{displayName}</div>
-            <div className="tenant-plan">{session.devOnly ? "dev_only" : session.tenantId}</div>
+            <div className="tenant-name">{project.name}</div>
+            <div className="tenant-plan">企业版</div>
           </div>
           <ChevronDown size={18} />
         </div>
@@ -510,6 +530,33 @@ function PageHeader({
   );
 }
 
+function HeaderActions({
+  primary,
+  icon: Icon,
+  onPrimary,
+}: {
+  primary: string;
+  icon: LucideIcon;
+  onPrimary?: () => void;
+}) {
+  return (
+    <div className="header-actions">
+      <button className="date-pill" type="button">
+        <BookOpen size={17} />
+        使用指南
+      </button>
+      <button className="date-pill" type="button">
+        <Share2 size={17} />
+        分享
+      </button>
+      <button className="airank-console-primary-button" type="button" onClick={onPrimary}>
+        <Icon size={18} />
+        {primary}
+      </button>
+    </div>
+  );
+}
+
 function ProjectStrip() {
   const { project } = useConsoleOverview();
 
@@ -540,7 +587,7 @@ function StripItem({ icon: Icon, label, value }: { icon: LucideIcon; label: stri
 function MetricCard({ item }: { item: ConsoleMetricCard }) {
   const Icon = iconMap[item.icon] ?? Activity;
   return (
-    <article className="airank-console-card metric-card">
+    <article className="airank-console-card metric-card" data-testid="stat-card">
       <IconTile tone={item.tone}>
         <Icon size={30} />
       </IconTile>
@@ -733,7 +780,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       />
       <section className="provider-grid">
         {providerResults.map((item) => (
-          <article className="airank-console-card provider-card" key={item.name}>
+          <article className="airank-console-card provider-card" data-testid="provider-card" key={item.name}>
             <div className="provider-avatar">{item.name.slice(0, 1)}</div>
             <h3>{item.name}</h3>
             <div className="provider-metrics">
@@ -871,9 +918,13 @@ function QuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       <PageHeader
         title="买家问题地图"
         subtitle="真正带来客户的，不是泛流量关键词，而是高意向买家问题。"
-        action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/gaps")}>生成推荐缺口分析</button>}
+        action={<HeaderActions primary="生成推荐缺口分析" icon={Target} onPrimary={() => onNavigate("/console/gaps")} />}
       />
-      <ProjectStrip />
+      <section className="opportunity-intro-card">
+        <h2>AI 来客机会地图 <Badge tone="primary">问题库升级为来客机会地图</Badge></h2>
+        <p>基于 AI 大模型与真实客户咨询数据，挖掘客户在认知、选型、对比、成交全过程中的高意向问题，发现您的推荐缺口与内容机会。</p>
+        <ProjectStrip />
+      </section>
       <QuestionTable showTabs onNavigate={onNavigate} />
     </>
   );
@@ -884,8 +935,8 @@ function GapQuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }
     <>
       <PageHeader
         title="推荐缺口分析"
-        subtitle="按问题维度识别 AI 为什么推荐竞品，以及需要补齐哪些资产。"
-        action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/assets")}>生成 AI 收录包</button>}
+        subtitle="AI 为什么推荐竞品，不推荐你？系统已反推出关键缺口。"
+        action={<HeaderActions primary="生成 AI 收录包" icon={PackageCheck} onPrimary={() => onNavigate("/console/assets")} />}
       />
       <ProjectStrip />
       <QuestionTable showTabs={false} onNavigate={onNavigate} />
@@ -1048,25 +1099,26 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     <>
       <PageHeader
         title="AI 收录包"
-        subtitle="把可信事实卡转换成 AI 可理解、可引用、可抓取的内容资产。"
-        action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/publishing")}>发布并复测</button>}
+        subtitle="这些不是普通文章，而是 AI 能抓取、理解、引用的企业证据链。"
+        action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
-      <ProjectStrip />
-      <section className="asset-grid">
+      <section className="asset-grid reference-asset-grid">
         {bundle.assets.map((item, index) => (
-          <article className="airank-console-card asset-card" key={item.title}>
+          <article className="airank-console-card asset-card reference-asset-card" data-testid="asset-card" key={item.title}>
             <div className="asset-card-head">
               <IconTile tone={index % 3 === 0 ? "primary" : index % 3 === 1 ? "success" : "warning"}>
-                {index > 5 ? <Link2 size={23} /> : <FileChartColumn size={23} />}
+                {(() => {
+                  const AssetIcon = assetCardIcons[index] ?? FileText;
+                  return <AssetIcon size={25} />;
+                })()}
               </IconTile>
               <Badge tone={item.status.includes("缺") ? "danger" : item.status.includes("待") ? "warning" : "success"}>{item.status}</Badge>
             </div>
             <h3>{item.title}</h3>
             <p>{item.desc}</p>
-            <ProgressBar value={item.progress} />
             <div className="asset-footer">
-              <span>完整度 {item.progress}%</span>
               <button
+                className="outline-button"
                 type="button"
                 onClick={() =>
                   openPanel({
@@ -1078,21 +1130,33 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
                   })
                 }
               >
-                编辑<ChevronRight size={16} />
+                <Eye size={16} />
+                预览
               </button>
             </div>
           </article>
         ))}
       </section>
-      <div className="package-footer">
+      <div className="package-footer reference-package-footer">
+        <DonutChart values={[bundle.completeness, 100 - bundle.completeness]} colors={["#443efd", "#edf0f7"]} center={`${bundle.completeness}%`} label="" />
         <div>
-          <strong>AI 收录包完整度</strong>
+          <strong>收录包完整度</strong>
           <span>{bundle.recommendation}</span>
+          <div className="package-check-grid">
+            <CheckLine text="内容完整性" value="" checked />
+            <CheckLine text="结构化程度" value="" checked />
+            <CheckLine text="证据链强度" value="" checked />
+            <CheckLine text="AI 友好度" value="" checked />
+          </div>
         </div>
-        <ProgressBar value={bundle.completeness} />
-        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/publishing")}>
-          去发布
-        </button>
+        <div className="package-next">
+          <strong>下一步：发布提交</strong>
+          <span>将收录包提交至目标平台，提升 AI 引用与收录概率。</span>
+          <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/publishing")}>
+            <Send size={18} />
+            发布提交
+          </button>
+        </div>
       </div>
     </>
   );
@@ -1103,33 +1167,33 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
 
   return (
     <>
-      <PageHeader title="发布提交中心" subtitle="把 AI 收录包发布到官网、AI 获客页和搜索入口，并加入复测队列。" action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/reports")}>生成复测报告</button>} />
+      <PageHeader
+        title="发布提交中心"
+        subtitle="把 AI 收录包发布到官网与可抓取入口，并持续跟踪抓取与索引状态。"
+        action={<HeaderActions primary="开始复测" icon={Play} onPrimary={() => onNavigate("/console/reports")} />}
+      />
       <ProcessSteps
-        steps={[
-          ["发布内容", "生成页面与结构化资产"],
-          ["提交抓取", "提交 Google / Bing / Baidu"],
-          ["索引观察", "追踪收录与抓取状态"],
-          ["加入复测", "复测 AI 推荐效果"],
-        ]}
+        className="publishing-flow"
+        steps={publishingSteps}
       />
       <section className="metric-grid publishing-stats">
-        <MiniStat label="已发布页面" value="18" icon={Rocket} />
-        <MiniStat label="已抓取页面" value="14" icon={SearchCheck} />
-        <MiniStat label="已收录页面" value="9" icon={BadgeCheck} />
-        <MiniStat label="待复测任务" value="6" icon={RotateCw} />
+        <MiniStat label="已发布页面" value="128" icon={CloudUpload} />
+        <MiniStat label="已抓取页面" value="96" icon={SearchCheck} />
+        <MiniStat label="已索引页面" value="82" icon={BadgeCheck} />
+        <MiniStat label="待复测页面" value="46" icon={RotateCw} />
       </section>
       <Panel title="页面发布与抓取状态">
         <table className="question-table publish-table">
           <thead>
-            <tr><th>页面</th><th>发布渠道</th><th>抓取状态</th><th>索引状态</th><th>最近提交</th><th>操作</th></tr>
+            <tr><th>页面名称</th><th>发布渠道</th><th>抓取状态</th><th>索引状态</th><th>最近提交时间</th><th>操作</th></tr>
           </thead>
           <tbody>
             {publishingRows.map((row) => (
               <tr key={row.page}>
                 <td><strong>{row.page}</strong></td>
                 <td>{row.channel}</td>
-                <td><Badge tone={row.crawl === "失败" ? "danger" : row.crawl === "排队中" ? "warning" : "success"}>{row.crawl}</Badge></td>
-                <td><Badge tone={row.index === "已收录" ? "success" : row.index === "待收录" ? "warning" : "muted"}>{row.index}</Badge></td>
+                <td><Badge tone={row.crawl.includes("失败") || row.crawl.includes("未") ? "danger" : row.crawl.includes("提交") ? "primary" : "success"}>{row.crawl}</Badge></td>
+                <td><Badge tone={row.index === "已索引" ? "success" : row.index === "待索引" ? "warning" : "muted"}>{row.index}</Badge></td>
                 <td>{row.time}</td>
                 <td>
                   <button
@@ -1182,9 +1246,13 @@ function AssistantPage() {
 
   return (
     <>
-      <PageHeader title="AI 来客助手" subtitle="基于已确认可信事实卡、AI 收录包和买家问题地图承接访客咨询。" action={<Badge tone="primary">P2 能力预览</Badge>} />
+      <PageHeader
+        title="AI 销售助手"
+        subtitle="客户进来后，AI 先替你接待、答疑、推荐案例并引导留资。"
+        action={<HeaderActions primary="发布到官网" icon={Rocket} />}
+      />
       <section className="assistant-grid">
-        <Panel title="对话预览">
+        <Panel title="实时会话预览" action={<Badge tone="success">在线</Badge>}>
           <div className="chat-window">
             {messages.map((msg, index) => (
               <div className={`chat-bubble ${msg.role}`} key={`${msg.role}-${index}`}>{msg.text}</div>
@@ -1203,10 +1271,15 @@ function AssistantPage() {
           </form>
         </Panel>
         <div className="rail-stack">
-          <ConfigPanel title="知识来源" items={["已确认可信事实卡", "AI 收录包内容", "买家问题地图", "发布后的官网页面"]} />
+          <ConfigPanel title="知识来源" items={["企业事实库", "产品与服务资料", "客户案例库", "常见问题库"]} />
           <ConfigPanel title="回复风格" items={["专业简洁", "先回答再引导留资", "引用已确认事实", "避免承诺未确认信息"]} />
           <ConfigPanel title="线索规则" items={["询价意向", "案例需求", "集成需求", "人工转接"]} />
         </div>
+      </section>
+      <section className="metric-grid assistant-stats">
+        <MiniStat label="今日会话数" value="326" icon={Activity} />
+        <MiniStat label="留资率" value="18.7%" icon={UsersRound} />
+        <MiniStat label="满意度" value="4.8" icon={Sparkles} />
       </section>
     </>
   );
@@ -1255,35 +1328,51 @@ function ReportsPage() {
     <>
       <PageHeader
         title="报表中心"
-        subtitle="面向老板、市场负责人和交付团队的 AI 来客增长报告。"
-        action={<button className="airank-console-primary-button" type="button" onClick={generateReport}>生成报告</button>}
+        subtitle="复测 AI 回答变化，向老板清楚汇报本月 AI 收录与来客增长情况。"
+        action={<HeaderActions primary="生成老板报告" icon={FileChartColumn} onPrimary={generateReport} />}
       />
-      <section className="metric-grid">
-        <MiniStat label="AI 提及率" value="52%" icon={Activity} />
-        <MiniStat label="推荐率" value="35%" icon={Target} />
-        <MiniStat label="首推率" value="19%" icon={BadgeCheck} />
-        <MiniStat label="线索增长" value="+36%" icon={UsersRound} />
+      <section className="report-metric-grid">
+        {reportMetrics.map((item) => (
+          <ReportMetricCard key={item.label} item={item} />
+        ))}
       </section>
-      <section className="reports-layout">
-        <Panel title="推荐率趋势">
+      <section className="reports-reference-layout">
+        <Panel
+          title="核心指标 30 天趋势"
+          action={<button className="date-pill compact-pill" type="button">近 30 天<ChevronDown size={15} /></button>}
+        >
           <TrendChart large />
         </Panel>
-        <Panel title="关键结论">
-          <ul className="conclusion-list">
-            <li>本月 AI 推荐率提升 8%，主要来自 FAQ 页和服务介绍页发布。</li>
-            <li>竞品仍在价格成交类问题上有明显优势。</li>
-            <li>建议优先生成客户案例页和竞品对比页。</li>
-          </ul>
-        </Panel>
+        <div className="rail-stack">
+          <Panel title="本月关键结论">
+            <ul className="conclusion-list reference-conclusions">
+              <li><CheckCircle2 size={22} />AI 提及率提升显著<span>本月 AI 提及率达 56.8%，环比提升 12.6%。</span></li>
+              <li><CheckCircle2 size={22} />推荐质量持续优化<span>推荐率提升至 38.7%，多项核心问题进入推荐结果。</span></li>
+              <li><CheckCircle2 size={22} />首推占比突破新高<span>首推率达 21.4%，在关键搜索场景中占据更优位置。</span></li>
+              <li><CheckCircle2 size={22} />线索增长强劲<span>AI 渠道带来的高质量线索持续放大。</span></li>
+            </ul>
+          </Panel>
+          <Panel title="建议动作">
+            <div className="report-action-list">
+              {["加强在高转化问题的首推占位", "持续优化产品与解决方案内容", "监控竞品动态，防止被反超"].map((item) => (
+                <button className="table-action" type="button" key={item}>{item}<ChevronRight size={16} /></button>
+              ))}
+            </div>
+          </Panel>
+        </div>
       </section>
       <section className="report-card-grid">
-        {reports.reports.map((item) => (
-          <article className="airank-console-card report-card" key={item.title}>
-            <FileChartColumn size={28} />
+        {reports.reports.map((item, index) => {
+          const ReportIcon = reportCardIcons[index] ?? FileChartColumn;
+          return (
+          <article className="airank-console-card report-card" data-testid="report-card" key={item.title}>
+            <IconTile tone={index === 1 ? "success" : index === 2 ? "warning" : "primary"}>
+              <ReportIcon size={23} />
+            </IconTile>
             <div>
               <h3>{item.title}</h3>
               <p>{item.desc}</p>
-              <span>{item.date}</span>
+              <span>{reportDescriptions[item.title] ?? item.date}</span>
             </div>
             <button
               className="outline-button"
@@ -1291,10 +1380,18 @@ function ReportsPage() {
               disabled={downloadingReportId === (item.report_id ?? item.title)}
               onClick={() => void downloadReport(item)}
             >
-              {downloadingReportId === (item.report_id ?? item.title) ? "记录中" : item.status}
+              {downloadingReportId === (item.report_id ?? item.title) ? (
+                "记录中"
+              ) : (
+                <>
+                  {item.status.includes("下载") ? <Download size={15} /> : <FileChartColumn size={15} />}
+                  {item.status}
+                </>
+              )}
             </button>
           </article>
-        ))}
+          );
+        })}
       </section>
     </>
   );
@@ -1315,25 +1412,31 @@ function SettingsPage() {
     <>
       <PageHeader
         title="设置中心"
-        subtitle={savedAt ? `管理品牌项目、官网域名、AI 平台接入、通知和成员权限。最近保存：${savedAt}` : "管理品牌项目、官网域名、AI 平台接入、通知和成员权限。"}
-        action={<button className="airank-console-primary-button" type="button" onClick={saveSettings}>保存设置</button>}
+        subtitle={savedAt ? `统一管理项目基础信息、品牌资料、模型平台、通知与成员权限。最近保存：${savedAt}` : "统一管理项目基础信息、品牌资料、模型平台、通知与成员权限。"}
+        action={<HeaderActions primary="保存设置" icon={Settings} onPrimary={saveSettings} />}
       />
       <section className="settings-grid">
-        <SettingsSection title="项目资料" icon={Building2} rows={[["企业名称", project.name], ["官网", project.website], ["行业", project.industry], ["目标客户", project.audience]]} />
-        <SettingsSection title="AI 平台接入" icon={Bot} rows={[["ChatGPT", "可用"], ["DeepSeek", "可用"], ["Kimi", "部分可用"], ["百度AI搜索", "待配置"]]} />
-        <SettingsSection title="通知设置" icon={Bell} rows={[["扫描完成", "站内 + 邮件"], ["发布失败", "立即提醒"], ["复测报告", "每周一 09:00"], ["线索提醒", "实时"]]} />
-        <SettingsSection title="成员权限" icon={LockKeyhole} rows={[["管理员", "2 人"], ["运营", "4 人"], ["审核员", "1 人"], ["权限来源", "yudao 绑定"]]} />
+        <SettingsSection title="项目设置" icon={Settings} rows={[["项目名称", "智界问道 | AIRank 来客"], ["项目 ID", "airank-laike-2024"], ["行业", project.industry], ["项目时区", "(GMT+08:00) 北京、上海、香港"], ["创建时间", "2024-05-20 10:30"]]} />
+        <SettingsSection title="品牌信息" icon={BadgeCheck} rows={[["品牌名称", "智界问道"], ["品牌标语", "用 AI 洞察客户，让增长更确定"], ["品牌简介", "智界问道是领先的 AI 营销洞察与增长决策平台"], ["联系电话", "400-888-1234"], ["联系邮箱", "service@zhijiewendao.com"]]} />
+        <SettingsSection title="官网与域名" icon={Globe2} rows={[["官网地址", "https://www.zhijiewendao.com"], ["网站状态", "已验证"], ["备案信息", "京ICP备2024012345号-1"], ["域名管理", "zhijiewendao.com（主域名）"]]} />
+        <SettingsSection title="AI 平台接入" icon={Bot} rows={[["已接入平台", "DeepSeek、豆包、Kimi、通义、ChatGPT"], ["接入状态", "5 / 5 已接入"], ["更新时间", "2024-05-20 10:30"], ["接入说明", "已完成企业身份验证与 API 授权"]]} />
+        <SettingsSection title="通知设置" icon={Bell} rows={[["系统通知", "已开启"], ["分析报告通知", "已开启"], ["推荐缺口提醒", "已开启"], ["邮件接收", "service@zhijiewendao.com"]]} />
+        <SettingsSection title="成员与权限" icon={UsersRound} actionLabel="管理成员" rows={[["团队成员", "12 人"], ["角色管理", "5 个角色"], ["我的角色", "超级管理员"], ["权限范围", "全部数据与功能"], ["安全设置", "登录保护、操作日志已启用"]]} />
       </section>
     </>
   );
 }
 
-function SettingsSection({ title, icon: Icon, rows }: { title: string; icon: LucideIcon; rows: [string, string][] }) {
+function SettingsSection({ title, icon: Icon, rows, actionLabel = "编辑" }: { title: string; icon: LucideIcon; rows: [string, string][]; actionLabel?: string }) {
   return (
     <article className="airank-console-card settings-section">
       <div className="settings-head">
         <IconTile><Icon size={22} /></IconTile>
-        <h2>{title}</h2>
+        <div>
+          <h2>{title}</h2>
+          <span>{title === "项目设置" ? "管理项目的基本信息与业务属性" : title === "成员与权限" ? "管理团队成员与角色权限" : "管理" + title + "配置"}</span>
+        </div>
+        <button className="settings-edit" type="button">{actionLabel}</button>
       </div>
       {rows.map(([label, value]) => (
         <div className="settings-row" key={label}>
@@ -1345,11 +1448,11 @@ function SettingsSection({ title, icon: Icon, rows }: { title: string; icon: Luc
   );
 }
 
-function ProcessSteps({ steps }: { steps: [string, string][] }) {
+function ProcessSteps({ steps, className = "" }: { steps: [string, string][]; className?: string }) {
   return (
-    <section className="process-steps">
+    <section className={`process-steps ${className}`}>
       {steps.map(([title, desc], index) => (
-        <article className="step-card" key={title}>
+        <article className="step-card" data-testid="checkup-stage" key={title}>
           <IconTile tone={index === 2 ? "success" : index === 3 ? "warning" : "primary"}>
             <span>{index + 1}</span>
           </IconTile>
@@ -1396,6 +1499,34 @@ function MiniStat({ label, value, icon: Icon }: { label: string; value: string; 
         <span>{label}</span>
         <strong>{value}</strong>
       </div>
+    </article>
+  );
+}
+
+function ReportMetricCard({
+  item,
+}: {
+  item: {
+    label: string;
+    value: string;
+    delta: string;
+    previous: string;
+    icon: LucideIcon;
+    tone: Tone;
+  };
+}) {
+  const Icon = item.icon;
+  return (
+    <article className="airank-console-card report-metric-card">
+      <div>
+        <span>{item.label}<Info size={14} /></span>
+        <strong>{item.value}</strong>
+        <em>{item.delta}</em>
+        <small>{item.previous}</small>
+      </div>
+      <IconTile tone={item.tone}>
+        <Icon size={24} />
+      </IconTile>
     </article>
   );
 }
