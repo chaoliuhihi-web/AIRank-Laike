@@ -25,9 +25,11 @@ done
 | ID | Owner | Status | Depends | File Scope | Acceptance | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
 | M1-WIN-001 health-version-envelope | CodexWin | done | `cf20229` API baseline | `apps/api`, `packages/contracts`, `tests/contracts` | `/api/v1/health` 和 `/api/v1/version` 返回统一 envelope、`trace_id`、版本信息；`console/overview` 不回归 | `python3 -m pytest tests/contracts` |
+| M1-WIN-001B error-trace-foundation | CodexWin | todo | `M1-WIN-001` | `apps/api`, `packages/contracts`, `tests/contracts` | 错误响应使用统一 envelope、registry code 和 trace_id；公共 API 不回归 | `python3 -m pytest tests/contracts` |
+| M1-WIN-001C project-question-contract-skeleton | CodexWin | todo | `M1-WIN-001B` | `packages/contracts`, `tests/contracts`, `docs/handoff` | project、competitor、buyer question 的 request/response JSON Schema 和 contract tests 先冻结，不实现 DB 持久化 | `python3 -m pytest tests/contracts` |
 | M1-IMAC-001 alembic-initial-schema | CodexiMac | todo | `ops/deployment/mysql-bootstrap.sql` | `apps/api/alembic`, `ops/deployment`, `docs/handoff` | `alembic upgrade head` 可从空库建 AIRank schema，字段与 bootstrap SQL 关键表一致 | `alembic upgrade head` 或写明本地 MySQL 不可用原因 |
 | M1-MACPRO-001 stage-review-current-head | CodexMacPro | todo | `b6c5458` | `docs/handoff`, `.github/workflows`, `tests` | 审核 `cf20229`、`a4de530`、`b6c5458` 是否偏离主线，并在 `review-ledger` 写 PASS/BLOCKED/PASS_WITH_RISK | `git diff --check`; `python3 -m pytest tests/contracts`; `cd apps/web && npm run build` |
-| M1-WIN-002 project-competitor-question-crud-contract | CodexWin | todo | `M1-WIN-001`, `M1-IMAC-001` | `apps/api`, `packages/contracts`, `tests/contracts` | project、competitor、buyer question CRUD 带 tenant 过滤；错误响应有 registry code 和 trace_id | `python3 -m pytest tests/contracts` |
+| M1-WIN-002 project-competitor-question-crud-contract | CodexWin | todo | `M1-WIN-001C`, `M1-IMAC-001` | `apps/api`, `packages/contracts`, `tests/contracts` | project、competitor、buyer question CRUD 带 tenant 过滤；错误响应有 registry code 和 trace_id | `python3 -m pytest tests/contracts` |
 | M1-IMAC-002 schema-index-tenant-review | CodexiMac | todo | `M1-IMAC-001` | `ops/deployment`, `docs/architecture`, `docs/handoff` | 业务表 tenant/project 查询字段、索引、敏感字段和不跨库外键策略明确 | `git diff --check` |
 
 ## M2 扫描 + 评分闭环

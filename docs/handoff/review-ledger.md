@@ -245,3 +245,30 @@ Risks:
 Next owner:
 - CodexiMac should complete `M1-IMAC-001 alembic-initial-schema`.
 - After that, CodexWin can resume at `M1-WIN-002`.
+
+## 2026-05-17 - Codex
+
+Scope:
+- 分析 CodexWin 停止原因，并补充等待 Alembic 时仍可执行的 CodexWin packet。
+
+Changed:
+- `docs/handoff/execution-packets.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `git diff --check`
+- result: pass
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: Codex
+- notes: CodexWin 停止是因为 `M1-WIN-002` 正确等待 `M1-IMAC-001`；为减少空等，新增 `M1-WIN-001B error-trace-foundation` 和 `M1-WIN-001C project-question-contract-skeleton`，让 CodexWin 在不碰数据库持久化的情况下继续推进。
+
+Risks:
+- `M1-WIN-001C` 只能冻结 contracts，不能实现假 DB CRUD；真正持久化仍必须等 `M1-IMAC-001`。
+
+Next owner:
+- CodexWin 继续领取 `M1-WIN-001B`。
+- CodexiMac 继续领取 `M1-IMAC-001`。
