@@ -127,6 +127,70 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 
 暂不做全文索引。MVP 的事实检索先用 `kb-lite` 简单检索；后续接 Xinghe KB Service / Qdrant。
 
+## M1 tenant / project 索引审查
+
+本节是 `M1-IMAC-002` 的 schema/index review 结论。目标是让 CodexWin 后续 CRUD 和 CodexiMac worker 都有一致的查询边界，不通过 API 或 worker 绕过租户隔离。
+
+### 查询字段基线
+
+| 表 | tenant 字段 | project 字段 | 主要查询路径 | 当前索引结论 |
+| --- | --- | --- | --- | --- |
+| `airank_tenant_bindings` | `tenant_id` | 无 | 按 `tenant_id` / `yudao_tenant_id` 查绑定，按 `status` 巡检 | `uk_airank_tenant_bindings_tenant`、`uk_airank_tenant_bindings_yudao`、`idx_airank_tenant_bindings_status` 覆盖 |
+| `airank_user_bindings` | `tenant_id` | 无 | 按租户和 `yudao_user_id` 查用户缓存，按租户状态列表 | `uk_airank_user_bindings_yudao`、`idx_airank_user_bindings_tenant_status` 覆盖 |
+| `airank_projects` | `tenant_id` | `id` 即 project id | 租户项目列表、按品牌名查项目、软删除过滤 | `idx_airank_projects_tenant_status`、`idx_airank_projects_brand` 覆盖；API 必须额外过滤 `deleted_at IS NULL` |
+| `airank_project_members` | `tenant_id` | `project_id` | 项目成员列表、按 yudao 用户查项目角色 | `uk_airank_project_members_user`、`idx_airank_project_members_project` 覆盖 |
+| `airank_competitors` | `tenant_id` | `project_id` | 项目竞品列表，按 `priority` 排序 | `idx_airank_competitors_project` 覆盖；API 必须过滤 `deleted_at IS NULL` |
+| `airank_buyer_questions` | `tenant_id` | `project_id` | 问题列表、按类型/意图筛选、按优先级排序 | `idx_airank_questions_project_priority`、`idx_airank_questions_type`、`idx_airank_questions_intent` 覆盖 |
+| `airank_scan_runs` | `tenant_id` | `project_id` | 项目扫描批次列表、按状态筛选、租户级最近扫描 | `idx_airank_scan_runs_project_status`、`idx_airank_scan_runs_created` 覆盖 |
+| `airank_scan_tasks` | `tenant_id` | `project_id` | worker 领取任务、项目任务状态列表、单 run 去重 | `idx_airank_scan_tasks_worker`、`idx_airank_scan_tasks_project`、`uk_airank_scan_tasks_once` 覆盖 |
+| `airank_answer_snapshots` | `tenant_id` | `project_id` | 按 run/question 查回答，按品牌出现和排名统计 | `idx_airank_snapshots_run_question`、`idx_airank_snapshots_brand_rank` 覆盖 |
+| `airank_source_citations` | `tenant_id` | `project_id` | 按 snapshot 回溯引用，按 host 做来源统计 | `idx_airank_citations_snapshot`、`idx_airank_citations_host` 覆盖 |
+| `airank_fact_atoms` | `tenant_id` | `project_id` | 事实库列表、可信等级/公开等级筛选、事实类型筛选 | `idx_airank_fact_atoms_project_status`、`idx_airank_fact_atoms_trust`、`idx_airank_fact_atoms_type` 覆盖 |
+| `airank_fact_sources` | `tenant_id` | `project_id` | FactAtom 来源回溯 | `idx_airank_fact_sources_fact` 覆盖 |
+| `airank_content_gaps` | `tenant_id` | `project_id` | 项目缺口列表，按状态和严重度筛选 | `idx_airank_content_gaps_project_status` 覆盖 |
+| `airank_content_assets` | `tenant_id` | `project_id` | 内容资产列表，按状态/类型筛选 | `idx_airank_content_assets_project_status`、`idx_airank_content_assets_type` 覆盖 |
+| `airank_publish_packages` | `tenant_id` | `project_id` | 发布包状态、渠道列表、复测队列 | `idx_airank_publish_packages_status`、`idx_airank_publish_packages_channel`、`idx_airank_publish_packages_retest` 覆盖 |
+| `airank_retest_runs` | `tenant_id` | `project_id` | 复测批次列表、按状态查询 | `idx_airank_retest_runs_project_status` 覆盖 |
+| `airank_reports` | `tenant_id` | `project_id` | 报告列表、按类型和生成时间查询 | `idx_airank_reports_project_status`、`idx_airank_reports_type` 覆盖 |
+| `airank_object_refs` | `tenant_id` | `project_id` 可空 | 对象引用列表、按 `sha256` 去重 | `idx_airank_object_refs_project`、`idx_airank_object_refs_sha` 覆盖 |
+| `airank_async_jobs` | `tenant_id` | `project_id` 可空 | worker claim、heartbeat 回收、项目任务列表 | `idx_airank_async_jobs_claim`、`idx_airank_async_jobs_heartbeat`、`idx_airank_async_jobs_project` 覆盖 |
+| `airank_outbox_events` | `tenant_id` | `project_id` 可空 | outbox 发布、aggregate 回溯、trace 排查 | `idx_airank_outbox_events_publish`、`idx_airank_outbox_events_aggregate`、`idx_airank_outbox_events_trace` 覆盖 |
+| `airank_integration_capabilities` | 无 | 无 | 能力探测状态，非租户业务数据 | `uk_airank_capabilities`、`idx_airank_capabilities_status` 覆盖 |
+| `airank_audit_events` | `tenant_id` | `project_id` 可空 | 审计列表、实体审计、trace 排查 | `idx_airank_audit_events_project`、`idx_airank_audit_events_entity`、`idx_airank_audit_events_trace` 覆盖 |
+
+### CRUD 和 worker 查询约束
+
+- 所有 Product/API 列表、详情、更新、删除都必须从认证上下文拿 `tenant_id`，不能接受客户端传入的 `tenant_id` 作为授权依据。
+- 有 `project_id` 的表，API 查询必须同时带 `tenant_id` 和 `project_id`。只用 `id` 查询时，也必须补充 `tenant_id` 条件。
+- 软删除表的用户可见查询必须带 `deleted_at IS NULL`。历史审计、内部巡检或 backfill 可以读取软删除数据，但必须是独立代码路径。
+- worker claim 类查询可以按 `status/scheduled_at/heartbeat_at` 走全局队列索引，但领取后写入、完成和回查项目数据时必须带 `tenant_id`。
+- `airank_integration_capabilities` 是全局能力探测表，不保存客户业务内容；如果后续要做租户级能力覆盖，必须新增租户维度表或字段并重新评审索引。
+
+### 敏感字段和脱敏要求
+
+| 字段 / 字段组 | 风险 | M1 处理规则 |
+| --- | --- | --- |
+| `airank_user_bindings.mobile`, `email` | 个人联系方式 | API 默认不返回完整值；日志、错误和 audit payload 中必须脱敏 |
+| `model_route_snapshot` | 可能包含模型路由和 key 指纹 | 只允许保存 provider、model、model_id、key_id、脱敏 key 指纹；禁止保存 API Key 明文 |
+| `request_json`, `response_meta_json`, `payload_json`, `metadata_json` | 可能包含 prompt、客户字段、外部 trace | 写入前做字段 allowlist 或 redaction；日志只输出摘要 |
+| `answer_text`, `cited_text`, `source_excerpt`, `fact_text`, `body_md` | 可能包含客户事实、销售资料、竞品描述 | 报告和发布包必须通过 FactAtom/source/citation gate；不允许无来源结论进入公开资产 |
+| `object_uri` | 可能暴露对象存储路径 | 使用按租户隔离的路径前缀；API 返回下载 URL 时必须做授权校验 |
+| `audit_events.payload_json` | 可能包含操作上下文 | 默认不在普通页面展示敏感 payload；导出需要管理员权限 |
+
+### 外键边界
+
+- 当前 DDL 只允许 AIRank 自有表之间建立外键，例如 project、run、question、snapshot、FactAtom 关系。
+- 禁止对 yudao 数据库、XingheAI2026V2 数据库或其它外部系统建立跨库外键。
+- yudao 和 Xinghe 字段只保存字符串引用或 snapshot：`yudao_tenant_id`、`yudao_user_id`、`external_trace_id`、`object_ref_id`、`model_route_snapshot`。
+- 外部系统删除、改名或暂时不可用时，AIRank 业务表不能因为外部 FK 失败而无法读取历史报告、证据或审计记录。
+- 如果未来需要强一致同步，用 adapter/outbox/reconcile job 处理，不通过跨库 FK 处理。
+
+### M1 结论
+
+- Bootstrap SQL 和 Alembic 初始迁移的核心 tenant/project 查询索引可支撑 M1 CRUD、M2 worker claim、M3/M4 证据回溯的最小闭环。
+- M1 不新增 DDL；后续如出现慢查询，优先基于真实 query plan 新增 Alembic migration，不在业务代码里绕过租户过滤。
+- 当前真实 `alembic upgrade head` 仍受本机 MySQL 授权影响，状态见 `docs/handoff/status/codex-imac.md` 的 `M1-IMAC-001 review_env_blocked`。
+
 ## 与 yudao 的字段映射
 
 | AIRank 字段 | 来源 | 说明 |

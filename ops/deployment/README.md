@@ -25,3 +25,9 @@ set +a
 ```
 
 详细说明见 `docs/architecture/mysql-schema-plan.md`。
+
+## Schema review
+
+- M1 schema/index review is documented in `docs/architecture/mysql-schema-plan.md`.
+- Production schema truth is Alembic under `apps/api/alembic`; this bootstrap SQL remains a local initialization snapshot.
+- Deployment users and grants stay in `ops/deployment/mysql-bootstrap.sql`, while Alembic migrations create only AIRank application schema objects.
