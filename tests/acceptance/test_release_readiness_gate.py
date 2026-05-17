@@ -84,3 +84,15 @@ def test_working_tree_check_fails_when_untracked_files_exist(
 
     assert check.status == "BLOCKED"
     assert "?? local.tmp" in check.detail
+
+
+def test_command_env_can_isolate_database_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIRANK_DATABASE_URL", "mysql+pymysql://example")
+    monkeypatch.setenv("ALEMBIC_DATABASE_URL", "mysql+pymysql://example")
+    monkeypatch.setenv("DATABASE_URL", "mysql+pymysql://example")
+
+    env = release_readiness.command_env(remove_database_urls=True)
+
+    assert "AIRANK_DATABASE_URL" not in env
+    assert "ALEMBIC_DATABASE_URL" not in env
+    assert "DATABASE_URL" not in env

@@ -45,7 +45,7 @@ python3 scripts/agent_control.py gate --write
 真实 beta 上线前运行：
 
 ```bash
-python3 scripts/release_readiness.py
+python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_URL"
 ```
 
-该命令会执行 contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration 失败，脚本会返回非零，不能声明 release ready。
+该命令会执行 contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。普通自动测试会隔离 `AIRANK_DATABASE_URL` 等数据库环境变量，真实 migration 只使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration 失败，脚本会返回非零，不能声明 release ready。

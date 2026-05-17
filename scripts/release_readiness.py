@@ -31,14 +31,38 @@ class Check:
         return self.status == "PASS"
 
 
-def run_command(command: str, *, cwd: Path = ROOT, env: Mapping[str, str] | None = None) -> tuple[int, str]:
+DATABASE_ENV_KEYS = ("AIRANK_DATABASE_URL", "ALEMBIC_DATABASE_URL", "DATABASE_URL")
+
+
+def command_env(
+    overrides: Mapping[str, str | None] | None = None,
+    *,
+    remove_database_urls: bool = False,
+) -> dict[str, str]:
     merged_env = os.environ.copy()
-    if env:
-        merged_env.update(env)
+    if remove_database_urls:
+        for key in DATABASE_ENV_KEYS:
+            merged_env.pop(key, None)
+    if overrides:
+        for key, value in overrides.items():
+            if value is None:
+                merged_env.pop(key, None)
+            else:
+                merged_env[key] = value
+    return merged_env
+
+
+def run_command(
+    command: str,
+    *,
+    cwd: Path = ROOT,
+    env: Mapping[str, str | None] | None = None,
+    remove_database_urls: bool = False,
+) -> tuple[int, str]:
     proc = subprocess.run(
         command,
         cwd=cwd,
-        env=merged_env,
+        env=command_env(env, remove_database_urls=remove_database_urls),
         shell=True,
         text=True,
         capture_output=True,
@@ -48,8 +72,15 @@ def run_command(command: str, *, cwd: Path = ROOT, env: Mapping[str, str] | None
     return proc.returncode, output
 
 
-def command_check(name: str, command: str, *, cwd: Path = ROOT, env: Mapping[str, str] | None = None) -> Check:
-    code, output = run_command(command, cwd=cwd, env=env)
+def command_check(
+    name: str,
+    command: str,
+    *,
+    cwd: Path = ROOT,
+    env: Mapping[str, str | None] | None = None,
+    remove_database_urls: bool = False,
+) -> Check:
+    code, output = run_command(command, cwd=cwd, env=env, remove_database_urls=remove_database_urls)
     return Check(name, "PASS" if code == 0 else "BLOCKED", command, output or "<empty>")
 
 
@@ -158,25 +189,46 @@ def capability_check(*, require_optional_capabilities: bool) -> Check:
     )
 
 
-def release_checks(*, require_optional_capabilities: bool) -> list[Check]:
+def release_database_url(explicit_database_url: str | None = None) -> str | None:
+    return (
+        explicit_database_url
+        or os.getenv("AIRANK_RELEASE_DATABASE_URL")
+        or os.getenv("AIRANK_DATABASE_URL")
+        or os.getenv("ALEMBIC_DATABASE_URL")
+        or os.getenv("DATABASE_URL")
+    )
+
+
+def release_checks(
+    *,
+    require_optional_capabilities: bool,
+    database_url: str | None = None,
+) -> list[Check]:
+    db_url = release_database_url(database_url)
+    real_mysql_env = {"AIRANK_DATABASE_URL": db_url} if db_url else None
     checks = [
         working_tree_check(),
         remote_ref_check("origin"),
         remote_ref_check("gitee"),
         command_check("diff check", "git diff --check"),
         tracked_runtime_artifact_check(),
-        command_check("contract tests", "python3 -m pytest tests/contracts -q"),
-        command_check("acceptance tests", "python3 -m pytest tests/acceptance -q"),
-        command_check("worker tests", "cd apps/worker && python3 -m pytest -q"),
-        command_check("score tests", "cd packages/score && python3 -m pytest -q"),
-        command_check("evidence tests", "cd packages/evidence && python3 -m pytest -q"),
-        command_check("xinghe adapter tests", "cd packages/xinghe-adapter && python3 -m pytest -q"),
+        command_check("contract tests", "python3 -m pytest tests/contracts -q", remove_database_urls=True),
+        command_check("acceptance tests", "python3 -m pytest tests/acceptance -q", remove_database_urls=True),
+        command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),
+        command_check("score tests", "cd packages/score && python3 -m pytest -q", remove_database_urls=True),
+        command_check("evidence tests", "cd packages/evidence && python3 -m pytest -q", remove_database_urls=True),
+        command_check(
+            "xinghe adapter tests",
+            "cd packages/xinghe-adapter && python3 -m pytest -q",
+            remove_database_urls=True,
+        ),
         command_check("web build", "cd apps/web && npm run build"),
         command_check(
             "alembic offline sql",
             "cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql",
+            env=real_mysql_env,
         ),
-        command_check("alembic real mysql", "cd apps/api && python3 -m alembic upgrade head"),
+        command_check("alembic real mysql", "cd apps/api && python3 -m alembic upgrade head", env=real_mysql_env),
         capability_check(require_optional_capabilities=require_optional_capabilities),
     ]
     return checks
@@ -231,12 +283,22 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Require optional Xinghe/Hermes capabilities to be ready instead of MVP-only warnings.",
     )
+    parser.add_argument(
+        "--database-url",
+        help=(
+            "Database URL for the real Alembic migration gate. Defaults to "
+            "AIRANK_RELEASE_DATABASE_URL, then AIRANK_DATABASE_URL/ALEMBIC_DATABASE_URL/DATABASE_URL."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    checks = release_checks(require_optional_capabilities=args.require_optional_capabilities)
+    checks = release_checks(
+        require_optional_capabilities=args.require_optional_capabilities,
+        database_url=args.database_url,
+    )
     report = render_markdown(checks)
     if args.report:
         report_path = args.report if args.report.is_absolute() else ROOT / args.report
