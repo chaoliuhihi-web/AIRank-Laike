@@ -187,6 +187,7 @@ function App() {
       return;
     }
 
+    setOverviewStatus("loading");
     const controller = new AbortController();
     fetchConsoleOverview(controller.signal)
       .then((nextOverview) => {
@@ -212,6 +213,7 @@ function App() {
 
   const handleLogin = (nextSession: AuthSession) => {
     storeAuthSession(nextSession);
+    setOverviewStatus("loading");
     setAuthSession(nextSession);
     navigate("/console");
   };

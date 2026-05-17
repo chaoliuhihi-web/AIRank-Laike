@@ -37,7 +37,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260517_0001"
+EXPECTED_ALEMBIC_HEAD = "20260517_0002"
 
 
 def require_real_flag(flag: str) -> None:
@@ -100,20 +100,29 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
         ).scalar_one()
         assert table_count == 22
 
-        for table_name in ("airank_projects", "airank_competitors"):
-            website_length = conn.execute(
+        url_columns = (
+            ("airank_projects", "website_url"),
+            ("airank_competitors", "website_url"),
+            ("airank_source_citations", "url"),
+            ("airank_fact_sources", "source_url"),
+            ("airank_content_assets", "target_url"),
+            ("airank_publish_packages", "published_url"),
+            ("airank_object_refs", "object_uri"),
+        )
+        for table_name, column_name in url_columns:
+            url_length = conn.execute(
                 text(
                     """
                     SELECT CHARACTER_MAXIMUM_LENGTH
                     FROM information_schema.columns
                     WHERE table_schema = DATABASE()
                       AND table_name = :table_name
-                      AND column_name = 'website_url'
+                      AND column_name = :column_name
                     """
                 ),
-                {"table_name": table_name},
+                {"table_name": table_name, "column_name": column_name},
             ).scalar_one()
-            assert website_length == 2048
+            assert url_length == 2048
 
 
 def test_real_mysql_project_competitor_question_write_path() -> None:

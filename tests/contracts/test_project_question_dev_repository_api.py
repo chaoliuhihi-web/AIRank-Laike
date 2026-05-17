@@ -181,8 +181,13 @@ def test_mysql_schema_url_lengths_match_api_contracts() -> None:
     migration_sql = (
         ROOT / "apps" / "api" / "alembic" / "versions" / "20260517_0001_initial_schema.py"
     ).read_text(encoding="utf-8")
+    reconcile_sql = (
+        ROOT / "apps" / "api" / "alembic" / "versions" / "20260517_0002_reconcile_url_lengths.py"
+    ).read_text(encoding="utf-8")
 
     assert "website_url VARCHAR(2048) NULL" in bootstrap_sql
     assert "website_url VARCHAR(2048) NULL" in migration_sql
+    assert "VARCHAR(2048)" in reconcile_sql
+    assert "VARCHAR(1024)" not in reconcile_sql
     assert "website_url VARCHAR(1024)" not in bootstrap_sql
     assert "website_url VARCHAR(1024)" not in migration_sql
