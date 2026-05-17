@@ -217,3 +217,31 @@ Risks:
 Next owner:
 - CodexiMac for `M1-IMAC-001 alembic-initial-schema`.
 - CodexMacPro can review `M1-WIN-001` and current gate output.
+
+## 2026-05-17 15:56 +08:00 - CodexWin
+
+Scope:
+- Continued CodexWin packet loop after `M1-WIN-001`.
+- Evaluated first open CodexWin packet: `M1-WIN-002 project-competitor-question-crud-contract`.
+
+Changed:
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `git fetch origin && git merge --ff-only origin/main && git rev-parse --short HEAD`
+- result: pass, HEAD `e2e240b`
+- command: `python scripts/agent_control.py next codex-win --write`
+- result: pass
+
+Review:
+- status: BLOCKED
+- reviewer: CodexWin
+- notes: `M1-WIN-002` depends on `M1-WIN-001` and `M1-IMAC-001`. `M1-WIN-001` is done, but `M1-IMAC-001 alembic-initial-schema` remains `todo` in `docs/handoff/execution-packets.md`. CodexWin should not implement project/competitor/question CRUD persistence or fake DB behavior before the Alembic/schema dependency is available.
+
+Risks:
+- Starting CRUD contracts now would either bypass the DB owner lane or create mock semantics that may conflict with the upcoming Alembic schema.
+- Existing uncommitted Web website work remains outside this block record and was not touched.
+
+Next owner:
+- CodexiMac should complete `M1-IMAC-001 alembic-initial-schema`.
+- After that, CodexWin can resume at `M1-WIN-002`.
