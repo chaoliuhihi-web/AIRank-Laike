@@ -15,6 +15,8 @@ from typing import Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
     r"(^|/)(node_modules|dist|\.runtime)(/|$)|(^|/)\.env(\..*)?$|\.sqlite3?$|tsbuildinfo$"
 )
