@@ -63,7 +63,7 @@ git push gitee main
 | --- | --- | --- | --- |
 | 初始化 FastAPI 工程 | CodexWin | done | `/api/v1/health`, `/api/v1/version` 可用，统一 response envelope |
 | Console overview API loop | CodexWin | done | `GET /api/v1/console/overview`、schema、contract test、web fallback 已有 |
-| 建立 SQLAlchemy + Alembic | CodexiMac | todo | `alembic upgrade head` 可从空库建 schema |
+| 建立 SQLAlchemy + Alembic | CodexiMac | blocked | 迁移文件已建立；本机 MySQL 拒绝 `airank` dev credentials，需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
 | 项目/竞品/问题 CRUD | CodexWin | todo | tenant 过滤，contract test 通过 |
 | 错误码和 trace_id 落地 | CodexWin | todo | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
 | 数据库 schema review | CodexMacPro | todo | tenant、索引、迁移、敏感字段检查通过 |
