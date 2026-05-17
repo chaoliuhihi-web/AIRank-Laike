@@ -71,9 +71,11 @@ import {
   loginToAirank,
   recordConsoleAction,
   recordDownloadReceipt,
+  runBrandCheck,
   storeAuthSession,
   type AuthSession,
   type AssetBundle,
+  type BrandCheckResult,
   type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
@@ -257,6 +259,11 @@ function App() {
     navigate("/console");
   };
 
+  const applyBrandCheckResult = (result: BrandCheckResult) => {
+    setOverview(result.overview);
+    setOverviewStatus("api");
+  };
+
   const showToast = (nextToast: Omit<ToastState, "id">) => {
     const id = Date.now();
     setToast({ ...nextToast, id });
@@ -266,10 +273,13 @@ function App() {
   };
 
   const recordAction = async (action: Omit<ConsoleActionInput, "projectId" | "sourceRoute">) => {
+    if (!overview.project.id) {
+      return;
+    }
     try {
       await recordConsoleAction({
         ...action,
-        projectId: overview.project.id ?? "project_demo",
+        projectId: overview.project.id,
         sourceRoute: path,
       });
     } catch (error) {
@@ -332,7 +342,7 @@ function App() {
             <div className="airank-console-shell">
               <Sidebar activePath={path} onNavigate={navigateWithAudit} />
               <section className="airank-console-main">
-                <ConsolePage path={path} onNavigate={navigateWithAudit} />
+                <ConsolePage path={path} onNavigate={navigateWithAudit} onBrandCheckComplete={applyBrandCheckResult} />
               </section>
             </div>
             {toast && <ActionToast toast={toast} onDismiss={() => setToast(null)} />}
@@ -503,7 +513,7 @@ function Sidebar({
           <Sparkles size={25} />
         </div>
         <div>
-          <div className="brand-title">智界问道</div>
+          <div className="brand-title">{project.name}</div>
           <div className="brand-subtitle">AIRank 来客</div>
         </div>
       </div>
@@ -557,7 +567,15 @@ function Sidebar({
   );
 }
 
-function ConsolePage({ path, onNavigate }: { path: string; onNavigate: (path: string) => void }) {
+function ConsolePage({
+  path,
+  onNavigate,
+  onBrandCheckComplete,
+}: {
+  path: string;
+  onNavigate: (path: string) => void;
+  onBrandCheckComplete: (result: BrandCheckResult) => void;
+}) {
   if (path === "/console/checkup") return <CheckupPage onNavigate={onNavigate} />;
   if (path === "/console/facts") return <FactsPage />;
   if (path === "/console/questions") return <QuestionsPage onNavigate={onNavigate} />;
@@ -568,7 +586,7 @@ function ConsolePage({ path, onNavigate }: { path: string; onNavigate: (path: st
   if (path === "/console/assistant") return <AssistantPage />;
   if (path === "/console/reports") return <ReportsPage onNavigate={onNavigate} />;
   if (path === "/console/settings") return <SettingsPage />;
-  return <DashboardPage onNavigate={onNavigate} />;
+  return <DashboardPage onNavigate={onNavigate} onBrandCheckComplete={onBrandCheckComplete} />;
 }
 
 function PageHeader({
@@ -704,7 +722,115 @@ function IconTile({ tone = "primary", children }: { tone?: Tone; children: React
   );
 }
 
-function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+function splitLines(value: string): string[] {
+  return value
+    .split(/[\n,，、]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function BrandCheckCard({
+  onNavigate,
+  onComplete,
+}: {
+  onNavigate: (path: string) => void;
+  onComplete: (result: BrandCheckResult) => void;
+}) {
+  const { notify } = useActionFeedback();
+  const [brandName, setBrandName] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [industryHint, setIndustryHint] = useState("");
+  const [competitorHints, setCompetitorHints] = useState("");
+  const [buyerQuestions, setBuyerQuestions] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [lastResult, setLastResult] = useState<BrandCheckResult | null>(null);
+
+  const submitBrandCheck = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      const result = await runBrandCheck({
+        brandName: brandName.trim(),
+        websiteUrl: websiteUrl.trim(),
+        industryHint: industryHint.trim() || undefined,
+        competitorHints: splitLines(competitorHints),
+        buyerQuestions: splitLines(buyerQuestions),
+      });
+      setLastResult(result);
+      onComplete(result);
+      notify({
+        title: "品牌检测已完成",
+        desc: `${result.project.brand_name} 已完成 ${result.taskCount} 个 AI 平台检测任务，并生成资料包和报告。`,
+        tone: "success",
+      });
+      onNavigate("/console/checkup");
+    } catch (error) {
+      notify({
+        title: "品牌检测失败",
+        desc: error instanceof Error ? error.message : "后端未能完成检测，请检查品牌和网址。",
+        tone: "danger",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="airank-console-card brand-check-card" aria-label="品牌 AI 排名检测">
+      <div className="brand-check-copy">
+        <IconTile tone="primary">
+          <SearchCheck size={27} />
+        </IconTile>
+        <div>
+          <h2>输入品牌，立即检测 AI 平台排名</h2>
+          <p>系统会创建项目、生成买家问题，在 ChatGPT、DeepSeek、Kimi、通义、豆包、百度 AI 搜索和腾讯元宝中完成检测，并生成可发布资料。</p>
+        </div>
+      </div>
+      <form className="brand-check-form" onSubmit={submitBrandCheck}>
+        <label>
+          <span>品牌名称</span>
+          <input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="例如：中关村软件园孵化器" required />
+        </label>
+        <label>
+          <span>官网或资料页</span>
+          <input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://example.com" required />
+        </label>
+        <label>
+          <span>行业</span>
+          <input value={industryHint} onChange={(event) => setIndustryHint(event.target.value)} placeholder="科技企业孵化 / 产业服务" />
+        </label>
+        <label>
+          <span>竞品/对标方</span>
+          <input value={competitorHints} onChange={(event) => setCompetitorHints(event.target.value)} placeholder="用顿号或逗号分隔，可留空" />
+        </label>
+        <label className="brand-check-wide">
+          <span>核心买家问题</span>
+          <input value={buyerQuestions} onChange={(event) => setBuyerQuestions(event.target.value)} placeholder="可留空，系统会自动生成 3 个高意向问题" />
+        </label>
+        <button className="airank-console-primary-button brand-check-submit" type="submit" disabled={submitting}>
+          {submitting ? "检测中" : "开始 AI 排名检测"}
+          <ArrowRight size={18} />
+        </button>
+      </form>
+      {lastResult && (
+        <div className="brand-check-result" role="status">
+          <Badge tone="success">检测完成</Badge>
+          <span>{lastResult.project.brand_name}</span>
+          <strong>{lastResult.scanRun.status === "completed" ? "已生成资料和报告" : "检测任务已创建"}</strong>
+          <span>{lastResult.taskCount} 个任务</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DashboardPage({
+  onNavigate,
+  onBrandCheckComplete,
+}: {
+  onNavigate: (path: string) => void;
+  onBrandCheckComplete: (result: BrandCheckResult) => void;
+}) {
   const { metricCards } = useConsoleOverview();
   const overviewStatus = useConsoleOverviewStatus();
 
@@ -723,6 +849,7 @@ function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           onClick={() => window.location.reload()}
         />
       )}
+      <BrandCheckCard onNavigate={onNavigate} onComplete={onBrandCheckComplete} />
       <section className="metric-grid">
         {metricCards.map((item) => (
           <MetricCard key={item.label} item={item} />
@@ -868,6 +995,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           ["竞品压制分析", "对比竞品表现并识别压制点"],
         ]}
       />
+      <ProjectStrip />
       <section className="provider-grid">
         {providerResults.map((item) => (
           <article className="airank-console-card provider-card" data-testid="provider-card" key={item.name}>
@@ -1350,6 +1478,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
 }
 
 function AssistantPage() {
+  const { project } = useConsoleOverview();
   const { notify, recordAction } = useActionFeedback();
   const [messages, setMessages] = useState<Array<{ role: string; text: string }>>(() => assistantMessages);
   const [draft, setDraft] = useState("");
@@ -1372,7 +1501,7 @@ function AssistantPage() {
       { role: "visitor", text: question },
       {
         role: "assistant",
-        text: "基于已确认事实库和 AI 收录包，我建议先明确业务场景、预算区间和集成系统，再给出可验证案例与下一步咨询入口。",
+        text: `基于 ${project.name} 的已确认事实库和 AI 收录包，我建议先明确客户场景、预算区间和决策周期，再引用官网事实页、FAQ 和案例资料，引导客户留下联系方式。`,
       },
     ]);
     setDraft("");

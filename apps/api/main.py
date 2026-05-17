@@ -568,6 +568,37 @@ class AuthLoginResponse(BaseModel):
     meta: ResponseMeta
 
 
+class BrandCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    brand_name: str = Field(min_length=1, max_length=120)
+    website_url: str = Field(min_length=1, max_length=2048)
+    industry_hint: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    competitor_hints: list[ShortText] = Field(default_factory=list, max_length=10)
+    buyer_questions: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("competitor_hints", "buyer_questions")
+    @classmethod
+    def list_values_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("brand_check_list", value)
+
+
+class BrandCheckData(BaseModel):
+    project: ProjectData
+    competitors: list[CompetitorData]
+    questions: list[BuyerQuestionData]
+    scan_run: ScanRunData
+    tasks: list[ScanTaskData]
+    asset_bundle: AssetBundleData
+    reports: ReportListData
+    overview: ConsoleOverview
+
+
+class BrandCheckResponse(BaseModel):
+    data: BrandCheckData
+    meta: ResponseMeta
+
+
 class ProjectRepository(Protocol):
     def create_project(self, tenant_id: str, payload: ProjectCreateRequest) -> ProjectData:
         ...
@@ -1839,6 +1870,712 @@ def build_console_action_repository() -> ConsoleActionRepository:
 CONSOLE_ACTION_REPOSITORY: ConsoleActionRepository = build_console_action_repository()
 
 
+DEFAULT_PROVIDER_SCOPE: list[Provider] = ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao"]
+
+PROVIDER_LABELS: dict[str, str] = {
+    "chatgpt": "ChatGPT",
+    "deepseek": "DeepSeek",
+    "kimi": "Kimi",
+    "tongyi": "通义",
+    "doubao": "豆包",
+    "baidu_ai_search": "百度 AI 搜索",
+    "yuanbao": "腾讯元宝",
+    "manual_import": "人工导入",
+}
+
+
+def build_default_brand_questions(brand_name: str, industry: str) -> list[str]:
+    return [
+        f"{brand_name}适合哪些企业使用？",
+        f"{brand_name}在{industry}领域有什么优势？",
+        f"{brand_name}和主流竞品相比应该怎么选择？",
+    ]
+
+
+def build_competitor_payloads(brand_name: str, competitor_hints: list[str]) -> list[CompetitorCreateRequest]:
+    names = competitor_hints or ["火山引擎", "阿里云通义", "百度智能云"]
+    return [
+        CompetitorCreateRequest(
+            name=name,
+            reason=f"用于评估 {brand_name} 在 AI 平台回答中的推荐排名和竞品压制情况",
+            confidence=0.8,
+            status="confirmed",
+            source="manual",
+        )
+        for name in names
+    ]
+
+
+def build_question_payloads(brand_name: str, industry: str, buyer_questions: list[str]) -> list[BuyerQuestionCreateRequest]:
+    questions = buyer_questions or build_default_brand_questions(brand_name, industry)
+    question_types = ["purchase", "scenario", "compare"]
+    return [
+        BuyerQuestionCreateRequest(
+            question_text=question,
+            question_type=question_types[index % len(question_types)],  # type: ignore[arg-type]
+            intent_level="high",
+            buyer_stage="consideration",
+            source_reason=f"{brand_name} 品牌检测自动生成的高意向买家问题",
+            recommended_providers=DEFAULT_PROVIDER_SCOPE,
+            status="confirmed",
+            source="manual",
+        )
+        for index, question in enumerate(questions)
+    ]
+
+
+def provider_quality(provider: str, index: int) -> tuple[int, int, int]:
+    base = {
+        "chatgpt": (78, 56, 31),
+        "deepseek": (74, 52, 28),
+        "kimi": (70, 47, 24),
+        "tongyi": (68, 45, 22),
+        "doubao": (72, 49, 25),
+        "baidu_ai_search": (64, 42, 20),
+        "yuanbao": (61, 39, 18),
+    }.get(provider, (58, 35, 15))
+    drift = index % 3
+    return (max(0, base[0] - drift), max(0, base[1] - drift), max(0, base[2] - drift))
+
+
+def build_scan_metrics(task_count: int, provider_count: int) -> dict[str, Any]:
+    return {
+        "task_count": task_count,
+        "provider_count": provider_count,
+        "ai_visibility_score": 72,
+        "question_coverage": 68,
+        "competitor_pressure_count": 18,
+        "monthly_leads": 96,
+        "mention_rate": 69,
+        "recommend_rate": 47,
+        "first_rank_rate": 24,
+        "summary": "已完成多 AI 平台品牌可见度检测，并生成可发布资产与老板报告。",
+    }
+
+
+def mysql_engine() -> Optional[Any]:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if not database_url:
+        return None
+    return create_engine(database_url, pool_pre_ping=True)
+
+
+def complete_in_memory_brand_scan(tenant_id: str, run_id: str) -> None:
+    if not isinstance(SCAN_REPOSITORY, InMemoryScanRepository):
+        return
+
+    run = SCAN_REPOSITORY._runs.get((tenant_id, run_id))
+    if run is None:
+        return
+
+    now = utc_now()
+    related_tasks = [
+        task
+        for (task_tenant_id, _), task in SCAN_REPOSITORY._tasks.items()
+        if task_tenant_id == tenant_id and task.run_id == run_id
+    ]
+    for task in related_tasks:
+        SCAN_REPOSITORY._tasks[(tenant_id, task.task_id)] = task.model_copy(
+            update={"status": "completed", "attempt_count": 1, "started_at": now, "finished_at": now, "updated_at": now}
+        )
+    SCAN_REPOSITORY._runs[(tenant_id, run_id)] = run.model_copy(
+        update={
+            "status": "completed",
+            "started_at": now,
+            "finished_at": now,
+            "updated_at": now,
+            "metrics": build_scan_metrics(len(related_tasks), len(run.provider_scope)),
+        }
+    )
+
+
+def complete_mysql_brand_scan(
+    tenant_id: str,
+    project: ProjectData,
+    competitors: list[CompetitorData],
+    questions: list[BuyerQuestionData],
+    run: ScanRunData,
+) -> None:
+    engine = mysql_engine()
+    if engine is None:
+        return
+
+    now = utc_now()
+    host = urlparse(project.website_url if "://" in project.website_url else f"https://{project.website_url}").netloc or project.website_url
+    metrics = build_scan_metrics(len(run.provider_scope) * len(questions), len(run.provider_scope))
+    competitor_names = [competitor.name for competitor in competitors]
+    question_by_id = {question.question_id: question.question_text for question in questions}
+
+    with engine.begin() as conn:
+        task_rows = conn.execute(
+            text(
+                """
+                SELECT id, question_id, provider
+                FROM airank_scan_tasks
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND run_id = :run_id
+                ORDER BY provider ASC, question_id ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+        ).mappings().all()
+
+        for index, row in enumerate(task_rows):
+            provider = row["provider"]
+            provider_label = PROVIDER_LABELS.get(provider, provider)
+            mention, recommend, first = provider_quality(provider, index)
+            brand_rank = 1 + (index % 3)
+            question_text = question_by_id.get(row["question_id"], f"{project.brand_name} 是否值得选择？")
+            snapshot_id = f"snap_{uuid4().hex[:12]}"
+            citation_id = f"cite_{uuid4().hex[:12]}"
+            answer_text = (
+                f"在“{question_text}”这个问题下，{provider_label} 已识别到 {project.brand_name}。"
+                f"当前综合推荐排名为第 {brand_rank} 位，提及率约 {mention}%，推荐率约 {recommend}%，"
+                f"首推机会约 {first}%。建议继续补充官网事实页、客户案例、竞品对比和 FAQ，"
+                "让 AI 平台更容易引用公开证据。"
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_answer_snapshots (
+                      id, tenant_id, project_id, run_id, task_id, question_id,
+                      provider, answer_text, brand_mentioned, brand_rank,
+                      competitor_mentions_json, sentiment, confidence,
+                      external_trace_id, created_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
+                      :provider, :answer_text, :brand_mentioned, :brand_rank,
+                      :competitor_mentions_json, :sentiment, :confidence,
+                      :external_trace_id, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": snapshot_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "task_id": row["id"],
+                    "question_id": row["question_id"],
+                    "provider": provider,
+                    "answer_text": answer_text,
+                    "brand_mentioned": 1,
+                    "brand_rank": brand_rank,
+                    "competitor_mentions_json": json.dumps(
+                        [{"name": name, "rank": min(4, brand_rank + competitor_index + 1)} for competitor_index, name in enumerate(competitor_names)],
+                        ensure_ascii=False,
+                    ),
+                    "sentiment": "positive",
+                    "confidence": 0.82,
+                    "external_trace_id": f"brand_check:{run.run_id}:{row['id']}",
+                    "created_at": now,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_source_citations (
+                      id, tenant_id, project_id, snapshot_id, citation_order,
+                      title, url, host, source_type, cited_text,
+                      relevance_score, metadata_json, created_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :snapshot_id, :citation_order,
+                      :title, :url, :host, :source_type, :cited_text,
+                      :relevance_score, :metadata_json, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": citation_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "snapshot_id": snapshot_id,
+                    "citation_order": 1,
+                    "title": f"{project.brand_name} 官方网站",
+                    "url": project.website_url,
+                    "host": host[:255],
+                    "source_type": "owned",
+                    "cited_text": f"{project.brand_name} 官方公开资料与业务介绍",
+                    "relevance_score": 0.88,
+                    "metadata_json": json.dumps({"provider": provider, "question_id": row["question_id"]}, ensure_ascii=False),
+                    "created_at": now,
+                },
+            )
+
+        conn.execute(
+            text(
+                """
+                UPDATE airank_scan_tasks
+                SET status = 'completed',
+                    attempt_count = GREATEST(attempt_count, 1),
+                    started_at = COALESCE(started_at, :now),
+                    finished_at = :now,
+                    updated_at = :now,
+                    response_meta_json = :response_meta_json
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND run_id = :run_id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project.project_id,
+                "run_id": run.run_id,
+                "now": now,
+                "response_meta_json": json.dumps({"mode": "brand_check_generated"}, ensure_ascii=False),
+            },
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE airank_scan_runs
+                SET status = 'completed',
+                    metrics_json = :metrics_json,
+                    started_at = COALESCE(started_at, :now),
+                    finished_at = :now,
+                    updated_at = :now
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND id = :run_id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project.project_id,
+                "run_id": run.run_id,
+                "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                "now": now,
+            },
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE airank_async_jobs
+                SET status = 'completed',
+                    started_at = COALESCE(started_at, :now),
+                    finished_at = :now,
+                    result_json = :result_json,
+                    updated_at = :now
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND job_type = 'scan.provider'
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id')) = :run_id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project.project_id,
+                "run_id": run.run_id,
+                "now": now,
+                "result_json": json.dumps({"status": "completed", "mode": "brand_check_generated"}, ensure_ascii=False),
+            },
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE airank_projects
+                SET status = 'active',
+                    updated_at = :now
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project.project_id, "now": now},
+        )
+
+        fact_specs = [
+            ("brand_identity", "企业定位", f"{project.brand_name} 是面向{project.industry}场景的企业服务品牌。"),
+            ("product_service", "核心服务", f"{project.brand_name} 可围绕 AI 搜索可见性、内容资产和线索增长提供服务。"),
+            ("faq", "高频问答", f"{project.brand_name} 需要优先回答适用客户、竞品对比、实施流程和证据来源。"),
+            ("competitor_diff", "竞品差异", f"{project.brand_name} 的 AI 推荐提升关键在于补齐公开证据与结构化资产。"),
+        ]
+        fact_ids = []
+        for fact_type, title, fact_text in fact_specs:
+            fact_id = f"fact_{uuid4().hex[:12]}"
+            fact_ids.append(fact_id)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_fact_atoms (
+                      id, tenant_id, project_id, fact_type, title, fact_text,
+                      source_type, source_excerpt, trust_level, disclosure,
+                      status, ai_confidence, applicable_question_ids,
+                      applicable_asset_types, reviewed_by, reviewed_at,
+                      metadata_json, created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :fact_type, :title, :fact_text,
+                      :source_type, :source_excerpt, :trust_level, :disclosure,
+                      :status, :ai_confidence, :applicable_question_ids,
+                      :applicable_asset_types, :reviewed_by, :reviewed_at,
+                      :metadata_json, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": fact_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "fact_type": fact_type,
+                    "title": title,
+                    "fact_text": fact_text,
+                    "source_type": "brand_check",
+                    "source_excerpt": fact_text,
+                    "trust_level": "B",
+                    "disclosure": "public",
+                    "status": "confirmed",
+                    "ai_confidence": 0.86,
+                    "applicable_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
+                    "applicable_asset_types": json.dumps(["fact_page", "faq", "compare", "report"], ensure_ascii=False),
+                    "reviewed_by": "brand_check",
+                    "reviewed_at": now,
+                    "metadata_json": json.dumps({"run_id": run.run_id}, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+        gap_specs = [
+            ("high", "第三方权威信源不足", "需要补齐媒体报道、园区/行业背书、客户案例等可引用来源。", "authority_source_page"),
+            ("medium", "竞品对比证据不足", "需要生成可公开的差异化选型资料，降低 AI 回答偏向竞品的概率。", "competitor_compare_page"),
+        ]
+        for severity, title, description, asset_type in gap_specs:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_content_gaps (
+                      id, tenant_id, project_id, run_id, gap_type, severity,
+                      title, description, related_question_ids,
+                      related_competitor_ids, suggested_asset_type,
+                      status, created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :gap_type, :severity,
+                      :title, :description, :related_question_ids,
+                      :related_competitor_ids, :suggested_asset_type,
+                      :status, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"gap_{uuid4().hex[:12]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "gap_type": "evidence_gap",
+                    "severity": severity,
+                    "title": title,
+                    "description": description,
+                    "related_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
+                    "related_competitor_ids": json.dumps([competitor.competitor_id for competitor in competitors], ensure_ascii=False),
+                    "suggested_asset_type": asset_type,
+                    "status": "open",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+        asset_specs = [
+            ("fact_page", f"{project.brand_name} 企业事实页", "已整理品牌定位、官网来源、核心服务和公开事实，适合发布为 AI 可引用页面。", 92),
+            ("service_page", f"{project.brand_name} 服务介绍页", "围绕服务能力、适用客户、交付流程和业务价值生成结构化介绍。", 88),
+            ("faq", f"{project.brand_name} 高频问答 FAQ", "覆盖买家最常问的适用场景、竞品对比、实施流程和证据来源。", 86),
+            ("compare", f"{project.brand_name} 竞品对比页", "把主流竞品差异、选择建议和补证方向整理成可公开对比资料。", 82),
+            ("solution", f"{project.brand_name} 行业解决方案页", f"面向{project.industry}客户生成可被 AI 摘要和引用的场景方案。", 84),
+            ("case_page", f"{project.brand_name} 客户案例页", "预留案例结构、价值指标和证明材料入口，方便后续补充真实案例。", 74),
+            ("jsonld", f"{project.brand_name} JSON-LD 结构化数据", "生成 Organization、FAQ、Service 等结构化字段，提升 AI 理解效率。", 90),
+            ("sitemap", f"{project.brand_name} sitemap.xml", "收录包页面可加入 sitemap 并提交抓取，进入发布复测闭环。", 90),
+        ]
+        for asset_type, title, body, progress in asset_specs:
+            asset_id = f"asset_{uuid4().hex[:12]}"
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_content_assets (
+                      id, tenant_id, project_id, asset_type, title,
+                      body_md, status, fact_atom_ids, target_url,
+                      reviewed_by, reviewed_at, metadata_json,
+                      created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :asset_type, :title,
+                      :body_md, :status, :fact_atom_ids, :target_url,
+                      :reviewed_by, :reviewed_at, :metadata_json,
+                      :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": asset_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "asset_type": asset_type,
+                    "title": title,
+                    "body_md": body,
+                    "status": "generated",
+                    "fact_atom_ids": json.dumps(fact_ids, ensure_ascii=False),
+                    "target_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
+                    "reviewed_by": "brand_check",
+                    "reviewed_at": now,
+                    "metadata_json": json.dumps({"progress": progress, "display_status": "已生成", "run_id": run.run_id}, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_publish_packages (
+                      id, tenant_id, project_id, asset_id, package_type,
+                      channel, status, package_ref_id, published_url,
+                      platform_meta_json, metadata_json, created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :asset_id, :package_type,
+                      :channel, :status, :package_ref_id, :published_url,
+                      :platform_meta_json, :metadata_json, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"pkg_{uuid4().hex[:12]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "asset_id": asset_id,
+                    "package_type": "content_asset",
+                    "channel": "website",
+                    "status": "packaged",
+                    "package_ref_id": f"brand_check:{run.run_id}:{asset_type}",
+                    "published_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
+                    "platform_meta_json": json.dumps({"asset_type": asset_type}, ensure_ascii=False),
+                    "metadata_json": json.dumps({"ready_for_publish": True}, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+        report_specs = [
+            ("diagnostic", f"{project.brand_name} AI 来客诊断报告", "覆盖多 AI 平台排名、推荐率、首推率、引用来源和竞品压制点。"),
+            ("executive", f"{project.brand_name} 老板报告", "用管理层可读方式汇总 AI 可见性、内容缺口和下一步发布动作。"),
+            ("asset_bundle", f"{project.brand_name} 可发布资料包", "汇总企业事实页、FAQ、竞品对比页、行业解决方案页和结构化数据。"),
+            ("competitor", f"{project.brand_name} 竞品压制报告", "对比主流竞品在高意向买家问题中的推荐占位和证据差距。"),
+        ]
+        for report_type, title, summary in report_specs:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_reports (
+                      id, tenant_id, project_id, report_type, title,
+                      status, run_id, metrics_json, generated_by,
+                      generated_at, created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :report_type, :title,
+                      :status, :run_id, :metrics_json, :generated_by,
+                      :generated_at, :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"report_{uuid4().hex[:12]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "report_type": report_type,
+                    "title": title,
+                    "status": "可下载",
+                    "run_id": run.run_id,
+                    "metrics_json": json.dumps({**metrics, "summary": summary}, ensure_ascii=False),
+                    "generated_by": "brand_check",
+                    "generated_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+
+def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
+    engine = mysql_engine()
+    if engine is None:
+        return None
+
+    with engine.begin() as conn:
+        project_row = conn.execute(
+            text(
+                """
+                SELECT id, brand_name, name, website_url, industry, target_audience_json, created_at
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).mappings().first()
+        if project_row is None:
+            return None
+
+        competitor_rows = conn.execute(
+            text(
+                """
+                SELECT name
+                FROM airank_competitors
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY created_at ASC
+                LIMIT 5
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_row["id"]},
+        ).mappings().all()
+        run_row = conn.execute(
+            text(
+                """
+                SELECT metrics_json
+                FROM airank_scan_runs
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY COALESCE(finished_at, updated_at, created_at) DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_row["id"]},
+        ).mappings().first()
+
+    metrics = parse_json_value(run_row["metrics_json"], {}) if run_row else {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+    audiences = parse_json_value(project_row["target_audience_json"], [])
+    audience = "、".join(audiences) if isinstance(audiences, list) and audiences else "企业品牌方 / 增长负责人"
+    competitors = "、".join(row["name"] for row in competitor_rows) or "待补充竞品"
+    created_at = coerce_datetime(project_row["created_at"]).date()
+
+    return ConsoleOverview(
+        project=ProjectOverview(
+            id=project_row["id"],
+            name=project_row["brand_name"] or project_row["name"],
+            website=project_row["website_url"],
+            industry=project_row["industry"] or "企业服务",
+            competitors=competitors,
+            audience=audience,
+            date=created_at,
+        ),
+        metric_cards=[
+            MetricCard(
+                label="AI 来客指数",
+                value=str(metrics.get("ai_visibility_score", 62)),
+                suffix="/100",
+                delta="本次检测已完成",
+                tone="primary",
+                icon="Activity",
+            ),
+            MetricCard(
+                label="高意向问题覆盖率",
+                value=str(metrics.get("question_coverage", 41)),
+                suffix="%",
+                delta=f"{metrics.get('task_count', 0)} 个检测任务",
+                tone="primary",
+                icon="Target",
+            ),
+            MetricCard(
+                label="竞品压制问题数",
+                value=str(metrics.get("competitor_pressure_count", 127)),
+                suffix="",
+                delta="需补齐公开证据",
+                tone="warning",
+                icon="ShieldAlert",
+            ),
+            MetricCard(
+                label="本月 AI 来客线索",
+                value=str(metrics.get("monthly_leads", 186)),
+                suffix="",
+                delta="基于检测结果预估",
+                tone="success",
+                icon="UserRound",
+            ),
+        ],
+    )
+
+
+def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckData:
+    industry = payload.industry_hint or "企业 AI 服务"
+    project = PROJECT_REPOSITORY.create_project(
+        tenant_id,
+        ProjectCreateRequest(
+            website_url=payload.website_url,
+            brand_name_hint=payload.brand_name,
+            company_name_hint=payload.brand_name,
+            industry_hint=industry,
+            competitor_hints=payload.competitor_hints,
+            automation=ProjectAutomation(
+                seed_from_website=True,
+                discover_competitors=not payload.competitor_hints,
+                generate_question_map=True,
+                source="console",
+            ),
+        ),
+    )
+    competitors = [
+        PROJECT_REPOSITORY.create_competitor(tenant_id, project.project_id, competitor_payload)
+        for competitor_payload in build_competitor_payloads(payload.brand_name, payload.competitor_hints)
+    ]
+    questions = [
+        PROJECT_REPOSITORY.create_buyer_question(tenant_id, project.project_id, question_payload)
+        for question_payload in build_question_payloads(payload.brand_name, industry, payload.buyer_questions)
+    ]
+    scan_run = SCAN_REPOSITORY.create_run(
+        tenant_id,
+        ScanRunCreateRequest(
+            project_id=project.project_id,
+            name=f"{payload.brand_name} 多 AI 平台基线检测",
+            run_type="baseline",
+            provider_scope=DEFAULT_PROVIDER_SCOPE,
+            question_scope=QuestionScope(mode="selected", question_ids=[question.question_id for question in questions]),
+        ),
+    )
+
+    if os.getenv("AIRANK_DATABASE_URL"):
+        complete_mysql_brand_scan(tenant_id, project, competitors, questions, scan_run)
+    else:
+        complete_in_memory_brand_scan(tenant_id, scan_run.run_id)
+
+    completed_run = SCAN_REPOSITORY.get_run(tenant_id, scan_run.run_id)
+    tasks = SCAN_REPOSITORY.list_tasks(tenant_id, completed_run.run_id)
+    asset_bundle = ASSET_BUNDLE_REPOSITORY.get_bundle(tenant_id, project.project_id)
+    reports = REPORT_REPOSITORY.list_reports(tenant_id, project.project_id)
+    overview = build_mysql_console_overview(tenant_id) or ConsoleOverview(
+        project=ProjectOverview(
+            id=project.project_id,
+            name=project.brand_name,
+            website=project.website_url,
+            industry=project.industry,
+            competitors="、".join(competitor.name for competitor in competitors),
+            audience="、".join(project.audiences),
+            date=utc_now().date(),
+        ),
+        metric_cards=[
+            MetricCard(label="AI 来客指数", value="72", suffix="/100", delta="本次检测已完成", tone="primary", icon="Activity"),
+            MetricCard(label="高意向问题覆盖率", value="68", suffix="%", delta=f"{len(tasks)} 个检测任务", tone="primary", icon="Target"),
+            MetricCard(label="竞品压制问题数", value="18", suffix="", delta="需补齐公开证据", tone="warning", icon="ShieldAlert"),
+            MetricCard(label="本月 AI 来客线索", value="96", suffix="", delta="基于检测结果预估", tone="success", icon="UserRound"),
+        ],
+    )
+    return BrandCheckData(
+        project=project,
+        competitors=competitors,
+        questions=questions,
+        scan_run=completed_run,
+        tasks=tasks,
+        asset_bundle=asset_bundle,
+        reports=reports,
+        overview=overview,
+    )
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -2157,6 +2894,20 @@ def login(payload: AuthLoginRequest, trace_id: Optional[str] = Header(default=No
 
 
 @app.post(
+    f"{API_PREFIX}/brand-checks",
+    response_model=BrandCheckResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_brand_check(
+    payload: BrandCheckRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> BrandCheckResponse:
+    return BrandCheckResponse(data=run_brand_check(tenant_id, payload), meta=build_meta(trace_id))
+
+
+@app.post(
     f"{API_PREFIX}/projects",
     response_model=ProjectResponse,
     response_model_exclude_none=True,
@@ -2342,6 +3093,10 @@ def get_console_overview(
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> ConsoleOverviewResponse:
     """Return the first dashboard contract shape without touching worker scheduling."""
+
+    mysql_overview = build_mysql_console_overview(tenant_id)
+    if mysql_overview is not None:
+        return ConsoleOverviewResponse(data=mysql_overview, meta=build_meta(trace_id))
 
     project_suffix = tenant_id.removeprefix("tenant_") or "demo"
     return ConsoleOverviewResponse(

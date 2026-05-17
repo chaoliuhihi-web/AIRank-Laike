@@ -388,6 +388,88 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.brand-check-card {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.brand-check-copy {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.brand-check-copy h2 {
+  margin: 0;
+  color: var(--console-text-strong);
+  font: var(--console-font-section-title);
+}
+
+.brand-check-copy p {
+  margin: 8px 0 0;
+  color: var(--console-text);
+  font: 600 14px / 22px var(--console-font-family);
+}
+
+.brand-check-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.brand-check-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--console-text-strong);
+  font: 700 13px / 18px var(--console-font-family);
+}
+
+.brand-check-form input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--console-title);
+  font: 600 14px / 20px var(--console-font-family);
+  box-sizing: border-box;
+}
+
+.brand-check-form input:focus {
+  border-color: var(--console-primary);
+  outline: 3px solid rgba(68, 62, 253, 0.15);
+}
+
+.brand-check-wide {
+  grid-column: span 2;
+}
+
+.brand-check-submit {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.brand-check-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #f6f8fc;
+  color: var(--console-text);
+  font: 600 13px / 18px var(--console-font-family);
+}
+
+.brand-check-result strong {
+  color: var(--console-text-strong);
+}
+
 .metric-card {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
@@ -1880,9 +1962,18 @@ button:disabled {
 
   .metric-grid,
   .asset-grid,
+  .brand-check-form,
   .report-metric-grid,
   .report-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .brand-check-wide {
+    grid-column: span 2;
+  }
+
+  .brand-check-submit {
+    width: 100%;
   }
 
   .provider-grid {
@@ -1988,6 +2079,7 @@ button:disabled {
   }
 
   .metric-grid,
+  .brand-check-form,
   .two-column,
   .three-column,
   .fact-grid,
@@ -1999,6 +2091,14 @@ button:disabled {
   .two-panel-wide,
   .process-steps.publishing-flow {
     grid-template-columns: 1fr;
+  }
+
+  .brand-check-copy {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .brand-check-wide {
+    grid-column: auto;
   }
 
   .strip-item,

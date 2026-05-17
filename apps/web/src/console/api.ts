@@ -50,6 +50,34 @@ export type ReportList = {
   reports: ReportItem[];
 };
 
+export type ScanRunSummary = {
+  run_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
+  metrics: Record<string, unknown>;
+};
+
+export type BrandCheckInput = {
+  brandName: string;
+  websiteUrl: string;
+  industryHint?: string;
+  competitorHints?: string[];
+  buyerQuestions?: string[];
+};
+
+export type BrandCheckResult = {
+  project: {
+    project_id: string;
+    brand_name: string;
+    website_url: string;
+    industry: string;
+  };
+  scanRun: ScanRunSummary;
+  taskCount: number;
+  assetBundle: AssetBundle;
+  reports: ReportList;
+  overview: ConsoleOverview;
+};
+
 export type AuthSession = {
   accessToken: string;
   tokenType: "Bearer";
@@ -112,6 +140,29 @@ type AssetBundlePayload = {
 
 type ReportListPayload = {
   data: ReportList;
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
+type BrandCheckPayload = {
+  data: {
+    project: {
+      project_id: string;
+      brand_name: string;
+      website_url: string;
+      industry: string;
+    };
+    scan_run: ScanRunSummary;
+    tasks: Array<{ task_id: string; status: string }>;
+    asset_bundle: AssetBundle;
+    reports: ReportList;
+    overview: {
+      project: ConsoleProject;
+      metric_cards: ConsoleMetricCard[];
+    };
+  };
   meta: {
     trace_id: string;
     request_id: string;
@@ -306,6 +357,40 @@ export async function fetchReports(projectId: string, signal?: AbortSignal): Pro
 
   const payload = (await response.json()) as ReportListPayload;
   return payload.data;
+}
+
+export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckResult> {
+  const response = await fetch("/api/v1/brand-checks", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_brand_check"),
+    },
+    body: JSON.stringify({
+      brand_name: input.brandName,
+      website_url: input.websiteUrl,
+      industry_hint: input.industryHint || undefined,
+      competitor_hints: input.competitorHints ?? [],
+      buyer_questions: input.buyerQuestions ?? [],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Brand check request failed with ${response.status}`));
+  }
+
+  const payload = (await response.json()) as BrandCheckPayload;
+  return {
+    project: payload.data.project,
+    scanRun: payload.data.scan_run,
+    taskCount: payload.data.tasks.length,
+    assetBundle: payload.data.asset_bundle,
+    reports: payload.data.reports,
+    overview: {
+      project: payload.data.overview.project,
+      metricCards: payload.data.overview.metric_cards,
+    },
+  };
 }
 
 export async function recordDownloadReceipt(reportId: string): Promise<void> {
