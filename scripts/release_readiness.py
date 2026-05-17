@@ -206,6 +206,9 @@ def release_checks(
 ) -> list[Check]:
     db_url = release_database_url(database_url)
     real_mysql_env = {"AIRANK_DATABASE_URL": db_url} if db_url else None
+    real_integration_env = {"AIRANK_RUN_REAL_MYSQL": "1", "AIRANK_DATABASE_URL": db_url} if db_url else None
+    if real_integration_env and os.getenv("YUDAO_USERNAME") and os.getenv("YUDAO_PASSWORD"):
+        real_integration_env["AIRANK_RUN_REAL_YUDAO"] = "1"
     checks = [
         working_tree_check(),
         remote_ref_check("origin"),
@@ -223,6 +226,7 @@ def release_checks(
             remove_database_urls=True,
         ),
         command_check("web build", "cd apps/web && npm run build"),
+        command_check("real integration tests", "python3 -m pytest tests/integration -q", env=real_integration_env),
         command_check(
             "alembic offline sql",
             "cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql",

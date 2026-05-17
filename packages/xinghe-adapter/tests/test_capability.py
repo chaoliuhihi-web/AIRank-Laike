@@ -35,6 +35,7 @@ def test_probe_can_report_ready_and_partial_external_capabilities() -> None:
             "AIRANK_AUTH_MODE": "yudao",
             "YUDAO_PERMISSION_INFO_URL": "http://yudao.local/permission",
             "YUDAO_BEARER_TOKEN": "token",
+            "YUDAO_TENANT_ID": "1",
             "XINGHE_CRAWLER_GATEWAY_BASE_URL": "http://crawler.local",
             "XINGHE_HERMES_BASE_URL": "http://hermes.local",
         }
@@ -43,7 +44,8 @@ def test_probe_can_report_ready_and_partial_external_capabilities() -> None:
     def fake_http(url: str, headers: dict[str, str], timeout: float) -> tuple[int, str]:
         if "yudao" in url:
             assert headers["Authorization"] == "Bearer token"
-            return 200, '{"tenant_id":"tenant_1","user_id":"user_1"}'
+            assert headers["tenant-id"] == "1"
+            return 200, '{"code":0,"data":{"tenant_id":"tenant_1","user_id":"user_1"}}'
         if "crawler" in url:
             return 503, "starting"
         if "hermes" in url:
@@ -83,3 +85,25 @@ def test_probe_config_reads_positive_timeout_from_env() -> None:
     assert config.timeout_seconds == 3.5
     assert parse_timeout_seconds("0") == 0.3
     assert parse_timeout_seconds("bad") == 0.3
+
+
+def test_probe_blocks_yudao_http_200_when_business_code_fails() -> None:
+    config = ProbeConfig.from_env(
+        {
+            "AIRANK_AUTH_MODE": "yudao",
+            "YUDAO_PERMISSION_INFO_URL": "http://yudao.local/permission",
+            "YUDAO_BEARER_TOKEN": "token",
+        }
+    )
+
+    def fake_http(url: str, headers: dict[str, str], timeout: float) -> tuple[int, str]:
+        return 200, '{"code":401,"msg":"账号未登录","data":null}'
+
+    results = {
+        result.capability: result
+        for result in CapabilityProbe(config, http_probe=fake_http, now=NOW).run()
+    }
+
+    assert results["yudao_auth"].status == CapabilityStatus.BLOCKED
+    assert "business code is not 0" in results["yudao_auth"].blocked_reason
+    assert results["yudao_tenant_user"].status == CapabilityStatus.BLOCKED

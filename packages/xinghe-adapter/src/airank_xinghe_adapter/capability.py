@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
+import re
 from uuid import uuid4
 from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
@@ -53,6 +55,7 @@ class ProbeConfig:
     yudao_permission_info_url: str | None
     yudao_model_resolve_url: str | None
     yudao_bearer_token: str | None
+    yudao_tenant_id: str | None
     object_storage_driver: str
     object_storage_root: str | None
     crawler_gateway_base_url: str | None
@@ -72,6 +75,8 @@ class ProbeConfig:
             yudao_model_resolve_url=empty_to_none(source.get("YUDAO_MODEL_RESOLVE_URL")),
             yudao_bearer_token=empty_to_none(source.get("YUDAO_BEARER_TOKEN"))
             or empty_to_none(source.get("YUDAO_TOKEN")),
+            yudao_tenant_id=empty_to_none(source.get("YUDAO_TENANT_ID"))
+            or empty_to_none(source.get("TENANT_ID")),
             object_storage_driver=source.get("AIRANK_OBJECT_STORAGE_DRIVER", "local"),
             object_storage_root=empty_to_none(source.get("AIRANK_OBJECT_STORAGE_ROOT", ".runtime/objects")),
             crawler_gateway_base_url=empty_to_none(source.get("XINGHE_CRAWLER_GATEWAY_BASE_URL")),
@@ -363,6 +368,8 @@ class CapabilityProbe:
         fallback: str,
     ) -> CapabilityResult:
         headers = {"Authorization": f"Bearer {self.config.yudao_bearer_token}"}
+        if source == "yudao" and self.config.yudao_tenant_id:
+            headers["tenant-id"] = self.config.yudao_tenant_id
         try:
             status_code, body = self.http_probe(endpoint, headers, self.config.timeout_seconds)
         except Exception as exc:
@@ -376,6 +383,19 @@ class CapabilityProbe:
                 fallback,
                 {},
             )
+        if 200 <= status_code < 300 and source == "yudao":
+            business_ok, business_reason = is_yudao_success_response(body)
+            if not business_ok:
+                return self._result(
+                    capability,
+                    CapabilityStatus.BLOCKED,
+                    source,
+                    True,
+                    endpoint,
+                    business_reason,
+                    fallback,
+                    {"http_status": str(status_code), "body_excerpt": body[:120]},
+                )
         if 200 <= status_code < 300:
             return self._result(
                 capability,
@@ -430,10 +450,10 @@ def default_http_probe(url: str, headers: Mapping[str, str], timeout_seconds: fl
     request = Request(url, headers=dict(headers), method="GET")
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read(512).decode("utf-8", errors="replace")
+            body = response.read(8192).decode("utf-8", errors="replace")
             return int(response.status), body
     except HTTPError as exc:
-        body = exc.read(512).decode("utf-8", errors="replace")
+        body = exc.read(8192).decode("utf-8", errors="replace")
         return int(exc.code), body
     except URLError as exc:
         raise ConnectionError(str(exc.reason)) from exc
@@ -459,3 +479,20 @@ def parse_timeout_seconds(value: str | None) -> float:
     except ValueError:
         return 0.3
     return parsed if parsed > 0 else 0.3
+
+
+def is_yudao_success_response(body: str) -> tuple[bool, str]:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        code_match = re.search(r'"code"\s*:\s*(-?\d+)', body[:200])
+        if code_match and int(code_match.group(1)) == 0:
+            return True, ""
+        return False, "Yudao response is not JSON"
+    if not isinstance(payload, dict):
+        return False, "Yudao response JSON is not an object"
+    code = payload.get("code")
+    if code != 0:
+        msg = payload.get("msg") or payload.get("message") or "unknown"
+        return False, f"Yudao business code is not 0: {code}; {msg}"
+    return True, ""

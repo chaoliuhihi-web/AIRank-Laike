@@ -13,6 +13,7 @@ CREATE DATABASE IF NOT EXISTS airank_laike_release_gate
 CREATE USER IF NOT EXISTS 'airank'@'%' IDENTIFIED BY 'airank_dev_password';
 CREATE USER IF NOT EXISTS 'airank'@'localhost' IDENTIFIED BY 'airank_dev_password';
 CREATE USER IF NOT EXISTS 'airank'@'127.0.0.1' IDENTIFIED BY 'airank_dev_password';
+CREATE USER IF NOT EXISTS 'airank'@'172.20.%' IDENTIFIED BY 'airank_dev_password';
 CREATE USER IF NOT EXISTS 'airank'@'192.168.65.%' IDENTIFIED BY 'airank_dev_password';
 
 -- Keep local bootstrap idempotent even if a previous dev user exists with
@@ -21,6 +22,7 @@ CREATE USER IF NOT EXISTS 'airank'@'192.168.65.%' IDENTIFIED BY 'airank_dev_pass
 ALTER USER IF EXISTS 'airank'@'%' IDENTIFIED BY 'airank_dev_password';
 ALTER USER IF EXISTS 'airank'@'localhost' IDENTIFIED BY 'airank_dev_password';
 ALTER USER IF EXISTS 'airank'@'127.0.0.1' IDENTIFIED BY 'airank_dev_password';
+ALTER USER IF EXISTS 'airank'@'172.20.%' IDENTIFIED BY 'airank_dev_password';
 ALTER USER IF EXISTS 'airank'@'192.168.65.%' IDENTIFIED BY 'airank_dev_password';
 
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
@@ -29,6 +31,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
   ON airank_laike.* TO 'airank'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
   ON airank_laike.* TO 'airank'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+  ON airank_laike.* TO 'airank'@'172.20.%';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
   ON airank_laike.* TO 'airank'@'192.168.65.%';
 

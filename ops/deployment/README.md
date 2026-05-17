@@ -17,7 +17,8 @@ mysql -uroot -p < ops/deployment/mysql-bootstrap.sql
 ```
 
 该脚本可重复执行，会修复本地 dev `airank` 用户的密码和常见本机/Docker
-Desktop 来源 host 授权。若仍出现 `Access denied for user 'airank'@'...'`，
+Desktop/Docker bridge 来源 host 授权，包括 `127.0.0.1`、`localhost`、
+`192.168.65.%` 和 `172.20.%`。若仍出现 `Access denied for user 'airank'@'...'`，
 用 root 检查是否存在更具体的同名 host 记录：
 
 ```sql
@@ -33,6 +34,25 @@ set +a
 ```
 
 详细说明见 `docs/architecture/mysql-schema-plan.md`。
+
+真实本地集成验证：
+
+```bash
+AIRANK_RUN_REAL_MYSQL=1 \
+AIRANK_DATABASE_URL="$AIRANK_DATABASE_URL" \
+python3 -m pytest tests/integration -q
+```
+
+真实 yudao 集成验证需要本地 yudao 已启动，并在 shell 中提供本地测试账号：
+
+```bash
+AIRANK_RUN_REAL_YUDAO=1 \
+YUDAO_BASE_URL=http://127.0.0.1:48080 \
+YUDAO_TENANT_ID=1 \
+YUDAO_USERNAME="$YUDAO_USERNAME" \
+YUDAO_PASSWORD="$YUDAO_PASSWORD" \
+python3 -m pytest tests/integration -q
+```
 
 ## Schema review
 

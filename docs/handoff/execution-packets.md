@@ -11,6 +11,7 @@ review
 blocked
 review_env_blocked
 dev_only
+partial
 done
 ```
 
