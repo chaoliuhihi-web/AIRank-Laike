@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -278,6 +278,58 @@ class ScanTaskListResponse(BaseModel):
     meta: ResponseMeta
 
 
+class FactReviewSourceRef(BaseModel):
+    source_type: str
+    support_type: Literal["supports", "contradicts", "context"] = "supports"
+    citation_id: Optional[str] = None
+    snapshot_id: Optional[str] = None
+    object_ref_id: Optional[str] = None
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+
+    def has_traceable_source(self) -> bool:
+        return bool(self.citation_id or self.object_ref_id or self.source_url)
+
+    @model_validator(mode="after")
+    def require_traceable_source(self) -> "FactReviewSourceRef":
+        if not self.has_traceable_source():
+            raise ValueError("fact review source ref requires citation_id, object_ref_id, or source_url")
+        return self
+
+
+class FactReviewRequest(BaseModel):
+    action: Literal["confirmed", "rejected", "needs_redaction", "private"]
+    reviewed_by: str = Field(min_length=1, max_length=64)
+    trust_level: Literal["A", "B", "C", "D"] = "B"
+    review_note: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    source_refs: list[FactReviewSourceRef] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_source_for_confirmed(self) -> "FactReviewRequest":
+        if self.action == "confirmed" and not self.source_refs:
+            raise ValueError("confirmed fact review requires at least one source ref")
+        return self
+
+
+class FactReviewData(BaseModel):
+    fact_id: str
+    tenant_id: str
+    project_id: str
+    review_status: Literal["confirmed", "rejected", "needs_redaction", "private"]
+    fact_status: Literal["draft", "confirmed", "rejected", "stale"]
+    disclosure: Literal["public", "redacted", "internal", "forbidden", "pending_approval"]
+    trust_level: Literal["A", "B", "C", "D"]
+    reviewed_by: str
+    reviewed_at: datetime
+    review_note: Optional[str] = None
+    source_refs: list[FactReviewSourceRef]
+
+
+class FactReviewResponse(BaseModel):
+    data: FactReviewData
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -350,6 +402,17 @@ class ScanRepository(Protocol):
         ...
 
     def list_tasks(self, tenant_id: str, run_id: str) -> list[ScanTaskData]:
+        ...
+
+
+class FactReviewRepository(Protocol):
+    def review_fact(
+        self,
+        tenant_id: str,
+        project_id: str,
+        fact_id: str,
+        payload: FactReviewRequest,
+    ) -> FactReviewData:
         ...
 
 
@@ -753,6 +816,61 @@ class InMemoryScanRepository:
 SCAN_REPOSITORY: ScanRepository = InMemoryScanRepository()
 
 
+class InMemoryFactReviewRepository:
+    def __init__(self) -> None:
+        self._reviews: dict[tuple[str, str], FactReviewData] = {}
+
+    def review_fact(
+        self,
+        tenant_id: str,
+        project_id: str,
+        fact_id: str,
+        payload: FactReviewRequest,
+    ) -> FactReviewData:
+        if payload.action == "confirmed" and not any(source.has_traceable_source() for source in payload.source_refs):
+            raise StarletteHTTPException(
+                status_code=400,
+                detail={
+                    "code": "FACT_SOURCE_REQUIRED",
+                    "details": {"fact_id": fact_id, "action": payload.action},
+                },
+            )
+
+        fact_status: Literal["draft", "confirmed", "rejected", "stale"]
+        disclosure: Literal["public", "redacted", "internal", "forbidden", "pending_approval"]
+        if payload.action == "confirmed":
+            fact_status = "confirmed"
+            disclosure = "public"
+        elif payload.action == "rejected":
+            fact_status = "rejected"
+            disclosure = "forbidden"
+        elif payload.action == "needs_redaction":
+            fact_status = "draft"
+            disclosure = "redacted"
+        else:
+            fact_status = "confirmed"
+            disclosure = "internal"
+
+        data = FactReviewData(
+            fact_id=fact_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            review_status=payload.action,
+            fact_status=fact_status,
+            disclosure=disclosure,
+            trust_level=payload.trust_level,
+            reviewed_by=payload.reviewed_by,
+            reviewed_at=utc_now(),
+            review_note=payload.review_note,
+            source_refs=payload.source_refs,
+        )
+        self._reviews[(tenant_id, fact_id)] = data
+        return data
+
+
+FACT_REVIEW_REPOSITORY: FactReviewRepository = InMemoryFactReviewRepository()
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -1002,6 +1120,24 @@ def get_scan_task(
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> ScanTaskResponse:
     return ScanTaskResponse(data=SCAN_REPOSITORY.get_task(tenant_id, task_id), meta=build_meta(trace_id))
+
+
+@app.patch(
+    f"{API_PREFIX}/projects/{{project_id}}/facts/{{fact_id}}/review",
+    response_model=FactReviewResponse,
+    response_model_exclude_none=True,
+)
+def review_fact(
+    project_id: str,
+    fact_id: str,
+    payload: FactReviewRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> FactReviewResponse:
+    return FactReviewResponse(
+        data=FACT_REVIEW_REPOSITORY.review_fact(tenant_id, project_id, fact_id, payload),
+        meta=build_meta(trace_id),
+    )
 
 
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)

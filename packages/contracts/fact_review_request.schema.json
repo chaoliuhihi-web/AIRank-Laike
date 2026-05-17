@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/fact_review_request.schema.json",
+  "title": "AIRank Fact Review Request",
+  "type": "object",
+  "required": ["action", "reviewed_by"],
+  "additionalProperties": false,
+  "properties": {
+    "action": { "type": "string", "enum": ["confirmed", "rejected", "needs_redaction", "private"] },
+    "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "trust_level": { "type": "string", "enum": ["A", "B", "C", "D"], "default": "B" },
+    "review_note": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "source_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source_ref" },
+      "uniqueItems": true,
+      "default": []
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "confirmed" } }, "required": ["action"] },
+      "then": {
+        "required": ["source_refs"],
+        "properties": { "source_refs": { "minItems": 1 } }
+      }
+    }
+  ],
+  "$defs": {
+    "source_ref": {
+      "type": "object",
+      "required": ["source_type"],
+      "additionalProperties": false,
+      "properties": {
+        "source_type": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "support_type": { "type": "string", "enum": ["supports", "contradicts", "context"], "default": "supports" },
+        "citation_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "snapshot_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "object_ref_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "source_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "source_title": { "type": "string", "minLength": 1, "maxLength": 240 }
+      },
+      "anyOf": [
+        { "required": ["citation_id"] },
+        { "required": ["object_ref_id"] },
+        { "required": ["source_url"] }
+      ]
+    }
+  }
+}

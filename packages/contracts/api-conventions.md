@@ -98,6 +98,16 @@ GET /api/v1/projects?limit=50&cursor=...
 
 scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`canceled`。scan task 状态只允许 `queued`、`running`、`completed`、`failed`、`skipped`。
 
+## M3 事实审核契约
+
+可信事实卡审核接口：
+
+```text
+PATCH /api/v1/projects/{project_id}/facts/{fact_id}/review
+```
+
+请求使用 `fact_review_request.schema.json`，响应使用 `fact_review_response.schema.json`。`confirmed` 必须带至少一个可追溯 `source_refs`，其中 `citation_id`、`object_ref_id`、`source_url` 至少有一个。`needs_redaction` 映射为 `disclosure=redacted`，`private` 映射为 `disclosure=internal`。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：

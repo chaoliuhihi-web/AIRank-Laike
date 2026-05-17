@@ -85,7 +85,7 @@ git push gitee main
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | FactAtom domain model | CodexiMac | review | 每个 FactAtom 至少有 source/citation |
-| fact review API | CodexWin | todo | 支持确认、驳回、需脱敏、不可公开 |
+| fact review API | CodexWin | review | 支持 confirmed/rejected/needs_redaction/private；confirmed 必须有 traceable source |
 | content gap 生成 | CodexiMac | review | 缺口可追溯到问题、citation、FactAtom |
 | AI 收录包 API | CodexWin | todo | 前端 `AI 收录包` 页面可读取真实资产 |
 | 事实链 review | CodexMacPro | todo | 无来源的内容不能进入报告 |
