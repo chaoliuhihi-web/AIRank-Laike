@@ -559,6 +559,14 @@ class AssetBundleRepository(Protocol):
         ...
 
 
+class ReportRepository(Protocol):
+    def list_reports(self, tenant_id: str, project_id: str) -> ReportListData:
+        ...
+
+    def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
+        ...
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1485,16 +1493,156 @@ def build_asset_bundle_repository() -> AssetBundleRepository:
 ASSET_BUNDLE_REPOSITORY: AssetBundleRepository = build_asset_bundle_repository()
 
 
-def build_report_list(tenant_id: str, project_id: str) -> ReportListData:
-    return ReportListData(
-        project_id=project_id,
-        tenant_id=tenant_id,
-        reports=[
-            ReportItem(report_id="report_diagnostic", title="AI 来客诊断报告", desc="覆盖平台表现、竞品压制、引用来源和优化建议", date="2026-05-17", status="已生成"),
-            ReportItem(report_id="report_retest", title="推荐缺口复测报告", desc="对比发布前后推荐率、首推率和引用变化", date="2026-05-17", status="可下载"),
-            ReportItem(report_id="report_exec", title="高管月报", desc="面向管理层的 AI 可见性和线索增长摘要", date="2026-05-01", status="已归档"),
-        ],
-    )
+class InMemoryReportRepository:
+    """Development fallback for local web work when no database URL is configured."""
+
+    def list_reports(self, tenant_id: str, project_id: str) -> ReportListData:
+        return ReportListData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            reports=[
+                ReportItem(report_id="report_diagnostic", title="AI 来客诊断报告", desc="覆盖平台表现、竞品压制、引用来源和优化建议", date="2026-05-17", status="已生成"),
+                ReportItem(report_id="report_retest", title="推荐缺口复测报告", desc="对比发布前后推荐率、首推率和引用变化", date="2026-05-17", status="可下载"),
+                ReportItem(report_id="report_exec", title="高管月报", desc="面向管理层的 AI 可见性和线索增长摘要", date="2026-05-01", status="已归档"),
+            ],
+        )
+
+    def record_download_receipt(self, tenant_id: str, report_id: str, _trace_id: str) -> DownloadReceiptData:
+        return DownloadReceiptData(
+            receipt_id=f"receipt_{uuid4().hex[:12]}",
+            report_id=report_id,
+            tenant_id=tenant_id,
+            downloaded_at=utc_now(),
+            status="recorded",
+        )
+
+
+class MySQLReportRepository:
+    def __init__(self, database_url: str) -> None:
+        self._engine = create_engine(database_url, pool_pre_ping=True)
+
+    def _ensure_project(self, conn: Any, tenant_id: str, project_id: str) -> None:
+        row = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                  AND deleted_at IS NULL
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).first()
+        if row is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}},
+            )
+
+    def _report_desc(self, row: Any) -> str:
+        metrics = parse_json_value(row["metrics_json"], {})
+        if isinstance(metrics, dict):
+            summary = metrics.get("summary") or metrics.get("desc")
+            if isinstance(summary, str) and summary.strip():
+                return summary[:240]
+        return f"{row['report_type']} report with evidence index"
+
+    def list_reports(self, tenant_id: str, project_id: str) -> ReportListData:
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT id, report_type, title, status, metrics_json, generated_at, created_at
+                    FROM airank_reports
+                    WHERE tenant_id = :tenant_id
+                      AND project_id = :project_id
+                      AND deleted_at IS NULL
+                    ORDER BY COALESCE(generated_at, created_at) DESC, id ASC
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().all()
+
+        return ReportListData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            reports=[
+                ReportItem(
+                    report_id=row["id"],
+                    title=row["title"],
+                    desc=self._report_desc(row),
+                    date=coerce_datetime(row["generated_at"] or row["created_at"]).date().isoformat(),
+                    status=row["status"],
+                )
+                for row in rows
+            ],
+        )
+
+    def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
+        receipt_id = f"receipt_{uuid4().hex[:12]}"
+        downloaded_at = utc_now()
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, project_id
+                    FROM airank_reports
+                    WHERE tenant_id = :tenant_id
+                      AND id = :report_id
+                      AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "report_id": report_id},
+            ).mappings().first()
+            if row is None:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={"code": "REPORT_NOT_FOUND", "details": {"report_id": report_id}},
+                )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_audit_events (
+                      id, tenant_id, project_id, event_type, entity_type,
+                      entity_id, trace_id, payload_json, created_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :event_type, :entity_type,
+                      :entity_id, :trace_id, :payload_json, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": receipt_id,
+                    "tenant_id": tenant_id,
+                    "project_id": row["project_id"],
+                    "event_type": "report.download_receipt",
+                    "entity_type": "report",
+                    "entity_id": report_id,
+                    "trace_id": trace_id,
+                    "payload_json": json.dumps({"report_id": report_id, "downloaded_at": downloaded_at.isoformat()}),
+                    "created_at": downloaded_at,
+                },
+            )
+        return DownloadReceiptData(
+            receipt_id=receipt_id,
+            report_id=report_id,
+            tenant_id=tenant_id,
+            downloaded_at=downloaded_at,
+            status="recorded",
+        )
+
+
+def build_report_repository() -> ReportRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLReportRepository(database_url)
+    return InMemoryReportRepository()
+
+
+REPORT_REPOSITORY: ReportRepository = build_report_repository()
 
 
 app = FastAPI(title="AIRank API", version="0.1.0")
@@ -1787,7 +1935,7 @@ def get_reports(
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> ReportListResponse:
-    return ReportListResponse(data=build_report_list(tenant_id, project_id), meta=build_meta(trace_id))
+    return ReportListResponse(data=REPORT_REPOSITORY.list_reports(tenant_id, project_id), meta=build_meta(trace_id))
 
 
 @app.post(
@@ -1800,15 +1948,10 @@ def create_download_receipt(
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> DownloadReceiptResponse:
+    meta = build_meta(trace_id)
     return DownloadReceiptResponse(
-        data=DownloadReceiptData(
-            receipt_id=f"receipt_{uuid4().hex[:12]}",
-            report_id=report_id,
-            tenant_id=tenant_id,
-            downloaded_at=utc_now(),
-            status="recorded",
-        ),
-        meta=build_meta(trace_id),
+        data=REPORT_REPOSITORY.record_download_receipt(tenant_id, report_id, meta.trace_id),
+        meta=meta,
     )
 
 

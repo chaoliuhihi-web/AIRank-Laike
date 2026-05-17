@@ -96,7 +96,7 @@ git push gitee main
 | --- | --- | --- | --- |
 | 诊断报告 JSON | CodexiMac | review | 每个结论可追溯到 snapshot/citation/FactAtom |
 | Xinghe/yudao capability probe | CodexiMac | dev_only | capability probe 已入库；本地矩阵全为 dev_only fallback，release 前需接真实 yudao/Xinghe/Hermes 环境验证 |
-| report API + download receipt | CodexWin | dev_only | 报告中心读取 reports API，并记录 download receipt；报告内容为 dev-only seed |
+| report API + download receipt | CodexWin | review_env_blocked | 配置 MySQL 时从 `airank_reports` 读取报告，并把下载回执写入 `airank_audit_events`；真实实库验证仍受本机 MySQL 授权阻塞 |
 | 前端 fixture 切 API | CodexWin | review | 控制台主页面 API-first；API 不可用时显示明确 fallback 状态 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
 | v0.1 beta release gate | CodexMacPro | blocked | 自动化测试通过；真实 MySQL migration 1045 access denied，外部 capability 仍为 dev_only，不能声明可上线 |

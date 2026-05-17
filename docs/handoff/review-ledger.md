@@ -294,6 +294,10 @@ Validation:
 - result: pass
 - command: `git diff --check`
 - result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this packet
 
 Review:
 - status: PASS_WITH_RISK
@@ -682,6 +686,44 @@ Risks:
 
 Next owner:
 - Continue with `M4-WIN-001 report API` production hardening, then rerun the full release gate once MySQL grants are fixed.
+
+## 2026-05-17 18:56 +08:00 - CodexMacPro
+
+Scope:
+- Continued release hardening for `M4-WIN-001 report API + download receipt`.
+- Replaced the production code path for reports with a MySQL-backed repository and persistent audit receipt writes.
+
+Changed:
+- `apps/api/main.py`
+- `tests/contracts/test_report_api_contract.py`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/codex-win.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts/test_report_api_contract.py -q`
+- result: pass, 6 tests
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 56 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `python3 -m py_compile apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: REVIEW_ENV_BLOCKED
+- reviewer: CodexMacPro
+- notes: When `AIRANK_DATABASE_URL` is configured, report listing now reads tenant-scoped `airank_reports`; download receipt creation verifies the report and inserts a `report.download_receipt` audit row into `airank_audit_events`.
+
+Risks:
+- Real MySQL execution remains blocked by the same `airank` access denied issue.
+- Report generation still depends on upstream evidence/report jobs populating `airank_reports`; this patch makes the API read/write production tables rather than seed payloads.
+
+Next owner:
+- Fix MySQL grants and rerun real migration/API DB-path smoke tests.
+- Continue external yudao/Xinghe/Hermes capability verification.
 
 ## 2026-05-17 17:38 +08:00 - CodexMacPro
 
