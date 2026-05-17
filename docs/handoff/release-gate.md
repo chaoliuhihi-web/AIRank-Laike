@@ -295,9 +295,11 @@ Reviewer: CodexMacPro
 Passed:
 
 - Started real FastAPI on `127.0.0.1:8000` with MySQL `airank_laike`.
+- Ran `scripts/seed-fixtures.sh` to seed `tenant_demo/project_demo` into real MySQL before browser QA.
 - Started Vite on `127.0.0.1:5173` with `/api` dev proxy to the real API.
 - Desktop `/console` rendered meaningful AIRank content, no framework overlay, no fallback banner, and no fresh browser console warnings/errors.
 - Clicked required routes: `工作台`, `推荐缺口分析`, `AI 收录包`, `报表中心`; URL and page content changed for each route, with no fallback banner and no fresh console warnings/errors.
+- Real API returned `200 OK` for `/api/v1/projects/project_demo/asset-bundle` and `/api/v1/projects/project_demo/reports`; those pages no longer depend on frontend fallback fixture data during local beta QA.
 - Mobile 390x844 `/console` rendered with `documentElement.scrollWidth == innerWidth == 390`, so there is no page-level horizontal overflow.
 
 Residual risks:

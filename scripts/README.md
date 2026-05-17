@@ -49,3 +49,14 @@ python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_UR
 ```
 
 该命令会执行 contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、真实 integration tests、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。普通自动测试会隔离 `AIRANK_DATABASE_URL` 等数据库环境变量，真实 migration 与 integration tests 只使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration/integration 失败，脚本会返回非零，不能声明 release ready。
+
+## 本地真实控制台数据
+
+本地 Web + API 联调前先灌入演示项目，避免控制台资产和报表页面退回前端 fixture：
+
+```bash
+AIRANK_DATABASE_URL="mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4" \
+  scripts/seed-fixtures.sh
+```
+
+默认写入 `tenant_demo` / `project_demo`，可用 `AIRANK_SEED_TENANT_ID` 和 `AIRANK_SEED_PROJECT_ID` 覆盖。

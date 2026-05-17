@@ -1085,14 +1085,25 @@ Next owner:
 Scope:
 - Closed the remaining non-scripted frontend gate for local beta QA.
 - Prevented Web dev QA from silently falling back to fixture data by adding a Vite `/api` proxy to real FastAPI.
+- Added a real MySQL seed script for `tenant_demo/project_demo` so asset bundle and report pages can use API/DB data during local beta QA.
 - Fixed local HMR host configuration so browser console health can be checked without Vite websocket errors.
 
 Changed:
 - `apps/web/vite.config.ts`
+- `scripts/seed-fixtures.sh`
+- `scripts/seed_fixtures.py`
+- `scripts/README.md`
 - `docs/handoff/release-gate.md`
 - `docs/handoff/review-ledger.md`
+- `docs/handoff/status/codex-macpro.md`
 
 Validation:
+- command: `AIRANK_DATABASE_URL=... scripts/seed-fixtures.sh`
+- result: pass, seeded `tenant_demo/project_demo`
+- command: `curl -H 'tenant-id: tenant_demo' http://127.0.0.1:8000/api/v1/projects/project_demo/asset-bundle`
+- result: pass, `200 OK` with DB-derived assets
+- command: `curl -H 'tenant-id: tenant_demo' http://127.0.0.1:8000/api/v1/projects/project_demo/reports`
+- result: pass, `200 OK` with DB-derived reports
 - command: `AIRANK_DATABASE_URL=... python3 -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000`
 - result: pass, API served real local requests
 - command: `cd apps/web && npm run dev -- --host 127.0.0.1`
@@ -1109,7 +1120,7 @@ Validation:
 Review:
 - status: PASS
 - reviewer: CodexMacPro
-- notes: Frontend local QA now exercises the real API path instead of relying on fallback fixture data. The browser console is clean after the HMR host fix.
+- notes: Frontend local QA now exercises the real API and MySQL path instead of relying on fallback fixture data. The browser console is clean after the HMR host fix.
 
 Risks:
 - This covers local Vite + FastAPI + MySQL beta QA. Production reverse proxy, TLS, CDN/cache headers, and production object storage should still be verified in the deployment environment.
