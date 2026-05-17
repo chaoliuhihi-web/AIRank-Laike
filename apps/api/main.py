@@ -330,6 +330,27 @@ class FactReviewResponse(BaseModel):
     meta: ResponseMeta
 
 
+class AssetBundleItem(BaseModel):
+    asset_id: str
+    title: str
+    desc: str
+    progress: int = Field(ge=0, le=100)
+    status: str
+
+
+class AssetBundleData(BaseModel):
+    project_id: str
+    tenant_id: str
+    completeness: int = Field(ge=0, le=100)
+    recommendation: str
+    assets: list[AssetBundleItem]
+
+
+class AssetBundleResponse(BaseModel):
+    data: AssetBundleData
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -871,6 +892,26 @@ class InMemoryFactReviewRepository:
 FACT_REVIEW_REPOSITORY: FactReviewRepository = InMemoryFactReviewRepository()
 
 
+def build_asset_bundle(tenant_id: str, project_id: str) -> AssetBundleData:
+    assets = [
+        AssetBundleItem(asset_id="asset_fact_page", title="企业事实页", desc="把已确认事实卡发布为 AI 易读页面", progress=86, status="可发布"),
+        AssetBundleItem(asset_id="asset_service_page", title="服务介绍页", desc="结构化呈现核心服务、流程与优势", progress=72, status="待补证据"),
+        AssetBundleItem(asset_id="asset_case_page", title="客户案例页", desc="承接案例、成效、行业场景与客户评价", progress=58, status="待确认"),
+        AssetBundleItem(asset_id="asset_faq", title="FAQ 页", desc="覆盖高频买家问题和官方回答", progress=64, status="可生成"),
+        AssetBundleItem(asset_id="asset_compare", title="竞品对比页", desc="形成差异化选型依据和对比证据", progress=45, status="缺证据"),
+        AssetBundleItem(asset_id="asset_solution", title="行业解决方案页", desc="沉淀本地行业和高价值场景方案", progress=52, status="可生成"),
+        AssetBundleItem(asset_id="asset_jsonld", title="JSON-LD", desc="让 AI 和搜索引擎识别品牌事实", progress=80, status="可发布"),
+        AssetBundleItem(asset_id="asset_sitemap", title="sitemap.xml", desc="发布后提交抓取和复测", progress=92, status="可发布"),
+    ]
+    return AssetBundleData(
+        project_id=project_id,
+        tenant_id=tenant_id,
+        completeness=68,
+        recommendation="建议先补齐竞品对比页和客户案例页，再发布复测。",
+        assets=assets,
+    )
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -1138,6 +1179,18 @@ def review_fact(
         data=FACT_REVIEW_REPOSITORY.review_fact(tenant_id, project_id, fact_id, payload),
         meta=build_meta(trace_id),
     )
+
+
+@app.get(
+    f"{API_PREFIX}/projects/{{project_id}}/asset-bundle",
+    response_model=AssetBundleResponse,
+)
+def get_asset_bundle(
+    project_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> AssetBundleResponse:
+    return AssetBundleResponse(data=build_asset_bundle(tenant_id, project_id), meta=build_meta(trace_id))
 
 
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)

@@ -87,7 +87,7 @@ git push gitee main
 | FactAtom domain model | CodexiMac | review | 每个 FactAtom 至少有 source/citation |
 | fact review API | CodexWin | review | 支持 confirmed/rejected/needs_redaction/private；confirmed 必须有 traceable source |
 | content gap 生成 | CodexiMac | review | 缺口可追溯到问题、citation、FactAtom |
-| AI 收录包 API | CodexWin | todo | 前端 `AI 收录包` 页面可读取真实资产 |
+| AI 收录包 API | CodexWin | dev_only | 前端 `AI 收录包` 页面读取资产 API；当前资产内容为 dev-only seed |
 | 事实链 review | CodexMacPro | todo | 无来源的内容不能进入报告 |
 
 ## Milestone 4：报告、前端接入、上线 beta

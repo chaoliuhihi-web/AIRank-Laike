@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/asset_bundle_response.schema.json",
+  "title": "AIRank Asset Bundle Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["project_id", "tenant_id", "completeness", "recommendation", "assets"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "completeness": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "recommendation": { "type": "string", "minLength": 1 },
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["asset_id", "title", "desc", "progress", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "asset_id": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "desc": { "type": "string", "minLength": 1 },
+              "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+              "status": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

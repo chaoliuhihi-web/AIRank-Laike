@@ -48,12 +48,14 @@ import {
 import { consoleRoutes } from "./console/routes/console-routes";
 import {
   fallbackConsoleOverview,
+  fallbackAssetBundle,
+  fetchAssetBundle,
   fetchConsoleOverview,
+  type AssetBundle,
   type ConsoleMetricCard,
   type ConsoleOverview,
 } from "./console/api";
 import {
-  assetCards,
   assistantMessages,
   factGroups,
   gapItems,
@@ -710,6 +712,17 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { project } = useConsoleOverview();
+  const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchAssetBundle(project.id ?? "project_demo", controller.signal)
+      .then(setBundle)
+      .catch(() => setBundle(fallbackAssetBundle));
+    return () => controller.abort();
+  }, [project.id]);
+
   return (
     <>
       <PageHeader
@@ -719,7 +732,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       />
       <ProjectStrip />
       <section className="asset-grid">
-        {assetCards.map((item, index) => (
+        {bundle.assets.map((item, index) => (
           <article className="airank-console-card asset-card" key={item.title}>
             <div className="asset-card-head">
               <IconTile tone={index % 3 === 0 ? "primary" : index % 3 === 1 ? "success" : "warning"}>
@@ -740,9 +753,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       <div className="package-footer">
         <div>
           <strong>AI 收录包完整度</strong>
-          <span>建议先补齐竞品对比页和客户案例页，再发布复测。</span>
+          <span>{bundle.recommendation}</span>
         </div>
-        <ProgressBar value={68} />
+        <ProgressBar value={bundle.completeness} />
         <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/publishing")}>
           去发布
         </button>

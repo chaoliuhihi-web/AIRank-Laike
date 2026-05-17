@@ -108,6 +108,14 @@ PATCH /api/v1/projects/{project_id}/facts/{fact_id}/review
 
 请求使用 `fact_review_request.schema.json`，响应使用 `fact_review_response.schema.json`。`confirmed` 必须带至少一个可追溯 `source_refs`，其中 `citation_id`、`object_ref_id`、`source_url` 至少有一个。`needs_redaction` 映射为 `disclosure=redacted`，`private` 映射为 `disclosure=internal`。
 
+AI 收录包接口：
+
+```text
+GET /api/v1/projects/{project_id}/asset-bundle
+```
+
+响应使用 `asset_bundle_response.schema.json`。当前返回可用于前端资产页的真实 API payload；资产内容仍是 dev-only seed，不代表生产内容生成。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：
