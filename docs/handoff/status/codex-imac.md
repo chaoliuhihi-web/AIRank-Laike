@@ -8,6 +8,7 @@
 | M2-IMAC-002 | review | 3ad8bdd | Mock provider generates answer snapshot with required source citations; worker marks missing-citation jobs failed. |
 | M2-IMAC-003 | review | 6e6c615 | Deterministic score pure function returns identical results for identical snapshot/citation input. |
 | M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
+| M3-IMAC-002 | review | pending | ContentGap generation requires question, citation, and FactAtom traceability. |
 
 ## Run Log
 
@@ -23,3 +24,5 @@
 - 2026-05-17: Completed `M2-IMAC-003`; validation `cd packages/score && python3 -m pytest` passed 2 tests, `python3 -m pytest tests/acceptance` passed 3 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
 - 2026-05-17: Started `M3-IMAC-001` FactAtom source rule so confirmed facts require citation/object/URL provenance.
 - 2026-05-17: Completed `M3-IMAC-001`; validation `cd packages/evidence && python3 -m pytest` passed 2 tests, `python3 -m pytest tests/acceptance` passed 4 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
+- 2026-05-17: Started `M3-IMAC-002` content gap generation with required question/citation/FactAtom traceability.
+- 2026-05-17: Completed `M3-IMAC-002`; validation `cd packages/evidence && python3 -m pytest` passed 4 tests, `python3 -m pytest tests/acceptance` passed 5 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.

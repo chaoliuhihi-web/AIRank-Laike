@@ -39,3 +39,15 @@ FAQ 不足
 - `suppression` 回答"竞品为什么排在前面"。
 - `evidence-gap` 回答"我缺什么推荐证据"。
 - 两者共同构成 `gap` 父模块，对应 PRD 第 11.5 节。
+
+## M3 traceability rule
+
+`airank_domain.ContentGap` is valid only when it can be traced to all of:
+
+- at least one buyer question id
+- at least one source citation id
+- at least one FactAtom id
+
+`packages/evidence.generate_gap_from_citations(...)` bridges source citations and
+sourced FactAtom objects into a traceable content gap. This prevents generating
+gap recommendations from unsupported claims.

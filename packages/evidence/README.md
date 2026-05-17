@@ -30,3 +30,9 @@ This keeps scan and report code from producing unsupported conclusions.
 a domain `FactSourceRef`. Confirmed FactAtom objects must carry one of these
 traceable source refs, so no confirmed fact can exist without citation/object/URL
 provenance.
+
+## M3 content gap generation
+
+`generate_gap_from_citations(...)` creates a domain `ContentGap` only when the
+gap can be traced to a buyer question, at least one source citation, and a
+sourced FactAtom.

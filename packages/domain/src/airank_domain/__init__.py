@@ -11,6 +11,7 @@ from .async_job import (
     heartbeat_job,
     timeout_job,
 )
+from .content_gap import ContentGap, GapSeverity, generate_content_gap
 from .fact_atom import (
     Disclosure,
     FactAtom,
@@ -23,10 +24,12 @@ from .fact_atom import (
 __all__ = [
     "AsyncJob",
     "AsyncJobStatus",
+    "ContentGap",
     "Disclosure",
     "FactAtom",
     "FactAtomStatus",
     "FactSourceRef",
+    "GapSeverity",
     "JobOwnershipError",
     "JobStateError",
     "TrustLevel",
@@ -34,6 +37,7 @@ __all__ = [
     "complete_job",
     "confirm_fact_atom",
     "fail_job",
+    "generate_content_gap",
     "heartbeat_job",
     "timeout_job",
 ]
