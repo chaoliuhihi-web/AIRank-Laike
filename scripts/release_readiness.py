@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -189,6 +190,68 @@ def capability_check(*, require_optional_capabilities: bool) -> Check:
     )
 
 
+def browser_provider_blockers(
+    records: Iterable[Mapping[str, object]],
+    *,
+    mode: str,
+    minimum_success_count: int,
+) -> tuple[list[str], list[str]]:
+    blockers: list[str] = []
+    warnings: list[str] = []
+    record_list = list(records)
+    ready_count = sum(1 for record in record_list if record.get("status") == "ready")
+
+    if mode != "browser":
+        blockers.append(f"AIRANK_PROVIDER_MODE={mode}; production ranking requires browser")
+    if ready_count < minimum_success_count:
+        blockers.append(f"browser_provider_ready={ready_count}/{minimum_success_count}")
+
+    for record in record_list:
+        if record.get("status") != "ready":
+            provider = str(record.get("provider", "<unknown>"))
+            reason = str(record.get("reason") or "blocked")
+            warnings.append(f"{provider}=blocked ({reason})")
+    return blockers, warnings
+
+
+def browser_provider_readiness_check() -> Check:
+    command = "probe_provider_readiness(DEFAULT_PROVIDER_SCOPE)"
+    try:
+        from apps.api.main import DEFAULT_PROVIDER_SCOPE, minimum_provider_success_count  # noqa: PLC0415
+        from apps.api.provider_scan import probe_provider_readiness, provider_execution_mode  # noqa: PLC0415
+
+        mode = provider_execution_mode()
+        minimum_success_count = minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE)
+        records = [asdict(probe_provider_readiness(provider)) for provider in DEFAULT_PROVIDER_SCOPE]
+    except Exception as exc:  # pragma: no cover - defensive release-gate output
+        return Check("browser provider readiness", "BLOCKED", command, repr(exc))
+
+    blockers, warnings = browser_provider_blockers(
+        records,
+        mode=mode,
+        minimum_success_count=minimum_success_count,
+    )
+    detail = json.dumps(
+        {
+            "mode": mode,
+            "minimum_success_count": minimum_success_count,
+            "providers": records,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    if warnings:
+        detail += "\n\nWarnings:\n" + "\n".join(f"- {warning}" for warning in warnings)
+    if blockers:
+        detail += "\n\nBlockers:\n" + "\n".join(f"- {blocker}" for blocker in blockers)
+    return Check(
+        "browser provider readiness",
+        "BLOCKED" if blockers else "PASS",
+        command,
+        detail,
+    )
+
+
 def release_database_url(explicit_database_url: str | None = None) -> str | None:
     return (
         explicit_database_url
@@ -202,6 +265,7 @@ def release_database_url(explicit_database_url: str | None = None) -> str | None
 def release_checks(
     *,
     require_optional_capabilities: bool,
+    require_browser_providers: bool,
     database_url: str | None = None,
 ) -> list[Check]:
     db_url = release_database_url(database_url)
@@ -235,6 +299,8 @@ def release_checks(
         command_check("alembic real mysql", "cd apps/api && python3 -m alembic upgrade head", env=real_mysql_env),
         capability_check(require_optional_capabilities=require_optional_capabilities),
     ]
+    if require_browser_providers:
+        checks.append(browser_provider_readiness_check())
     return checks
 
 
@@ -288,6 +354,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Require optional Xinghe/Hermes capabilities to be ready instead of MVP-only warnings.",
     )
     parser.add_argument(
+        "--require-browser-providers",
+        action="store_true",
+        help="Require consumer web AI provider browser profiles to be ready for production ranking.",
+    )
+    parser.add_argument(
         "--database-url",
         help=(
             "Database URL for the real Alembic migration gate. Defaults to "
@@ -301,6 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     checks = release_checks(
         require_optional_capabilities=args.require_optional_capabilities,
+        require_browser_providers=args.require_browser_providers,
         database_url=args.database_url,
     )
     report = render_markdown(checks)

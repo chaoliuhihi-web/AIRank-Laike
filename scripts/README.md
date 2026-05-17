@@ -50,6 +50,19 @@ python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_UR
 
 该命令会执行 contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、真实 integration tests、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。普通自动测试会隔离 `AIRANK_DATABASE_URL` 等数据库环境变量，真实 migration 与 integration tests 只使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration/integration 失败，脚本会返回非零，不能声明 release ready。
 
+生产发布还必须加上消费端网页 Provider 门禁：
+
+```bash
+AIRANK_PROVIDER_MODE=browser \
+AIRANK_BROWSER_PROFILE_DIR=.runtime/browser-profiles \
+python3 scripts/release_readiness.py \
+  --database-url "$AIRANK_RELEASE_DATABASE_URL" \
+  --require-optional-capabilities \
+  --require-browser-providers
+```
+
+`--require-browser-providers` 会打开 ChatGPT、DeepSeek、Kimi、通义、豆包、百度 AI 搜索和腾讯元宝的持久浏览器 profile。任何平台未登录、需要真人验证或找不到可输入问题的控件，都会让 release gate 返回非零。
+
 ## 本地真实控制台数据
 
 本地 Web + API 联调前先灌入演示项目，避免控制台资产和报表页面退回前端 fixture：

@@ -71,6 +71,31 @@ def test_release_readiness_can_require_all_optional_capabilities() -> None:
     assert warnings == []
 
 
+def test_browser_provider_gate_blocks_non_browser_mode() -> None:
+    blockers, warnings = release_readiness.browser_provider_blockers(
+        [{"provider": "chatgpt", "status": "ready"}],
+        mode="mock",
+        minimum_success_count=1,
+    )
+
+    assert blockers == ["AIRANK_PROVIDER_MODE=mock; production ranking requires browser"]
+    assert warnings == []
+
+
+def test_browser_provider_gate_blocks_below_minimum_ready_count() -> None:
+    blockers, warnings = release_readiness.browser_provider_blockers(
+        [
+            {"provider": "chatgpt", "status": "ready"},
+            {"provider": "deepseek", "status": "blocked", "reason": "login required"},
+        ],
+        mode="browser",
+        minimum_success_count=2,
+    )
+
+    assert blockers == ["browser_provider_ready=1/2"]
+    assert warnings == ["deepseek=blocked (login required)"]
+
+
 def test_working_tree_check_fails_when_untracked_files_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -96,3 +121,19 @@ def test_command_env_can_isolate_database_urls(monkeypatch: pytest.MonkeyPatch) 
     assert "AIRANK_DATABASE_URL" not in env
     assert "ALEMBIC_DATABASE_URL" not in env
     assert "DATABASE_URL" not in env
+
+
+def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_check() -> release_readiness.Check:
+        return release_readiness.Check("browser provider readiness", "PASS", "fake", "ready")
+
+    monkeypatch.setattr(release_readiness, "working_tree_check", lambda: release_readiness.Check("working tree", "PASS", "fake", "clean"))
+    monkeypatch.setattr(release_readiness, "remote_ref_check", lambda remote: release_readiness.Check(f"{remote} main ref", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "command_check", lambda name, command, **kwargs: release_readiness.Check(name, "PASS", command, "ok"))
+    monkeypatch.setattr(release_readiness, "tracked_runtime_artifact_check", lambda: release_readiness.Check("tracked runtime artifacts", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "capability_check", lambda **kwargs: release_readiness.Check("capability probe", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "browser_provider_readiness_check", fake_check)
+
+    checks = release_readiness.release_checks(require_optional_capabilities=False, require_browser_providers=True)
+
+    assert checks[-1].name == "browser provider readiness"

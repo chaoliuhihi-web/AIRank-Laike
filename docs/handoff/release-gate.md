@@ -5,10 +5,13 @@
 可执行门禁命令：
 
 ```bash
-python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_URL"
+python3 scripts/release_readiness.py \
+  --database-url "$AIRANK_RELEASE_DATABASE_URL" \
+  --require-optional-capabilities \
+  --require-browser-providers
 ```
 
-该命令把本文件的核心自动检查脚本化：远端一致性、工作区、运行产物、contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 迁移和 capability probe。普通自动测试会隔离数据库环境变量，真实 migration 使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。真实 MySQL 或必需 capability 未 READY 时返回非零，不允许用 `dev_only` 结果替代上线通过。
+该命令把本文件的核心自动检查脚本化：远端一致性、工作区、运行产物、contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 迁移、capability probe 和消费端网页 Provider readiness。普通自动测试会隔离数据库环境变量，真实 migration 使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。真实 MySQL、必需 capability 或 ChatGPT / DeepSeek / Kimi / 通义 / 豆包 / 百度 AI 搜索 / 腾讯元宝任一消费端网页 profile 未 READY 时返回非零，不允许用 `dev_only` 结果替代上线通过。
 
 ## Gate 0：仓库和远端
 
