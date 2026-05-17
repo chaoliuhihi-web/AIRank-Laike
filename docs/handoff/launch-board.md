@@ -88,7 +88,7 @@ git push gitee main
 | fact review API | CodexWin | review | 支持 confirmed/rejected/needs_redaction/private；confirmed 必须有 traceable source |
 | content gap 生成 | CodexiMac | review | 缺口可追溯到问题、citation、FactAtom |
 | AI 收录包 API | CodexWin | dev_only | 前端 `AI 收录包` 页面读取资产 API；当前资产内容为 dev-only seed |
-| 事实链 review | CodexMacPro | todo | 无来源的内容不能进入报告 |
+| 事实链 review | CodexMacPro | review | acceptance 覆盖无来源 FactAtom 和缺 snapshot/citation/FactAtom 的报告结论失败 |
 
 ## Milestone 4：报告、前端接入、上线 beta
 
