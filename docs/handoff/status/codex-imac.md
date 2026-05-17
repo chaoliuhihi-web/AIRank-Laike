@@ -10,6 +10,7 @@
 | M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
 | M3-IMAC-002 | review | e469ed0 | ContentGap generation requires question, citation, and FactAtom traceability. |
 | M4-IMAC-001 | review | 86e2f65 | Report JSON conclusions require snapshot, citation, and FactAtom refs. |
+| M4-IMAC-002 | dev_only | pending | Capability probe covers yudao auth, tenant/user, object storage, Xinghe optional services, and Hermes; current local matrix is dev_only fallback only. |
 
 ## Run Log
 
@@ -29,3 +30,5 @@
 - 2026-05-17: Completed `M3-IMAC-002`; validation `cd packages/evidence && python3 -m pytest` passed 4 tests, `python3 -m pytest tests/acceptance` passed 5 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
 - 2026-05-17: Started `M4-IMAC-001` report evidence JSON so every conclusion carries snapshot/citation/FactAtom refs.
 - 2026-05-17: Completed `M4-IMAC-001`; validation `cd packages/evidence && python3 -m pytest` passed 6 tests, `python3 -m pytest tests/acceptance` passed 6 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
+- 2026-05-17: Started `M4-IMAC-002` Xinghe/yudao capability probe. Local/default environment has no authenticated yudao token or optional Xinghe/Hermes service URLs, so probe behavior is `dev_only`/fallback-oriented rather than release-ready.
+- 2026-05-17: Completed `M4-IMAC-002` dev-only capability probe. Local matrix: yudao auth `dev_only`, yudao tenant/user `dev_only`, object storage `dev_only`, crawler gateway `dev_only`, KB service `dev_only`, creator marketing `dev_only`, workflow runner `dev_only`, Hermes `dev_only`. Validation `cd packages/xinghe-adapter && python3 -m pytest -q` passed 2 tests, `python3 -m pytest tests/acceptance -q` passed 7 tests, `git diff --check` passed. Existing lane checks also passed: worker 6, score 2, evidence 6.

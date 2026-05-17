@@ -28,3 +28,27 @@ status/     capability readiness
 - 不读取主仓 `.runtime` 当作产品真相源。
 - 不吞掉星河侧错误。
 - 不把 `partial` 能力包装成 `ready`。
+
+## M4 capability probe
+
+`airank_xinghe_adapter.CapabilityProbe` outputs a capability matrix with:
+
+- `ready`: authenticated or reachable probe succeeded.
+- `partial`: optional Xinghe/Hermes endpoint is configured but not healthy.
+- `blocked`: required MVP dependency is missing or failed.
+- `dev_only`: local/mock fallback is usable for development but not release-ready.
+
+Covered capabilities:
+
+- `yudao_auth`
+- `yudao_tenant_user`
+- `object_storage`
+- `xinghe_crawler_gateway`
+- `xinghe_kb_service`
+- `xinghe_creator_marketing`
+- `xinghe_workflow_runner`
+- `xinghe_hermes`
+
+The probe reads deployment environment variables and does not import
+`XingheAI2026V2` internals. Local object storage and missing optional Xinghe
+endpoints are reported as `dev_only` with explicit fallbacks.
