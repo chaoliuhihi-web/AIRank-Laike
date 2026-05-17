@@ -3158,7 +3158,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
         run_row = conn.execute(
             text(
                 """
-                SELECT metrics_json
+                SELECT status, metrics_json, error_message
                 FROM airank_scan_runs
                 WHERE tenant_id = :tenant_id
                   AND project_id = :project_id
@@ -3173,10 +3173,18 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
     metrics = parse_json_value(run_row["metrics_json"], {}) if run_row else {}
     if not isinstance(metrics, dict):
         metrics = {}
+    run_status = str(run_row["status"] or "") if run_row else ""
+    run_error_message = str(run_row["error_message"] or "") if run_row else ""
     audiences = parse_json_value(project_row["target_audience_json"], [])
     audience = "、".join(audiences) if isinstance(audiences, list) and audiences else "企业品牌方 / 增长负责人"
     competitors = "、".join(row["name"] for row in competitor_rows) or "待补充竞品"
     created_at = coerce_datetime(project_row["created_at"]).date()
+    scan_completed = run_status == "completed"
+    task_count = int(metrics.get("task_count") or 0)
+    scan_delta = "本次检测已完成" if scan_completed else "检测未完成：Provider 登录待处理"
+    coverage_delta = f"{task_count} 个检测任务" if scan_completed else f"0/{task_count} 个任务完成"
+    leads_delta = "基于检测结果预估" if scan_completed else "未生成，需完成真实采样"
+    pressure_delta = "需补齐公开证据" if scan_completed else "外部网页登录/真人验证未完成"
 
     return ConsoleOverview(
         project=ProjectOverview(
@@ -3193,7 +3201,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 label="AI 来客指数",
                 value=str(metrics.get("ai_visibility_score", 62)),
                 suffix="/100",
-                delta="本次检测已完成",
+                delta=scan_delta,
                 tone="primary",
                 icon="Activity",
             ),
@@ -3201,7 +3209,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 label="高意向问题覆盖率",
                 value=str(metrics.get("question_coverage", 41)),
                 suffix="%",
-                delta=f"{metrics.get('task_count', 0)} 个检测任务",
+                delta=coverage_delta,
                 tone="primary",
                 icon="Target",
             ),
@@ -3209,7 +3217,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 label="竞品压制问题数",
                 value=str(metrics.get("competitor_pressure_count", 127)),
                 suffix="",
-                delta="需补齐公开证据",
+                delta=pressure_delta,
                 tone="warning",
                 icon="ShieldAlert",
             ),
@@ -3217,7 +3225,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 label="本月 AI 来客线索",
                 value=str(metrics.get("monthly_leads", 186)),
                 suffix="",
-                delta="基于检测结果预估",
+                delta=leads_delta,
                 tone="success",
                 icon="UserRound",
             ),

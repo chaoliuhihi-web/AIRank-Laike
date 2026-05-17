@@ -96,6 +96,12 @@ import {
   Tone,
 } from "./console/data";
 
+const blockedNextActions = [
+  { title: "完成 Provider 登录态", level: "上线阻断", desc: "为 7 个消费端 AI 平台的浏览器 profile 完成网页登录和真人验证。", cta: "查看体检状态" },
+  { title: "重跑真实采样", level: "关键步骤", desc: "登录态 ready 后重新提交品牌检测，生成可追溯快照、引用和排名结果。", cta: "回到检测页" },
+  { title: "再生成资产和报告", level: "等待采样", desc: "真实采样完成前不要发布 GEO 结论、AI 收录包或老板报告。", cta: "查看设置" },
+];
+
 const iconMap: Record<string, LucideIcon> = {
   Activity,
   AlertTriangle,
@@ -283,9 +289,13 @@ function App() {
         sourceRoute: path,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "后端未能记录本次操作，请稍后重试。";
+      if (message === "Project not found" || message === "PROJECT_NOT_FOUND") {
+        return;
+      }
       showToast({
         title: "操作记录失败",
-        desc: error instanceof Error ? error.message : "后端未能记录本次操作，请稍后重试。",
+        desc: message,
         tone: "danger",
       });
     }
@@ -844,6 +854,7 @@ function DashboardPage({
 }) {
   const { metricCards } = useConsoleOverview();
   const overviewStatus = useConsoleOverviewStatus();
+  const scanBlocked = metricCards.some((item) => item.delta.includes("检测未完成") || item.delta.includes("Provider 登录待处理"));
 
   return (
     <>
@@ -866,6 +877,31 @@ function DashboardPage({
           <MetricCard key={item.label} item={item} />
         ))}
       </section>
+      {scanBlocked && (
+        <AlertBanner
+          title="真实 AI 平台采样未完成"
+          desc="当前项目已创建，但 ChatGPT、DeepSeek、Kimi、通义、豆包、百度 AI 搜索或腾讯元宝的浏览器 profile 还需要登录/真人验证；完成前不生成 GEO 结论、线索数或收录包。"
+          action="查看体检状态"
+          onClick={() => onNavigate("/console/checkup")}
+        />
+      )}
+      {scanBlocked ? (
+        <section className="dashboard-grid">
+          <div className="dashboard-main">
+            <Panel title="AI 来客机会总览">
+              <div className="warning-note">等待 7 个真实消费端 AI 平台完成网页登录态和真人验证后，才会计算机会总量。</div>
+            </Panel>
+            <Panel title="本周新增来客线索">
+              <div className="lead-card">
+                <strong>0</strong>
+                <span>条</span>
+                <small>真实采样未完成，暂不估算线索</small>
+              </div>
+            </Panel>
+          </div>
+          <NextActionsRail onNavigate={onNavigate} blocked />
+        </section>
+      ) : (
       <section className="dashboard-grid">
         <div className="dashboard-main">
           <div className="two-column">
@@ -917,6 +953,7 @@ function DashboardPage({
         </div>
         <NextActionsRail onNavigate={onNavigate} />
       </section>
+      )}
     </>
   );
 }
@@ -956,16 +993,16 @@ function Panel({ title, children, action }: { title: string; children: ReactNode
   );
 }
 
-function NextActionsRail({ onNavigate }: { onNavigate: (path: string) => void }) {
+function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: string) => void; blocked?: boolean }) {
   return (
     <aside className="airank-console-card right-rail">
       <div className="rail-title">
         <Target size={24} />
         <h2>下一步建议</h2>
       </div>
-      <p className="rail-subtitle">优先补齐推荐证据，提升 AI 推荐概率</p>
+      <p className="rail-subtitle">{blocked ? "先完成真实 AI 平台登录态，再生成 GEO 结论" : "优先补齐推荐证据，提升 AI 推荐概率"}</p>
       <div className="action-timeline">
-        {nextActions.map((item, index) => (
+        {(blocked ? blockedNextActions : nextActions).map((item, index) => (
           <article className="action-card" key={item.title}>
             <span className="action-index">{index + 1}</span>
             <div>
@@ -974,18 +1011,22 @@ function NextActionsRail({ onNavigate }: { onNavigate: (path: string) => void })
                 <span>{item.level}</span>
               </div>
               <p>{item.desc}</p>
-              <button className="outline-button" type="button" onClick={() => onNavigate(index === 2 ? "/console/publishing" : "/console/assets")}>
+              <button
+                className="outline-button"
+                type="button"
+                onClick={() => onNavigate(blocked ? (index === 2 ? "/console/settings" : "/console/checkup") : index === 2 ? "/console/publishing" : "/console/assets")}
+              >
                 {item.cta}
               </button>
             </div>
           </article>
         ))}
       </div>
-      <button className="airank-console-primary-button rail-cta" type="button" onClick={() => onNavigate("/console/assets")}>
-        继续下一步
+      <button className="airank-console-primary-button rail-cta" type="button" onClick={() => onNavigate(blocked ? "/console/checkup" : "/console/assets")}>
+        {blocked ? "查看阻断状态" : "继续下一步"}
         <ArrowRight size={18} />
       </button>
-      <span className="rail-caption">按此顺序执行，可最大化 AI 推荐效果</span>
+      <span className="rail-caption">{blocked ? "上线前必须让所有生产 provider profile ready" : "按此顺序执行，可最大化 AI 推荐效果"}</span>
     </aside>
   );
 }
