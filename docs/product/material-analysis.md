@@ -11,12 +11,17 @@
 - `AIRank素材/Web宣传/免费体检.png`
 - `AIRank素材/Web宣传/定价.png`
 - `AIRank素材/Web宣传/资源中心.png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (1).png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (2).png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (3).png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (4).png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (5).png`
-- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 09_52_28 (6).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 12_51_02 (1).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 12_51_03 (2).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 12_51_03 (3).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 12_51_04 (4).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 12_51_04 (5).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_07 (1).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_08 (2).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_08 (3).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_09 (4).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_10 (5).png`
+- `AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_11 (6).png`
 
 ## 当前可见素材结构
 
@@ -31,12 +36,17 @@ AIRank素材/
     定价.png
     资源中心.png
   操作台/
-    ChatGPT Image 2026年5月17日 09_52_28 (1).png
-    ChatGPT Image 2026年5月17日 09_52_28 (2).png
-    ChatGPT Image 2026年5月17日 09_52_28 (3).png
-    ChatGPT Image 2026年5月17日 09_52_28 (4).png
-    ChatGPT Image 2026年5月17日 09_52_28 (5).png
-    ChatGPT Image 2026年5月17日 09_52_28 (6).png
+    ChatGPT Image 2026年5月17日 12_51_02 (1).png
+    ChatGPT Image 2026年5月17日 12_51_03 (2).png
+    ChatGPT Image 2026年5月17日 12_51_03 (3).png
+    ChatGPT Image 2026年5月17日 12_51_04 (4).png
+    ChatGPT Image 2026年5月17日 12_51_04 (5).png
+    ChatGPT Image 2026年5月17日 13_41_07 (1).png
+    ChatGPT Image 2026年5月17日 13_41_08 (2).png
+    ChatGPT Image 2026年5月17日 13_41_08 (3).png
+    ChatGPT Image 2026年5月17日 13_41_09 (4).png
+    ChatGPT Image 2026年5月17日 13_41_10 (5).png
+    ChatGPT Image 2026年5月17日 13_41_11 (6).png
   需求文档PRDv0.1/
     airank来客_prd_v_3_可信事实资产版 (1).md
   废弃/
@@ -91,6 +101,8 @@ AI 销售助手（后续工程统一命名为 AI 来客助手）
 设置中心
 ```
 
+当前操作台素材已经进一步细化为 11 个页面稿，工程侧不要把这些 PNG 当作页面背景使用。已新增 `apps/web/design/console-reference.md`，把每张图映射到控制台路由、共享组件、API view model 和开发优先级。
+
 这些页面可以映射到第一版 `apps/web` 的控制台路由，也可以映射到 `apps/api` 的领域模块：
 
 | 页面 | 领域对象 | 第一版工程落点 |
@@ -109,10 +121,10 @@ AI 销售助手（后续工程统一命名为 AI 来客助手）
 ## 第一版要保留的视觉约束
 
 - 对外站：浅蓝白、科技感、强 CTA，避免复杂营销长页先行。
-- 控制台：深色侧栏 + 白底数据工作区，适合 B 端长期使用。
+- 控制台：严格按 `AIRank素材/操作台` 效果图还原深色侧栏 + 白底数据工作区；色彩、icon、字体、间距、圆角、阴影和视觉密度不要另行改版。
 - 页面必须工作化，不要做成纯展示大屏。
-- 控制台卡片可以使用，但不要卡片套卡片；表格、趋势、漏斗和状态流转要可扫描。
-- 图标和状态颜色需要服务业务判断：ready / partial / blocked / failed / reviewed。
+- 控制台卡片、表格、趋势、漏斗和状态流转都按效果图拆组件实现，不用整图背景，也不替换为其它组件库默认视觉。
+- 图标和状态颜色需要服务业务判断：ready / partial / blocked / failed / reviewed，但呈现方式必须沿用效果图的线性图标、彩色 icon tile 和 badge 风格。
 
 ## 工程含义
 
