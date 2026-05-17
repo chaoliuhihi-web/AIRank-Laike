@@ -60,7 +60,7 @@ git push gitee main
 
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
-| 初始化 FastAPI 工程 | CodexWin | todo | `/api/v1/health`, `/api/v1/version` 可用，统一 response envelope |
+| 初始化 FastAPI 工程 | CodexWin | done | `/api/v1/health`, `/api/v1/version` 可用，统一 response envelope |
 | Console overview API loop | CodexWin | done | `GET /api/v1/console/overview`、schema、contract test、web fallback 已有 |
 | 建立 SQLAlchemy + Alembic | CodexiMac | todo | `alembic upgrade head` 可从空库建 schema |
 | 项目/竞品/问题 CRUD | CodexWin | todo | tenant 过滤，contract test 通过 |

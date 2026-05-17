@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import os
 from typing import Literal, Optional
 from uuid import uuid4
 
@@ -8,6 +9,8 @@ from fastapi import FastAPI, Header
 from pydantic import BaseModel, ConfigDict, Field
 
 API_PREFIX = "/api/v1"
+API_VERSION = "v1"
+SERVICE_NAME = "airank-api"
 
 
 class ProjectOverview(BaseModel):
@@ -41,6 +44,30 @@ class ResponseMeta(BaseModel):
     request_id: str
 
 
+class HealthStatus(BaseModel):
+    status: Literal["ok"]
+    service: str
+    api_version: str
+
+
+class VersionInfo(BaseModel):
+    service: str
+    version: str
+    api_version: str
+    api_prefix: str
+    commit: str
+
+
+class HealthResponse(BaseModel):
+    data: HealthStatus
+    meta: ResponseMeta
+
+
+class VersionResponse(BaseModel):
+    data: VersionInfo
+    meta: ResponseMeta
+
+
 class ConsoleOverviewResponse(BaseModel):
     data: ConsoleOverview
     meta: ResponseMeta
@@ -53,6 +80,32 @@ def build_trace_id(trace_id: Optional[str]) -> str:
     if trace_id:
         return trace_id
     return f"trc_{uuid4().hex[:16]}"
+
+
+def build_meta(trace_id: Optional[str]) -> ResponseMeta:
+    return ResponseMeta(trace_id=build_trace_id(trace_id), request_id=f"req_{uuid4().hex[:16]}")
+
+
+@app.get(f"{API_PREFIX}/health", response_model=HealthResponse)
+def get_health(trace_id: Optional[str] = Header(default=None, alias="X-AIRank-Trace-Id")) -> HealthResponse:
+    return HealthResponse(
+        data=HealthStatus(status="ok", service=SERVICE_NAME, api_version=API_VERSION),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(f"{API_PREFIX}/version", response_model=VersionResponse)
+def get_version(trace_id: Optional[str] = Header(default=None, alias="X-AIRank-Trace-Id")) -> VersionResponse:
+    return VersionResponse(
+        data=VersionInfo(
+            service=SERVICE_NAME,
+            version=app.version,
+            api_version=API_VERSION,
+            api_prefix=API_PREFIX,
+            commit=os.getenv("AIRANK_BUILD_COMMIT", "local"),
+        ),
+        meta=build_meta(trace_id),
+    )
 
 
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)
@@ -109,5 +162,5 @@ def get_console_overview(
                 ),
             ],
         ),
-        meta=ResponseMeta(trace_id=build_trace_id(trace_id), request_id=f"req_{uuid4().hex[:16]}"),
+        meta=build_meta(trace_id),
     )

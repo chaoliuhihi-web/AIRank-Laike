@@ -179,3 +179,41 @@ Risks:
 
 Next owner:
 - CodexWin 先同步到包含 execution packets 和 Windows gate fix 的最新 HEAD，再执行 `M1-WIN-001`。
+
+## 2026-05-17 15:54 +08:00 - CodexWin
+
+Scope:
+- 完成 `M1-WIN-001 health-version-envelope`。
+- 在 FastAPI baseline 中补齐 `/api/v1/health`、`/api/v1/version` 和统一 success envelope helper。
+- 为 health/version 增加 full-response JSON Schema 和 contract tests，确认 `console/overview` 不回归。
+
+Changed:
+- `apps/api/main.py`
+- `packages/contracts/health_response.schema.json`
+- `packages/contracts/version_response.schema.json`
+- `tests/contracts/test_api_baseline_contract.py`
+- `docs/handoff/execution-packets.md`
+- `docs/handoff/launch-board.md`
+
+Validation:
+- command: `$env:PYTHONUTF8='1'; python scripts/agent_control.py gate --write`
+- result: pass with expected dirty Web website worktree outside this packet
+- command: `python -m pytest tests/contracts -q`
+- result: pass, 3 tests
+- command: `git diff --check`
+- result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+
+Review:
+- status: PASS
+- reviewer: CodexWin
+- notes: Health/version endpoints now return `{ data, meta }` with caller-provided `X-AIRank-Trace-Id` propagated and `request_id` generated. Version response includes service, API version, prefix, app version, and build commit fallback. `M1-WIN-001` marked `done`.
+
+Risks:
+- Existing uncommitted Web website work remains in the workspace and was deliberately excluded from this packet commit.
+- `M1-WIN-002` still depends on `M1-IMAC-001 alembic-initial-schema`; CodexWin should not start CRUD persistence until that dependency is complete.
+
+Next owner:
+- CodexiMac for `M1-IMAC-001 alembic-initial-schema`.
+- CodexMacPro can review `M1-WIN-001` and current gate output.

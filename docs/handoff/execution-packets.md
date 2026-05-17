@@ -24,7 +24,7 @@ done
 
 | ID | Owner | Status | Depends | File Scope | Acceptance | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| M1-WIN-001 health-version-envelope | CodexWin | todo | `cf20229` API baseline | `apps/api`, `packages/contracts`, `tests/contracts` | `/api/v1/health` 和 `/api/v1/version` 返回统一 envelope、`trace_id`、版本信息；`console/overview` 不回归 | `python3 -m pytest tests/contracts` |
+| M1-WIN-001 health-version-envelope | CodexWin | done | `cf20229` API baseline | `apps/api`, `packages/contracts`, `tests/contracts` | `/api/v1/health` 和 `/api/v1/version` 返回统一 envelope、`trace_id`、版本信息；`console/overview` 不回归 | `python3 -m pytest tests/contracts` |
 | M1-IMAC-001 alembic-initial-schema | CodexiMac | todo | `ops/deployment/mysql-bootstrap.sql` | `apps/api/alembic`, `ops/deployment`, `docs/handoff` | `alembic upgrade head` 可从空库建 AIRank schema，字段与 bootstrap SQL 关键表一致 | `alembic upgrade head` 或写明本地 MySQL 不可用原因 |
 | M1-MACPRO-001 stage-review-current-head | CodexMacPro | todo | `b6c5458` | `docs/handoff`, `.github/workflows`, `tests` | 审核 `cf20229`、`a4de530`、`b6c5458` 是否偏离主线，并在 `review-ledger` 写 PASS/BLOCKED/PASS_WITH_RISK | `git diff --check`; `python3 -m pytest tests/contracts`; `cd apps/web && npm run build` |
 | M1-WIN-002 project-competitor-question-crud-contract | CodexWin | todo | `M1-WIN-001`, `M1-IMAC-001` | `apps/api`, `packages/contracts`, `tests/contracts` | project、competitor、buyer question CRUD 带 tenant 过滤；错误响应有 registry code 和 trace_id | `python3 -m pytest tests/contracts` |
