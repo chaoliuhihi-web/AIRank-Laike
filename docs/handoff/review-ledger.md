@@ -551,3 +551,41 @@ Risks:
 Next owner:
 - CodexMacPro should regenerate prompts and verify there are no false actionable tasks.
 - Human/integration owner must fix real MySQL grants and provide real external capability credentials, or explicitly approve a dev_only beta scope.
+
+## 2026-05-17 18:20 +08:00 - CodexMacPro
+
+Scope:
+- Reduced the MySQL release blocker by making the local bootstrap repair stale dev-user credentials and common host grants.
+- Documented the remaining root-MySQL verification step instead of treating local Access denied as a code failure.
+
+Changed:
+- `ops/deployment/mysql-bootstrap.sql`
+- `ops/deployment/README.md`
+- `docs/handoff/release-gate.md`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `mysql --version`
+- result: blocked locally; `mysql` client is not installed in this shell
+- command: CI bootstrap grep checks for required AIRank tables and worker fields
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 33 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+
+Review:
+- status: REVIEW_ENV_BLOCKED
+- reviewer: CodexMacPro
+- notes: Bootstrap now creates/repairs `airank` for `%`, `localhost`, `127.0.0.1`, and Docker Desktop `192.168.65.%`. This should fix stale-password or missing-host local dev setups once a root-capable MySQL shell reruns the bootstrap.
+
+Risks:
+- If MySQL has an even more-specific `airank` host record, an operator still needs to inspect `mysql.user` and fix that exact host.
+- Real `alembic upgrade head` remains unproven in this environment until MySQL client/root access is available.
+
+Next owner:
+- Human/CodexMacPro with root MySQL access should rerun `mysql -uroot -p < ops/deployment/mysql-bootstrap.sql`, then run `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
+- Integration owner still must provide real yudao/Xinghe/Hermes config or approve dev_only beta scope.

@@ -126,5 +126,5 @@ Blocked:
 
 Minimum fix before beta PASS:
 
-- Re-run `ops/deployment/mysql-bootstrap.sql` or fix local/prod MySQL grants for the `airank` user, then rerun `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
+- Re-run `ops/deployment/mysql-bootstrap.sql`; it now repairs common local/Docker Desktop dev-user credentials and grants. If MySQL still reports access denied, inspect `mysql.user` for a more-specific `airank` host record and fix that grant, then rerun `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
 - Provide real yudao/Xinghe/Hermes configuration or explicitly accept a dev_only beta scope before tagging.

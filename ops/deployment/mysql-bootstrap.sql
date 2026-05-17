@@ -7,8 +7,26 @@ CREATE DATABASE IF NOT EXISTS airank_laike
   DEFAULT COLLATE utf8mb4_0900_ai_ci;
 
 CREATE USER IF NOT EXISTS 'airank'@'%' IDENTIFIED BY 'airank_dev_password';
+CREATE USER IF NOT EXISTS 'airank'@'localhost' IDENTIFIED BY 'airank_dev_password';
+CREATE USER IF NOT EXISTS 'airank'@'127.0.0.1' IDENTIFIED BY 'airank_dev_password';
+CREATE USER IF NOT EXISTS 'airank'@'192.168.65.%' IDENTIFIED BY 'airank_dev_password';
+
+-- Keep local bootstrap idempotent even if a previous dev user exists with
+-- stale credentials. This is intentionally deployment-only; Alembic migrations
+-- never manage users or grants.
+ALTER USER IF EXISTS 'airank'@'%' IDENTIFIED BY 'airank_dev_password';
+ALTER USER IF EXISTS 'airank'@'localhost' IDENTIFIED BY 'airank_dev_password';
+ALTER USER IF EXISTS 'airank'@'127.0.0.1' IDENTIFIED BY 'airank_dev_password';
+ALTER USER IF EXISTS 'airank'@'192.168.65.%' IDENTIFIED BY 'airank_dev_password';
+
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
   ON airank_laike.* TO 'airank'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+  ON airank_laike.* TO 'airank'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+  ON airank_laike.* TO 'airank'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+  ON airank_laike.* TO 'airank'@'192.168.65.%';
 
 USE airank_laike;
 

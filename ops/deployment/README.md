@@ -16,6 +16,14 @@
 mysql -uroot -p < ops/deployment/mysql-bootstrap.sql
 ```
 
+该脚本可重复执行，会修复本地 dev `airank` 用户的密码和常见本机/Docker
+Desktop 来源 host 授权。若仍出现 `Access denied for user 'airank'@'...'`，
+用 root 检查是否存在更具体的同名 host 记录：
+
+```sql
+SELECT user, host FROM mysql.user WHERE user = 'airank';
+```
+
 本地环境变量：
 
 ```bash
