@@ -231,3 +231,31 @@ Residual risks:
 
 - Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities still report `dev_only` unless real endpoints are configured. They are not required for the MVP gate by the current capability metadata.
 - Filesystem object storage is acceptable only for a single-node beta with a mounted persistent directory; multi-node production still needs S3/OSS/minio-class storage integration and probe.
+
+## 2026-05-17 19:05 +08:00 Execution
+
+Release Gate: PASS_WITH_RISK
+
+Commit: `c2ceae4`
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- `python3 scripts/release_readiness.py --database-url mysql+pymysql://.../airank_laike_release_gate?charset=utf8mb4` passed with real yudao token and filesystem object storage environment.
+- GitHub and Gitee `main` matched local HEAD `c2ceae4`.
+- `python3 -m pytest tests/contracts -q` passed 56 tests.
+- `python3 -m pytest tests/acceptance -q` passed 15 tests.
+- `cd apps/worker && python3 -m pytest -q` passed 11 tests.
+- `cd packages/score && python3 -m pytest -q` passed 3 tests.
+- `cd packages/evidence && python3 -m pytest -q` passed 9 tests.
+- `cd packages/xinghe-adapter && python3 -m pytest -q` passed 3 tests.
+- `cd apps/web && npm run build` passed.
+- Alembic offline SQL passed.
+- Real Alembic migration passed against `airank_laike_release_gate`.
+- Capability probe passed for required MVP capabilities: `yudao_auth=ready`, `yudao_tenant_user=ready`, `object_storage=ready`.
+
+Residual risks:
+
+- Optional Xinghe crawler/KB/creator/workflow/Hermes capabilities remain `dev_only` warnings because endpoints are not configured; current MVP metadata marks them not required.
+- Filesystem object storage is a valid single-node beta gate only when backed by a mounted persistent directory. Multi-node production still needs S3/OSS/minio-class storage and probe.

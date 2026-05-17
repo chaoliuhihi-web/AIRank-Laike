@@ -5,13 +5,13 @@
 当前产品基线：
 
 - 前端原型提交：`622b1f7 feat: implement console frontend prototype`
-- 最新远端阶段提交：`9ca4fc9 feat: add mysql worker lease store`
+- 最新远端阶段提交：`c2ceae4 feat: verify filesystem object storage capability`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
 - Worker：`apps/worker` 已有 in-memory 和 MySQL-backed async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；scan API 已能在 MySQL 路径写入 `airank_async_jobs`，真实 worker DB 消费仍需实库验证。
 - 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；2026-05-17 已在本机 `yudao-mysql` 容器验证 `airank` 应用用户、真实 `alembic upgrade head` 和 MySQL-backed 项目/竞品/问题/scan/assets/reports API。
 - Contracts：`packages/contracts/console_overview.schema.json` 已有首个 dashboard slice contract。
-- 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；Release Gate 尚未执行完整通过。
+- 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；本机单节点 beta release readiness 已通过，仍带可选 Xinghe 服务 dev_only 风险。
 
 ## 协作规则
 
@@ -95,14 +95,14 @@ git push gitee main
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | 诊断报告 JSON | CodexiMac | review | 每个结论可追溯到 snapshot/citation/FactAtom |
-| Xinghe/yudao capability probe | CodexiMac | dev_only | capability probe 已入库；本地矩阵全为 dev_only fallback，release 前需接真实 yudao/Xinghe/Hermes 环境验证 |
+| Xinghe/yudao capability probe | CodexiMac | review | yudao auth/tenant-user 可用真实本地 token 验证 ready；filesystem object storage 可验证 ready；可选 Xinghe/Hermes 仍需配置真实 endpoint |
 | report API + download receipt | CodexWin | review | 配置 MySQL 时从 `airank_reports` 读取报告，并把下载回执写入 `airank_audit_events`；fresh release-gate DB 已验证 |
 | 前端 fixture 切 API | CodexWin | review | 控制台主页面 API-first；API 不可用时显示明确 fallback 状态 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
-| v0.1 beta release gate | CodexMacPro | blocked | 自动化测试、真实 MySQL migration、MySQL-backed CRUD/scan/assets/reports/worker lease 已通过；外部 yudao token 未提供，capability 仍含 dev_only/partial，未获明确 dev_only beta scope 批准前不能声明可上线 |
+| v0.1 beta release gate | CodexMacPro | review | `scripts/release_readiness.py` 在本机单节点 beta 配置下通过；可选 Xinghe/Hermes 服务仍为 dev_only warning，多节点生产还需 S3/OSS/minio-class 对象存储 |
 
 ## 当前下一个推荐动作
 
-1. CodexMacPro：数据库 blocker 已解除；保持 release gate `blocked`，直到外部 yudao token/真实能力验证完成，或产品明确批准 dev_only beta scope。
-2. CodexWin：当前 Product/API/Web packet 已推进到 `M4-WIN-002 review/dev_only`；不要重复执行 `M1-WIN-001C` / `M1-WIN-001D`。
-3. CodexiMac：当前 Data/Worker/Evidence packet 已推进到 `M4-IMAC-002 dev_only`；等待真实外部环境或 CodexMacPro 拆分新的后续 packet，不要重复执行 capability probe。
+1. CodexMacPro：本机单节点 beta gate 已通过；如要进入多节点/正式生产，下一步补 S3/OSS/minio-class object storage 和真实 Xinghe optional endpoints。
+2. CodexWin：当前 Product/API/Web packet 已推进到 `M4-WIN-002 review/dev_only`；上线前做一次浏览器人工验收。
+3. CodexiMac：当前 Data/Worker/Evidence 主链已满足单节点 beta gate；后续重点是真实 Xinghe crawler/KB/Hermes endpoint 映射。
