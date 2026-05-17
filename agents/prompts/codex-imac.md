@@ -96,6 +96,7 @@ cd apps/api && alembic upgrade head
 - `docs/handoff/status/codex-imac.md`：更新你负责的 packet 状态、commit、验证结果、风险和 fallback 状态。
 - 不直接更新 `docs/handoff/execution-packets.md` 或 `docs/handoff/review-ledger.md`，除非 CodexMacPro 明确要求你解决冲突。
 - 如果你处于 rebase 冲突状态，先读 `docs/handoff/rebase-recovery.md`。
+- 如果 MySQL、外部服务或本机环境阻塞真实验证，把 packet 标为 `review_env_blocked`；如果交付的是 mock/local fallback，则标明 `dev_only`，继续做 mock provider、domain、score、evidence 这类不依赖该环境的后续可执行任务。
 
 ## 提交和推送
 

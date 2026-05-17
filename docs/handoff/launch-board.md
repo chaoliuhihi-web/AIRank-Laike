@@ -8,8 +8,8 @@
 - 最新远端阶段提交：`a4de530 docs: detail low-touch hermes MVP flow`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
-- Worker：`apps/worker` 仍为空骨架。
-- 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 尚未建立。
+- Worker：`apps/worker` 已有 in-memory async job lease/heartbeat 和 mock provider snapshot/citation baseline；生产 MySQL 队列持久化仍未完成。
+- 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；真实 MySQL `alembic upgrade head` 仍受本机授权环境阻塞。
 - Contracts：`packages/contracts/console_overview.schema.json` 已有首个 dashboard slice contract。
 - 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；Release Gate 尚未执行完整通过。
 
@@ -63,9 +63,11 @@ git push gitee main
 | --- | --- | --- | --- |
 | 初始化 FastAPI 工程 | CodexWin | done | `/api/v1/health`, `/api/v1/version` 可用，统一 response envelope |
 | Console overview API loop | CodexWin | done | `GET /api/v1/console/overview`、schema、contract test、web fallback 已有 |
-| 建立 SQLAlchemy + Alembic | CodexiMac | blocked | 迁移文件已建立；本机 MySQL 拒绝 `airank` dev credentials，需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
-| 项目/竞品/问题 CRUD | CodexWin | todo | tenant 过滤，contract test 通过 |
+| 建立 SQLAlchemy + Alembic | CodexiMac | review_env_blocked | migration SQL/parity 已通过；本机 MySQL 拒绝 `airank` dev credentials，release 前需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
 | 错误码和 trace_id 落地 | CodexWin | todo | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
+| 项目/竞品/问题 contract skeleton | CodexWin | todo | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
+| 项目/竞品/问题 dev repository | CodexWin | todo | repository interface + in-memory/dev-only adapter 先打通 API，不能冒充生产持久化 |
+| 项目/竞品/问题 CRUD | CodexWin | todo | Alembic/MySQL 持久化、tenant 过滤，contract test 通过 |
 | 数据库 schema review | CodexMacPro | todo | tenant、索引、迁移、敏感字段检查通过 |
 
 ## Milestone 2：扫描和评分闭环
@@ -73,18 +75,18 @@ git push gitee main
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | scan run / scan task API | CodexWin | todo | 可创建 scan run 并查询状态 |
-| worker job 领取和 heartbeat | CodexiMac | todo | queued/running/succeeded/failed/timeout 状态可复测 |
-| mock/manual provider | CodexiMac | todo | 可生成 answer snapshot 和 citation |
-| AIRank Score 纯函数 | CodexiMac | todo | 同一输入重复计算一致 |
+| worker job 领取和 heartbeat | CodexiMac | review | queued/running/succeeded/failed/timeout 状态可复测 |
+| mock/manual provider | CodexiMac | review | 可生成 answer snapshot 和 citation |
+| AIRank Score 纯函数 | CodexiMac | review | 同一输入重复计算一致 |
 | scan/score acceptance | CodexMacPro | todo | 从项目到 score 的测试通过 |
 
 ## Milestone 3：事实卡、缺口、AI 收录包
 
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
-| FactAtom domain model | CodexiMac | todo | 每个 FactAtom 至少有 source/citation |
+| FactAtom domain model | CodexiMac | review | 每个 FactAtom 至少有 source/citation |
 | fact review API | CodexWin | todo | 支持确认、驳回、需脱敏、不可公开 |
-| content gap 生成 | CodexiMac | todo | 缺口可追溯到问题、citation、FactAtom |
+| content gap 生成 | CodexiMac | review | 缺口可追溯到问题、citation、FactAtom |
 | AI 收录包 API | CodexWin | todo | 前端 `AI 收录包` 页面可读取真实资产 |
 | 事实链 review | CodexMacPro | todo | 无来源的内容不能进入报告 |
 
@@ -92,7 +94,8 @@ git push gitee main
 
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
-| 诊断报告 JSON | CodexiMac | todo | 每个结论可追溯到 snapshot/citation/FactAtom |
+| 诊断报告 JSON | CodexiMac | review | 每个结论可追溯到 snapshot/citation/FactAtom |
+| Xinghe/yudao capability probe | CodexiMac | todo | 输出 ready/partial/blocked/dev_only，明确哪些平台能力可复用、哪些需要 fallback |
 | report API + download receipt | CodexWin | todo | 报告中心可查看真实报告 |
 | 前端 fixture 切 API | CodexWin | todo | 控制台主页面不再依赖硬编码 demo 数据 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
@@ -100,6 +103,6 @@ git push gitee main
 
 ## 当前下一个推荐动作
 
-1. CodexWin：领取 `M1-WIN-001 health-version-envelope`。
-2. CodexiMac：领取 `M1-IMAC-001 alembic-initial-schema`。
-3. CodexMacPro：领取 `M1-MACPRO-001 stage-review-current-head`。
+1. CodexWin：领取 `M1-WIN-001B error-trace-foundation`，之后继续 `M1-WIN-001C` 和 `M1-WIN-001D`，不要再等 DB。
+2. CodexiMac：领取 `M4-IMAC-002 xinghe-yudao-capability-probe`，把可复用平台能力和 fallback 状态跑清楚。
+3. CodexMacPro：持续审核两边提交，若发现等待状态，立刻拆出 contract/mock/dev-only packet，不让开发 AI 空等。

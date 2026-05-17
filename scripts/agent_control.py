@@ -47,7 +47,7 @@ AGENTS = {
 
 ACTIONABLE_TASK_STATUSES = {"todo", "in_progress", "partial"}
 OPEN_TASK_STATUSES = {"todo", "in_progress", "blocked", "partial"}
-DEPENDENCY_SATISFIED_STATUSES = {"done", "review", "review_env_blocked"}
+DEPENDENCY_SATISFIED_STATUSES = {"done", "review", "review_env_blocked", "dev_only"}
 PACKET_ID_RE = re.compile(r"M\d+-[A-Z]+-\d+[A-Z]?")
 TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
     r"(^|/)(node_modules|dist|\.runtime)(/|$)|(^|/)\.env(\..*)?$|\.sqlite3?$|tsbuildinfo$"
@@ -266,6 +266,19 @@ def recent_review_lines() -> str:
     return "\n".join(important[-28:])
 
 
+def acceleration_candidate_lines(waiting_tasks: list[dict[str, str]]) -> str:
+    candidates: list[str] = []
+    for task in waiting_tasks:
+        depends = task["depends"]
+        if depends == "-":
+            continue
+        candidates.append(
+            f"- {task['packet_id']} blocked_by={task['dependency_note']} -> "
+            "ask CodexMacPro to split or approve a contract skeleton / dev-only adapter / mock provider slice in the same owner lane."
+        )
+    return "\n".join(candidates[:5]) if candidates else "- <empty>"
+
+
 def build_next_prompt(agent_key: str) -> str:
     agent = AGENTS[agent_key]
     owner = agent["owner"]
@@ -285,7 +298,7 @@ def build_next_prompt(agent_key: str) -> str:
         for task in actionable_tasks[:8]
     )
     if not actionable_lines:
-        actionable_lines = "- 当前没有依赖满足的可执行 task。不要硬做假实现；在 review-ledger 写清 blocker 后交回 CodexMacPro。"
+        actionable_lines = "- 当前没有依赖满足的可执行 task。先看下方 Development Acceleration Candidates；只有没有可拆分的 contract/mock/dev-only 中间成果时，才把 blocker 写入自己的 status 文件交回 CodexMacPro。"
     waiting_lines = "\n".join(
         (
             f"- [{task['status']}] {task['task']} :: blocked_by={task['dependency_note']} :: "
@@ -295,6 +308,7 @@ def build_next_prompt(agent_key: str) -> str:
     )
     if not waiting_lines:
         waiting_lines = "- <empty>"
+    acceleration_lines = acceleration_candidate_lines(waiting_tasks)
     validation = "\n".join(f"- `{cmd}`" for cmd in agent["default_validation"])
 
     if agent_key == "codex-macpro":
@@ -352,6 +366,12 @@ Then read this generated file again and execute the first open task below.
 ## Waiting Or Blocked Tasks
 
 {waiting_lines}
+
+## Development Acceleration Candidates
+
+{acceleration_lines}
+
+规则：生产依赖、外部服务或本机环境未 ready 时，优先做同 owner lane 内的 contract skeleton、repository interface、in-memory/dev-only adapter、mock provider、UI fallback 或 test scaffold。状态必须写 `dev_only` 或 `review_env_blocked`，不能声明 release ready。
 
 ## Required Validation
 

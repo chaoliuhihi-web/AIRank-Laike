@@ -49,6 +49,7 @@ docs/handoff/next-prompts/codex-macpro.md
 ```
 
 如果 CodexWin 或 CodexiMac 的提交偏离 v0.1 beta 主链，你必须直接改 `docs/handoff/launch-board.md` 和下一轮 prompt，把任务拉回主线。
+如果 CodexWin 或 CodexiMac 因依赖、MySQL、外部服务、推送凭据或没有 Actionable Tasks 而停止，你必须直接拆出可并行 packet，例如 contract skeleton、dev-only adapter、in-memory repository、mock provider、UI fallback 或 test scaffold，并重新生成 next prompt，不能只记录 blocker。
 
 ## 审核重点
 
@@ -95,6 +96,8 @@ PASS
 BLOCKED
 PASS_WITH_RISK
 ```
+
+开发态中间成果可以标记 `dev_only` 或 `review_env_blocked`，用于解锁后续开发；上线 gate 仍必须把它们当作风险或 blocker 复查。
 
 如果是 `BLOCKED`，必须写：
 

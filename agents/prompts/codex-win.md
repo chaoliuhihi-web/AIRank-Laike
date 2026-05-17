@@ -53,6 +53,7 @@ python3 scripts/agent_control.py next codex-win --write
 - 一个页面从 fixture 切换到 API。
 - 一个 CRUD 主链 + contract test。
 - 一个报告 view model + 页面展示。
+- 生产 DB 未 ready 时，可以先做 repository interface + in-memory/dev-only adapter，但必须在状态文件标明 `dev_only`，不能冒充 release ready。
 
 不要一轮同时做 API、worker、score、UI 大面积重构。
 
@@ -79,6 +80,7 @@ python3 -m pytest tests/contracts
 - `docs/handoff/status/codex-win.md`：更新你负责的 packet 状态、commit、验证结果和风险。
 - 不直接更新 `docs/handoff/execution-packets.md` 或 `docs/handoff/review-ledger.md`，除非 CodexMacPro 明确要求你解决冲突。
 - 如果你处于 rebase 冲突状态，先读 `docs/handoff/rebase-recovery.md`。
+- 如果没有 Actionable Tasks，不要停在泛泛汇报；先确认是否能做 contract skeleton、dev-only adapter、UI fallback 或 test scaffold。如果仍没有，写入 status 后交 CodexMacPro 新增 packet。
 
 ## 提交和推送
 

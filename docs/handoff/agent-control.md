@@ -92,6 +92,17 @@ GIT_EDITOR=true git rebase --continue
 | bug 越积越多 | 每轮只做小闭环，必须写验证命令和结果 |
 | 双远端不同步 | 每轮提交后强制 `git push origin main && git push gitee main` |
 
+## 开发加速机制
+
+CodexMacPro 的调度原则不是让其它 AI 等依赖，而是把 blocker 降级成可并行的中间成果：
+
+- 生产依赖未 ready：允许先做 contract skeleton、dev-only adapter、in-memory repository、mock provider、UI fallback。
+- 环境验证失败：状态写 `review_env_blocked`，后续开发可以继续，release gate 不能通过。
+- 推送失败：先切 SSH remote 或按 `rebase-recovery.md` 恢复，不能把本地已完成代码长期留在单机。
+- 没有 Actionable Tasks：CodexMacPro 必须新增可并行 packet，不能让开发 AI 空等。
+
+禁止把 dev-only / mock / in-memory 当成上线完成；它们只是为了让前后端和测试闭环先跑起来。
+
 ## 自动化能力边界
 
 当前自动化是本仓脚本级机制，不是后台 daemon。它解决：

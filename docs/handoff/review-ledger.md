@@ -379,3 +379,57 @@ Risks:
 
 Next owner:
 - CodexiMac 运行 `python3 scripts/agent_control.py recover-handoff --write` 或等价 Git 命令，继续 rebase 后推送 `0efcbb5`。
+
+## 2026-05-17 16:47 +08:00 - CodexMacPro
+
+Scope:
+- 修正三 AI 调度机制过度保守的问题，让开发 AI 遇到 DB、环境、外部服务或依赖 blocker 时继续推进可验证中间成果。
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/execution-packets.md`
+- `docs/handoff/agent-control.md`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/README.md`
+- `docs/handoff/status/codex-macpro.md`
+- `agents/prompts/codex-win.md`
+- `agents/prompts/codex-imac.md`
+- `agents/prompts/codex-macpro.md`
+
+Validation:
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass; next actionable task is `M1-WIN-001B error-trace-foundation`
+- command: `python3 scripts/agent_control.py next codex-imac --write`
+- result: pass; after syncing `25069c7`, next actionable task is `M4-IMAC-002 xinghe-yudao-capability-probe`
+- command: `python3 scripts/agent_control.py director --write`
+- result: pass
+- command: `python3 -m py_compile scripts/agent_control.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 3 tests
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 6 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 6 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 6 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this change
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: `dev_only` is now treated as a development-satisfied status, not a release-ready status. Auto next prompts now include Development Acceleration Candidates so agents do not stop simply because production persistence or an external dependency is not ready.
+
+Risks:
+- This improves throughput but requires CodexMacPro to keep release gate strict: `dev_only` and `review_env_blocked` work can unblock development, but cannot be counted as beta release completion.
+
+Next owner:
+- CodexWin should sync and execute `M1-WIN-001B`, then continue `M1-WIN-001C` / `M1-WIN-001D` without waiting for DB persistence.
+- CodexiMac should sync and execute `M4-IMAC-002`; MySQL real upgrade remains a release blocker, not a development stop sign.
