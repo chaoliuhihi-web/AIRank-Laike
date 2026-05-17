@@ -96,7 +96,7 @@ git push gitee main
 | --- | --- | --- | --- |
 | 诊断报告 JSON | CodexiMac | review | 每个结论可追溯到 snapshot/citation/FactAtom |
 | Xinghe/yudao capability probe | CodexiMac | dev_only | capability probe 已入库；本地矩阵全为 dev_only fallback，release 前需接真实 yudao/Xinghe/Hermes 环境验证 |
-| report API + download receipt | CodexWin | todo | 报告中心可查看真实报告 |
+| report API + download receipt | CodexWin | dev_only | 报告中心读取 reports API，并记录 download receipt；报告内容为 dev-only seed |
 | 前端 fixture 切 API | CodexWin | todo | 控制台主页面不再依赖硬编码 demo 数据 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
 | v0.1 beta release gate | CodexMacPro | todo | `docs/handoff/release-gate.md` 全部通过 |

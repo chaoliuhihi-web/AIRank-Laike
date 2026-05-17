@@ -1,4 +1,4 @@
-import { assetCards, metricCards, project, type Tone } from "./data";
+import { assetCards, metricCards, project, reportCards, type Tone } from "./data";
 
 export type ConsoleProject = typeof project & {
   id?: string;
@@ -34,6 +34,20 @@ export type AssetBundle = {
   assets: AssetBundleItem[];
 };
 
+export type ReportItem = {
+  report_id?: string;
+  title: string;
+  desc: string;
+  date: string;
+  status: string;
+};
+
+export type ReportList = {
+  project_id: string;
+  tenant_id: string;
+  reports: ReportItem[];
+};
+
 type ConsoleOverviewPayload = {
   data: {
     project: ConsoleProject;
@@ -53,6 +67,14 @@ type AssetBundlePayload = {
   };
 };
 
+type ReportListPayload = {
+  data: ReportList;
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
 export const fallbackConsoleOverview: ConsoleOverview = {
   project,
   metricCards,
@@ -64,6 +86,12 @@ export const fallbackAssetBundle: AssetBundle = {
   completeness: 68,
   recommendation: "建议先补齐竞品对比页和客户案例页，再发布复测。",
   assets: assetCards,
+};
+
+export const fallbackReportList: ReportList = {
+  project_id: "project_demo",
+  tenant_id: "tenant_demo",
+  reports: reportCards,
 };
 
 export async function fetchConsoleOverview(signal?: AbortSignal): Promise<ConsoleOverview> {
@@ -101,4 +129,31 @@ export async function fetchAssetBundle(projectId: string, signal?: AbortSignal):
 
   const payload = (await response.json()) as AssetBundlePayload;
   return payload.data;
+}
+
+export async function fetchReports(projectId: string, signal?: AbortSignal): Promise<ReportList> {
+  const response = await fetch(`/api/v1/projects/${projectId}/reports`, {
+    headers: {
+      "tenant-id": "tenant_demo",
+      "X-AIRank-Trace-Id": `trc_web_reports_${Date.now()}`,
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Reports request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as ReportListPayload;
+  return payload.data;
+}
+
+export async function recordDownloadReceipt(reportId: string): Promise<void> {
+  await fetch(`/api/v1/reports/${reportId}/download-receipts`, {
+    method: "POST",
+    headers: {
+      "tenant-id": "tenant_demo",
+      "X-AIRank-Trace-Id": `trc_web_receipt_${Date.now()}`,
+    },
+  });
 }

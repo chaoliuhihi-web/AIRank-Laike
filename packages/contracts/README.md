@@ -23,6 +23,8 @@ M1 已冻结的 API schema：
 - `fact_review_request.schema.json`
 - `fact_review_response.schema.json`
 - `asset_bundle_response.schema.json`
+- `report_list_response.schema.json`
+- `download_receipt_response.schema.json`
 
 后续领域 schema：
 

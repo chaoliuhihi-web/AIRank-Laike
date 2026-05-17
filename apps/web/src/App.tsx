@@ -51,9 +51,13 @@ import {
   fallbackAssetBundle,
   fetchAssetBundle,
   fetchConsoleOverview,
+  fallbackReportList,
+  fetchReports,
+  recordDownloadReceipt,
   type AssetBundle,
   type ConsoleMetricCard,
   type ConsoleOverview,
+  type ReportList,
 } from "./console/api";
 import {
   assistantMessages,
@@ -829,6 +833,17 @@ function AssistantPage() {
 }
 
 function ReportsPage() {
+  const { project } = useConsoleOverview();
+  const [reports, setReports] = useState<ReportList>(fallbackReportList);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchReports(project.id ?? "project_demo", controller.signal)
+      .then(setReports)
+      .catch(() => setReports({ ...fallbackReportList, reports: reportCards }));
+    return () => controller.abort();
+  }, [project.id]);
+
   return (
     <>
       <PageHeader title="报表中心" subtitle="面向老板、市场负责人和交付团队的 AI 来客增长报告。" action={<button className="airank-console-primary-button" type="button">生成报告</button>} />
@@ -851,7 +866,7 @@ function ReportsPage() {
         </Panel>
       </section>
       <section className="report-card-grid">
-        {reportCards.map((item) => (
+        {reports.reports.map((item) => (
           <article className="airank-console-card report-card" key={item.title}>
             <FileChartColumn size={28} />
             <div>
@@ -859,7 +874,9 @@ function ReportsPage() {
               <p>{item.desc}</p>
               <span>{item.date}</span>
             </div>
-            <Badge tone="primary">{item.status}</Badge>
+            <button className="outline-button" type="button" onClick={() => void recordDownloadReceipt(item.report_id ?? item.title)}>
+              {item.status}
+            </button>
           </article>
         ))}
       </section>

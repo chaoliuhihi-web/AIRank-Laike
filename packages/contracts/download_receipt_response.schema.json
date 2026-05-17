@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/download_receipt_response.schema.json",
+  "title": "AIRank Download Receipt Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["receipt_id", "report_id", "tenant_id", "downloaded_at", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": { "type": "string", "pattern": "^receipt_[A-Za-z0-9_-]+$" },
+        "report_id": { "type": "string", "minLength": 1 },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "downloaded_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["recorded"] }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

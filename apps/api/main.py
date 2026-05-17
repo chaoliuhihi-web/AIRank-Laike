@@ -351,6 +351,38 @@ class AssetBundleResponse(BaseModel):
     meta: ResponseMeta
 
 
+class ReportItem(BaseModel):
+    report_id: str
+    title: str
+    desc: str
+    date: str
+    status: str
+
+
+class ReportListData(BaseModel):
+    project_id: str
+    tenant_id: str
+    reports: list[ReportItem]
+
+
+class ReportListResponse(BaseModel):
+    data: ReportListData
+    meta: ResponseMeta
+
+
+class DownloadReceiptData(BaseModel):
+    receipt_id: str
+    report_id: str
+    tenant_id: str
+    downloaded_at: datetime
+    status: Literal["recorded"]
+
+
+class DownloadReceiptResponse(BaseModel):
+    data: DownloadReceiptData
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -912,6 +944,18 @@ def build_asset_bundle(tenant_id: str, project_id: str) -> AssetBundleData:
     )
 
 
+def build_report_list(tenant_id: str, project_id: str) -> ReportListData:
+    return ReportListData(
+        project_id=project_id,
+        tenant_id=tenant_id,
+        reports=[
+            ReportItem(report_id="report_diagnostic", title="AI 来客诊断报告", desc="覆盖平台表现、竞品压制、引用来源和优化建议", date="2026-05-17", status="已生成"),
+            ReportItem(report_id="report_retest", title="推荐缺口复测报告", desc="对比发布前后推荐率、首推率和引用变化", date="2026-05-17", status="可下载"),
+            ReportItem(report_id="report_exec", title="高管月报", desc="面向管理层的 AI 可见性和线索增长摘要", date="2026-05-01", status="已归档"),
+        ],
+    )
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -1191,6 +1235,40 @@ def get_asset_bundle(
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> AssetBundleResponse:
     return AssetBundleResponse(data=build_asset_bundle(tenant_id, project_id), meta=build_meta(trace_id))
+
+
+@app.get(
+    f"{API_PREFIX}/projects/{{project_id}}/reports",
+    response_model=ReportListResponse,
+)
+def get_reports(
+    project_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ReportListResponse:
+    return ReportListResponse(data=build_report_list(tenant_id, project_id), meta=build_meta(trace_id))
+
+
+@app.post(
+    f"{API_PREFIX}/reports/{{report_id}}/download-receipts",
+    response_model=DownloadReceiptResponse,
+    status_code=201,
+)
+def create_download_receipt(
+    report_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> DownloadReceiptResponse:
+    return DownloadReceiptResponse(
+        data=DownloadReceiptData(
+            receipt_id=f"receipt_{uuid4().hex[:12]}",
+            report_id=report_id,
+            tenant_id=tenant_id,
+            downloaded_at=utc_now(),
+            status="recorded",
+        ),
+        meta=build_meta(trace_id),
+    )
 
 
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)
