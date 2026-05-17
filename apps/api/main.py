@@ -3,14 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 import json
 import os
-from typing import Any, Literal, Optional, Protocol
+from typing import Annotated, Any, Literal, Optional, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -112,14 +112,43 @@ class SourceRef(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+ShortText = Annotated[str, Field(min_length=1, max_length=120)]
+UrlText = Annotated[str, Field(min_length=1, max_length=2048)]
+
+
+class ContactInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    mobile: Optional[str] = Field(default=None, min_length=5, max_length=40)
+    wechat: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    email: Optional[str] = Field(default=None, min_length=1, max_length=160)
+
+
+class ProjectAutomation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seed_from_website: bool = True
+    discover_competitors: bool = True
+    generate_question_map: bool = True
+    source: Optional[Literal["free_check", "console", "imported", "manual"]] = None
+
+
 class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     website_url: str = Field(min_length=1, max_length=2048)
     brand_name_hint: Optional[str] = Field(default=None, min_length=1, max_length=120)
     company_name_hint: Optional[str] = Field(default=None, min_length=1, max_length=160)
     industry_hint: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    contact: Optional[dict[str, str]] = None
-    competitor_hints: list[str] = Field(default_factory=list, max_length=10)
-    automation: Optional[dict[str, Any]] = None
+    contact: Optional[ContactInfo] = None
+    competitor_hints: list[ShortText] = Field(default_factory=list, max_length=10)
+    automation: Optional[ProjectAutomation] = None
+
+    @field_validator("competitor_hints")
+    @classmethod
+    def competitor_hints_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("competitor_hints", value)
 
 
 class ProjectData(BaseModel):
@@ -144,13 +173,20 @@ class ProjectResponse(BaseModel):
 
 
 class CompetitorCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     website_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
     reason: Optional[str] = Field(default=None, min_length=1, max_length=500)
-    evidence_urls: list[str] = Field(default_factory=list, max_length=20)
+    evidence_urls: list[UrlText] = Field(default_factory=list, max_length=20)
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     status: Literal["suggested", "confirmed", "rejected"] = "suggested"
     source: Literal["hermes_discovered", "manual", "imported"] = "manual"
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def evidence_urls_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("evidence_urls", value)
 
 
 class CompetitorData(BaseModel):
@@ -174,6 +210,8 @@ class CompetitorResponse(BaseModel):
 
 
 class BuyerQuestionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question_text: str = Field(min_length=4, max_length=500)
     question_type: Literal["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"] = "purchase"
     intent_level: Literal["high", "medium", "low"] = "medium"
@@ -184,6 +222,11 @@ class BuyerQuestionCreateRequest(BaseModel):
     ] = Field(default_factory=list, max_length=8)
     status: Literal["suggested", "confirmed", "archived"] = "suggested"
     source: Literal["hermes_generated", "manual", "imported"] = "manual"
+
+    @field_validator("recommended_providers")
+    @classmethod
+    def recommended_providers_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("recommended_providers", value)
 
 
 class BuyerQuestionData(BaseModel):
@@ -473,11 +516,17 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def require_unique_values(field_name: str, values: list[str]) -> list[str]:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{field_name} must contain unique values")
+    return values
+
+
 def infer_brand_name(website_url: str) -> str:
     parsed = urlparse(website_url if "://" in website_url else f"https://{website_url}")
     host = parsed.netloc or parsed.path
     host = host.removeprefix("www.")
-    return (host.split(".")[0] or "brand").replace("-", " ").title()
+    return ((host.split(".")[0] or "brand").replace("-", " ").title())[:120]
 
 
 class InMemoryProjectRepository:

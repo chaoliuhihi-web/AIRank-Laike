@@ -57,6 +57,15 @@ class AnswerSnapshot:
     def __post_init__(self) -> None:
         if not self.citations:
             raise ValueError("answer snapshot must include at least one citation")
+        if self.brand_rank is not None and self.brand_rank < 1:
+            raise ValueError("brand_rank must be a positive rank when present")
+        for citation in self.citations:
+            if citation.tenant_id != self.tenant_id:
+                raise ValueError("citation tenant_id must match answer snapshot tenant_id")
+            if citation.project_id != self.project_id:
+                raise ValueError("citation project_id must match answer snapshot project_id")
+            if citation.snapshot_id != self.id:
+                raise ValueError("citation snapshot_id must match answer snapshot id")
 
     def to_record(self) -> dict[str, Any]:
         return {

@@ -90,5 +90,5 @@ def test_mock_scan_job_fails_without_citation_and_does_not_requeue() -> None:
 
     stored = store.get("task_missing_citation")
     assert stored.status == AsyncJobStatus.FAILED
-    assert stored.error_code == "ProviderPayloadError"
+    assert stored.error_code == "FACT_SOURCE_REQUIRED"
     assert store.claim_next("worker-b", NOW) is None

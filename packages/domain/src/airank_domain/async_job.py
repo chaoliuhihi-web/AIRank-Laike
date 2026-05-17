@@ -81,7 +81,7 @@ def claim_job(job: AsyncJob, worker_id: str, now: datetime) -> AsyncJob:
             replace(job, status=AsyncJobStatus.RUNNING, locked_by=worker_id),
             worker_id,
             now,
-            "MAX_ATTEMPTS_EXCEEDED",
+            "JOB_MAX_ATTEMPTS_EXCEEDED",
             "job exceeded max attempts before claim",
         )
     return replace(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from airank_evidence import AnswerSnapshot, MockAnswerProvider
+from airank_evidence import AnswerSnapshot, MockAnswerProvider, ProviderPayloadError
 
 from .lease import InMemoryJobLeaseStore
 
@@ -25,8 +25,11 @@ def run_next_mock_scan_job(
             task_id=job.id,
             created_at=now,
         )
+    except ProviderPayloadError as exc:
+        store.fail(job.id, worker_id, now, "FACT_SOURCE_REQUIRED", str(exc))
+        raise
     except Exception as exc:
-        store.fail(job.id, worker_id, now, type(exc).__name__, str(exc))
+        store.fail(job.id, worker_id, now, "SCAN_PROVIDER_BLOCKED", str(exc))
         raise
 
     store.succeed(

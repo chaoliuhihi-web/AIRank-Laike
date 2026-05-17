@@ -113,6 +113,8 @@ def pending_component(key: str, label: str, refs: tuple[str, ...]) -> ScoreCompo
 def rank_points(brand_rank: int | None) -> int:
     if brand_rank is None:
         return 0
+    if brand_rank < 1:
+        return 0
     if brand_rank == 1:
         return 20
     if brand_rank <= 3:
@@ -123,6 +125,8 @@ def rank_points(brand_rank: int | None) -> int:
 def rank_reason(brand_rank: int | None) -> str:
     if brand_rank is None:
         return "brand rank absent"
+    if brand_rank < 1:
+        return f"invalid brand_rank={brand_rank}"
     return f"brand_rank={brand_rank}"
 
 

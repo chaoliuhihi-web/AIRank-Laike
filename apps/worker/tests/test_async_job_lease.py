@@ -106,3 +106,24 @@ def test_only_lock_owner_can_mutate_running_job() -> None:
 
     with pytest.raises(JobOwnershipError):
         store.heartbeat("job_scan_4", "worker-b", NOW + timedelta(seconds=5))
+
+
+def test_exhausted_job_uses_registered_error_code() -> None:
+    store = InMemoryJobLeaseStore(
+        [
+            AsyncJob(
+                id="job_scan_5",
+                tenant_id="tenant_1",
+                job_type="scan",
+                scheduled_at=NOW,
+                attempt_count=3,
+                max_attempts=3,
+            )
+        ]
+    )
+
+    exhausted = store.claim_next("worker-a", NOW)
+
+    assert exhausted is not None
+    assert exhausted.status == AsyncJobStatus.FAILED
+    assert exhausted.error_code == "JOB_MAX_ATTEMPTS_EXCEEDED"

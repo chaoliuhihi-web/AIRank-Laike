@@ -589,3 +589,62 @@ Risks:
 Next owner:
 - Human/CodexMacPro with root MySQL access should rerun `mysql -uroot -p < ops/deployment/mysql-bootstrap.sql`, then run `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
 - Integration owner still must provide real yudao/Xinghe/Hermes config or approve dev_only beta scope.
+
+## 2026-05-17 17:38 +08:00 - CodexMacPro
+
+Scope:
+- Review and corrective patch for CodexWin/CodexiMac recent code, focusing on error-code consistency, evidence-chain integrity, and score edge cases.
+
+Changed:
+- `packages/domain/src/airank_domain/async_job.py`
+- `apps/worker/airank_worker/scan.py`
+- `packages/evidence/src/airank_evidence/snapshot.py`
+- `packages/domain/src/airank_domain/content_gap.py`
+- `packages/evidence/src/airank_evidence/gap.py`
+- `packages/score/src/airank_score/calculator.py`
+- `apps/api/main.py`
+- `apps/api/alembic/versions/20260517_0001_initial_schema.py`
+- `ops/deployment/mysql-bootstrap.sql`
+- `apps/worker/tests/test_async_job_lease.py`
+- `apps/worker/tests/test_mock_provider_scan.py`
+- `packages/evidence/tests/test_snapshot.py`
+- `packages/evidence/tests/test_content_gap.py`
+- `packages/score/tests/test_calculator.py`
+- `tests/contracts/test_project_question_dev_repository_api.py`
+- `docs/handoff/status/codex-macpro.md`
+
+Validation:
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 7 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 19 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 7 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `cd apps/api && python3 -m alembic upgrade head --sql`
+- result: pass after installing `apps/api/requirements-dev.txt` locally; generated SQL uses `website_url VARCHAR(2048)` for projects and competitors
+- command: `python3 -m py_compile apps/api/main.py scripts/agent_control.py packages/domain/src/airank_domain/*.py packages/evidence/src/airank_evidence/*.py packages/score/src/airank_score/*.py apps/worker/airank_worker/*.py packages/xinghe-adapter/src/airank_xinghe_adapter/*.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: Project/competitor/question request models now forbid extra body fields and enforce unique arrays to match JSON Schema contracts; inferred brand names are bounded to the response contract; MySQL bootstrap/Alembic URL columns now match the 2048-char API contract; worker failures now use registered AIRank error codes; AnswerSnapshot rejects citation tenant/project/snapshot mismatch; content gap generation now requires FactAtom source citation alignment; score no longer rewards invalid raw `brand_rank=0`.
+
+Risks:
+- CodexWin contract skeleton is still schema-only; API and repository behavior remain the active critical path.
+- `M4-IMAC-002` remains `dev_only`; no live yudao/Xinghe/Hermes readiness is proven.
+- Live MySQL `alembic upgrade head` still depends on valid local DB credentials; SQL generation is verified in this review.
+
+Next owner:
+- CodexWin should continue `M1-WIN-001D project-question-dev-repository`.
+- CodexMacPro should review CodexWin's first API repository implementation before it becomes the base for CRUD and scan APIs.

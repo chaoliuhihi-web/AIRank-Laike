@@ -106,6 +106,22 @@ def test_project_child_dev_repository_is_tenant_scoped() -> None:
     validate_response("error_response.schema.json", body)
 
 
+def test_project_inferred_brand_name_is_contract_bounded() -> None:
+    client = TestClient(app)
+    long_host_label = "a" * 200
+
+    response = client.post(
+        "/api/v1/projects",
+        headers={"tenant-id": "tenant_contract", "X-AIRank-Trace-Id": "trc_project_long_brand"},
+        json={"website_url": f"https://{long_host_label}.example.com"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["data"]["brand_name"]) == 120
+    validate_response("project_response.schema.json", body)
+
+
 def test_project_repository_factory_selects_persistence_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AIRANK_DATABASE_URL", raising=False)
     assert isinstance(build_project_repository(), InMemoryProjectRepository)
@@ -115,3 +131,58 @@ def test_project_repository_factory_selects_persistence_mode(monkeypatch: pytest
         "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike",
     )
     assert isinstance(build_project_repository(), MySQLProjectRepository)
+
+
+def test_project_create_api_rejects_body_tenant_leakage() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/projects",
+        headers={"tenant-id": "tenant_contract", "X-AIRank-Trace-Id": "trc_project_leak"},
+        json={"website_url": "www.example.com", "tenant_id": "tenant_other"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_project_leak"
+    assert any(error["loc"] == ["body", "tenant_id"] for error in body["error"]["details"]["errors"])
+    validate_response("error_response.schema.json", body)
+
+
+def test_dev_repository_api_rejects_duplicate_contract_arrays() -> None:
+    client = TestClient(app)
+
+    project_response = client.post(
+        "/api/v1/projects",
+        headers={"tenant-id": "tenant_contract", "X-AIRank-Trace-Id": "trc_project_unique"},
+        json={"website_url": "www.example.com"},
+    )
+    project_id = project_response.json()["data"]["project_id"]
+
+    question_response = client.post(
+        f"/api/v1/projects/{project_id}/buyer-questions",
+        headers={"tenant-id": "tenant_contract", "X-AIRank-Trace-Id": "trc_question_duplicate"},
+        json={
+            "question_text": "Which AI answer platform should we compare?",
+            "recommended_providers": ["chatgpt", "chatgpt"],
+        },
+    )
+
+    assert question_response.status_code == 422
+    body = question_response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_question_duplicate"
+    validate_response("error_response.schema.json", body)
+
+
+def test_mysql_schema_url_lengths_match_api_contracts() -> None:
+    bootstrap_sql = (ROOT / "ops" / "deployment" / "mysql-bootstrap.sql").read_text(encoding="utf-8")
+    migration_sql = (
+        ROOT / "apps" / "api" / "alembic" / "versions" / "20260517_0001_initial_schema.py"
+    ).read_text(encoding="utf-8")
+
+    assert "website_url VARCHAR(2048) NULL" in bootstrap_sql
+    assert "website_url VARCHAR(2048) NULL" in migration_sql
+    assert "website_url VARCHAR(1024)" not in bootstrap_sql
+    assert "website_url VARCHAR(1024)" not in migration_sql

@@ -78,3 +78,42 @@ def test_content_gap_requires_citations() -> None:
             fact_atom=fact,
             citations=(),
         )
+
+
+def test_content_gap_rejects_unrelated_fact_source_citation() -> None:
+    citation = build_citation()
+    unrelated_citation = SourceCitation(
+        id="cite_unrelated",
+        tenant_id="tenant_1",
+        project_id="project_1",
+        snapshot_id="snap_1",
+        citation_order=2,
+        title="Unrelated source",
+        url="https://example.com/unrelated",
+        host="example.com",
+        source_type="web",
+        cited_text="This citation does not support the FactAtom.",
+        created_at=NOW,
+    )
+    fact = confirm_fact_atom(
+        FactAtom(
+            id="fact_gap_3",
+            tenant_id="tenant_1",
+            project_id="project_1",
+            fact_type="faq",
+            title="FAQ evidence",
+            fact_text="FAQ content should cite source material.",
+        ),
+        reviewed_by="reviewer_1",
+        reviewed_at=NOW,
+        sources=(fact_source_ref_from_citation(citation),),
+    )
+
+    with pytest.raises(ValueError, match="FactAtom source citation"):
+        generate_gap_from_citations(
+            tenant_id="tenant_1",
+            project_id="project_1",
+            question_id="question_1",
+            fact_atom=fact,
+            citations=(unrelated_citation,),
+        )

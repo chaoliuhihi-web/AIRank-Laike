@@ -17,6 +17,11 @@ def generate_gap_from_citations(
 ) -> ContentGap:
     if not citations:
         raise ValueError("content gap requires source citations")
+    for citation in citations:
+        if citation.tenant_id != tenant_id:
+            raise ValueError("content gap citation tenant_id must match gap tenant_id")
+        if citation.project_id != project_id:
+            raise ValueError("content gap citation project_id must match gap project_id")
     return generate_content_gap(
         tenant_id=tenant_id,
         project_id=project_id,

@@ -60,3 +60,18 @@ def test_score_marks_missing_future_inputs_as_pending() -> None:
         "purchase_intent_coverage": "pending_input",
         "answer_stability": "pending_input",
     }
+
+
+def test_score_does_not_reward_invalid_rank_from_raw_payload() -> None:
+    result = calculate_airank_score(
+        {
+            "id": "snap_invalid_rank",
+            "brand_mentioned": True,
+            "brand_rank": 0,
+            "citations": [{"id": "cite_invalid_rank"}],
+        }
+    )
+
+    recommendation = {component.key: component for component in result.components}["recommendation_rank"]
+    assert recommendation.points == 0
+    assert recommendation.reason == "invalid brand_rank=0"
