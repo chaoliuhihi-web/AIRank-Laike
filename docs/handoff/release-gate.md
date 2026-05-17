@@ -242,7 +242,7 @@ Reviewer: CodexMacPro
 
 Passed:
 
-- `python3 scripts/release_readiness.py --database-url mysql+pymysql://.../airank_laike_release_gate?charset=utf8mb4` passed with real yudao token and filesystem object storage environment.
+- `python3 scripts/release_readiness.py --database-url mysql+pymysql://.../airank_laike_release_gate?charset=utf8mb4` passed with real yudao token, `AIRANK_PROBE_TIMEOUT_SECONDS=3`, and filesystem object storage environment.
 - GitHub and Gitee `main` matched local HEAD `c2ceae4`.
 - `python3 -m pytest tests/contracts -q` passed 56 tests.
 - `python3 -m pytest tests/acceptance -q` passed 15 tests.

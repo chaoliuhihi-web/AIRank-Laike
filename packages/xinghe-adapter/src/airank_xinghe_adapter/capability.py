@@ -80,6 +80,7 @@ class ProbeConfig:
             workflow_runner_base_url=empty_to_none(source.get("XINGHE_WORKFLOW_RUNNER_BASE_URL")),
             hermes_base_url=empty_to_none(source.get("XINGHE_HERMES_BASE_URL"))
             or empty_to_none(source.get("HERMES_BASE_URL")),
+            timeout_seconds=parse_timeout_seconds(source.get("AIRANK_PROBE_TIMEOUT_SECONDS")),
         )
 
 
@@ -448,3 +449,13 @@ def empty_to_none(value: str | None) -> str | None:
     if value is None or value.strip() == "":
         return None
     return value
+
+
+def parse_timeout_seconds(value: str | None) -> float:
+    if value is None or value.strip() == "":
+        return 0.3
+    try:
+        parsed = float(value)
+    except ValueError:
+        return 0.3
+    return parsed if parsed > 0 else 0.3
