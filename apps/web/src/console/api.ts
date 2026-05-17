@@ -277,8 +277,12 @@ export async function fetchReports(projectId: string, signal?: AbortSignal): Pro
 }
 
 export async function recordDownloadReceipt(reportId: string): Promise<void> {
-  await fetch(`/api/v1/reports/${reportId}/download-receipts`, {
+  const response = await fetch(`/api/v1/reports/${reportId}/download-receipts`, {
     method: "POST",
     headers: buildApiHeaders("trc_web_receipt"),
   });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Download receipt request failed with ${response.status}`));
+  }
 }

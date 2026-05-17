@@ -62,6 +62,7 @@ import {
   type AssetBundle,
   type ConsoleMetricCard,
   type ConsoleOverview,
+  type ReportItem,
   type ReportList,
 } from "./console/api";
 import {
@@ -121,6 +122,32 @@ const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
 const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
 const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
 
+type FeedbackTone = "success" | "warning" | "danger" | "primary";
+type ToastState = {
+  id: number;
+  title: string;
+  desc: string;
+  tone: FeedbackTone;
+};
+type ActionPanelState = {
+  title: string;
+  desc: string;
+  items?: string[];
+  primaryLabel?: string;
+  onPrimary?: () => void;
+};
+type ActionFeedback = {
+  notify: (toast: Omit<ToastState, "id">) => void;
+  openPanel: (panel: ActionPanelState) => void;
+  closePanel: () => void;
+};
+
+const ActionFeedbackContext = createContext<ActionFeedback>({
+  notify: () => undefined,
+  openPanel: () => undefined,
+  closePanel: () => undefined,
+});
+
 function useConsoleOverview() {
   return useContext(ConsoleOverviewContext);
 }
@@ -129,11 +156,17 @@ function useConsoleOverviewStatus() {
   return useContext(ConsoleOverviewStatusContext);
 }
 
+function useActionFeedback() {
+  return useContext(ActionFeedbackContext);
+}
+
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredAuthSession());
   const [overview, setOverview] = useState<ConsoleOverview>(fallbackConsoleOverview);
   const [overviewStatus, setOverviewStatus] = useState<"loading" | "api" | "fallback">("loading");
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [actionPanel, setActionPanel] = useState<ActionPanelState | null>(null);
 
   const navigate = (nextPath: string) => {
     const normalized = normalizePath(nextPath);
@@ -189,6 +222,14 @@ function App() {
     navigate("/login");
   };
 
+  const notify = (nextToast: Omit<ToastState, "id">) => {
+    const id = Date.now();
+    setToast({ ...nextToast, id });
+    window.setTimeout(() => {
+      setToast((currentToast) => (currentToast?.id === id ? null : currentToast));
+    }, 3200);
+  };
+
   if (!authSession || path === "/login") {
     return <LoginPage onLogin={handleLogin} />;
   }
@@ -196,14 +237,24 @@ function App() {
   return (
     <ConsoleOverviewContext.Provider value={overview}>
       <ConsoleOverviewStatusContext.Provider value={overviewStatus}>
-        <main className="airank-console">
-          <div className="airank-console-shell">
-            <Sidebar activePath={path} onNavigate={navigate} session={authSession} onLogout={handleLogout} />
-            <section className="airank-console-main">
-              <ConsolePage path={path} onNavigate={navigate} />
-            </section>
-          </div>
-        </main>
+        <ActionFeedbackContext.Provider
+          value={{
+            notify,
+            openPanel: setActionPanel,
+            closePanel: () => setActionPanel(null),
+          }}
+        >
+          <main className="airank-console">
+            <div className="airank-console-shell">
+              <Sidebar activePath={path} onNavigate={navigate} session={authSession} onLogout={handleLogout} />
+              <section className="airank-console-main">
+                <ConsolePage path={path} onNavigate={navigate} />
+              </section>
+            </div>
+            {toast && <ActionToast toast={toast} onDismiss={() => setToast(null)} />}
+            {actionPanel && <ActionPanel panel={actionPanel} onClose={() => setActionPanel(null)} />}
+          </main>
+        </ActionFeedbackContext.Provider>
       </ConsoleOverviewStatusContext.Provider>
     </ConsoleOverviewContext.Provider>
   );
@@ -281,6 +332,61 @@ function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   );
 }
 
+function ActionToast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void }) {
+  const Icon = toast.tone === "success" ? CheckCircle2 : toast.tone === "danger" ? ShieldAlert : Info;
+
+  return (
+    <div className="action-toast" data-tone={toast.tone} role="status">
+      <Icon size={22} />
+      <div>
+        <strong>{toast.title}</strong>
+        <span>{toast.desc}</span>
+      </div>
+      <button type="button" onClick={onDismiss} aria-label="关闭提示">
+        关闭
+      </button>
+    </div>
+  );
+}
+
+function ActionPanel({ panel, onClose }: { panel: ActionPanelState; onClose: () => void }) {
+  const runPrimaryAction = () => {
+    panel.onPrimary?.();
+    onClose();
+  };
+
+  return (
+    <div className="action-panel-backdrop" role="presentation" onClick={onClose}>
+      <section className="action-panel" role="dialog" aria-modal="true" aria-label={panel.title} onClick={(event) => event.stopPropagation()}>
+        <div className="action-panel-head">
+          <h2>{panel.title}</h2>
+          <button type="button" onClick={onClose} aria-label="关闭面板">
+            关闭
+          </button>
+        </div>
+        <p>{panel.desc}</p>
+        {panel.items && (
+          <ul>
+            {panel.items.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        )}
+        <div className="action-panel-actions">
+          <button className="outline-button" type="button" onClick={onClose}>
+            知道了
+          </button>
+          {panel.primaryLabel && (
+            <button className="airank-console-primary-button" type="button" onClick={runPrimaryAction}>
+              {panel.primaryLabel}
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function normalizePath(path: string) {
   if (path === "/" || path === "/console/") {
     return "/console";
@@ -300,6 +406,7 @@ function Sidebar({
   onLogout: () => void;
 }) {
   const { project } = useConsoleOverview();
+  const { openPanel } = useActionFeedback();
   const displayName = session.user.nickname || session.user.username || project.name;
 
   return (
@@ -334,13 +441,23 @@ function Sidebar({
       </nav>
 
       <div className="sidebar-footer">
-        <button className="help-link" type="button">
+        <button
+          className="help-link"
+          type="button"
+          onClick={() =>
+            openPanel({
+              title: "帮助中心",
+              desc: "当前控制台按 AI 来客闭环组织：先体检，再确认事实和问题，补齐资产，最后发布复测并下载报告。",
+              items: ["遇到数据异常时先刷新工作台", "发布前确认事实库和 AI 收录包", "报告页会记录每一次下载回执"],
+            })
+          }
+        >
           <HelpCircle size={22} />
           <span>帮助中心</span>
         </button>
         <button className="help-link" type="button" onClick={onLogout}>
           <LockKeyhole size={22} />
-          <span>Logout</span>
+          <span>退出登录</span>
         </button>
         <div className="tenant-switcher">
           <div className="tenant-avatar">
@@ -529,9 +646,20 @@ function DashboardPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function DatePill() {
   const { project } = useConsoleOverview();
+  const { openPanel } = useActionFeedback();
 
   return (
-    <button className="date-pill" type="button">
+    <button
+      className="date-pill"
+      type="button"
+      onClick={() =>
+        openPanel({
+          title: "数据周期",
+          desc: "当前工作台展示最近一次 AI 来客体检和复测后的汇总数据。",
+          items: [`数据日期：${project.date}`, "下一版会接入后端周期筛选；当前版本点击可确认所见指标口径。"],
+        })
+      }
+    >
       <CalendarDays size={18} />
       {project.date}
       <ChevronDown size={16} />
@@ -655,12 +783,28 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function FactsPage() {
+  const { notify, openPanel } = useActionFeedback();
+
   return (
     <>
       <PageHeader
         title="企业事实库"
         subtitle="AI 认识你的前提，是企业事实足够清晰、可信、可公开。"
-        action={<button className="airank-console-primary-button" type="button">确认企业事实</button>}
+        action={
+          <button
+            className="airank-console-primary-button"
+            type="button"
+            onClick={() =>
+              notify({
+                title: "事实确认已提交",
+                desc: "已将 36 条待确认事实加入审核队列，后续内容生成会优先引用已确认事实。",
+                tone: "success",
+              })
+            }
+          >
+            确认企业事实
+          </button>
+        }
       />
       <section className="summary-band">
         <SummaryMetric label="事实完整度" value="76%" tone="primary" />
@@ -701,7 +845,19 @@ function FactsPage() {
           <strong>为什么需要确认企业事实？</strong>
           <span>AI 基于可信事实生成内容与回答，事实不清晰或未公开可能导致推荐偏差、信息缺失、信任下降。</span>
         </div>
-        <button className="outline-button" type="button">查看使用指南</button>
+        <button
+          className="outline-button"
+          type="button"
+          onClick={() =>
+            openPanel({
+              title: "事实库使用指南",
+              desc: "事实库只保存可被 AI 引用的公开可信信息。进入发布前，请优先确认企业简介、核心服务、案例和联系方式。",
+              items: ["确认后的事实可用于 AI 收录包", "敏感事实保持内部或脱敏状态", "缺少来源的事实不会进入公开内容"],
+            })
+          }
+        >
+          查看使用指南
+        </button>
       </div>
     </>
   );
@@ -716,7 +872,7 @@ function QuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/gaps")}>生成推荐缺口分析</button>}
       />
       <ProjectStrip />
-      <QuestionTable showTabs />
+      <QuestionTable showTabs onNavigate={onNavigate} />
     </>
   );
 }
@@ -730,19 +886,29 @@ function GapQuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }
         action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/assets")}>生成 AI 收录包</button>}
       />
       <ProjectStrip />
-      <QuestionTable showTabs={false} />
+      <QuestionTable showTabs={false} onNavigate={onNavigate} />
     </>
   );
 }
 
-function QuestionTable({ showTabs }: { showTabs: boolean }) {
+function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate: (path: string) => void }) {
+  const tabs = ["全部问题", "品牌认知", "选型决策", "竞品对比", "价格成交", "本地行业"];
+  const [selectedTab, setSelectedTab] = useState(0);
+  const filteredRows =
+    showTabs && selectedTab > 0
+      ? questionRows.filter((_row, index) => index % (tabs.length - 1) === selectedTab - 1)
+      : questionRows;
+  const visibleRows = filteredRows.length > 0 ? filteredRows : questionRows.slice(0, 3);
+
   return (
     <section className="content-with-rail">
       <div>
         {showTabs && (
           <div className="tab-row">
-            {["全部问题", "品牌认知", "选型决策", "竞品对比", "价格成交", "本地行业"].map((item, index) => (
-              <button className="tab-button" data-active={index === 0} type="button" key={item}>{item}</button>
+            {tabs.map((item, index) => (
+              <button className="tab-button" data-active={index === selectedTab} type="button" key={item} onClick={() => setSelectedTab(index)}>
+                {item}
+              </button>
             ))}
           </div>
         )}
@@ -759,7 +925,7 @@ function QuestionTable({ showTabs }: { showTabs: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {questionRows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.q}>
                   <td>
                     <strong>{row.q}</strong>
@@ -779,7 +945,7 @@ function QuestionTable({ showTabs }: { showTabs: boolean }) {
             </tbody>
           </table>
           <div className="table-footer">
-            <span>共 128 条问题</span>
+            <span>{showTabs ? `${tabs[selectedTab]}：${visibleRows.length} 条样例 / 共 128 条问题` : "共 128 条问题"}</span>
             <div className="pagination">‹ <strong>1</strong> 2 3 4 5 ... 13 ›</div>
           </div>
         </div>
@@ -803,7 +969,7 @@ function QuestionTable({ showTabs }: { showTabs: boolean }) {
               <li key={row.q}><span>{index + 1}</span>{row.q}<strong>{row.gap}%</strong></li>
             ))}
           </ol>
-          <button className="ghost-button" type="button">查看完整 Top50 问题</button>
+          <button className="ghost-button" type="button" onClick={() => onNavigate("/console/gaps/questions")}>查看完整 Top50 问题</button>
         </Panel>
       </aside>
     </section>
@@ -865,6 +1031,7 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
+  const { openPanel } = useActionFeedback();
   const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
 
   useEffect(() => {
@@ -897,7 +1064,20 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <ProgressBar value={item.progress} />
             <div className="asset-footer">
               <span>完整度 {item.progress}%</span>
-              <button type="button">编辑<ChevronRight size={16} /></button>
+              <button
+                type="button"
+                onClick={() =>
+                  openPanel({
+                    title: item.title,
+                    desc: item.desc,
+                    items: [`完整度 ${item.progress}%`, `当前状态：${item.status}`, "可继续补齐证据、来源和结构化字段后再发布复测。"],
+                    primaryLabel: "去发布中心",
+                    onPrimary: () => onNavigate("/console/publishing"),
+                  })
+                }
+              >
+                编辑<ChevronRight size={16} />
+              </button>
             </div>
           </article>
         ))}
@@ -917,6 +1097,8 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { openPanel } = useActionFeedback();
+
   return (
     <>
       <PageHeader title="发布提交中心" subtitle="把 AI 收录包发布到官网、AI 获客页和搜索入口，并加入复测队列。" action={<button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/reports")}>生成复测报告</button>} />
@@ -947,7 +1129,23 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
                 <td><Badge tone={row.crawl === "失败" ? "danger" : row.crawl === "排队中" ? "warning" : "success"}>{row.crawl}</Badge></td>
                 <td><Badge tone={row.index === "已收录" ? "success" : row.index === "待收录" ? "warning" : "muted"}>{row.index}</Badge></td>
                 <td>{row.time}</td>
-                <td><button className="table-action" type="button">查看</button></td>
+                <td>
+                  <button
+                    className="table-action"
+                    type="button"
+                    onClick={() =>
+                      openPanel({
+                        title: row.page,
+                        desc: "发布记录详情会同步展示抓取、索引和最近提交状态。",
+                        items: [`发布渠道：${row.channel}`, `抓取状态：${row.crawl}`, `索引状态：${row.index}`, `最近提交：${row.time}`],
+                        primaryLabel: "生成复测报告",
+                        onPrimary: () => onNavigate("/console/reports"),
+                      })
+                    }
+                  >
+                    查看
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -958,17 +1156,49 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
 }
 
 function AssistantPage() {
+  const { notify } = useActionFeedback();
+  const [messages, setMessages] = useState<Array<{ role: string; text: string }>>(() => assistantMessages);
+  const [draft, setDraft] = useState("");
+
+  const sendPreviewMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = draft.trim();
+    if (!question) {
+      notify({ title: "请输入问题", desc: "输入访客问题后，助手会基于当前事实库和收录包生成预览回复。", tone: "warning" });
+      return;
+    }
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      { role: "visitor", text: question },
+      {
+        role: "assistant",
+        text: "基于已确认事实库和 AI 收录包，我建议先明确业务场景、预算区间和集成系统，再给出可验证案例与下一步咨询入口。",
+      },
+    ]);
+    setDraft("");
+  };
+
   return (
     <>
       <PageHeader title="AI 来客助手" subtitle="基于已确认可信事实卡、AI 收录包和买家问题地图承接访客咨询。" action={<Badge tone="primary">P2 能力预览</Badge>} />
       <section className="assistant-grid">
         <Panel title="对话预览">
           <div className="chat-window">
-            {assistantMessages.map((msg, index) => (
+            {messages.map((msg, index) => (
               <div className={`chat-bubble ${msg.role}`} key={`${msg.role}-${index}`}>{msg.text}</div>
             ))}
           </div>
-          <div className="chat-input"><span>输入访客问题进行预览</span><Send size={18} /></div>
+          <form className="chat-input" onSubmit={sendPreviewMessage}>
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="输入访客问题进行预览"
+              aria-label="访客问题"
+            />
+            <button type="submit" aria-label="发送访客问题">
+              <Send size={18} />
+            </button>
+          </form>
         </Panel>
         <div className="rail-stack">
           <ConfigPanel title="知识来源" items={["已确认可信事实卡", "AI 收录包内容", "买家问题地图", "发布后的官网页面"]} />
@@ -982,7 +1212,9 @@ function AssistantPage() {
 
 function ReportsPage() {
   const { project } = useConsoleOverview();
+  const { notify } = useActionFeedback();
   const [reports, setReports] = useState<ReportList>(fallbackReportList);
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -992,9 +1224,38 @@ function ReportsPage() {
     return () => controller.abort();
   }, [project.id]);
 
+  const generateReport = () => {
+    notify({
+      title: "报告生成任务已确认",
+      desc: "当前版本会展示最新可用报告；生产报告生成队列接入后将由后端返回新报告。",
+      tone: "success",
+    });
+  };
+
+  const downloadReport = async (report: ReportItem) => {
+    const reportId = report.report_id ?? report.title;
+    setDownloadingReportId(reportId);
+    try {
+      await recordDownloadReceipt(reportId);
+      notify({ title: "下载回执已记录", desc: `${report.title} 的下载审计已写入 API。`, tone: "success" });
+    } catch (error) {
+      notify({
+        title: "下载回执记录失败",
+        desc: error instanceof Error ? error.message : "请稍后重试。",
+        tone: "danger",
+      });
+    } finally {
+      setDownloadingReportId(null);
+    }
+  };
+
   return (
     <>
-      <PageHeader title="报表中心" subtitle="面向老板、市场负责人和交付团队的 AI 来客增长报告。" action={<button className="airank-console-primary-button" type="button">生成报告</button>} />
+      <PageHeader
+        title="报表中心"
+        subtitle="面向老板、市场负责人和交付团队的 AI 来客增长报告。"
+        action={<button className="airank-console-primary-button" type="button" onClick={generateReport}>生成报告</button>}
+      />
       <section className="metric-grid">
         <MiniStat label="AI 提及率" value="52%" icon={Activity} />
         <MiniStat label="推荐率" value="35%" icon={Target} />
@@ -1022,8 +1283,13 @@ function ReportsPage() {
               <p>{item.desc}</p>
               <span>{item.date}</span>
             </div>
-            <button className="outline-button" type="button" onClick={() => void recordDownloadReceipt(item.report_id ?? item.title)}>
-              {item.status}
+            <button
+              className="outline-button"
+              type="button"
+              disabled={downloadingReportId === (item.report_id ?? item.title)}
+              onClick={() => void downloadReport(item)}
+            >
+              {downloadingReportId === (item.report_id ?? item.title) ? "记录中" : item.status}
             </button>
           </article>
         ))}
@@ -1034,10 +1300,22 @@ function ReportsPage() {
 
 function SettingsPage() {
   const { project } = useConsoleOverview();
+  const { notify } = useActionFeedback();
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  const saveSettings = () => {
+    const nextSavedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+    setSavedAt(nextSavedAt);
+    notify({ title: "设置已保存", desc: `本地控制台设置已保存于 ${nextSavedAt}。`, tone: "success" });
+  };
 
   return (
     <>
-      <PageHeader title="设置中心" subtitle="管理品牌项目、官网域名、AI 平台接入、通知和成员权限。" action={<button className="airank-console-primary-button" type="button">保存设置</button>} />
+      <PageHeader
+        title="设置中心"
+        subtitle={savedAt ? `管理品牌项目、官网域名、AI 平台接入、通知和成员权限。最近保存：${savedAt}` : "管理品牌项目、官网域名、AI 平台接入、通知和成员权限。"}
+        action={<button className="airank-console-primary-button" type="button" onClick={saveSettings}>保存设置</button>}
+      />
       <section className="settings-grid">
         <SettingsSection title="项目资料" icon={Building2} rows={[["企业名称", project.name], ["官网", project.website], ["行业", project.industry], ["目标客户", project.audience]]} />
         <SettingsSection title="AI 平台接入" icon={Bot} rows={[["ChatGPT", "可用"], ["DeepSeek", "可用"], ["Kimi", "部分可用"], ["百度AI搜索", "待配置"]]} />
