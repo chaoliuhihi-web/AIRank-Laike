@@ -10,3 +10,11 @@
 - 是否有可信事实卡 / FactAtom 支撑内容生成
 - 是否有报告证据包和下载回执
 - 是否真实标注星河能力状态
+
+上线审核以 `docs/handoff/release-gate.md` 为强制门禁。每次审核结论必须写入 `docs/handoff/review-ledger.md`，状态只能是：
+
+```text
+PASS
+PASS_WITH_RISK
+BLOCKED
+```

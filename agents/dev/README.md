@@ -15,3 +15,11 @@
 9. kb-lite
 
 开发 Agent 不直接修改 `XingheAI2026V2`，也不直接复制主仓代码。
+
+当前三 AI 分工以 `docs/handoff/launch-board.md` 为准：
+
+- CodexWin：产品主链、API、Web、contracts。
+- CodexiMac：数据、worker、score、evidence、adapter。
+- CodexMacPro：审核、测试、CI、release gate。
+
+每轮结束必须更新 `docs/handoff/review-ledger.md`。

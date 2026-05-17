@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, Header
@@ -49,7 +49,7 @@ class ConsoleOverviewResponse(BaseModel):
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
-def build_trace_id(trace_id: str | None) -> str:
+def build_trace_id(trace_id: Optional[str]) -> str:
     if trace_id:
         return trace_id
     return f"trc_{uuid4().hex[:16]}"
@@ -58,7 +58,7 @@ def build_trace_id(trace_id: str | None) -> str:
 @app.get(f"{API_PREFIX}/console/overview", response_model=ConsoleOverviewResponse)
 def get_console_overview(
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
-    trace_id: str | None = Header(default=None, alias="X-AIRank-Trace-Id"),
+    trace_id: Optional[str] = Header(default=None, alias="X-AIRank-Trace-Id"),
 ) -> ConsoleOverviewResponse:
     """Return the first dashboard contract shape without touching worker scheduling."""
 

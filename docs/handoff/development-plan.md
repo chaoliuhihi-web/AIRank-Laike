@@ -212,6 +212,15 @@ ops/deployment/mysql-bootstrap.sql
 
 ## 多 Agent 分工
 
+最新可执行协作入口：
+
+- `agents/prompts/codex-win.md`
+- `agents/prompts/codex-imac.md`
+- `agents/prompts/codex-macpro.md`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/release-gate.md`
+- `docs/handoff/review-ledger.md`
+
 ### Dev Agent
 
 负责：
