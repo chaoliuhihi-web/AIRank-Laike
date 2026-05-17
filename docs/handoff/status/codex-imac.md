@@ -10,7 +10,7 @@
 | M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
 | M3-IMAC-002 | review | e469ed0 | ContentGap generation requires question, citation, and FactAtom traceability. |
 | M4-IMAC-001 | review | 86e2f65 | Report JSON conclusions require snapshot, citation, and FactAtom refs. |
-| M4-IMAC-002 | dev_only | pending | Capability probe covers yudao auth, tenant/user, object storage, Xinghe optional services, and Hermes; current local matrix is dev_only fallback only. |
+| M4-IMAC-002 | dev_only | a6d9df6 | Capability probe covers yudao auth, tenant/user, object storage, Xinghe optional services, and Hermes; current local matrix is dev_only fallback only. |
 
 ## Run Log
 
