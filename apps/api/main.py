@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import os
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Protocol
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, Request
@@ -101,6 +102,110 @@ class ResponseMeta(BaseModel):
     request_id: str
 
 
+class SourceRef(BaseModel):
+    url: str
+    title: Optional[str] = None
+    source_type: Literal["owned", "third_party", "community", "unknown"]
+    captured_at: Optional[datetime] = None
+    confidence: float = Field(ge=0, le=1)
+
+
+class ProjectCreateRequest(BaseModel):
+    website_url: str = Field(min_length=1, max_length=2048)
+    brand_name_hint: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    company_name_hint: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    industry_hint: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    contact: Optional[dict[str, str]] = None
+    competitor_hints: list[str] = Field(default_factory=list, max_length=10)
+    automation: Optional[dict[str, Any]] = None
+
+
+class ProjectData(BaseModel):
+    project_id: str
+    tenant_id: str
+    website_url: str
+    brand_name: str
+    company_name: Optional[str] = None
+    industry: str
+    products: list[str]
+    audiences: list[str]
+    status: Literal["draft", "seeded", "needs_confirmation", "active", "archived"]
+    automation_level: Literal["A0", "A1", "A2", "A3"]
+    source_refs: list[SourceRef]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectResponse(BaseModel):
+    data: ProjectData
+    meta: ResponseMeta
+
+
+class CompetitorCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    website_url: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+    reason: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    evidence_urls: list[str] = Field(default_factory=list, max_length=20)
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    status: Literal["suggested", "confirmed", "rejected"] = "suggested"
+    source: Literal["hermes_discovered", "manual", "imported"] = "manual"
+
+
+class CompetitorData(BaseModel):
+    competitor_id: str
+    project_id: str
+    tenant_id: str
+    name: str
+    website_url: Optional[str] = None
+    reason: Optional[str] = None
+    evidence_urls: list[str]
+    confidence: Optional[float] = None
+    status: Literal["suggested", "confirmed", "rejected"]
+    source: Literal["hermes_discovered", "manual", "imported"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CompetitorResponse(BaseModel):
+    data: CompetitorData
+    meta: ResponseMeta
+
+
+class BuyerQuestionCreateRequest(BaseModel):
+    question_text: str = Field(min_length=4, max_length=500)
+    question_type: Literal["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"] = "purchase"
+    intent_level: Literal["high", "medium", "low"] = "medium"
+    buyer_stage: Literal["awareness", "consideration", "decision"] = "consideration"
+    source_reason: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    recommended_providers: list[
+        Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+    ] = Field(default_factory=list, max_length=8)
+    status: Literal["suggested", "confirmed", "archived"] = "suggested"
+    source: Literal["hermes_generated", "manual", "imported"] = "manual"
+
+
+class BuyerQuestionData(BaseModel):
+    question_id: str
+    project_id: str
+    tenant_id: str
+    question_text: str
+    question_type: Literal["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"]
+    intent_level: Literal["high", "medium", "low"]
+    buyer_stage: Literal["awareness", "consideration", "decision"]
+    source_reason: Optional[str] = None
+    recommended_providers: list[str]
+    coverage_status: Literal["unknown", "covered", "gap", "needs_scan"]
+    status: Literal["suggested", "confirmed", "archived"]
+    source: Literal["hermes_generated", "manual", "imported"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class BuyerQuestionResponse(BaseModel):
+    data: BuyerQuestionData
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -139,6 +244,144 @@ class VersionResponse(BaseModel):
 class ConsoleOverviewResponse(BaseModel):
     data: ConsoleOverview
     meta: ResponseMeta
+
+
+class ProjectRepository(Protocol):
+    def create_project(self, tenant_id: str, payload: ProjectCreateRequest) -> ProjectData:
+        ...
+
+    def create_competitor(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: CompetitorCreateRequest,
+    ) -> CompetitorData:
+        ...
+
+    def create_buyer_question(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: BuyerQuestionCreateRequest,
+    ) -> BuyerQuestionData:
+        ...
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def infer_brand_name(website_url: str) -> str:
+    parsed = urlparse(website_url if "://" in website_url else f"https://{website_url}")
+    host = parsed.netloc or parsed.path
+    host = host.removeprefix("www.")
+    return (host.split(".")[0] or "brand").replace("-", " ").title()
+
+
+class InMemoryProjectRepository:
+    """Development-only repository used until M1 MySQL persistence is wired."""
+
+    def __init__(self) -> None:
+        self._projects: dict[tuple[str, str], ProjectData] = {}
+        self._competitors: dict[tuple[str, str], CompetitorData] = {}
+        self._questions: dict[tuple[str, str], BuyerQuestionData] = {}
+
+    def _ensure_project(self, tenant_id: str, project_id: str) -> ProjectData:
+        project = self._projects.get((tenant_id, project_id))
+        if project is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={
+                    "code": "PROJECT_NOT_FOUND",
+                    "details": {"project_id": project_id, "repository": "in_memory_dev"},
+                },
+            )
+        return project
+
+    def create_project(self, tenant_id: str, payload: ProjectCreateRequest) -> ProjectData:
+        now = utc_now()
+        project_id = f"project_{uuid4().hex[:12]}"
+        brand_name = payload.brand_name_hint or infer_brand_name(payload.website_url)
+        data = ProjectData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            website_url=payload.website_url,
+            brand_name=brand_name,
+            company_name=payload.company_name_hint,
+            industry=payload.industry_hint or "unknown",
+            products=["AI visibility diagnosis"],
+            audiences=["B2B growth leader"],
+            status="needs_confirmation",
+            automation_level="A1",
+            source_refs=[
+                SourceRef(
+                    url=payload.website_url,
+                    title=f"{brand_name} website seed",
+                    source_type="owned",
+                    captured_at=now,
+                    confidence=0.6,
+                )
+            ],
+            created_at=now,
+            updated_at=now,
+        )
+        self._projects[(tenant_id, project_id)] = data
+        return data
+
+    def create_competitor(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: CompetitorCreateRequest,
+    ) -> CompetitorData:
+        self._ensure_project(tenant_id, project_id)
+        now = utc_now()
+        data = CompetitorData(
+            competitor_id=f"competitor_{uuid4().hex[:12]}",
+            project_id=project_id,
+            tenant_id=tenant_id,
+            name=payload.name,
+            website_url=payload.website_url,
+            reason=payload.reason,
+            evidence_urls=payload.evidence_urls,
+            confidence=payload.confidence,
+            status=payload.status,
+            source=payload.source,
+            created_at=now,
+            updated_at=now,
+        )
+        self._competitors[(tenant_id, data.competitor_id)] = data
+        return data
+
+    def create_buyer_question(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: BuyerQuestionCreateRequest,
+    ) -> BuyerQuestionData:
+        self._ensure_project(tenant_id, project_id)
+        now = utc_now()
+        data = BuyerQuestionData(
+            question_id=f"question_{uuid4().hex[:12]}",
+            project_id=project_id,
+            tenant_id=tenant_id,
+            question_text=payload.question_text,
+            question_type=payload.question_type,
+            intent_level=payload.intent_level,
+            buyer_stage=payload.buyer_stage,
+            source_reason=payload.source_reason,
+            recommended_providers=payload.recommended_providers,
+            coverage_status="needs_scan",
+            status=payload.status,
+            source=payload.source,
+            created_at=now,
+            updated_at=now,
+        )
+        self._questions[(tenant_id, data.question_id)] = data
+        return data
+
+
+PROJECT_REPOSITORY: ProjectRepository = InMemoryProjectRepository()
 
 
 app = FastAPI(title="AIRank API", version="0.1.0")
@@ -285,6 +528,56 @@ def get_version(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADE
             api_prefix=API_PREFIX,
             commit=os.getenv("AIRANK_BUILD_COMMIT", "local"),
         ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.post(
+    f"{API_PREFIX}/projects",
+    response_model=ProjectResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_project(
+    payload: ProjectCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ProjectResponse:
+    return ProjectResponse(data=PROJECT_REPOSITORY.create_project(tenant_id, payload), meta=build_meta(trace_id))
+
+
+@app.post(
+    f"{API_PREFIX}/projects/{{project_id}}/competitors",
+    response_model=CompetitorResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_competitor(
+    project_id: str,
+    payload: CompetitorCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> CompetitorResponse:
+    return CompetitorResponse(
+        data=PROJECT_REPOSITORY.create_competitor(tenant_id, project_id, payload),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.post(
+    f"{API_PREFIX}/projects/{{project_id}}/buyer-questions",
+    response_model=BuyerQuestionResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_buyer_question(
+    project_id: str,
+    payload: BuyerQuestionCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> BuyerQuestionResponse:
+    return BuyerQuestionResponse(
+        data=PROJECT_REPOSITORY.create_buyer_question(tenant_id, project_id, payload),
         meta=build_meta(trace_id),
     )
 

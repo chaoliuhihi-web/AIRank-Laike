@@ -73,6 +73,18 @@ GET /api/v1/projects?limit=50&cursor=...
 }
 ```
 
+## M1 项目 / 竞品 / 买家问题
+
+当前 M1 dev-only repository 暴露以下路由，先用于前后端和 contract test 串联，不代表生产 MySQL 持久化：
+
+| Route | 说明 |
+| --- | --- |
+| `POST /api/v1/projects` | 根据网站和可选 hint 创建待确认项目，返回 `project_response.schema.json` |
+| `POST /api/v1/projects/{project_id}/competitors` | 给项目追加候选竞品，返回 `competitor_response.schema.json` |
+| `POST /api/v1/projects/{project_id}/buyer-questions` | 给项目追加候选买家问题，返回 `buyer_question_response.schema.json` |
+
+`tenant_id` 必须来自认证上下文或 `tenant-id` header，不能从 request body 接收。当前 in-memory adapter 仅用于开发串联，进程重启后数据会丢失。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：

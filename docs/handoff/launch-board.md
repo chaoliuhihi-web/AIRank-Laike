@@ -66,7 +66,7 @@ git push gitee main
 | 建立 SQLAlchemy + Alembic | CodexiMac | review_env_blocked | migration SQL/parity 已通过；本机 MySQL 拒绝 `airank` dev credentials，release 前需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
 | 错误码和 trace_id 落地 | CodexWin | review | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
 | 项目/竞品/问题 contract skeleton | CodexWin | todo | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
-| 项目/竞品/问题 dev repository | CodexWin | todo | repository interface + in-memory/dev-only adapter 先打通 API，不能冒充生产持久化 |
+| 项目/竞品/问题 dev repository | CodexWin | dev_only | repository interface + in-memory/dev-only adapter 已打通 API；不作为生产持久化 |
 | 项目/竞品/问题 CRUD | CodexWin | todo | Alembic/MySQL 持久化、tenant 过滤，contract test 通过 |
 | 数据库 schema review | CodexMacPro | todo | tenant、索引、迁移、敏感字段检查通过 |
 
