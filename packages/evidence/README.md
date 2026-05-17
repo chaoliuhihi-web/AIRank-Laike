@@ -10,3 +10,16 @@ AIRank 的报告必须可复盘：
 - 下载导出需要有 receipt，方便交付验收。
 
 该包复用 `XingheAI2026V2` creator-marketing 的 report evidence 思路，但不复制其内部实现。
+
+## M2 mock/manual provider
+
+`packages/evidence/src/airank_evidence` defines the first testable evidence
+objects:
+
+- `AnswerSnapshot` stores the AI answer, question, provider, run, task and brand
+  visibility fields.
+- `SourceCitation` stores URL, host, title, cited text and source type.
+- `MockAnswerProvider` builds deterministic snapshots from worker job payloads.
+
+The provider refuses to create an answer snapshot without at least one citation.
+This keeps scan and report code from producing unsupported conclusions.

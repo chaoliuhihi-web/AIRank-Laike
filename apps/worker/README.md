@@ -35,3 +35,10 @@ State transitions covered by tests:
 Failed and timed-out jobs are terminal by default. They do not silently return to
 `queued`; retry requires an explicit `requeue_for_retry` call and remaining
 attempts.
+
+## M2 mock scan provider
+
+`airank_worker.scan.run_next_mock_scan_job` claims the next due job and uses
+`packages/evidence` `MockAnswerProvider` to generate an answer snapshot plus
+source citations. Missing citation payloads fail the job with a structured error
+instead of returning it to `queued`.
