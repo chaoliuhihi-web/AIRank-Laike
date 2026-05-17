@@ -9,7 +9,7 @@
 | M2-IMAC-003 | review | 6e6c615 | Deterministic score pure function returns identical results for identical snapshot/citation input. |
 | M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
 | M3-IMAC-002 | review | e469ed0 | ContentGap generation requires question, citation, and FactAtom traceability. |
-| M4-IMAC-001 | review | pending | Report JSON conclusions require snapshot, citation, and FactAtom refs. |
+| M4-IMAC-001 | review | 86e2f65 | Report JSON conclusions require snapshot, citation, and FactAtom refs. |
 
 ## Run Log
 
