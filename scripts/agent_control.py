@@ -14,6 +14,12 @@ REVIEW_LEDGER = ROOT / "docs/handoff/review-ledger.md"
 NEXT_PROMPTS = ROOT / "docs/handoff/next-prompts"
 DIRECTOR_BRIEF = ROOT / "docs/handoff/director-brief.md"
 STATUS_DIR = ROOT / "docs/handoff/status"
+CENTRAL_HANDOFF_FILES = {
+    "docs/handoff/execution-packets.md",
+    "docs/handoff/review-ledger.md",
+    "docs/handoff/launch-board.md",
+    "docs/handoff/agent-control.md",
+}
 
 AGENTS = {
     "codex-win": {
@@ -68,6 +74,79 @@ def tracked_runtime_artifacts() -> tuple[int, str]:
         return code, output
     matches = [line for line in output.splitlines() if TRACKED_RUNTIME_ARTIFACT_RE.search(line)]
     return (1 if matches else 0), "\n".join(matches)
+
+
+def conflicted_files() -> list[str]:
+    code, output = run(["git", "diff", "--name-only", "--diff-filter=U"])
+    if code != 0 or not output:
+        return []
+    return [line for line in output.splitlines() if line]
+
+
+def recover_handoff_conflicts(write_files: bool) -> str:
+    conflicts = conflicted_files()
+    central_conflicts = [path for path in conflicts if path in CENTRAL_HANDOFF_FILES]
+    noncentral_conflicts = [path for path in conflicts if path not in CENTRAL_HANDOFF_FILES]
+    lines = [
+        "# Handoff Conflict Recovery",
+        "",
+        "Purpose: keep central handoff files owned by CodexMacPro while preserving agent code changes.",
+        "",
+        "## Conflicted Files",
+        "",
+        "```text",
+        "\n".join(conflicts) if conflicts else "<none>",
+        "```",
+        "",
+    ]
+    if noncentral_conflicts:
+        lines.extend(
+            [
+                "## Result",
+                "",
+                "BLOCKED: non-handoff conflicts are present. Resolve source-code conflicts manually.",
+                "",
+                "```text",
+                "\n".join(noncentral_conflicts),
+                "```",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+    if not central_conflicts:
+        lines.extend(["## Result", "", "No central handoff conflicts to recover.", ""])
+        return "\n".join(lines)
+    if write_files:
+        for path in central_conflicts:
+            run(["git", "restore", "--source=HEAD", "--", path])
+        run(["git", "add", *central_conflicts])
+    lines.extend(
+        [
+            "## Result",
+            "",
+            "PASS: central handoff conflicts can use the current upstream version.",
+            "",
+            "Recovered files:" if write_files else "Files to recover:",
+            "",
+            "```text",
+            "\n".join(central_conflicts),
+            "```",
+            "",
+            "Next command:",
+            "",
+            "```bash",
+            "GIT_EDITOR=true git rebase --continue",
+            "```",
+            "",
+            "PowerShell equivalent:",
+            "",
+            "```powershell",
+            "$env:GIT_EDITOR='true'; git rebase --continue",
+            "```",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def parse_packet_rows() -> list[dict[str, str]]:
@@ -232,7 +311,16 @@ def build_next_prompt(agent_key: str) -> str:
     else:
         control_block = """## Execution Boundary
 
-你不直接重新规划大方向。先读取 CodexMacPro 生成的本文件和 `docs/handoff/launch-board.md`，只领取你 owner lane 的第一条 open task。遇到方向不清、跨 lane 或 gate blocker，停止扩 scope，写入 `docs/handoff/review-ledger.md` 交回 CodexMacPro。"""
+你不直接重新规划大方向。先读取 CodexMacPro 生成的本文件和 `docs/handoff/launch-board.md`，只领取你 owner lane 的第一条 open task。遇到方向不清、跨 lane 或 gate blocker，停止扩 scope，写入自己的 status 文件交回 CodexMacPro。
+
+如果 rebase/merge 只冲突 `docs/handoff/execution-packets.md`、`docs/handoff/review-ledger.md`、`docs/handoff/launch-board.md` 或 `docs/handoff/agent-control.md`，运行：
+
+```bash
+python3 scripts/agent_control.py recover-handoff --write
+GIT_EDITOR=true git rebase --continue
+```
+
+如果有业务代码冲突，停止并交回 CodexMacPro。"""
 
     return f"""# Auto Next Prompt - {owner}
 
@@ -384,6 +472,9 @@ def main() -> None:
     gate_parser = sub.add_parser("gate")
     gate_parser.add_argument("--write", action="store_true")
 
+    recover_parser = sub.add_parser("recover-handoff")
+    recover_parser.add_argument("--write", action="store_true")
+
     args = parser.parse_args()
     if args.cmd == "next":
         if args.write:
@@ -394,6 +485,8 @@ def main() -> None:
         print(director(args.write))
     elif args.cmd == "gate":
         print(gate(args.write))
+    elif args.cmd == "recover-handoff":
+        print(recover_handoff_conflicts(args.write))
 
 
 if __name__ == "__main__":

@@ -66,6 +66,19 @@ CodexMacPro 每轮必须：
 5. 更新 `docs/handoff/launch-board.md` 和 `docs/handoff/review-ledger.md`。
 6. 重新生成三台 AI 的下一轮 prompt：`python3 scripts/agent_control.py director --write`
 
+## 冲突恢复职责
+
+CodexMacPro 不只记录 blocker，还必须给出可执行恢复路径。
+
+中心 handoff 文件冲突时，开发 AI 可以自动保留当前 `origin/main` 版本并继续 rebase：
+
+```bash
+python3 scripts/agent_control.py recover-handoff --write
+GIT_EDITOR=true git rebase --continue
+```
+
+详细流程见 `docs/handoff/rebase-recovery.md`。
+
 ## 防跑偏机制
 
 | 风险 | 机制 |

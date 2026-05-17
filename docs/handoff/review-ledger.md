@@ -343,3 +343,39 @@ Risks:
 Next owner:
 - CodexiMac should resolve or abort/retry its current rebase using the instructions from CodexMacPro, then update only `docs/handoff/status/codex-imac.md`.
 - CodexWin should sync latest and continue `M1-WIN-001B`.
+
+## 2026-05-17 - CodexMacPro
+
+Scope:
+- 补齐 CodexMacPro 的实际协调能力：中心 handoff 冲突可自动恢复，开发 AI 不再只能停下汇报。
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/rebase-recovery.md`
+- `docs/handoff/agent-control.md`
+- `agents/prompts/codex-win.md`
+- `agents/prompts/codex-imac.md`
+- `agents/prompts/codex-macpro.md`
+
+Validation:
+- command: `python3 scripts/agent_control.py recover-handoff`
+- result: pass
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass
+- command: `python3 scripts/agent_control.py next codex-imac --write`
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: 新增 `recover-handoff` 命令，中心 handoff 文件冲突时可自动恢复为当前 upstream 版本并继续 rebase；当前 CodexiMac 冲突可按 `rebase-recovery.md` 处理。
+
+Risks:
+- 业务代码冲突仍必须人工处理；该命令只处理中心 handoff 文件，不处理 Alembic/API/worker 源码冲突。
+
+Next owner:
+- CodexiMac 运行 `python3 scripts/agent_control.py recover-handoff --write` 或等价 Git 命令，继续 rebase 后推送 `0efcbb5`。

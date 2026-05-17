@@ -13,6 +13,7 @@ git merge --ff-only origin/main
 ```
 
 如果合并失败，停止审核，先报告冲突文件和建议 owner。
+如果冲突只涉及中心 handoff 文件，直接按 `docs/handoff/rebase-recovery.md` 恢复，并继续审核。
 
 ## 你的 Owner 范围
 

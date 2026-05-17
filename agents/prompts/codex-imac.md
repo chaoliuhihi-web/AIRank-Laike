@@ -15,7 +15,10 @@ python3 scripts/agent_control.py next codex-imac --write
 
 然后读取 `docs/handoff/next-prompts/codex-imac.md`，按自动生成的第一条 open task 执行。不要从聊天记录复制旧 prompt。
 
-如果合并失败，停止编码，先报告冲突文件和建议 owner。
+如果合并失败，先判断冲突类型：
+
+- 只冲突中心 handoff 文件：运行 `python3 scripts/agent_control.py recover-handoff --write`，再运行 `GIT_EDITOR=true git rebase --continue` 或 PowerShell 的 `$env:GIT_EDITOR='true'; git rebase --continue`，然后继续。
+- 冲突业务代码文件：停止编码，报告冲突文件和建议 owner。
 
 ## 你的 Owner 范围
 
@@ -92,6 +95,7 @@ cd apps/api && alembic upgrade head
 
 - `docs/handoff/status/codex-imac.md`：更新你负责的 packet 状态、commit、验证结果、风险和 fallback 状态。
 - 不直接更新 `docs/handoff/execution-packets.md` 或 `docs/handoff/review-ledger.md`，除非 CodexMacPro 明确要求你解决冲突。
+- 如果你处于 rebase 冲突状态，先读 `docs/handoff/rebase-recovery.md`。
 
 ## 提交和推送
 
