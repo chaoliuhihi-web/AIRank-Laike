@@ -64,3 +64,15 @@ pending_approval  需客户确认
 - 内容资产（`asset`）生成时必须引用事实元 ID。
 - 审核控制台（`review-console`）负责人工确认事实元的可信等级和可公开程度。
 - 证据包（`evidence`）在报告中追溯事实元的原始来源。
+
+## M3 domain rule
+
+`airank_domain.FactAtom` enforces the first code-level source rule:
+
+- `draft` facts may exist without source refs while being edited.
+- `confirmed` facts must include at least one traceable source: citation id,
+  object ref id, or source URL.
+- `confirm_fact_atom(...)` raises if no traceable source is provided.
+
+`packages/evidence` converts `SourceCitation` into `FactSourceRef` so FactAtom
+confirmation can remain independent from evidence storage internals.

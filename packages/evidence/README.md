@@ -23,3 +23,10 @@ objects:
 
 The provider refuses to create an answer snapshot without at least one citation.
 This keeps scan and report code from producing unsupported conclusions.
+
+## M3 FactAtom source bridge
+
+`fact_source_ref_from_citation(citation)` converts an answer source citation into
+a domain `FactSourceRef`. Confirmed FactAtom objects must carry one of these
+traceable source refs, so no confirmed fact can exist without citation/object/URL
+provenance.
