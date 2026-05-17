@@ -590,6 +590,58 @@ Next owner:
 - Human/CodexMacPro with root MySQL access should rerun `mysql -uroot -p < ops/deployment/mysql-bootstrap.sql`, then run `cd apps/api && AIRANK_DATABASE_URL=... python3 -m alembic upgrade head`.
 - Integration owner still must provide real yudao/Xinghe/Hermes config or approve dev_only beta scope.
 
+## 2026-05-17 18:34 +08:00 - CodexMacPro
+
+Scope:
+- Continued release hardening under the rule that dev_only cannot satisfy上线标准.
+- Upgraded `M2-WIN-001 scan-run-api-contract` from in-memory-only behavior to a MySQL-backed scan repository path.
+
+Changed:
+- `apps/api/main.py`
+- `tests/contracts/test_scan_run_api_contract.py`
+- `docs/handoff/launch-board.md`
+- `docs/handoff/status/codex-win.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts/test_scan_run_api_contract.py -q`
+- result: pass, 9 tests
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 48 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `python3 -m py_compile apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this packet
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 7 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/api && AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4 python3 -m alembic upgrade head`
+- result: blocked by MySQL `(1045) Access denied for user 'airank'@'192.168.65.1'`
+
+Review:
+- status: REVIEW_ENV_BLOCKED
+- reviewer: CodexMacPro
+- notes: When `AIRANK_DATABASE_URL` is configured, scan run creation now verifies project/question rows, persists scan run/task rows, and enqueues `airank_async_jobs` rows for worker consumption. No-env mode remains in-memory only for local tests.
+
+Risks:
+- Real MySQL migration and API DB path still require root MySQL grant repair before they can be proven against the target database.
+- Enqueued jobs now exist in the production schema, but real provider execution and status reconciliation still need integration verification.
+
+Next owner:
+- CodexMacPro should continue eliminating dev_only report/asset paths or run the real MySQL gate once credentials are fixed.
+- CodexiMac/worker owner should verify DB-backed worker claim/complete behavior against `airank_async_jobs` after MySQL access is available.
+
 ## 2026-05-17 17:38 +08:00 - CodexMacPro
 
 Scope:

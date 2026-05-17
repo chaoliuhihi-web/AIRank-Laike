@@ -957,7 +957,311 @@ class InMemoryScanRepository:
         return [task for (task_tenant_id, _), task in self._tasks.items() if task_tenant_id == tenant_id and task.run_id == run_id]
 
 
-SCAN_REPOSITORY: ScanRepository = InMemoryScanRepository()
+def parse_json_value(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def coerce_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    raise TypeError(f"Unsupported datetime value: {value!r}")
+
+
+def api_scan_status(value: str) -> Literal["queued", "running", "completed", "failed", "canceled"]:
+    if value in {"completed", "succeeded"}:
+        return "completed"
+    if value in {"queued", "running", "failed", "canceled"}:
+        return value  # type: ignore[return-value]
+    return "failed"
+
+
+def api_scan_task_status(value: str) -> Literal["queued", "running", "completed", "failed", "skipped"]:
+    if value in {"completed", "succeeded"}:
+        return "completed"
+    if value in {"queued", "running", "failed", "skipped"}:
+        return value  # type: ignore[return-value]
+    return "failed"
+
+
+class MySQLScanRepository:
+    def __init__(self, database_url: str) -> None:
+        self._engine = create_engine(database_url, pool_pre_ping=True)
+
+    def _ensure_project(self, conn: Any, tenant_id: str, project_id: str) -> None:
+        row = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                  AND deleted_at IS NULL
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).first()
+        if row is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}},
+            )
+
+    def _resolve_questions(self, conn: Any, tenant_id: str, project_id: str, scope: QuestionScope) -> list[dict[str, str]]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, question_text, status
+                FROM airank_buyer_questions
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY priority ASC, created_at ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+        active_questions = [
+            {"id": row["id"], "question_text": row["question_text"]}
+            for row in rows
+            if row["status"] != "archived"
+        ]
+
+        if scope.mode == "all_active":
+            if not active_questions:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={"code": "QUESTION_NOT_FOUND", "details": {"project_id": project_id, "scope": "all_active"}},
+                )
+            return active_questions
+
+        questions_by_id = {question["id"]: question for question in active_questions}
+        active_id_set = set(questions_by_id)
+        missing = [question_id for question_id in scope.question_ids if question_id not in active_id_set]
+        if missing:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "QUESTION_NOT_FOUND", "details": {"project_id": project_id, "question_ids": missing}},
+            )
+        return [questions_by_id[question_id] for question_id in scope.question_ids]
+
+    def _row_to_run(self, row: Any) -> ScanRunData:
+        provider_scope = parse_json_value(row["provider_scope_json"], [])
+        question_scope_payload = parse_json_value(row["question_scope_json"], {"mode": "selected", "question_ids": []})
+        metrics = parse_json_value(row["metrics_json"], {})
+        error = ScanError(code="INTERNAL_ERROR", message=row["error_message"]) if row["error_message"] else None
+        return ScanRunData(
+            run_id=row["id"],
+            tenant_id=row["tenant_id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            run_type=row["run_type"],
+            status=api_scan_status(row["status"]),
+            provider_scope=provider_scope,
+            question_scope=QuestionScope(**question_scope_payload),
+            metrics=metrics,
+            error=error,
+            started_at=coerce_datetime(row["started_at"]) if row["started_at"] else None,
+            finished_at=coerce_datetime(row["finished_at"]) if row["finished_at"] else None,
+            created_at=coerce_datetime(row["created_at"]),
+            updated_at=coerce_datetime(row["updated_at"]),
+        )
+
+    def _row_to_task(self, row: Any) -> ScanTaskData:
+        error = None
+        if row["error_code"] or row["error_message"]:
+            error = ScanError(code=row["error_code"] or "INTERNAL_ERROR", message=row["error_message"] or "Scan task failed")
+        return ScanTaskData(
+            task_id=row["id"],
+            run_id=row["run_id"],
+            tenant_id=row["tenant_id"],
+            project_id=row["project_id"],
+            question_id=row["question_id"],
+            provider=row["provider"],
+            status=api_scan_task_status(row["status"]),
+            attempt_count=row["attempt_count"],
+            scheduled_at=coerce_datetime(row["scheduled_at"]) if row["scheduled_at"] else None,
+            started_at=coerce_datetime(row["started_at"]) if row["started_at"] else None,
+            finished_at=coerce_datetime(row["finished_at"]) if row["finished_at"] else None,
+            error=error,
+            created_at=coerce_datetime(row["created_at"]),
+            updated_at=coerce_datetime(row["updated_at"]),
+        )
+
+    def create_run(self, tenant_id: str, payload: ScanRunCreateRequest) -> ScanRunData:
+        now = utc_now()
+        run_id = f"scan_run_{uuid4().hex[:12]}"
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, payload.project_id)
+            questions = self._resolve_questions(conn, tenant_id, payload.project_id, payload.question_scope)
+            question_ids = [question["id"] for question in questions]
+            question_scope = QuestionScope(mode=payload.question_scope.mode, question_ids=question_ids)
+            task_count = len(payload.provider_scope) * len(question_ids)
+            metrics = {"task_count": task_count}
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_scan_runs (
+                      id, tenant_id, project_id, name, run_type, status,
+                      provider_scope_json, question_scope_json, metrics_json,
+                      created_at, updated_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :name, :run_type, :status,
+                      :provider_scope_json, :question_scope_json, :metrics_json,
+                      :created_at, :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": run_id,
+                    "tenant_id": tenant_id,
+                    "project_id": payload.project_id,
+                    "name": payload.name,
+                    "run_type": payload.run_type,
+                    "status": "queued",
+                    "provider_scope_json": json.dumps(payload.provider_scope, ensure_ascii=False),
+                    "question_scope_json": json.dumps(question_scope.model_dump(mode="json"), ensure_ascii=False),
+                    "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            for provider in payload.provider_scope:
+                for question in questions:
+                    task_id = f"scan_task_{uuid4().hex[:12]}"
+                    job_id = f"job_{uuid4().hex[:12]}"
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_scan_tasks (
+                              id, tenant_id, project_id, run_id, question_id, provider,
+                              status, attempt_count, scheduled_at, created_at, updated_at
+                            )
+                            VALUES (
+                              :id, :tenant_id, :project_id, :run_id, :question_id, :provider,
+                              :status, :attempt_count, :scheduled_at, :created_at, :updated_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": task_id,
+                            "tenant_id": tenant_id,
+                            "project_id": payload.project_id,
+                            "run_id": run_id,
+                            "question_id": question["id"],
+                            "provider": provider,
+                            "status": "queued",
+                            "attempt_count": 0,
+                            "scheduled_at": now,
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_async_jobs (
+                              id, tenant_id, project_id, job_type, status, priority,
+                              scheduled_at, payload_json, created_at, updated_at
+                            )
+                            VALUES (
+                              :id, :tenant_id, :project_id, :job_type, :status, :priority,
+                              :scheduled_at, :payload_json, :created_at, :updated_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": job_id,
+                            "tenant_id": tenant_id,
+                            "project_id": payload.project_id,
+                            "job_type": "scan.provider",
+                            "status": "queued",
+                            "priority": 100,
+                            "scheduled_at": now,
+                            "payload_json": json.dumps(
+                                {
+                                    "run_id": run_id,
+                                    "scan_task_id": task_id,
+                                    "question_id": question["id"],
+                                    "question_text": question["question_text"],
+                                    "provider": provider,
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+        return self.get_run(tenant_id, run_id)
+
+    def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM airank_scan_runs
+                    WHERE tenant_id = :tenant_id
+                      AND id = :run_id
+                      AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run_id},
+            ).mappings().first()
+        if row is None:
+            raise StarletteHTTPException(status_code=404, detail={"code": "SCAN_RUN_NOT_FOUND", "details": {"run_id": run_id}})
+        return self._row_to_run(row)
+
+    def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM airank_scan_tasks
+                    WHERE tenant_id = :tenant_id
+                      AND id = :task_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "task_id": task_id},
+            ).mappings().first()
+        if row is None:
+            raise StarletteHTTPException(status_code=404, detail={"code": "SCAN_TASK_NOT_FOUND", "details": {"task_id": task_id}})
+        return self._row_to_task(row)
+
+    def list_tasks(self, tenant_id: str, run_id: str) -> list[ScanTaskData]:
+        self.get_run(tenant_id, run_id)
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM airank_scan_tasks
+                    WHERE tenant_id = :tenant_id
+                      AND run_id = :run_id
+                    ORDER BY provider ASC, question_id ASC, created_at ASC, id ASC
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run_id},
+            ).mappings().all()
+        return [self._row_to_task(row) for row in rows]
+
+
+def build_scan_repository() -> ScanRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLScanRepository(database_url)
+    return InMemoryScanRepository()
+
+
+SCAN_REPOSITORY: ScanRepository = build_scan_repository()
 
 
 class InMemoryFactReviewRepository:
