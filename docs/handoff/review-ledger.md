@@ -1127,3 +1127,56 @@ Risks:
 
 Next owner:
 - Deployment owner should map production `/api` to the FastAPI service and rerun the same browser smoke test against the deployed URL.
+
+## 2026-05-17 21:58 +08:00 - CodexMacPro
+
+Scope:
+- Re-ran console QA as a strict上线 pass for all visible pages, buttons, forms, dialogs, toasts, and responsive states.
+- Fixed remaining no-response UI controls without changing the approved reference layout, color system, icon system, or card structure.
+
+Changed:
+- `.gitignore`
+- `apps/web/src/App.tsx`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: Browser QA through real FastAPI + MySQL + yudao login on local Vite
+- result: pass, login plus 10 sidebar nav buttons and direct `/console/gaps/questions` passed
+- command: Browser visible-button QA
+- result: pass, 91 visible page buttons/forms across 11 console pages produced URL changes, dialogs, toasts, tab state changes, body state changes, or checkbox state changes
+- command: Browser modal primary action QA
+- result: pass, asset preview primary navigated to publishing, publishing detail primary navigated to reports, and report recommendation primary navigated to AI 收录包
+- command: Playwright exact viewport QA at 1491x1055
+- result: pass, all 11 console pages rendered at `innerWidth=1491` and `innerHeight=1055`, no horizontal overflow, no framework overlay, and screenshots saved under `/tmp/airank-exact-1491-qa`
+- command: Playwright interaction spot checks
+- result: pass, Top50 panel, settings save, assistant typed send, and report download receipt all produced expected UI state
+- command: Browser mobile QA at 390x844
+- result: pass, all 11 routes rendered expected headings with no horizontal overflow
+- command: Browser/Playwright console and network health
+- result: pass, zero relevant console warnings/errors, zero page errors, and zero `5xx` responses during the exact QA pass
+- command: `python3 -m pytest -q`
+- result: pass, 103 tests passed and 6 opt-in integration tests skipped
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 11 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 5 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS
+- reviewer: CodexMacPro
+- notes: The console no longer has visible inert buttons in the tested routes. The previous `/console/gaps/questions` no-response Top50 action is fixed and covered by browser QA.
+
+Risks:
+- This is local beta QA against Vite + FastAPI + MySQL + local yudao. A deployed environment still needs the same exact browser smoke pass after production reverse proxy, TLS, object storage, and CDN/cache configuration are in place.
+
+Next owner:
+- CodexMacPro should keep this strict browser/user-flow pass as a required gate after any future UI or route change.

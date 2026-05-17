@@ -505,7 +505,7 @@ function ConsolePage({ path, onNavigate }: { path: string; onNavigate: (path: st
   if (path === "/console/assets") return <AssetsPage onNavigate={onNavigate} />;
   if (path === "/console/publishing") return <PublishingPage onNavigate={onNavigate} />;
   if (path === "/console/assistant") return <AssistantPage />;
-  if (path === "/console/reports") return <ReportsPage />;
+  if (path === "/console/reports") return <ReportsPage onNavigate={onNavigate} />;
   if (path === "/console/settings") return <SettingsPage />;
   return <DashboardPage onNavigate={onNavigate} />;
 }
@@ -539,13 +539,35 @@ function HeaderActions({
   icon: LucideIcon;
   onPrimary?: () => void;
 }) {
+  const { notify, openPanel } = useActionFeedback();
+
+  const shareCurrentPage = () => {
+    const currentUrl = window.location.href;
+    void navigator.clipboard?.writeText(currentUrl).catch(() => undefined);
+    notify({
+      title: "分享链接已生成",
+      desc: `当前页面链接已准备：${window.location.pathname}`,
+      tone: "success",
+    });
+  };
+
   return (
     <div className="header-actions">
-      <button className="date-pill" type="button">
+      <button
+        className="date-pill"
+        type="button"
+        onClick={() =>
+          openPanel({
+            title: "使用指南",
+            desc: "按当前页面的主任务继续推进，系统会保留体检、事实、问题、资产、发布和报告之间的上下文。",
+            items: ["先确认事实与买家问题", "再补齐 AI 收录包", "发布后回到报表中心复测效果"],
+          })
+        }
+      >
         <BookOpen size={17} />
         使用指南
       </button>
-      <button className="date-pill" type="button">
+      <button className="date-pill" type="button" onClick={shareCurrentPage}>
         <Share2 size={17} />
         分享
       </button>
@@ -945,6 +967,7 @@ function GapQuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }
 }
 
 function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate: (path: string) => void }) {
+  const { openPanel } = useActionFeedback();
   const tabs = ["全部问题", "品牌认知", "选型决策", "竞品对比", "价格成交", "本地行业"];
   const [selectedTab, setSelectedTab] = useState(0);
   const filteredRows =
@@ -1022,7 +1045,21 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
               <li key={row.q}><span>{index + 1}</span>{row.q}<strong>{row.gap}%</strong></li>
             ))}
           </ol>
-          <button className="ghost-button" type="button" onClick={() => onNavigate("/console/gaps/questions")}>查看完整 Top50 问题</button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() =>
+              showTabs
+                ? onNavigate("/console/gaps/questions")
+                : openPanel({
+                    title: "Top50 推荐缺口问题",
+                    desc: "当前页面已经切换到推荐缺口问题视角，完整 Top50 将按推荐差距、商业意图和建议资产排序展示。",
+                    items: ["优先处理高意图问题", "补齐竞品对比与案例证据", "发布后回到报表中心复测推荐变化"],
+                  })
+            }
+          >
+            查看完整 Top50 问题
+          </button>
         </Panel>
       </aside>
     </section>
@@ -1249,7 +1286,19 @@ function AssistantPage() {
       <PageHeader
         title="AI 销售助手"
         subtitle="客户进来后，AI 先替你接待、答疑、推荐案例并引导留资。"
-        action={<HeaderActions primary="发布到官网" icon={Rocket} />}
+        action={
+          <HeaderActions
+            primary="发布到官网"
+            icon={Rocket}
+            onPrimary={() =>
+              notify({
+                title: "发布任务已确认",
+                desc: "AI 来客助手配置已加入官网发布队列，发布中心会跟踪后续抓取和复测状态。",
+                tone: "success",
+              })
+            }
+          />
+        }
       />
       <section className="assistant-grid">
         <Panel title="实时会话预览" action={<Badge tone="success">在线</Badge>}>
@@ -1285,9 +1334,9 @@ function AssistantPage() {
   );
 }
 
-function ReportsPage() {
+function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
-  const { notify } = useActionFeedback();
+  const { notify, openPanel } = useActionFeedback();
   const [reports, setReports] = useState<ReportList>(fallbackReportList);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
@@ -1339,7 +1388,22 @@ function ReportsPage() {
       <section className="reports-reference-layout">
         <Panel
           title="核心指标 30 天趋势"
-          action={<button className="date-pill compact-pill" type="button">近 30 天<ChevronDown size={15} /></button>}
+          action={
+            <button
+              className="date-pill compact-pill"
+              type="button"
+              onClick={() =>
+                openPanel({
+                  title: "报表周期",
+                  desc: "当前报表按最近 30 天口径展示，后续会接入后端周期筛选并保留下载审计。",
+                  items: ["近 30 天：当前视图", "近 90 天：待接入", "自定义时间：待接入"],
+                })
+              }
+            >
+              近 30 天
+              <ChevronDown size={15} />
+            </button>
+          }
         >
           <TrendChart large />
         </Panel>
@@ -1355,7 +1419,23 @@ function ReportsPage() {
           <Panel title="建议动作">
             <div className="report-action-list">
               {["加强在高转化问题的首推占位", "持续优化产品与解决方案内容", "监控竞品动态，防止被反超"].map((item) => (
-                <button className="table-action" type="button" key={item}>{item}<ChevronRight size={16} /></button>
+                <button
+                  className="table-action"
+                  type="button"
+                  key={item}
+                  onClick={() =>
+                    openPanel({
+                      title: item,
+                      desc: "该建议会进入下一轮 AI 收录包优化清单，发布后可在报表中心复测效果。",
+                      items: ["关联买家问题", "补齐可信事实", "生成可引用资产", "发布后加入复测队列"],
+                      primaryLabel: "去 AI 收录包",
+                      onPrimary: () => onNavigate("/console/assets"),
+                    })
+                  }
+                >
+                  {item}
+                  <ChevronRight size={16} />
+                </button>
               ))}
             </div>
           </Panel>
@@ -1399,7 +1479,7 @@ function ReportsPage() {
 
 function SettingsPage() {
   const { project } = useConsoleOverview();
-  const { notify } = useActionFeedback();
+  const { notify, openPanel } = useActionFeedback();
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const saveSettings = () => {
@@ -1416,18 +1496,97 @@ function SettingsPage() {
         action={<HeaderActions primary="保存设置" icon={Settings} onPrimary={saveSettings} />}
       />
       <section className="settings-grid">
-        <SettingsSection title="项目设置" icon={Settings} rows={[["项目名称", "智界问道 | AIRank 来客"], ["项目 ID", "airank-laike-2024"], ["行业", project.industry], ["项目时区", "(GMT+08:00) 北京、上海、香港"], ["创建时间", "2024-05-20 10:30"]]} />
-        <SettingsSection title="品牌信息" icon={BadgeCheck} rows={[["品牌名称", "智界问道"], ["品牌标语", "用 AI 洞察客户，让增长更确定"], ["品牌简介", "智界问道是领先的 AI 营销洞察与增长决策平台"], ["联系电话", "400-888-1234"], ["联系邮箱", "service@zhijiewendao.com"]]} />
-        <SettingsSection title="官网与域名" icon={Globe2} rows={[["官网地址", "https://www.zhijiewendao.com"], ["网站状态", "已验证"], ["备案信息", "京ICP备2024012345号-1"], ["域名管理", "zhijiewendao.com（主域名）"]]} />
-        <SettingsSection title="AI 平台接入" icon={Bot} rows={[["已接入平台", "DeepSeek、豆包、Kimi、通义、ChatGPT"], ["接入状态", "5 / 5 已接入"], ["更新时间", "2024-05-20 10:30"], ["接入说明", "已完成企业身份验证与 API 授权"]]} />
-        <SettingsSection title="通知设置" icon={Bell} rows={[["系统通知", "已开启"], ["分析报告通知", "已开启"], ["推荐缺口提醒", "已开启"], ["邮件接收", "service@zhijiewendao.com"]]} />
-        <SettingsSection title="成员与权限" icon={UsersRound} actionLabel="管理成员" rows={[["团队成员", "12 人"], ["角色管理", "5 个角色"], ["我的角色", "超级管理员"], ["权限范围", "全部数据与功能"], ["安全设置", "登录保护、操作日志已启用"]]} />
+        <SettingsSection
+          title="项目设置"
+          icon={Settings}
+          onAction={() =>
+            openPanel({
+              title: "编辑项目设置",
+              desc: "项目基础信息会影响体检、报表和 AI 收录包的默认口径。当前版本先展示配置摘要，后续接入后端保存接口。",
+              items: ["项目名称：智界问道 | AIRank 来客", `行业：${project.industry}`, "项目时区：GMT+08:00"],
+            })
+          }
+          rows={[["项目名称", "智界问道 | AIRank 来客"], ["项目 ID", "airank-laike-2024"], ["行业", project.industry], ["项目时区", "(GMT+08:00) 北京、上海、香港"], ["创建时间", "2024-05-20 10:30"]]}
+        />
+        <SettingsSection
+          title="品牌信息"
+          icon={BadgeCheck}
+          onAction={() =>
+            openPanel({
+              title: "编辑品牌信息",
+              desc: "品牌信息会作为 AI 识别企业和生成公开内容的基础资料。",
+              items: ["品牌名称：智界问道", "品牌标语：用 AI 洞察客户，让增长更确定", "联系邮箱：service@zhijiewendao.com"],
+            })
+          }
+          rows={[["品牌名称", "智界问道"], ["品牌标语", "用 AI 洞察客户，让增长更确定"], ["品牌简介", "智界问道是领先的 AI 营销洞察与增长决策平台"], ["联系电话", "400-888-1234"], ["联系邮箱", "service@zhijiewendao.com"]]}
+        />
+        <SettingsSection
+          title="官网与域名"
+          icon={Globe2}
+          onAction={() =>
+            openPanel({
+              title: "编辑官网与域名",
+              desc: "官网和域名验证状态会影响 AI 收录包发布、sitemap 提交和后续复测。",
+              items: ["官网地址：https://www.zhijiewendao.com", "网站状态：已验证", "备案信息：京ICP备2024012345号-1"],
+            })
+          }
+          rows={[["官网地址", "https://www.zhijiewendao.com"], ["网站状态", "已验证"], ["备案信息", "京ICP备2024012345号-1"], ["域名管理", "zhijiewendao.com（主域名）"]]}
+        />
+        <SettingsSection
+          title="AI 平台接入"
+          icon={Bot}
+          onAction={() =>
+            openPanel({
+              title: "编辑 AI 平台接入",
+              desc: "平台接入状态决定后续多模型体检、复测和推荐结果采样范围。",
+              items: ["DeepSeek、豆包、Kimi、通义、ChatGPT", "接入状态：5 / 5 已接入", "更新时间：2024-05-20 10:30"],
+            })
+          }
+          rows={[["已接入平台", "DeepSeek、豆包、Kimi、通义、ChatGPT"], ["接入状态", "5 / 5 已接入"], ["更新时间", "2024-05-20 10:30"], ["接入说明", "已完成企业身份验证与 API 授权"]]}
+        />
+        <SettingsSection
+          title="通知设置"
+          icon={Bell}
+          onAction={() =>
+            openPanel({
+              title: "编辑通知设置",
+              desc: "通知规则会用于报告生成、推荐缺口提醒和发布复测结果同步。",
+              items: ["系统通知：已开启", "分析报告通知：已开启", "邮件接收：service@zhijiewendao.com"],
+            })
+          }
+          rows={[["系统通知", "已开启"], ["分析报告通知", "已开启"], ["推荐缺口提醒", "已开启"], ["邮件接收", "service@zhijiewendao.com"]]}
+        />
+        <SettingsSection
+          title="成员与权限"
+          icon={UsersRound}
+          actionLabel="管理成员"
+          onAction={() =>
+            openPanel({
+              title: "管理成员与权限",
+              desc: "成员权限会控制事实确认、发布提交、报告下载和设置变更等关键操作。",
+              items: ["团队成员：12 人", "角色管理：5 个角色", "我的角色：超级管理员", "安全设置：登录保护、操作日志已启用"],
+            })
+          }
+          rows={[["团队成员", "12 人"], ["角色管理", "5 个角色"], ["我的角色", "超级管理员"], ["权限范围", "全部数据与功能"], ["安全设置", "登录保护、操作日志已启用"]]}
+        />
       </section>
     </>
   );
 }
 
-function SettingsSection({ title, icon: Icon, rows, actionLabel = "编辑" }: { title: string; icon: LucideIcon; rows: [string, string][]; actionLabel?: string }) {
+function SettingsSection({
+  title,
+  icon: Icon,
+  rows,
+  actionLabel = "编辑",
+  onAction,
+}: {
+  title: string;
+  icon: LucideIcon;
+  rows: [string, string][];
+  actionLabel?: string;
+  onAction: () => void;
+}) {
   return (
     <article className="airank-console-card settings-section">
       <div className="settings-head">
@@ -1436,7 +1595,7 @@ function SettingsSection({ title, icon: Icon, rows, actionLabel = "编辑" }: { 
           <h2>{title}</h2>
           <span>{title === "项目设置" ? "管理项目的基本信息与业务属性" : title === "成员与权限" ? "管理团队成员与角色权限" : "管理" + title + "配置"}</span>
         </div>
-        <button className="settings-edit" type="button">{actionLabel}</button>
+        <button className="settings-edit" type="button" onClick={onAction}>{actionLabel}</button>
       </div>
       {rows.map(([label, value]) => (
         <div className="settings-row" key={label}>
