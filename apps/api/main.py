@@ -4,7 +4,9 @@ from datetime import date, datetime, timezone
 import json
 import os
 from typing import Annotated, Any, Literal, Optional, Protocol
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, Path, Request
@@ -29,6 +31,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "INTERNAL_ERROR": (500, "Internal server error"),
     "AUTH_TOKEN_MISSING": (401, "Authentication token is missing"),
     "AUTH_TOKEN_INVALID": (401, "Authentication token is invalid"),
+    "AUTH_LOGIN_FAILED": (401, "Login credentials are invalid"),
     "AUTH_YUDAO_UNAVAILABLE": (503, "Yudao authentication is unavailable"),
     "TENANT_MISMATCH": (403, "Tenant does not match the token"),
     "TENANT_FORBIDDEN": (403, "Tenant access is forbidden"),
@@ -505,6 +508,35 @@ class VersionResponse(BaseModel):
 
 class ConsoleOverviewResponse(BaseModel):
     data: ConsoleOverview
+    meta: ResponseMeta
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=256, repr=False)
+    yudao_tenant_id: str = Field(default="1", min_length=1, max_length=64)
+
+
+class AuthUser(BaseModel):
+    user_id: str
+    username: Optional[str] = None
+    nickname: Optional[str] = None
+
+
+class AuthLoginData(BaseModel):
+    access_token: str
+    token_type: Literal["Bearer"]
+    expires_in: Optional[int] = None
+    tenant_id: str
+    yudao_tenant_id: str
+    user: AuthUser
+    dev_only: bool = False
+
+
+class AuthLoginResponse(BaseModel):
+    data: AuthLoginData
     meta: ResponseMeta
 
 
@@ -1658,6 +1690,165 @@ def build_meta(trace_id: Optional[str]) -> ResponseMeta:
     return ResponseMeta(trace_id=build_trace_id(trace_id), request_id=f"req_{uuid4().hex[:16]}")
 
 
+def get_auth_mode() -> str:
+    return os.getenv("AIRANK_AUTH_MODE", "yudao").strip().lower()
+
+
+def get_airank_default_tenant_id() -> str:
+    return os.getenv("AIRANK_DEFAULT_TENANT_ID", "tenant_demo").strip() or "tenant_demo"
+
+
+def get_auth_timeout_seconds() -> float:
+    raw_timeout = os.getenv("AIRANK_AUTH_TIMEOUT_SECONDS", "5")
+    try:
+        timeout = float(raw_timeout)
+    except ValueError:
+        return 5.0
+    return max(0.5, min(timeout, 30.0))
+
+
+def build_yudao_url(env_name: str, path: str) -> str:
+    explicit_url = os.getenv(env_name)
+    if explicit_url:
+        return explicit_url.rstrip("/")
+    base_url = os.getenv("YUDAO_BASE_URL", "http://127.0.0.1:48080").rstrip("/")
+    return f"{base_url}{path}"
+
+
+def request_external_json(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: Optional[dict[str, str]] = None,
+    body: Optional[dict[str, Any]] = None,
+    timeout: Optional[float] = None,
+) -> dict[str, Any]:
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
+    request = UrlRequest(url, data=payload, headers=headers or {}, method=method)
+    with urlopen(request, timeout=timeout or get_auth_timeout_seconds()) as response:
+        raw_body = response.read().decode("utf-8")
+    parsed = json.loads(raw_body) if raw_body else {}
+    return parsed if isinstance(parsed, dict) else {"data": parsed}
+
+
+def extract_yudao_token(payload: dict[str, Any]) -> Optional[str]:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    token = data.get("accessToken") or data.get("access_token") or data.get("token")
+    return token if isinstance(token, str) and token else None
+
+
+def extract_yudao_expires_in(payload: dict[str, Any]) -> Optional[int]:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    raw_value = data.get("expiresIn") or data.get("expires_in")
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, str) and raw_value.isdigit():
+        return int(raw_value)
+    return None
+
+
+def yudao_business_success(payload: dict[str, Any]) -> bool:
+    code = payload.get("code")
+    return code in (0, "0", None)
+
+
+def extract_yudao_user(payload: dict[str, Any], username: str) -> AuthUser:
+    data = payload.get("data")
+    user = data.get("user") if isinstance(data, dict) else None
+    if not isinstance(user, dict):
+        return AuthUser(user_id=username, username=username, nickname=username)
+
+    user_id = user.get("id") or user.get("userId") or user.get("user_id") or username
+    user_name = user.get("username") or user.get("userName") or username
+    nickname = user.get("nickname") or user.get("nickName") or user_name
+    return AuthUser(user_id=str(user_id), username=str(user_name), nickname=str(nickname))
+
+
+def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
+    return AuthLoginResponse(
+        data=AuthLoginData(
+            access_token=f"dev_only_{uuid4().hex}",
+            token_type="Bearer",
+            expires_in=3600,
+            tenant_id=get_airank_default_tenant_id(),
+            yudao_tenant_id=payload.yudao_tenant_id,
+            user=AuthUser(user_id=payload.username, username=payload.username, nickname=payload.username),
+            dev_only=True,
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
+def yudao_login(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
+    login_url = build_yudao_url("YUDAO_LOGIN_URL", "/admin-api/system/auth/login")
+    permission_url = build_yudao_url("YUDAO_PERMISSION_INFO_URL", "/admin-api/system/auth/get-permission-info")
+    headers = {"Content-Type": "application/json", "tenant-id": payload.yudao_tenant_id}
+
+    try:
+        login_payload = request_external_json(
+            login_url,
+            method="POST",
+            headers=headers,
+            body={"username": payload.username, "password": payload.password},
+        )
+    except HTTPError as exc:
+        if exc.code in {400, 401, 403}:
+            raise StarletteHTTPException(
+                status_code=401,
+                detail={"code": "AUTH_LOGIN_FAILED", "details": {"source": "yudao"}},
+            ) from exc
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "AUTH_YUDAO_UNAVAILABLE", "details": {"stage": "login"}},
+        ) from exc
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "AUTH_YUDAO_UNAVAILABLE", "details": {"stage": "login"}},
+        ) from exc
+
+    token = extract_yudao_token(login_payload)
+    if not yudao_business_success(login_payload) or token is None:
+        raise StarletteHTTPException(
+            status_code=401,
+            detail={"code": "AUTH_LOGIN_FAILED", "details": {"source": "yudao"}},
+        )
+
+    try:
+        permission_payload = request_external_json(
+            permission_url,
+            headers={"Authorization": f"Bearer {token}", "tenant-id": payload.yudao_tenant_id},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "AUTH_YUDAO_UNAVAILABLE", "details": {"stage": "permission_info"}},
+        ) from exc
+
+    if not yudao_business_success(permission_payload):
+        raise StarletteHTTPException(
+            status_code=401,
+            detail={"code": "AUTH_TOKEN_INVALID", "details": {"source": "yudao"}},
+        )
+
+    return AuthLoginResponse(
+        data=AuthLoginData(
+            access_token=token,
+            token_type="Bearer",
+            expires_in=extract_yudao_expires_in(login_payload),
+            tenant_id=get_airank_default_tenant_id(),
+            yudao_tenant_id=payload.yudao_tenant_id,
+            user=extract_yudao_user(permission_payload, payload.username),
+            dev_only=False,
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
 def get_request_trace_id(request: Request) -> str:
     trace_id = request.headers.get(TRACE_HEADER)
     if trace_id:
@@ -1791,6 +1982,16 @@ def get_version(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADE
         ),
         meta=build_meta(trace_id),
     )
+
+
+@app.post(
+    f"{API_PREFIX}/auth/login",
+    response_model=AuthLoginResponse,
+)
+def login(payload: AuthLoginRequest, trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> AuthLoginResponse:
+    if get_auth_mode() in {"dev", "dev_only", "development"}:
+        return build_dev_only_auth_response(payload, trace_id)
+    return yudao_login(payload, trace_id)
 
 
 @app.post(

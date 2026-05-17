@@ -18,6 +18,104 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.airank-login {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background:
+    linear-gradient(135deg, rgba(68, 62, 253, 0.14), rgba(1, 200, 177, 0.1)),
+    var(--console-page-bg);
+  box-sizing: border-box;
+}
+
+.airank-login-panel {
+  width: min(440px, 100%);
+  padding: 32px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--console-shadow-card);
+  box-sizing: border-box;
+}
+
+.login-brand {
+  height: auto;
+  margin: 0 0 26px;
+  color: var(--console-title);
+}
+
+.login-brand .brand-mark {
+  background: var(--console-sidebar-bg);
+  color: #ffffff;
+}
+
+.login-brand .brand-subtitle {
+  color: var(--console-text);
+}
+
+.login-copy h1 {
+  margin: 0;
+  color: var(--console-title);
+  font: 800 32px / 38px var(--console-font-family);
+}
+
+.login-copy p {
+  margin: 10px 0 24px;
+  color: var(--console-text);
+  font: 600 15px / 24px var(--console-font-family);
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--console-title);
+  font: 700 14px / 20px var(--console-font-family);
+}
+
+.login-form input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-title);
+  font: 600 15px / 22px var(--console-font-family);
+  box-sizing: border-box;
+}
+
+.login-form input:focus {
+  border-color: var(--console-primary);
+  outline: 3px solid rgba(68, 62, 253, 0.16);
+}
+
+.login-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 72, 72, 0.28);
+  border-radius: 8px;
+  background: rgba(230, 72, 72, 0.08);
+  color: var(--console-danger);
+  font: 700 13px / 20px var(--console-font-family);
+}
+
+.login-submit {
+  justify-content: center;
+  min-height: 46px;
+  width: 100%;
+}
+
 .brand-lockup {
   display: flex;
   align-items: center;

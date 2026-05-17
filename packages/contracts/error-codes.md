@@ -34,6 +34,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | --- | --- | --- |
 | `AUTH_TOKEN_MISSING` | 401 | 缺少 token |
 | `AUTH_TOKEN_INVALID` | 401 | token 无效 |
+| `AUTH_LOGIN_FAILED` | 401 | 登录凭证无效 |
 | `AUTH_YUDAO_UNAVAILABLE` | 503 | yudao auth 不可用 |
 | `TENANT_MISMATCH` | 403 | header 租户与 token 租户不一致 |
 | `TENANT_FORBIDDEN` | 403 | 无租户权限 |

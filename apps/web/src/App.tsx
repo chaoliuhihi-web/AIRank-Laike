@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -53,7 +53,12 @@ import {
   fetchConsoleOverview,
   fallbackReportList,
   fetchReports,
+  clearAuthSession,
+  getStoredAuthSession,
+  loginToAirank,
   recordDownloadReceipt,
+  storeAuthSession,
+  type AuthSession,
   type AssetBundle,
   type ConsoleMetricCard,
   type ConsoleOverview,
@@ -126,8 +131,15 @@ function useConsoleOverviewStatus() {
 
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredAuthSession());
   const [overview, setOverview] = useState<ConsoleOverview>(fallbackConsoleOverview);
   const [overviewStatus, setOverviewStatus] = useState<"loading" | "api" | "fallback">("loading");
+
+  const navigate = (nextPath: string) => {
+    const normalized = normalizePath(nextPath);
+    window.history.pushState({}, "", normalized);
+    setPath(normalized);
+  };
 
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname));
@@ -136,6 +148,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!authSession) {
+      setOverview(fallbackConsoleOverview);
+      setOverviewStatus("fallback");
+      return;
+    }
+
     const controller = new AbortController();
     fetchConsoleOverview(controller.signal)
       .then((nextOverview) => {
@@ -147,20 +165,40 @@ function App() {
         setOverviewStatus("fallback");
       });
     return () => controller.abort();
-  }, []);
+  }, [authSession]);
 
-  const navigate = (nextPath: string) => {
-    const normalized = normalizePath(nextPath);
-    window.history.pushState({}, "", normalized);
-    setPath(normalized);
+  useEffect(() => {
+    if (!authSession && path !== "/login") {
+      navigate("/login");
+      return;
+    }
+    if (authSession && path === "/login") {
+      navigate("/console");
+    }
+  }, [authSession, path]);
+
+  const handleLogin = (nextSession: AuthSession) => {
+    storeAuthSession(nextSession);
+    setAuthSession(nextSession);
+    navigate("/console");
   };
+
+  const handleLogout = () => {
+    clearAuthSession();
+    setAuthSession(null);
+    navigate("/login");
+  };
+
+  if (!authSession || path === "/login") {
+    return <LoginPage onLogin={handleLogin} />;
+  }
 
   return (
     <ConsoleOverviewContext.Provider value={overview}>
       <ConsoleOverviewStatusContext.Provider value={overviewStatus}>
         <main className="airank-console">
           <div className="airank-console-shell">
-            <Sidebar activePath={path} onNavigate={navigate} />
+            <Sidebar activePath={path} onNavigate={navigate} session={authSession} onLogout={handleLogout} />
             <section className="airank-console-main">
               <ConsolePage path={path} onNavigate={navigate} />
             </section>
@@ -171,6 +209,78 @@ function App() {
   );
 }
 
+function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [yudaoTenantId, setYudaoTenantId] = useState("1");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const session = await loginToAirank({ username, password, yudaoTenantId });
+      onLogin(session);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Login failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="airank-login">
+      <section className="airank-login-panel">
+        <div className="brand-lockup login-brand">
+          <div className="brand-mark">
+            <Sparkles size={25} />
+          </div>
+          <div>
+            <div className="brand-title">AIRank Laike</div>
+            <div className="brand-subtitle">Product console</div>
+          </div>
+        </div>
+        <div className="login-copy">
+          <h1>Sign in</h1>
+          <p>Use yudao credentials to open the AIRank console. Local demos can set AIRANK_AUTH_MODE=dev_only.</p>
+        </div>
+        <form className="login-form" onSubmit={submitLogin}>
+          <label>
+            <span>Yudao tenant</span>
+            <input value={yudaoTenantId} onChange={(event) => setYudaoTenantId(event.target.value)} autoComplete="organization" />
+          </label>
+          <label>
+            <span>Username</span>
+            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              type="password"
+              required
+            />
+          </label>
+          {error && (
+            <div className="login-error" role="alert">
+              <ShieldAlert size={18} />
+              <span>{error}</span>
+            </div>
+          )}
+          <button className="airank-console-primary-button login-submit" type="submit" disabled={submitting}>
+            {submitting ? "Signing in" : "Sign in"}
+            <ArrowRight size={18} />
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function normalizePath(path: string) {
   if (path === "/" || path === "/console/") {
     return "/console";
@@ -178,8 +288,19 @@ function normalizePath(path: string) {
   return path.replace(/\/$/, "");
 }
 
-function Sidebar({ activePath, onNavigate }: { activePath: string; onNavigate: (path: string) => void }) {
+function Sidebar({
+  activePath,
+  onNavigate,
+  session,
+  onLogout,
+}: {
+  activePath: string;
+  onNavigate: (path: string) => void;
+  session: AuthSession;
+  onLogout: () => void;
+}) {
   const { project } = useConsoleOverview();
+  const displayName = session.user.nickname || session.user.username || project.name;
 
   return (
     <aside className="airank-console-sidebar">
@@ -217,13 +338,17 @@ function Sidebar({ activePath, onNavigate }: { activePath: string; onNavigate: (
           <HelpCircle size={22} />
           <span>帮助中心</span>
         </button>
+        <button className="help-link" type="button" onClick={onLogout}>
+          <LockKeyhole size={22} />
+          <span>Logout</span>
+        </button>
         <div className="tenant-switcher">
           <div className="tenant-avatar">
             <CircleUserRound size={23} />
           </div>
           <div>
-            <div className="tenant-name">{project.name}</div>
-            <div className="tenant-plan">企业版</div>
+            <div className="tenant-name">{displayName}</div>
+            <div className="tenant-plan">{session.devOnly ? "dev_only" : session.tenantId}</div>
           </div>
           <ChevronDown size={18} />
         </div>

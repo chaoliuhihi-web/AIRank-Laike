@@ -23,6 +23,7 @@
             "INTERNAL_ERROR",
             "AUTH_TOKEN_MISSING",
             "AUTH_TOKEN_INVALID",
+            "AUTH_LOGIN_FAILED",
             "AUTH_YUDAO_UNAVAILABLE",
             "TENANT_MISMATCH",
             "TENANT_FORBIDDEN",

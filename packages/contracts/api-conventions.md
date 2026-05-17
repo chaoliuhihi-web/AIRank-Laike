@@ -12,6 +12,16 @@
 
 ## 认证
 
+登录入口：
+
+```text
+POST /api/v1/auth/login
+```
+
+请求使用 `auth_login_request.schema.json`，响应使用 `auth_login_response.schema.json`。默认模式调用 yudao
+`/admin-api/system/auth/login` 后再调用 `/admin-api/system/auth/get-permission-info` 解析用户；本地演示可显式设置
+`AIRANK_AUTH_MODE=dev_only`，响应会标记 `dev_only=true`，不能冒充 release-ready。
+
 请求头：
 
 ```text

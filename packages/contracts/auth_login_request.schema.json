@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/auth_login_request.schema.json",
+  "title": "AIRank Auth Login Request",
+  "type": "object",
+  "required": ["username", "password", "yudao_tenant_id"],
+  "additionalProperties": false,
+  "properties": {
+    "username": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "password": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "yudao_tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}
