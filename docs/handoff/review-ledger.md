@@ -302,3 +302,44 @@ Risks:
 Next owner:
 - CodexWin 领取 `M1-WIN-001B`。
 - CodexiMac 修复 remote 推送后推送 `0efcbb5`，若仅 MySQL 权限失败但 migration SQL/parity 已通过，应把 `M1-IMAC-001` 改为 `review_env_blocked` 而不是 `blocked`。
+
+## 2026-05-17 - CodexMacPro
+
+Scope:
+- 处理 CodexiMac rebase 冲突反馈，降低三 AI 并行时中心 handoff 文件冲突概率。
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/status/README.md`
+- `docs/handoff/status/codex-win.md`
+- `docs/handoff/status/codex-imac.md`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/execution-packets.md`
+- `docs/handoff/agent-control.md`
+- `docs/handoff/launch-board.md`
+- `agents/prompts/codex-win.md`
+- `agents/prompts/codex-imac.md`
+
+Validation:
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass; prompt shows `M1-WIN-001B` as actionable and uses `docs/handoff/status/codex-win.md`
+- command: `python3 scripts/agent_control.py next codex-imac --write`
+- result: pass; prompt uses `docs/handoff/status/codex-imac.md`
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this change
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: `execution-packets.md` is now treated as task definition, while per-owner packet state and run logs go to `docs/handoff/status/<owner>.md`. `agent_control.py` reads these status files as overrides, so dev agents no longer need to edit the same central files every round.
+
+Risks:
+- CodexiMac still needs to finish its interrupted rebase locally; this change prevents future repeats but does not automatically resolve its local conflict state.
+
+Next owner:
+- CodexiMac should resolve or abort/retry its current rebase using the instructions from CodexMacPro, then update only `docs/handoff/status/codex-imac.md`.
+- CodexWin should sync latest and continue `M1-WIN-001B`.

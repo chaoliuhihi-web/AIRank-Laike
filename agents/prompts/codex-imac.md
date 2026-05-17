@@ -41,7 +41,7 @@ MySQL schema/Alembic -> scan job -> answer snapshot -> citation -> FactAtom -> c
 ## 禁止事项
 
 - 不直接改 `apps/web` 页面布局和视觉，除非只补 API 字段消费说明。
-- 不直接改 CodexWin 正在实现的 API endpoint 行为，除非先在 `docs/handoff/review-ledger.md` 写明 contract 风险。
+- 不直接改 CodexWin 正在实现的 API endpoint 行为，除非先在 `docs/handoff/status/codex-imac.md` 写明 contract 风险并交给 CodexMacPro。
 - 不直接依赖 `XingheAI2026V2` 内部路径。
 - 不把 Xinghe/yudao 不可用当 blocker；必须提供 local fallback / mock provider / manual import。
 - 不写无法追溯来源的分数、结论或报告。
@@ -90,8 +90,8 @@ cd apps/api && alembic upgrade head
 
 每轮结束必须更新：
 
-- `docs/handoff/launch-board.md`：更新你负责的 task 状态。
-- `docs/handoff/review-ledger.md`：写本轮变更、验证命令、风险、fallback 状态。
+- `docs/handoff/status/codex-imac.md`：更新你负责的 packet 状态、commit、验证结果、风险和 fallback 状态。
+- 不直接更新 `docs/handoff/execution-packets.md` 或 `docs/handoff/review-ledger.md`，除非 CodexMacPro 明确要求你解决冲突。
 
 ## 提交和推送
 

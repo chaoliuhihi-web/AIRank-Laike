@@ -73,8 +73,8 @@ python3 -m pytest tests/contracts
 
 每轮结束必须更新：
 
-- `docs/handoff/launch-board.md`：更新你负责的 task 状态。
-- `docs/handoff/review-ledger.md`：写本轮变更、验证命令、风险、需要 CodexMacPro 审核的点。
+- `docs/handoff/status/codex-win.md`：更新你负责的 packet 状态、commit、验证结果和风险。
+- 不直接更新 `docs/handoff/execution-packets.md` 或 `docs/handoff/review-ledger.md`，除非 CodexMacPro 明确要求你解决冲突。
 
 ## 提交和推送
 

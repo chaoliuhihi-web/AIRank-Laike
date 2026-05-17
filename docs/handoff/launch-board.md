@@ -29,12 +29,13 @@ git push origin main
 git push gitee main
 ```
 
-每轮只做一个可验证小闭环，并更新本文件和 `docs/handoff/review-ledger.md`。
+每轮只做一个可验证小闭环。CodexWin / CodexiMac 更新自己的 `docs/handoff/status/<owner>.md`；CodexMacPro 汇总更新本文件和 `docs/handoff/review-ledger.md`。
 
 自动协作机制见：
 
 - `docs/handoff/agent-control.md`
 - `docs/handoff/execution-packets.md`
+- `docs/handoff/status/`
 - `scripts/agent_control.py`
 - `docs/handoff/director-brief.md`（本地生成）
 - `docs/handoff/next-prompts/`（本地生成）
