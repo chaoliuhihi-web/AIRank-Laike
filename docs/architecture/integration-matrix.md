@@ -49,3 +49,19 @@ adapter 内部可以调用星河 API，但 `apps/api`、`apps/worker` 和 `packa
 - `last_success_trace_id`
 
 失败时返回结构化错误，不能吞错，也不能让任务长期停留在 `queued`。
+
+## 外部 AI Provider 执行规则
+
+`AIRANK_PROVIDER_MODE=browser` 是 MySQL 环境的默认生产策略。品牌检测不能用模型 API 代替 C 端网页结果；必须通过 Playwright 持久浏览器 profile 打开各平台消费端页面，像用户一样输入问题，读取页面回答，再落库为 `answer_snapshot`。如果网页要求登录、真人验证、验证码，或找不到输入框，对应 `scan_task` 标记为 `failed`，错误码为 `SCAN_PROVIDER_BLOCKED`。如果没有任何 provider 成功，`/api/v1/brand-checks` 返回 `INTEGRATION_CAPABILITY_BLOCKED`，不生成排名、资产和报告。
+
+| Provider | 默认网页入口 | 真实运行要求 |
+| --- | --- | --- |
+| ChatGPT | `https://chatgpt.com/` | 持久浏览器 profile 中有可用登录态 |
+| DeepSeek | `https://chat.deepseek.com/` | 持久浏览器 profile 中有可用登录态 |
+| Kimi | `https://www.kimi.com/` | 持久浏览器 profile 中有可用登录态 |
+| 通义 | `https://www.tongyi.com/qianwen/` | 持久浏览器 profile 中有可用登录态 |
+| 豆包 | `https://www.doubao.com/chat/` | 持久浏览器 profile 中有可用登录态 |
+| 百度 AI 搜索 | `https://chat.baidu.com/` | 持久浏览器 profile 中有可用登录态 |
+| 腾讯元宝 | `https://yuanbao.tencent.com/` | 持久浏览器 profile 中有可用登录态 |
+
+API 调用只能作为运维探测或企业接口扩展，不得进入 AIRank Score 和对客报告的“真实排名”证据链。真实排名证据链必须保存 provider、网页 URL、截图路径、原始网页回答、brand_rank 和 competitor_mentions。

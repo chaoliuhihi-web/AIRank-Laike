@@ -466,8 +466,18 @@ button:disabled {
   font: 600 13px / 18px var(--console-font-family);
 }
 
+.brand-check-result[data-tone="danger"] {
+  align-items: flex-start;
+  background: #fff4f1;
+  color: #a63a28;
+}
+
 .brand-check-result strong {
   color: var(--console-text-strong);
+}
+
+.brand-check-result[data-tone="danger"] strong {
+  color: #7f2618;
 }
 
 .metric-card {
@@ -1940,6 +1950,21 @@ button:disabled {
 .airank-console-badge[data-tone="muted"] {
   background: #f1f4f9;
   color: var(--console-text-muted);
+}
+
+.airank-console-badge[data-tone="success"] {
+  background: #e5fbf6;
+  color: #008f7f;
+}
+
+.airank-console-badge[data-tone="warning"] {
+  background: #fff4df;
+  color: #b55a00;
+}
+
+.airank-console-badge[data-tone="danger"] {
+  background: #ffe3dc;
+  color: #b23a28;
 }
 
 @media (max-width: 1320px) {

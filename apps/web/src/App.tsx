@@ -744,10 +744,12 @@ function BrandCheckCard({
   const [buyerQuestions, setBuyerQuestions] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [lastResult, setLastResult] = useState<BrandCheckResult | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const submitBrandCheck = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
+    setLastError(null);
     try {
       const result = await runBrandCheck({
         brandName: brandName.trim(),
@@ -765,9 +767,11 @@ function BrandCheckCard({
       });
       onNavigate("/console/checkup");
     } catch (error) {
+      const message = error instanceof Error ? error.message : "后端未能完成检测，请检查品牌和网址。";
+      setLastError(message);
       notify({
         title: "品牌检测失败",
-        desc: error instanceof Error ? error.message : "后端未能完成检测，请检查品牌和网址。",
+        desc: message,
         tone: "danger",
       });
     } finally {
@@ -818,6 +822,12 @@ function BrandCheckCard({
           <span>{lastResult.project.brand_name}</span>
           <strong>{lastResult.scanRun.status === "completed" ? "已生成资料和报告" : "检测任务已创建"}</strong>
           <span>{lastResult.taskCount} 个任务</span>
+        </div>
+      )}
+      {lastError && (
+        <div className="brand-check-result" data-tone="danger" role="alert">
+          <Badge tone="danger">检测失败</Badge>
+          <strong>{lastError}</strong>
         </div>
       )}
     </section>
