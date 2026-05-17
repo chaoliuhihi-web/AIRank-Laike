@@ -40,3 +40,18 @@ def test_report_api_lists_reports_and_records_download_receipt() -> None:
     receipt_body = receipt.json()
     assert receipt_body["data"]["report_id"] == report_id
     validate_response("download_receipt_response.schema.json", receipt_body)
+
+
+def test_report_api_rejects_invalid_project_id() -> None:
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/projects/not_a_project_id/reports",
+        headers={"tenant-id": "tenant_reports", "X-AIRank-Trace-Id": "trc_reports_bad_project"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_FAILED"
+    assert body["error"]["trace_id"] == "trc_reports_bad_project"
+    validate_response("error_response.schema.json", body)

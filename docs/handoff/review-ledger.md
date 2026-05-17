@@ -746,3 +746,48 @@ Risks:
 Next owner:
 - CodexWin should wire these endpoints to real repositories only after preserving the current validation and error-envelope behavior.
 - CodexMacPro should continue reviewing every new API surface for schema/runtime drift before it reaches release gate.
+
+## 2026-05-17 18:07 +08:00 - CodexMacPro
+
+Scope:
+- Review and corrective patch after CodexWin/CodexiMac remote advanced with report list and download receipt API.
+- Keep report list path validation aligned with `report_list_response.schema.json`.
+
+Changed:
+- `apps/api/main.py`
+- `tests/contracts/test_report_api_contract.py`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 44 tests
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 7 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 9 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 2 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: `cd apps/api && python3 -m alembic upgrade head --sql`
+- result: pass; generated SQL keeps project/competitor `website_url VARCHAR(2048)`
+- command: `python3 -m py_compile apps/api/main.py`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: Report list now validates `project_id` at the route boundary so invalid path IDs return the standard validation envelope instead of producing contract-invalid report payloads.
+
+Risks:
+- Report list and download receipt are still development seed APIs; receipts are not persisted and reports are not loaded from MySQL/object storage yet.
+
+Next owner:
+- CodexWin should preserve route-level validation when replacing seeded report payloads with real repository-backed data.

@@ -24,3 +24,4 @@
 - 2026-05-17: Code review found API request models weaker than JSON Schema contracts, MySQL URL columns narrower than API contracts, unregistered worker failure codes, and weak evidence-chain validation in the worker/evidence/score slices; patched and added focused tests.
 - 2026-05-17: After rebasing over CodexWin scan run status API, review found scan request validation weaker than schema and scan task 404 using `JOB_NOT_FOUND`; patched strict request validation, `SCAN_TASK_NOT_FOUND`, and focused contract tests.
 - 2026-05-17: After rebasing over fact review and asset bundle APIs, review found path IDs and request bodies weaker than the contracts; patched fact/source validation, duplicate source rejection, and asset project ID validation.
+- 2026-05-17: After rebasing over report download receipt API, review found report list project path validation missing; patched route validation and contract coverage.

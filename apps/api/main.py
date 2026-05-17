@@ -445,7 +445,7 @@ class ReportItem(BaseModel):
 
 
 class ReportListData(BaseModel):
-    project_id: str
+    project_id: ProjectId
     tenant_id: str
     reports: list[ReportItem]
 
@@ -1333,7 +1333,7 @@ def get_asset_bundle(
     response_model=ReportListResponse,
 )
 def get_reports(
-    project_id: str,
+    project_id: ProjectIdPath,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> ReportListResponse:
