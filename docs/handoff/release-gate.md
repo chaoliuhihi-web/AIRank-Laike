@@ -2,6 +2,14 @@
 
 本文件是 AIRank v0.1 beta 上线前的强制门禁。未全部通过时，不允许声明“可上线”。
 
+可执行门禁命令：
+
+```bash
+python3 scripts/release_readiness.py
+```
+
+该命令把本文件的核心自动检查脚本化：远端一致性、工作区、运行产物、contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 迁移和 capability probe。真实 MySQL 或必需 capability 未 READY 时返回非零，不允许用 `dev_only` 结果替代上线通过。
+
 ## Gate 0：仓库和远端
 
 | Check | Command / Evidence | Required |
@@ -163,3 +171,23 @@ Minimum fix before beta PASS:
 - Provide a real yudao bearer token and rerun the capability probe with `AIRANK_AUTH_MODE=yudao`, `YUDAO_PERMISSION_INFO_URL`, and `YUDAO_BEARER_TOKEN`.
 - Either map crawler/KB health paths to real service readiness endpoints, or document them as optional `partial` capabilities for the beta scope.
 - If product accepts a dev-only beta, record the approval and change the conclusion to `PASS_WITH_RISK` instead of `PASS`.
+
+## 2026-05-17 18:51 +08:00 Execution
+
+Release Gate: BLOCKED
+
+Commit: release-readiness script commit rebased on `9aef7e9`
+
+Reviewer: CodexMacPro
+
+Passed:
+
+- Added executable `python3 scripts/release_readiness.py` gate so release checks can fail CI/local runs instead of living only in this document.
+- `python3 -m py_compile scripts/release_readiness.py` passed.
+- `python3 -m pytest tests/acceptance/test_release_readiness_gate.py -q` passed 4 tests.
+- `python3 -m pytest tests/acceptance -q` passed 13 tests before rebase; after rebase, rerun required because origin added DBVERIFY changes.
+
+Still blocked:
+
+- Release remains blocked by missing real yudao bearer token / tenant-user capability or explicit product approval for a dev-only beta scope.
+- The new script must be run from a clean worktree after this commit lands; it intentionally fails on uncommitted files.
