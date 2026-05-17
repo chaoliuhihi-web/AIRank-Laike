@@ -6,7 +6,7 @@
 | M1-IMAC-002 | review | ea56c7c | Tenant/project query fields, index coverage, sensitive fields, and no-cross-db-FK policy documented; `git diff --check` passed. |
 | M2-IMAC-001 | review | 182f5c6 | Async job lease/heartbeat state machine covers queued/running/succeeded/failed/timeout; `python3 -m pytest` passed in apps/worker. |
 | M2-IMAC-002 | review | 3ad8bdd | Mock provider generates answer snapshot with required source citations; worker marks missing-citation jobs failed. |
-| M2-IMAC-003 | review | pending | Deterministic score pure function returns identical results for identical snapshot/citation input. |
+| M2-IMAC-003 | review | 6e6c615 | Deterministic score pure function returns identical results for identical snapshot/citation input. |
 
 ## Run Log
 
