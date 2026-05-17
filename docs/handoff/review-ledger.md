@@ -1180,3 +1180,55 @@ Risks:
 
 Next owner:
 - CodexMacPro should keep this strict browser/user-flow pass as a required gate after any future UI or route change.
+
+## 2026-05-17 22:35 +08:00 - CodexMacPro
+
+Scope:
+- Raised console QA from UI-only button response to backend-recorded business action proof.
+- Added a real console action contract/API and wired critical console controls to audit events.
+
+Changed:
+- `apps/api/main.py`
+- `apps/web/src/App.tsx`
+- `apps/web/src/console/api.ts`
+- `packages/contracts/README.md`
+- `packages/contracts/console_action_request.schema.json`
+- `packages/contracts/console_action_response.schema.json`
+- `tests/contracts/test_console_action_api_contract.py`
+- `docs/handoff/status/codex-macpro.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 -m pytest -q`
+- result: pass, 107 passed and 6 opt-in integration tests skipped
+- command: `cd apps/worker && python3 -m pytest -q`
+- result: pass, 11 tests
+- command: `cd packages/score && python3 -m pytest -q`
+- result: pass, 3 tests
+- command: `cd packages/evidence && python3 -m pytest -q`
+- result: pass, 9 tests
+- command: `cd packages/xinghe-adapter && python3 -m pytest -q`
+- result: pass, 5 tests
+- command: `cd apps/web && npm run build`
+- result: pass
+- command: real Docker MySQL bootstrap + Alembic + `scripts/seed_fixtures.py`
+- result: pass, `tenant_demo/project_demo` seeded in `airank_laike`
+- command: real FastAPI + yudao + Vite browser QA
+- result: pass, real login, visible console workflows, assistant form/config, report download receipt, settings save, desktop 1491x1055, and mobile 390x844 all passed without console errors
+- command: MySQL audit query
+- result: pass, `airank_audit_events` contains `console.navigation.route`, `console.panel.open`, `console.panel.primary`, `console.ui.notify`, `console.share.link`, `console.fact.confirm_batch`, `console.question.tab_select`, `console.assistant.preview_send`, `console.assistant.config_toggle`, `console.assistant.publish`, `console.report.generate`, `console.settings.save`, and `report.download_receipt`
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected local working-tree changes before commit
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS
+- reviewer: CodexMacPro
+- notes: Controls that previously only showed local UI feedback now create a server-side action record. Browser QA found and fixed an assistant accessibility ambiguity by renaming the icon button aria label to `发送消息`.
+
+Risks:
+- This is still a single-node local beta environment. Production reverse proxy, TLS, object storage, and optional Xinghe/Hermes capability probes must be revalidated against the deployed URL.
+
+Next owner:
+- CodexMacPro should rerun the same action-audit browser pass after every UI workflow change and before any production release tag.

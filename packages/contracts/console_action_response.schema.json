@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/console_action_response.schema.json",
+  "title": "AIRank Console Action Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["action_id", "tenant_id", "project_id", "action_type", "recorded_at", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "action_id": { "type": "string", "pattern": "^audit_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "action_type": { "type": "string", "minLength": 3, "maxLength": 80, "pattern": "^[a-z][a-z0-9_.-]*$" },
+        "entity_type": { "type": ["string", "null"], "minLength": 1, "maxLength": 80, "pattern": "^[a-z][a-z0-9_.-]*$" },
+        "entity_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "recorded_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["recorded"] }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

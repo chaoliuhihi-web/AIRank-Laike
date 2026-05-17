@@ -471,6 +471,34 @@ class DownloadReceiptResponse(BaseModel):
     meta: ResponseMeta
 
 
+class ConsoleActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: ProjectId
+    action_type: str = Field(min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]*$")
+    label: str = Field(min_length=1, max_length=120)
+    source_route: str = Field(min_length=1, max_length=160)
+    entity_type: Optional[str] = Field(default=None, min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9_.-]*$")
+    entity_id: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConsoleActionData(BaseModel):
+    action_id: str
+    tenant_id: str
+    project_id: ProjectId
+    action_type: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    recorded_at: datetime
+    status: Literal["recorded"]
+
+
+class ConsoleActionResponse(BaseModel):
+    data: ConsoleActionData
+    meta: ResponseMeta
+
+
 class ErrorInfo(BaseModel):
     code: str
     message: str
@@ -596,6 +624,17 @@ class ReportRepository(Protocol):
         ...
 
     def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
+        ...
+
+
+class ConsoleActionRepository(Protocol):
+    def record_action(
+        self,
+        tenant_id: str,
+        payload: ConsoleActionRequest,
+        trace_id: str,
+        actor_user_id: Optional[str] = None,
+    ) -> ConsoleActionData:
         ...
 
 
@@ -1689,6 +1728,117 @@ def build_report_repository() -> ReportRepository:
 REPORT_REPOSITORY: ReportRepository = build_report_repository()
 
 
+class InMemoryConsoleActionRepository:
+    def record_action(
+        self,
+        tenant_id: str,
+        payload: ConsoleActionRequest,
+        trace_id: str,
+        actor_user_id: Optional[str] = None,
+    ) -> ConsoleActionData:
+        del trace_id, actor_user_id
+        return ConsoleActionData(
+            action_id=f"audit_{uuid4().hex[:12]}",
+            tenant_id=tenant_id,
+            project_id=payload.project_id,
+            action_type=payload.action_type,
+            entity_type=payload.entity_type,
+            entity_id=payload.entity_id,
+            recorded_at=utc_now(),
+            status="recorded",
+        )
+
+
+class MySQLConsoleActionRepository:
+    def __init__(self, database_url: str) -> None:
+        self._engine = create_engine(database_url, pool_pre_ping=True)
+
+    def record_action(
+        self,
+        tenant_id: str,
+        payload: ConsoleActionRequest,
+        trace_id: str,
+        actor_user_id: Optional[str] = None,
+    ) -> ConsoleActionData:
+        action_id = f"audit_{uuid4().hex[:12]}"
+        recorded_at = utc_now()
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM airank_projects
+                    WHERE tenant_id = :tenant_id
+                      AND id = :project_id
+                      AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": payload.project_id},
+            ).first()
+            if row is None:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": payload.project_id}},
+                )
+
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_audit_events (
+                      id, tenant_id, project_id, actor_user_id, event_type,
+                      entity_type, entity_id, trace_id, payload_json, created_at
+                    )
+                    VALUES (
+                      :id, :tenant_id, :project_id, :actor_user_id, :event_type,
+                      :entity_type, :entity_id, :trace_id, :payload_json, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": action_id,
+                    "tenant_id": tenant_id,
+                    "project_id": payload.project_id,
+                    "actor_user_id": actor_user_id,
+                    "event_type": f"console.{payload.action_type}",
+                    "entity_type": payload.entity_type,
+                    "entity_id": payload.entity_id,
+                    "trace_id": trace_id,
+                    "payload_json": json.dumps(
+                        {
+                            "label": payload.label,
+                            "source_route": payload.source_route,
+                            "payload": payload.payload,
+                            "recorded_at": recorded_at.isoformat(),
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    "created_at": recorded_at,
+                },
+            )
+
+        return ConsoleActionData(
+            action_id=action_id,
+            tenant_id=tenant_id,
+            project_id=payload.project_id,
+            action_type=payload.action_type,
+            entity_type=payload.entity_type,
+            entity_id=payload.entity_id,
+            recorded_at=recorded_at,
+            status="recorded",
+        )
+
+
+def build_console_action_repository() -> ConsoleActionRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLConsoleActionRepository(database_url)
+    return InMemoryConsoleActionRepository()
+
+
+CONSOLE_ACTION_REPOSITORY: ConsoleActionRepository = build_console_action_repository()
+
+
 app = FastAPI(title="AIRank API", version="0.1.0")
 
 
@@ -2164,6 +2314,24 @@ def create_download_receipt(
     meta = build_meta(trace_id)
     return DownloadReceiptResponse(
         data=REPORT_REPOSITORY.record_download_receipt(tenant_id, report_id, meta.trace_id),
+        meta=meta,
+    )
+
+
+@app.post(
+    f"{API_PREFIX}/console/actions",
+    response_model=ConsoleActionResponse,
+    status_code=201,
+)
+def record_console_action(
+    payload: ConsoleActionRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    actor_user_id: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+) -> ConsoleActionResponse:
+    meta = build_meta(trace_id)
+    return ConsoleActionResponse(
+        data=CONSOLE_ACTION_REPOSITORY.record_action(tenant_id, payload, meta.trace_id, actor_user_id),
         meta=meta,
     )
 

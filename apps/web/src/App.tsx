@@ -69,10 +69,12 @@ import {
   fetchReports,
   getStoredAuthSession,
   loginToAirank,
+  recordConsoleAction,
   recordDownloadReceipt,
   storeAuthSession,
   type AuthSession,
   type AssetBundle,
+  type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
   type ReportItem,
@@ -175,12 +177,14 @@ type ActionFeedback = {
   notify: (toast: Omit<ToastState, "id">) => void;
   openPanel: (panel: ActionPanelState) => void;
   closePanel: () => void;
+  recordAction: (action: Omit<ConsoleActionInput, "projectId" | "sourceRoute">) => Promise<void>;
 };
 
 const ActionFeedbackContext = createContext<ActionFeedback>({
   notify: () => undefined,
   openPanel: () => undefined,
   closePanel: () => undefined,
+  recordAction: async () => undefined,
 });
 
 function useConsoleOverview() {
@@ -253,12 +257,60 @@ function App() {
     navigate("/console");
   };
 
-  const notify = (nextToast: Omit<ToastState, "id">) => {
+  const showToast = (nextToast: Omit<ToastState, "id">) => {
     const id = Date.now();
     setToast({ ...nextToast, id });
     window.setTimeout(() => {
       setToast((currentToast) => (currentToast?.id === id ? null : currentToast));
     }, 3200);
+  };
+
+  const recordAction = async (action: Omit<ConsoleActionInput, "projectId" | "sourceRoute">) => {
+    try {
+      await recordConsoleAction({
+        ...action,
+        projectId: overview.project.id ?? "project_demo",
+        sourceRoute: path,
+      });
+    } catch (error) {
+      showToast({
+        title: "操作记录失败",
+        desc: error instanceof Error ? error.message : "后端未能记录本次操作，请稍后重试。",
+        tone: "danger",
+      });
+    }
+  };
+
+  const notify = (nextToast: Omit<ToastState, "id">) => {
+    void recordAction({
+      actionType: "ui.notify",
+      label: nextToast.title,
+      entityType: "toast",
+      entityId: nextToast.tone,
+      payload: { desc: nextToast.desc, tone: nextToast.tone },
+    });
+    showToast(nextToast);
+  };
+
+  const openActionPanel = (nextPanel: ActionPanelState) => {
+    void recordAction({
+      actionType: "panel.open",
+      label: nextPanel.title,
+      entityType: "console_panel",
+      payload: { desc: nextPanel.desc, items: nextPanel.items ?? [], primary_label: nextPanel.primaryLabel ?? null },
+    });
+    setActionPanel(nextPanel);
+  };
+
+  const navigateWithAudit = (nextPath: string) => {
+    void recordAction({
+      actionType: "navigation.route",
+      label: "页面导航",
+      entityType: "route",
+      entityId: nextPath,
+      payload: { from: path, to: nextPath },
+    });
+    navigate(nextPath);
   };
 
   if (!authSession || path === "/login") {
@@ -271,15 +323,16 @@ function App() {
         <ActionFeedbackContext.Provider
           value={{
             notify,
-            openPanel: setActionPanel,
+            openPanel: openActionPanel,
             closePanel: () => setActionPanel(null),
+            recordAction,
           }}
         >
           <main className="airank-console">
             <div className="airank-console-shell">
-              <Sidebar activePath={path} onNavigate={navigate} />
+              <Sidebar activePath={path} onNavigate={navigateWithAudit} />
               <section className="airank-console-main">
-                <ConsolePage path={path} onNavigate={navigate} />
+                <ConsolePage path={path} onNavigate={navigateWithAudit} />
               </section>
             </div>
             {toast && <ActionToast toast={toast} onDismiss={() => setToast(null)} />}
@@ -381,7 +434,15 @@ function ActionToast({ toast, onDismiss }: { toast: ToastState; onDismiss: () =>
 }
 
 function ActionPanel({ panel, onClose }: { panel: ActionPanelState; onClose: () => void }) {
+  const { recordAction } = useActionFeedback();
+
   const runPrimaryAction = () => {
+    void recordAction({
+      actionType: "panel.primary",
+      label: panel.primaryLabel ?? panel.title,
+      entityType: "console_panel",
+      payload: { panel_title: panel.title, primary_label: panel.primaryLabel ?? null },
+    });
     panel.onPrimary?.();
     onClose();
   };
@@ -539,10 +600,17 @@ function HeaderActions({
   icon: LucideIcon;
   onPrimary?: () => void;
 }) {
-  const { notify, openPanel } = useActionFeedback();
+  const { notify, openPanel, recordAction } = useActionFeedback();
 
   const shareCurrentPage = () => {
     const currentUrl = window.location.href;
+    void recordAction({
+      actionType: "share.link",
+      label: "分享",
+      entityType: "console_page",
+      entityId: window.location.pathname,
+      payload: { url: currentUrl },
+    });
     void navigator.clipboard?.writeText(currentUrl).catch(() => undefined);
     notify({
       title: "分享链接已生成",
@@ -854,7 +922,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function FactsPage() {
-  const { notify, openPanel } = useActionFeedback();
+  const { notify, openPanel, recordAction } = useActionFeedback();
 
   return (
     <>
@@ -866,11 +934,19 @@ function FactsPage() {
             className="airank-console-primary-button"
             type="button"
             onClick={() =>
-              notify({
-                title: "事实确认已提交",
-                desc: "已将 36 条待确认事实加入审核队列，后续内容生成会优先引用已确认事实。",
-                tone: "success",
-              })
+              void recordAction({
+                actionType: "fact.confirm_batch",
+                label: "确认企业事实",
+                entityType: "fact_group",
+                entityId: "pending_facts",
+                payload: { pending_count: 36 },
+              }).then(() =>
+                notify({
+                  title: "事实确认已提交",
+                  desc: "已将 36 条待确认事实加入审核队列，后续内容生成会优先引用已确认事实。",
+                  tone: "success",
+                })
+              )
             }
           >
             确认企业事实
@@ -967,7 +1043,7 @@ function GapQuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }
 }
 
 function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate: (path: string) => void }) {
-  const { openPanel } = useActionFeedback();
+  const { openPanel, recordAction } = useActionFeedback();
   const tabs = ["全部问题", "品牌认知", "选型决策", "竞品对比", "价格成交", "本地行业"];
   const [selectedTab, setSelectedTab] = useState(0);
   const filteredRows =
@@ -982,7 +1058,22 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
         {showTabs && (
           <div className="tab-row">
             {tabs.map((item, index) => (
-              <button className="tab-button" data-active={index === selectedTab} type="button" key={item} onClick={() => setSelectedTab(index)}>
+              <button
+                className="tab-button"
+                data-active={index === selectedTab}
+                type="button"
+                key={item}
+                onClick={() => {
+                  void recordAction({
+                    actionType: "question.tab_select",
+                    label: item,
+                    entityType: "buyer_question_tab",
+                    entityId: String(index),
+                    payload: { previous_tab: tabs[selectedTab], next_tab: item },
+                  });
+                  setSelectedTab(index);
+                }}
+              >
                 {item}
               </button>
             ))}
@@ -1259,7 +1350,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
 }
 
 function AssistantPage() {
-  const { notify } = useActionFeedback();
+  const { notify, recordAction } = useActionFeedback();
   const [messages, setMessages] = useState<Array<{ role: string; text: string }>>(() => assistantMessages);
   const [draft, setDraft] = useState("");
 
@@ -1270,6 +1361,12 @@ function AssistantPage() {
       notify({ title: "请输入问题", desc: "输入访客问题后，助手会基于当前事实库和收录包生成预览回复。", tone: "warning" });
       return;
     }
+    void recordAction({
+      actionType: "assistant.preview_send",
+      label: "发送访客问题",
+      entityType: "assistant_preview",
+      payload: { question },
+    });
     setMessages((currentMessages) => [
       ...currentMessages,
       { role: "visitor", text: question },
@@ -1290,13 +1387,19 @@ function AssistantPage() {
           <HeaderActions
             primary="发布到官网"
             icon={Rocket}
-            onPrimary={() =>
+            onPrimary={() => {
+              void recordAction({
+                actionType: "assistant.publish",
+                label: "发布到官网",
+                entityType: "assistant_config",
+                payload: { message_count: messages.length },
+              });
               notify({
                 title: "发布任务已确认",
                 desc: "AI 来客助手配置已加入官网发布队列，发布中心会跟踪后续抓取和复测状态。",
                 tone: "success",
-              })
-            }
+              });
+            }}
           />
         }
       />
@@ -1314,7 +1417,7 @@ function AssistantPage() {
               placeholder="输入访客问题进行预览"
               aria-label="访客问题"
             />
-            <button type="submit" aria-label="发送访客问题">
+	            <button type="submit" aria-label="发送消息">
               <Send size={18} />
             </button>
           </form>
@@ -1336,7 +1439,7 @@ function AssistantPage() {
 
 function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
-  const { notify, openPanel } = useActionFeedback();
+  const { notify, openPanel, recordAction } = useActionFeedback();
   const [reports, setReports] = useState<ReportList>(fallbackReportList);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
@@ -1349,6 +1452,13 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   }, [project.id]);
 
   const generateReport = () => {
+    void recordAction({
+      actionType: "report.generate",
+      label: "生成老板报告",
+      entityType: "report",
+      entityId: "executive_report",
+      payload: { report_count: reports.reports.length },
+    });
     notify({
       title: "报告生成任务已确认",
       desc: "当前版本会展示最新可用报告；生产报告生成队列接入后将由后端返回新报告。",
@@ -1479,12 +1589,19 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function SettingsPage() {
   const { project } = useConsoleOverview();
-  const { notify, openPanel } = useActionFeedback();
+  const { notify, openPanel, recordAction } = useActionFeedback();
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const saveSettings = () => {
     const nextSavedAt = new Date().toLocaleString("zh-CN", { hour12: false });
     setSavedAt(nextSavedAt);
+    void recordAction({
+      actionType: "settings.save",
+      label: "保存设置",
+      entityType: "settings",
+      entityId: project.id ?? "project_demo",
+      payload: { saved_at: nextSavedAt },
+    });
     notify({ title: "设置已保存", desc: `本地控制台设置已保存于 ${nextSavedAt}。`, tone: "success" });
   };
 
@@ -1639,11 +1756,28 @@ function AlertBanner({ title, desc, action, onClick }: { title: string; desc: st
 }
 
 function ConfigPanel({ title, items }: { title: string; items: string[] }) {
+  const { recordAction } = useActionFeedback();
+
   return (
     <Panel title={title}>
       <div className="config-list">
         {items.map((item) => (
-          <label key={item}><input type="checkbox" defaultChecked />{item}</label>
+          <label key={item}>
+            <input
+              type="checkbox"
+              defaultChecked
+              onChange={(event) =>
+                void recordAction({
+                  actionType: "assistant.config_toggle",
+                  label: item,
+                  entityType: "assistant_config",
+                  entityId: item,
+                  payload: { group: title, checked: event.currentTarget.checked },
+                })
+              }
+            />
+            {item}
+          </label>
         ))}
       </div>
     </Panel>

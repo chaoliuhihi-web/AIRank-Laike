@@ -64,6 +64,27 @@ export type AuthSession = {
   devOnly: boolean;
 };
 
+export type ConsoleActionInput = {
+  projectId: string;
+  actionType: string;
+  label: string;
+  sourceRoute: string;
+  entityType?: string;
+  entityId?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type ConsoleActionReceipt = {
+  action_id: string;
+  tenant_id: string;
+  project_id: string;
+  action_type: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  recorded_at: string;
+  status: "recorded";
+};
+
 export type AuthLoginInput = {
   username: string;
   password: string;
@@ -111,6 +132,14 @@ type AuthLoginPayload = {
     };
     dev_only: boolean;
   };
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
+type ConsoleActionPayload = {
+  data: ConsoleActionReceipt;
   meta: {
     trace_id: string;
     request_id: string;
@@ -207,6 +236,9 @@ function buildApiHeaders(tracePrefix: string): Record<string, string> {
   if (session?.accessToken) {
     headers.Authorization = `${session.tokenType} ${session.accessToken}`;
   }
+  if (session?.user.userId) {
+    headers["X-AIRank-User-Id"] = session.user.userId;
+  }
   return headers;
 }
 
@@ -285,4 +317,30 @@ export async function recordDownloadReceipt(reportId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Download receipt request failed with ${response.status}`));
   }
+}
+
+export async function recordConsoleAction(input: ConsoleActionInput): Promise<ConsoleActionReceipt> {
+  const response = await fetch("/api/v1/console/actions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_action"),
+    },
+    body: JSON.stringify({
+      project_id: input.projectId,
+      action_type: input.actionType,
+      label: input.label,
+      source_route: input.sourceRoute,
+      entity_type: input.entityType,
+      entity_id: input.entityId,
+      payload: input.payload ?? {},
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Console action request failed with ${response.status}`));
+  }
+
+  const payload = (await response.json()) as ConsoleActionPayload;
+  return payload.data;
 }

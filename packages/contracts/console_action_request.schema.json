@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/console_action_request.schema.json",
+  "title": "AIRank Console Action Request",
+  "type": "object",
+  "required": ["project_id", "action_type", "label", "source_route"],
+  "additionalProperties": false,
+  "properties": {
+    "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+    "action_type": { "type": "string", "minLength": 3, "maxLength": 80, "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "source_route": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "entity_type": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "entity_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "payload": { "type": "object", "additionalProperties": true }
+  }
+}
