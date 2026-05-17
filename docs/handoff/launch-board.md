@@ -5,10 +5,10 @@
 当前产品基线：
 
 - 前端原型提交：`622b1f7 feat: implement console frontend prototype`
-- 最新远端阶段提交：`a4de530 docs: detail low-touch hermes MVP flow`
+- 最新远端阶段提交：`c7a878e docs: record CodexiMac capability status`
 - 前端：React + Vite 控制台原型已完成，当前为 fixture 数据。
 - 后端：`apps/api` 已有 FastAPI baseline 和 `GET /api/v1/console/overview`。
-- Worker：`apps/worker` 已有 in-memory async job lease/heartbeat 和 mock provider snapshot/citation baseline；生产 MySQL 队列持久化仍未完成。
+- Worker：`apps/worker` 已有 in-memory async job lease/heartbeat、mock provider snapshot/citation、FactAtom、content gap、report evidence JSON 和 capability probe baseline；生产 MySQL 队列持久化仍未完成。
 - 数据库：`ops/deployment/mysql-bootstrap.sql` 已有 bootstrap schema，Alembic 初始迁移已入库；真实 MySQL `alembic upgrade head` 仍受本机授权环境阻塞。
 - Contracts：`packages/contracts/console_overview.schema.json` 已有首个 dashboard slice contract。
 - 审核：基础 CI 已覆盖 diff check、静态架构检查、API contract test 和 Web build；Release Gate 尚未执行完整通过。
@@ -64,7 +64,7 @@ git push gitee main
 | 初始化 FastAPI 工程 | CodexWin | done | `/api/v1/health`, `/api/v1/version` 可用，统一 response envelope |
 | Console overview API loop | CodexWin | done | `GET /api/v1/console/overview`、schema、contract test、web fallback 已有 |
 | 建立 SQLAlchemy + Alembic | CodexiMac | review_env_blocked | migration SQL/parity 已通过；本机 MySQL 拒绝 `airank` dev credentials，release 前需重新执行 bootstrap/修复授权后再跑 `alembic upgrade head` |
-| 错误码和 trace_id 落地 | CodexWin | todo | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
+| 错误码和 trace_id 落地 | CodexWin | review | 所有 API 返回 trace_id，错误码来自 `packages/contracts/error-codes.md` |
 | 项目/竞品/问题 contract skeleton | CodexWin | todo | request/response JSON Schema 和 contract tests 先冻结，不等 DB |
 | 项目/竞品/问题 dev repository | CodexWin | todo | repository interface + in-memory/dev-only adapter 先打通 API，不能冒充生产持久化 |
 | 项目/竞品/问题 CRUD | CodexWin | todo | Alembic/MySQL 持久化、tenant 过滤，contract test 通过 |
@@ -95,7 +95,7 @@ git push gitee main
 | Task | Owner | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | 诊断报告 JSON | CodexiMac | review | 每个结论可追溯到 snapshot/citation/FactAtom |
-| Xinghe/yudao capability probe | CodexiMac | todo | 输出 ready/partial/blocked/dev_only，明确哪些平台能力可复用、哪些需要 fallback |
+| Xinghe/yudao capability probe | CodexiMac | dev_only | capability probe 已入库；本地矩阵全为 dev_only fallback，release 前需接真实 yudao/Xinghe/Hermes 环境验证 |
 | report API + download receipt | CodexWin | todo | 报告中心可查看真实报告 |
 | 前端 fixture 切 API | CodexWin | todo | 控制台主页面不再依赖硬编码 demo 数据 |
 | GitHub Actions CI | CodexMacPro | done | web build + backend tests + diff check |
@@ -103,6 +103,6 @@ git push gitee main
 
 ## 当前下一个推荐动作
 
-1. CodexWin：领取 `M1-WIN-001B error-trace-foundation`，之后继续 `M1-WIN-001C` 和 `M1-WIN-001D`，不要再等 DB。
-2. CodexiMac：领取 `M4-IMAC-002 xinghe-yudao-capability-probe`，把可复用平台能力和 fallback 状态跑清楚。
-3. CodexMacPro：持续审核两边提交，若发现等待状态，立刻拆出 contract/mock/dev-only packet，不让开发 AI 空等。
+1. CodexWin：领取 `M1-WIN-001C project-question-contract-skeleton`，之后继续 `M1-WIN-001D`，不要再等 DB。
+2. CodexMacPro：持续审核 CodexiMac 的 `dev_only` / `review_env_blocked` 输出，release gate 中继续把真实 MySQL、yudao/Xinghe/Hermes 验证列为上线 blocker。
+3. CodexiMac：当前 Data/Worker/Evidence packet 已推进到 `M4-IMAC-002 dev_only`；等待 CodexMacPro 拆分新的后续 packet，不要重复执行 capability probe。

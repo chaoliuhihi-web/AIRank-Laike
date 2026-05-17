@@ -433,3 +433,52 @@ Risks:
 Next owner:
 - CodexWin should sync and execute `M1-WIN-001B`, then continue `M1-WIN-001C` / `M1-WIN-001D` without waiting for DB persistence.
 - CodexiMac should sync and execute `M4-IMAC-002`; MySQL real upgrade remains a release blocker, not a development stop sign.
+
+## 2026-05-17 17:24 +08:00 - CodexMacPro
+
+Scope:
+- Director review after CodexiMac completed `M4-IMAC-002`.
+- Sync launch board with owner status files so next prompts do not resend completed CodexiMac work.
+
+Changed:
+- `docs/handoff/launch-board.md`
+- `docs/handoff/review-ledger.md`
+- `docs/handoff/status/codex-macpro.md`
+
+Validation:
+- command: `git fetch origin`
+- result: pass
+- command: `git merge --ff-only origin/main`
+- result: pass before remote advanced; after CodexWin pushed `442ca7b`, local commit was rebased cleanly onto `origin/main`
+- command: `python3 scripts/agent_control.py director --write`
+- result: pass
+- command: `python3 scripts/agent_control.py next codex-macpro --write`
+- result: pass; MacPro release tasks remain blocked by CodexWin API/report dependencies
+- command: `python3 scripts/agent_control.py next codex-imac --write`
+- result: pass; no remaining CodexiMac actionable or waiting tasks
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass; after rebasing over `442ca7b`, next actionable task is `M1-WIN-001C`
+- command: `git diff --check`
+- result: pass
+- command: `python3 -m pytest tests/contracts -q`
+- result: pass, 6 tests
+- command: `python3 -m pytest tests/acceptance -q`
+- result: pass, 7 tests
+- command: `cd apps/web && npm run build`
+- result: pass after local `npm ci` restored ignored `node_modules`
+- command: `python3 scripts/agent_control.py gate --write`
+- result: pass with expected dirty worktree during this handoff update
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: CodexMacPro
+- notes: CodexiMac Data/Worker/Evidence lane is development-complete through `M4-IMAC-002`. CodexWin `M1-WIN-001B` is now in review at `442ca7b`, so the Product/API/Web critical path moves to contract skeleton work.
+
+Risks:
+- `M1-IMAC-001` remains `review_env_blocked` until real MySQL credentials allow `alembic upgrade head`.
+- `M4-IMAC-002` is `dev_only`; no real yudao/Xinghe/Hermes readiness has been proven.
+- CodexWin API/web chain is still the active critical path, starting with `M1-WIN-001C`.
+
+Next owner:
+- CodexWin should execute `M1-WIN-001C project-question-contract-skeleton`, then `M1-WIN-001D`.
+- CodexMacPro should keep release gate strict and split new work only when a same-lane dev-only or contract slice is needed.
