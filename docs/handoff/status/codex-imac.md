@@ -9,6 +9,7 @@
 | M2-IMAC-003 | review | 6e6c615 | Deterministic score pure function returns identical results for identical snapshot/citation input. |
 | M3-IMAC-001 | review | 4bbb2b6 | Confirmed FactAtom requires citation/object/source provenance; evidence bridge converts citations to FactSourceRef. |
 | M3-IMAC-002 | review | e469ed0 | ContentGap generation requires question, citation, and FactAtom traceability. |
+| M4-IMAC-001 | review | pending | Report JSON conclusions require snapshot, citation, and FactAtom refs. |
 
 ## Run Log
 
@@ -26,3 +27,5 @@
 - 2026-05-17: Completed `M3-IMAC-001`; validation `cd packages/evidence && python3 -m pytest` passed 2 tests, `python3 -m pytest tests/acceptance` passed 4 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
 - 2026-05-17: Started `M3-IMAC-002` content gap generation with required question/citation/FactAtom traceability.
 - 2026-05-17: Completed `M3-IMAC-002`; validation `cd packages/evidence && python3 -m pytest` passed 4 tests, `python3 -m pytest tests/acceptance` passed 5 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.
+- 2026-05-17: Started `M4-IMAC-001` report evidence JSON so every conclusion carries snapshot/citation/FactAtom refs.
+- 2026-05-17: Completed `M4-IMAC-001`; validation `cd packages/evidence && python3 -m pytest` passed 6 tests, `python3 -m pytest tests/acceptance` passed 6 tests, `python3 scripts/agent_control.py gate --write` and `git diff --check` passed.

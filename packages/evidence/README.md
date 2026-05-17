@@ -36,3 +36,14 @@ provenance.
 `generate_gap_from_citations(...)` creates a domain `ContentGap` only when the
 gap can be traced to a buyer question, at least one source citation, and a
 sourced FactAtom.
+
+## M4 report evidence JSON
+
+`EvidenceReport.to_json()` emits report conclusions with an explicit evidence
+index. Every `ReportConclusion` must reference:
+
+- at least one answer snapshot id
+- at least one source citation id
+- at least one FactAtom id
+
+Unsupported conclusions are rejected before JSON serialization.
