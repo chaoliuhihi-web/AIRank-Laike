@@ -9,16 +9,18 @@ todo
 in_progress
 review
 blocked
+review_env_blocked
 done
 ```
 
 ## 冲突规则
 
-1. 每轮只领取一条 packet。
+1. 每轮只领取一条 `Actionable Tasks` 里的 packet；如果某条 packet 依赖未满足，跳过它继续找同 owner 的下一条可执行 packet。
 2. 只修改 `File Scope` 内的文件；需要改其它路径时，先在 `review-ledger` 写明原因并交给 CodexMacPro。
 3. 任何 public contract 变更必须同时更新 `packages/contracts` 和对应 contract test。
 4. 数据库结构由 CodexiMac owner，API 调用语义由 CodexWin owner，跨界改动必须以 mock/fallback 或 contract 方式衔接。
 5. CodexMacPro 不抢主链实现，只做 gate、测试、review 和 blocker 小修。
+6. 如果代码产物已完成，但本地 MySQL、外部服务、推送凭据等环境问题导致无法完成最终验证，状态用 `review_env_blocked`，不等同于业务代码 `blocked`；依赖方可以基于已入库代码继续做 contract/mock 层工作，但不能声明完整上线通过。
 
 ## M1 API + DB 最小主链
 

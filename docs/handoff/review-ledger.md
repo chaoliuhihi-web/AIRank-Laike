@@ -272,3 +272,33 @@ Risks:
 Next owner:
 - CodexWin 继续领取 `M1-WIN-001B`。
 - CodexiMac 继续领取 `M1-IMAC-001`。
+
+## 2026-05-17 - Codex
+
+Scope:
+- 调整持续执行逻辑：自动 prompt 区分可执行任务和依赖阻塞任务，避免 AI 被第一条 blocked packet 停死。
+
+Changed:
+- `scripts/agent_control.py`
+- `docs/handoff/execution-packets.md`
+- `docs/handoff/review-ledger.md`
+
+Validation:
+- command: `python3 scripts/agent_control.py next codex-win --write`
+- result: pass; `M1-WIN-001B` correctly appears as actionable after dependency parser fix
+- command: `python3 scripts/agent_control.py next codex-imac --write`
+- result: pass
+- command: `git diff --check`
+- result: pass
+
+Review:
+- status: PASS_WITH_RISK
+- reviewer: Codex
+- notes: 生成 prompt 现在输出 `Actionable Tasks` 和 `Waiting Or Blocked Tasks`，依赖未满足的 packet 会被自动降到等待区；新增 `review_env_blocked` 状态，用于区分代码完成但外部环境未验证。
+
+Risks:
+- `review_env_blocked` 只表示可继续 contract/mock 层工作，不允许声明 release gate 通过。
+
+Next owner:
+- CodexWin 领取 `M1-WIN-001B`。
+- CodexiMac 修复 remote 推送后推送 `0efcbb5`，若仅 MySQL 权限失败但 migration SQL/parity 已通过，应把 `M1-IMAC-001` 改为 `review_env_blocked` 而不是 `blocked`。

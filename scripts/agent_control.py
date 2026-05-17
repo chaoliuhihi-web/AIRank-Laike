@@ -35,7 +35,10 @@ AGENTS = {
     },
 }
 
-OPEN_TASK_STATUSES = {"todo", "in_progress", "blocked", "review", "partial"}
+ACTIONABLE_TASK_STATUSES = {"todo", "in_progress", "partial"}
+OPEN_TASK_STATUSES = {"todo", "in_progress", "blocked", "partial"}
+DEPENDENCY_SATISFIED_STATUSES = {"done", "review", "review_env_blocked"}
+PACKET_ID_RE = re.compile(r"M\d+-[A-Z]+-\d+[A-Z]?")
 TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
     r"(^|/)(node_modules|dist|\.runtime)(/|$)|(^|/)\.env(\..*)?$|\.sqlite3?$|tsbuildinfo$"
 )
@@ -63,7 +66,7 @@ def tracked_runtime_artifacts() -> tuple[int, str]:
     return (1 if matches else 0), "\n".join(matches)
 
 
-def parse_open_tasks_from_packets(owner: str) -> list[dict[str, str]]:
+def parse_packet_rows() -> list[dict[str, str]]:
     tasks: list[dict[str, str]] = []
     for line in read(EXECUTION_PACKETS).splitlines():
         if not line.startswith("|") or "---" in line:
@@ -72,12 +75,13 @@ def parse_open_tasks_from_packets(owner: str) -> list[dict[str, str]]:
         if len(parts) < 7 or parts[0] == "ID":
             continue
         packet_id, packet_owner, status, depends, file_scope, acceptance, validation = parts[:7]
-        normalized_status = status.lower()
-        if packet_owner != owner or normalized_status not in OPEN_TASK_STATUSES:
-            continue
+        packet_key_match = PACKET_ID_RE.search(packet_id)
+        packet_key = packet_key_match.group(0) if packet_key_match else packet_id
         tasks.append(
             {
                 "task": packet_id,
+                "packet_id": packet_key,
+                "owner": packet_owner,
                 "status": status,
                 "depends": depends,
                 "file_scope": file_scope,
@@ -88,7 +92,36 @@ def parse_open_tasks_from_packets(owner: str) -> list[dict[str, str]]:
     return tasks
 
 
-def parse_open_tasks_from_launch_board(owner: str) -> list[dict[str, str]]:
+def dependency_ids(depends: str) -> list[str]:
+    return [match.group(0) for match in PACKET_ID_RE.finditer(depends)]
+
+
+def dependency_state(task: dict[str, str], status_by_id: dict[str, str]) -> tuple[bool, str]:
+    unmet: list[str] = []
+    for packet_id in dependency_ids(task["depends"]):
+        status = status_by_id.get(packet_id, "missing").lower()
+        if status not in DEPENDENCY_SATISFIED_STATUSES:
+            unmet.append(f"{packet_id}:{status}")
+    if unmet:
+        return False, ", ".join(unmet)
+    return True, "ready"
+
+
+def parse_tasks_from_packets(owner: str) -> list[dict[str, str]]:
+    all_tasks = parse_packet_rows()
+    status_by_id = {task["packet_id"]: task["status"] for task in all_tasks}
+    tasks: list[dict[str, str]] = []
+    for task in all_tasks:
+        normalized_status = task["status"].lower()
+        if task["owner"] != owner or normalized_status not in OPEN_TASK_STATUSES:
+            continue
+        ready, dependency_note = dependency_state(task, status_by_id)
+        task = {**task, "ready": "yes" if ready else "no", "dependency_note": dependency_note}
+        tasks.append(task)
+    return tasks
+
+
+def parse_tasks_from_launch_board(owner: str) -> list[dict[str, str]]:
     tasks: list[dict[str, str]] = []
     for line in read(LAUNCH_BOARD).splitlines():
         if not line.startswith("|") or "---" in line:
@@ -108,14 +141,16 @@ def parse_open_tasks_from_launch_board(owner: str) -> list[dict[str, str]]:
                 "file_scope": "See launch board owner lane",
                 "exit_criteria": exit_criteria,
                 "validation": "Use role prompt validation",
+                "ready": "yes",
+                "dependency_note": "ready",
             }
         )
     return tasks
 
 
-def parse_open_tasks(owner: str) -> list[dict[str, str]]:
-    packet_tasks = parse_open_tasks_from_packets(owner)
-    return packet_tasks if packet_tasks else parse_open_tasks_from_launch_board(owner)
+def parse_tasks(owner: str) -> list[dict[str, str]]:
+    packet_tasks = parse_tasks_from_packets(owner)
+    return packet_tasks if packet_tasks else parse_tasks_from_launch_board(owner)
 
 
 def recent_review_lines() -> str:
@@ -133,16 +168,29 @@ def build_next_prompt(agent_key: str) -> str:
     owner = agent["owner"]
     commit = git_line(["log", "--oneline", "-1"]) or "unknown"
     status = git_line(["status", "--short", "--branch"]) or "unknown"
-    tasks = parse_open_tasks(owner)
-    task_lines = "\n".join(
+    tasks = parse_tasks(owner)
+    actionable_tasks = [
+        task for task in tasks if task["ready"] == "yes" and task["status"].lower() in ACTIONABLE_TASK_STATUSES
+    ]
+    waiting_tasks = [task for task in tasks if task not in actionable_tasks]
+    actionable_lines = "\n".join(
         (
             f"- [{task['status']}] {task['task']} :: depends={task['depends']} :: "
             f"files={task['file_scope']} :: exit={task['exit_criteria']} :: validate={task['validation']}"
         )
-        for task in tasks[:8]
+        for task in actionable_tasks[:8]
     )
-    if not task_lines:
-        task_lines = "- 当前 launch-board 没有你的 open task。请让 CodexMacPro 更新任务，不要自行扩 scope。"
+    if not actionable_lines:
+        actionable_lines = "- 当前没有依赖满足的可执行 task。不要硬做假实现；在 review-ledger 写清 blocker 后交回 CodexMacPro。"
+    waiting_lines = "\n".join(
+        (
+            f"- [{task['status']}] {task['task']} :: blocked_by={task['dependency_note']} :: "
+            f"depends={task['depends']}"
+        )
+        for task in waiting_tasks[:8]
+    )
+    if not waiting_lines:
+        waiting_lines = "- <empty>"
     validation = "\n".join(f"- `{cmd}`" for cmd in agent["default_validation"])
 
     if agent_key == "codex-macpro":
@@ -184,9 +232,13 @@ Then read this generated file again and execute the first open task below.
 
 {control_block}
 
-## Open Tasks For This Agent
+## Actionable Tasks For This Agent
 
-{task_lines}
+{actionable_lines}
+
+## Waiting Or Blocked Tasks
+
+{waiting_lines}
 
 ## Required Validation
 
