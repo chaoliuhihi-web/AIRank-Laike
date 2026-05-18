@@ -1,0 +1,16 @@
+{
+  "name": "airank-visual-refined-frontend",
+  "version": "3.1.0",
+  "private": true,
+  "description": "智界问道 AIRank 来客官网前端：组件化静态页面 + 局部高保真切图",
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "check": "node scripts/check-static.mjs",
+    "audit": "node scripts/check-static.mjs",
+    "routes": "node scripts/check-routes.mjs"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,55 @@
+[build]
+  publish = "."
+
+[[redirects]]
+  from = "/index.html"
+  to = "/"
+  status = 301
+[[redirects]]
+  from = "/product.html"
+  to = "/product/"
+  status = 301
+[[redirects]]
+  from = "/solutions.html"
+  to = "/solutions/"
+  status = 301
+[[redirects]]
+  from = "/cases.html"
+  to = "/cases/"
+  status = 301
+[[redirects]]
+  from = "/resources.html"
+  to = "/resources/"
+  status = 301
+[[redirects]]
+  from = "/pricing.html"
+  to = "/pricing/"
+  status = 301
+[[redirects]]
+  from = "/diagnosis.html"
+  to = "/diagnosis/"
+  status = 301
+[[redirects]]
+  from = "/trial.html"
+  to = "/diagnosis/"
+  status = 301
+[[redirects]]
+  from = "/checkup.html"
+  to = "/diagnosis/"
+  status = 301
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

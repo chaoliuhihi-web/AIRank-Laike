@@ -1,0 +1,17 @@
+{
+  "name": "智界问道 AIRank 来客",
+  "short_name": "AIRank 来客",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#06162F",
+  "theme_color": "#0A42FF",
+  "icons": [
+    {
+      "src": "assets/img/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

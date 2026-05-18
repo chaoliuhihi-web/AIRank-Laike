@@ -1,0 +1,17 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="6" y1="35" x2="34" y2="5" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A42FF"/>
+      <stop offset="0.55" stop-color="#2D8CFF"/>
+      <stop offset="1" stop-color="#7DD3FC"/>
+    </linearGradient>
+    <filter id="s" x="0" y="0" width="40" height="40" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0A66FF" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#s)">
+    <path d="M19.98 4.6L35.4 13.7V27.5L20 36L4.6 27.5V13.7L19.98 4.6Z" fill="url(#g)"/>
+    <path d="M20.05 9.3L31.2 15.75V25.35L20 31.55L8.85 25.35V15.75L20.05 9.3Z" fill="#061B42" fill-opacity="0.48" stroke="white" stroke-opacity="0.36"/>
+    <path d="M14.2 24.7L19.92 12.7C20.16 12.2 20.86 12.2 21.1 12.7L26.86 24.7C27.08 25.18 26.74 25.73 26.2 25.73H23.7C23.38 25.73 23.1 25.55 22.96 25.26L21.96 23.18H18.98L17.98 25.26C17.84 25.55 17.56 25.73 17.24 25.73H14.86C14.32 25.73 13.98 25.18 14.2 24.7ZM20.47 16.4L19.35 20.3H21.55L20.47 16.4Z" fill="white"/>
+  </g>
+</svg>
