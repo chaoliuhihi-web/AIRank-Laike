@@ -4063,3 +4063,139 @@ body[data-page="diagnosis"] .diagnosis-copy .slice-frame > img{
     background-image:none!important;
   }
 }
+
+/* Final solutions hero restoration: keep DOM copy, restore the original high-fidelity visual. */
+body[data-page="solutions"] .solution-hero-ui{
+  display:none!important;
+}
+body[data-page="solutions"] .solution-hero-object{
+  display:block!important;
+}
+
+@media (min-width:901px){
+  body[data-page="solutions"] .hero--dark{
+    min-height:auto!important;
+    background:
+      radial-gradient(circle at 72% 50%,rgba(20,115,255,.34),transparent 34%),
+      radial-gradient(circle at 22% 26%,rgba(54,214,255,.12),transparent 28%),
+      linear-gradient(180deg,#020b1b 0%,#061831 56%,#031025 100%)!important;
+  }
+  body[data-page="solutions"] .hero--dark:before{
+    background-image:
+      linear-gradient(rgba(110,171,255,.04) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(110,171,255,.04) 1px,transparent 1px)!important;
+    background-size:80px 80px!important;
+    opacity:.42!important;
+  }
+  body[data-page="solutions"] .hero__inner{
+    grid-template-columns:minmax(500px,.88fr) minmax(0,1.12fr)!important;
+    gap:18px!important;
+    min-height:390px!important;
+    padding:34px 0 18px!important;
+    align-items:start!important;
+  }
+  body[data-page="solutions"] .hero__copy{
+    max-width:610px!important;
+    z-index:2!important;
+  }
+  body[data-page="solutions"] .hero__copy .eyebrow{
+    display:none!important;
+  }
+  body[data-page="solutions"] .hero__copy h1{
+    margin:0 0 18px!important;
+    color:#fff!important;
+    font-size:42px!important;
+    line-height:1.17!important;
+    letter-spacing:0!important;
+    text-shadow:0 14px 34px rgba(0,0,0,.26)!important;
+  }
+  body[data-page="solutions"] .hero__copy h1 span{
+    display:block!important;
+    white-space:nowrap!important;
+  }
+  body[data-page="solutions"] .hero__copy p{
+    max-width:560px!important;
+    margin-bottom:18px!important;
+    color:#d7e8ff!important;
+    font-size:17px!important;
+    line-height:1.65!important;
+  }
+  body[data-page="solutions"] .solution-hero-tabs{
+    width:min(100%,520px)!important;
+    margin:18px 0 14px!important;
+  }
+  body[data-page="solutions"] .hero__badges{
+    color:#d7e8ff!important;
+  }
+  body[data-page="solutions"] .hero__visual{
+    width:100%!important;
+    max-width:705px!important;
+    justify-self:end!important;
+    overflow:visible!important;
+    z-index:1!important;
+  }
+  body[data-page="solutions"] .hero__visual .slice-frame{
+    min-height:0!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+    transform:translate(18px,-10px)!important;
+  }
+  body[data-page="solutions"] .hero__visual img.solution-hero-object{
+    width:720px!important;
+    max-width:none!important;
+    height:auto!important;
+    border-radius:0!important;
+    filter:drop-shadow(0 34px 86px rgba(0,70,190,.34)) saturate(1.08) contrast(1.04)!important;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.35) 5%,#000 16%,#000 100%)!important;
+    mask-image:linear-gradient(90deg,transparent 0%,rgba(0,0,0,.35) 5%,#000 16%,#000 100%)!important;
+  }
+}
+
+@media (min-width:901px) and (max-width:1180px){
+  body[data-page="solutions"] .hero__inner{
+    grid-template-columns:minmax(470px,.86fr) minmax(0,1.14fr)!important;
+    gap:12px!important;
+  }
+  body[data-page="solutions"] .hero__copy h1{
+    font-size:39px!important;
+  }
+  body[data-page="solutions"] .hero__visual img.solution-hero-object{
+    width:650px!important;
+  }
+  body[data-page="solutions"] .hero__visual .slice-frame{
+    transform:translate(-110px,-6px)!important;
+  }
+}
+
+@media (max-width:900px){
+  body[data-page="solutions"] .hero__copy h1{
+    font-size:36px!important;
+    line-height:1.18!important;
+    letter-spacing:0!important;
+  }
+  body[data-page="solutions"] .hero__copy h1 span{
+    display:block!important;
+    white-space:normal!important;
+  }
+  body[data-page="solutions"] .hero__visual .slice-frame{
+    padding:0!important;
+    border:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+  }
+  body[data-page="solutions"] .hero__visual img.solution-hero-object{
+    width:100%!important;
+    max-width:680px!important;
+    height:auto!important;
+    margin-inline:auto!important;
+    border-radius:0!important;
+    filter:drop-shadow(0 24px 58px rgba(0,70,190,.26)) saturate(1.06) contrast(1.03)!important;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 10%,#000 100%)!important;
+    mask-image:linear-gradient(90deg,transparent 0%,#000 10%,#000 100%)!important;
+  }
+}
