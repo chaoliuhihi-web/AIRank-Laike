@@ -2,6 +2,10 @@
 
 部署配置和环境说明。
 
+生产部署和交付给第三方的步骤见：
+
+- `ops/deployment/production-deployment.md`
+
 第一版目标：
 
 - AIRank 可独立部署。
