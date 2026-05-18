@@ -4199,3 +4199,511 @@ body[data-page="solutions"] .solution-hero-object{
     mask-image:linear-gradient(90deg,transparent 0%,#000 10%,#000 100%)!important;
   }
 }
+
+/* Final cross-page image fidelity restoration.
+   Keep primary copy/buttons as DOM, but restore the high-fidelity visual slices that match the approved mocks. */
+body[data-page="product"] .product-hero-ui,
+body[data-page="pricing"] .pricing-hero-ui,
+body[data-page="resources"] .resource-hero-ui,
+body[data-page="resources"] .resource-report-ui,
+body[data-page="diagnosis"] .diagnosis-report-ui{
+  display:none!important;
+}
+
+body[data-page="product"] .product-hero-object,
+body[data-page="pricing"] .pricing-hero-object,
+body[data-page="resources"] .resource-hero-object,
+body[data-page="resources"] .featured-resource .slice-frame > img,
+body[data-page="diagnosis"] .diagnosis-copy .slice-frame > img{
+  display:block!important;
+}
+
+@media (min-width:901px){
+  body[data-page="product"] .hero--dark{
+    color:#06162f!important;
+    background:
+      radial-gradient(circle at 50% 24%,rgba(88,154,255,.18),transparent 34%),
+      linear-gradient(180deg,#f9fcff 0%,#eef6ff 58%,#ffffff 100%)!important;
+  }
+  body[data-page="product"] .hero--dark:before{
+    background-image:
+      linear-gradient(rgba(12,70,155,.045) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(12,70,155,.045) 1px,transparent 1px)!important;
+    background-size:80px 80px!important;
+    opacity:.55!important;
+    mask-image:linear-gradient(180deg,#000,transparent 84%)!important;
+  }
+  body[data-page="product"] .hero__inner{
+    display:grid!important;
+    grid-template-columns:1fr!important;
+    gap:10px!important;
+    min-height:640px!important;
+    padding:32px 0 16px!important;
+    align-items:start!important;
+    text-align:center!important;
+  }
+  body[data-page="product"] .hero__copy{
+    max-width:900px!important;
+    margin-inline:auto!important;
+  }
+  body[data-page="product"] .hero__copy .eyebrow,
+  body[data-page="product"] .hero__actions,
+  body[data-page="product"] .hero__badges{
+    display:none!important;
+  }
+  body[data-page="product"] .hero__copy h1,
+  body[data-page="product"] .hero__copy h1 span{
+    color:#06162f!important;
+    text-shadow:none!important;
+  }
+  body[data-page="product"] .hero__copy h1{
+    margin:0 0 10px!important;
+    font-size:42px!important;
+    line-height:1.16!important;
+    letter-spacing:0!important;
+  }
+  body[data-page="product"] .hero__copy p{
+    max-width:760px!important;
+    margin:0 auto!important;
+    color:#43566f!important;
+    font-size:17px!important;
+    line-height:1.75!important;
+  }
+  body[data-page="product"] .hero__visual{
+    width:100%!important;
+    max-width:1120px!important;
+    margin-inline:auto!important;
+    justify-self:center!important;
+  }
+  body[data-page="product"] .hero__visual .slice-frame{
+    min-height:0!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+    transform:none!important;
+  }
+  body[data-page="product"] .hero__visual img.product-hero-object{
+    width:min(1120px,100%)!important;
+    max-width:1120px!important;
+    height:auto!important;
+    margin:0 auto!important;
+    border-radius:0!important;
+    filter:drop-shadow(0 30px 70px rgba(42,107,190,.18)) saturate(1.05) contrast(1.02)!important;
+    -webkit-mask-image:none!important;
+    mask-image:none!important;
+  }
+
+  body[data-page="pricing"] .hero__visual{
+    width:100%!important;
+    max-width:650px!important;
+    justify-self:end!important;
+    overflow:visible!important;
+  }
+  body[data-page="pricing"] .hero__visual .slice-frame{
+    min-height:0!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+    transform:translate(10px,-8px)!important;
+  }
+  body[data-page="pricing"] .hero__visual img.pricing-hero-object{
+    width:min(650px,100%)!important;
+    max-width:650px!important;
+    height:auto!important;
+    margin-inline:auto!important;
+    border-radius:0!important;
+    filter:drop-shadow(0 28px 62px rgba(42,107,190,.20)) saturate(1.05) contrast(1.02)!important;
+    -webkit-mask-image:none!important;
+    mask-image:none!important;
+  }
+
+  body[data-page="resources"] .hero--resources{
+    background:
+      radial-gradient(circle at 78% 28%,rgba(96,165,255,.20),transparent 34%),
+      linear-gradient(180deg,#f8fbff 0%,#eef6ff 58%,#ffffff 100%)!important;
+  }
+  body[data-page="resources"] .hero--resources .hero__inner{
+    min-height:560px!important;
+    padding:48px 0 32px!important;
+  }
+  body[data-page="resources"] .hero__visual{
+    width:100%!important;
+    max-width:650px!important;
+    justify-self:end!important;
+    overflow:visible!important;
+  }
+  body[data-page="resources"] .hero__visual .slice-frame{
+    min-height:0!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+    transform:translate(8px,-10px)!important;
+  }
+  body[data-page="resources"] .hero__visual img.resource-hero-object{
+    width:min(630px,100%)!important;
+    max-width:630px!important;
+    height:auto!important;
+    margin-inline:auto!important;
+    border-radius:0!important;
+    filter:drop-shadow(0 30px 70px rgba(38,92,160,.20)) saturate(1.04) contrast(1.02)!important;
+    -webkit-mask-image:none!important;
+    mask-image:none!important;
+  }
+  body[data-page="resources"] .featured-resource .slice-frame{
+    padding:0!important;
+    border:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+  }
+  body[data-page="resources"] .featured-resource .slice-frame > img{
+    width:100%!important;
+    height:auto!important;
+    border-radius:16px!important;
+    filter:drop-shadow(0 20px 44px rgba(0,38,96,.22)) saturate(1.04) contrast(1.02)!important;
+  }
+
+  body[data-page="diagnosis"] .diagnosis-copy .slice-frame{
+    min-height:0!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+  }
+  body[data-page="diagnosis"] .diagnosis-copy .slice-frame > img{
+    width:min(610px,100%)!important;
+    max-width:610px!important;
+    height:auto!important;
+    border-radius:18px!important;
+    box-shadow:0 28px 72px rgba(0,24,62,.28)!important;
+    filter:saturate(1.04) contrast(1.02)!important;
+  }
+}
+
+@media (min-width:901px) and (max-width:1180px){
+  body[data-page="product"] .hero__copy h1{
+    font-size:38px!important;
+  }
+  body[data-page="product"] .hero__visual img.product-hero-object{
+    width:min(1000px,100%)!important;
+  }
+  body[data-page="pricing"] .hero__visual img.pricing-hero-object{
+    width:min(560px,100%)!important;
+  }
+  body[data-page="resources"] .hero__visual img.resource-hero-object{
+    width:min(560px,100%)!important;
+  }
+}
+
+@media (max-width:900px){
+  body[data-page="product"] .product-hero-object,
+  body[data-page="pricing"] .pricing-hero-object,
+  body[data-page="resources"] .resource-hero-object,
+  body[data-page="resources"] .featured-resource .slice-frame > img,
+  body[data-page="diagnosis"] .diagnosis-copy .slice-frame > img{
+    display:block!important;
+    width:100%!important;
+    max-width:680px!important;
+    height:auto!important;
+    margin-inline:auto!important;
+  }
+  body[data-page="product"] .hero__visual .slice-frame,
+  body[data-page="pricing"] .hero__visual .slice-frame,
+  body[data-page="resources"] .hero__visual .slice-frame,
+  body[data-page="diagnosis"] .diagnosis-copy .slice-frame{
+    padding:0!important;
+    border:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    overflow:visible!important;
+  }
+}
+
+/* Final full-page fidelity pass: restore complex mock visuals below the fold. */
+@media (min-width:901px){
+  body[data-page="product"] #capabilities{
+    padding:34px 0 22px!important;
+    background:#fff!important;
+  }
+  body[data-page="product"] #capabilities .section-title{
+    margin-bottom:14px!important;
+  }
+  body[data-page="product"] #capabilities .grid--6{
+    display:block!important;
+    min-height:250px!important;
+    background:url("/assets/img/slices/product-matrix.webp") center/contain no-repeat!important;
+  }
+  body[data-page="product"] #capabilities .feature-card{
+    display:none!important;
+  }
+  body[data-page="product"] #workflow{
+    padding:24px 0 20px!important;
+    background:#edf7ff!important;
+  }
+  body[data-page="product"] #workflow .section-title{
+    margin-bottom:8px!important;
+  }
+  body[data-page="product"] #workflow .step-row{
+    display:block!important;
+    min-height:128px!important;
+    background:url("/assets/img/slices/product-flow.webp") center/contain no-repeat!important;
+  }
+  body[data-page="product"] #workflow .step-card{
+    display:none!important;
+  }
+  body[data-page="product"] #monitoring,
+  body[data-page="product"] #knowledge-base,
+  body[data-page="product"] #sales-assistant{
+    padding:22px 0!important;
+    background:#fff!important;
+  }
+  body[data-page="product"] #monitoring .section-title,
+  body[data-page="product"] #knowledge-base .section-title,
+  body[data-page="product"] #sales-assistant .section-title{
+    display:none!important;
+  }
+  body[data-page="product"] #monitoring .platform-panel,
+  body[data-page="product"] #knowledge-base .knowledge-panel,
+  body[data-page="product"] #sales-assistant .sales-panel{
+    display:block!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:14px!important;
+    box-shadow:none!important;
+    background-color:transparent!important;
+    background-repeat:no-repeat!important;
+    background-position:center center!important;
+    background-size:contain!important;
+    overflow:hidden!important;
+  }
+  body[data-page="product"] #monitoring .platform-panel{
+    min-height:392px!important;
+    background-image:url("/assets/img/slices/product-monitor-full.webp")!important;
+  }
+  body[data-page="product"] #knowledge-base .knowledge-panel{
+    min-height:246px!important;
+    background-image:url("/assets/img/slices/product-kg.webp")!important;
+  }
+  body[data-page="product"] #sales-assistant .sales-panel{
+    min-height:340px!important;
+    background-image:url("/assets/img/slices/product-sales-full.webp")!important;
+  }
+  body[data-page="product"] #monitoring .platform-panel > *,
+  body[data-page="product"] #knowledge-base .knowledge-panel > *,
+  body[data-page="product"] #sales-assistant .sales-panel > *{
+    opacity:0!important;
+    pointer-events:none!important;
+  }
+
+  body[data-page="solutions"] .solution-live{
+    padding:34px 0!important;
+    background:#f7fbff!important;
+  }
+  body[data-page="solutions"] .solution-block,
+  body[data-page="solutions"] #complex-sales .solution-block{
+    display:grid!important;
+    grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr)!important;
+    gap:28px!important;
+    align-items:center!important;
+    padding:24px!important;
+    border-radius:22px!important;
+    border:1px solid rgba(208,225,248,.92)!important;
+    background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(241,248,255,.92))!important;
+    box-shadow:0 24px 70px rgba(14,48,98,.10)!important;
+  }
+  body[data-page="solutions"] #complex-sales .solution-block{
+    grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr)!important;
+  }
+  body[data-page="solutions"] .solution-block > *{
+    opacity:1!important;
+    pointer-events:auto!important;
+  }
+  body[data-page="solutions"] .scene-card{
+    position:relative!important;
+    display:block!important;
+    min-height:0!important;
+    padding:0!important;
+    border-radius:20px!important;
+    background:#071a3a!important;
+    border:1px solid rgba(179,207,242,.58)!important;
+    box-shadow:0 26px 70px rgba(8,30,68,.16)!important;
+    overflow:hidden!important;
+  }
+  body[data-page="solutions"] .scene-card:before,
+  body[data-page="solutions"] .scene-card:after{
+    display:none!important;
+  }
+  body[data-page="solutions"] .scene-card > img{
+    display:block!important;
+    width:100%!important;
+    height:auto!important;
+    border-radius:20px!important;
+    opacity:1!important;
+    filter:saturate(1.04) contrast(1.02)!important;
+  }
+  body[data-page="solutions"] .scene-ui{
+    display:none!important;
+  }
+
+  body[data-page="resources"] .featured-resource{
+    grid-template-columns:1fr 360px!important;
+    gap:30px!important;
+    background:
+      linear-gradient(90deg,rgba(4,20,54,.94),rgba(4,41,104,.76)),
+      url("/assets/img/slices/resources-feature.webp") center/cover no-repeat!important;
+  }
+  body[data-page="resources"] .featured-resource .slice-frame > img{
+    display:block!important;
+    opacity:1!important;
+    width:100%!important;
+    height:auto!important;
+  }
+  body[data-page="resources"] .article-thumb,
+  body[data-page="resources"] .doc-cover{
+    background-size:cover!important;
+    background-position:center!important;
+    background-repeat:no-repeat!important;
+  }
+  body[data-page="resources"] .article-card:nth-child(1) .article-thumb{background-image:url("/assets/img/slices/resources-feature.webp")!important}
+  body[data-page="resources"] .article-card:nth-child(2) .article-thumb{background-image:url("/assets/img/slices/product-flow.webp")!important}
+  body[data-page="resources"] .article-card:nth-child(3) .article-thumb{background-image:url("/assets/img/slices/product-kg.webp")!important}
+  body[data-page="resources"] .article-card:nth-child(4) .article-thumb{background-image:url("/assets/img/slices/cases-hero-object.png")!important}
+  body[data-page="resources"] .doc-card:nth-child(1) .doc-cover{background-image:url("/assets/img/slices/resources-book.webp")!important}
+  body[data-page="resources"] .doc-card:nth-child(2) .doc-cover{background-image:url("/assets/img/slices/design-board-components.webp")!important}
+  body[data-page="resources"] .doc-card:nth-child(3) .doc-cover{background-image:url("/assets/img/slices/diagnosis-report.webp")!important}
+  body[data-page="resources"] .doc-card:nth-child(4) .doc-cover{background-image:url("/assets/img/slices/product-monitor-full.webp")!important}
+  body[data-page="resources"] .doc-card:nth-child(5) .doc-cover{background-image:url("/assets/img/slices/home-kg.webp")!important}
+  body[data-page="resources"] .doc-card:nth-child(6) .doc-cover{background-image:url("/assets/img/slices/diagnosis-reportcards-full.webp")!important}
+
+  body[data-page="diagnosis"] #free-report .step-row{
+    display:block!important;
+    min-height:150px!important;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.50)),
+      url("/assets/img/slices/diagnosis-steps-full.webp") center/cover no-repeat!important;
+    border:1px solid #e2eefb!important;
+    border-radius:18px!important;
+    box-shadow:0 16px 46px rgba(18,45,88,.07)!important;
+  }
+  body[data-page="diagnosis"] #free-report .step-card{
+    opacity:0!important;
+    pointer-events:none!important;
+  }
+  body[data-page="diagnosis"] #customers .grid--4{
+    grid-template-columns:repeat(6,minmax(0,1fr))!important;
+    gap:18px!important;
+  }
+  body[data-page="diagnosis"] #customers .feature-card{
+    min-height:146px!important;
+    padding:18px 14px!important;
+    border-radius:14px!important;
+  }
+  body[data-page="diagnosis"] #customers .feature-card h3{
+    font-size:15px!important;
+    line-height:1.3!important;
+  }
+  body[data-page="diagnosis"] #customers .feature-card p{
+    font-size:11px!important;
+    line-height:1.5!important;
+  }
+  body[data-page="diagnosis"] #report-sample .report-grid{
+    display:block!important;
+    min-height:238px!important;
+    background:url("/assets/img/slices/diagnosis-reportcards-full.webp") center/contain no-repeat!important;
+  }
+  body[data-page="diagnosis"] #report-sample .report-grid > *{
+    opacity:0!important;
+    pointer-events:none!important;
+  }
+}
+
+@media (max-width:900px){
+  body[data-page="product"] #capabilities .grid--6,
+  body[data-page="product"] #workflow .step-row,
+  body[data-page="product"] #monitoring .platform-panel,
+  body[data-page="product"] #knowledge-base .knowledge-panel,
+  body[data-page="product"] #sales-assistant .sales-panel,
+  body[data-page="diagnosis"] #free-report .step-row,
+  body[data-page="diagnosis"] #report-sample .report-grid{
+    background-size:contain!important;
+    background-position:center!important;
+    background-repeat:no-repeat!important;
+  }
+  body[data-page="solutions"] .scene-card > img{
+    display:block!important;
+    opacity:1!important;
+    width:100%!important;
+    height:auto!important;
+  }
+  body[data-page="solutions"] .scene-ui{
+    display:none!important;
+  }
+  body[data-page="resources"] .featured-resource .slice-frame > img{
+    opacity:1!important;
+  }
+}
+
+/* Final spacing correction after high-fidelity slice restoration. */
+@media (min-width:901px){
+  body[data-page="product"] #monitoring .platform-panel > *,
+  body[data-page="product"] #knowledge-base .knowledge-panel > *,
+  body[data-page="product"] #sales-assistant .sales-panel > *,
+  body[data-page="diagnosis"] #report-sample .report-grid > *{
+    display:none!important;
+  }
+  body[data-page="product"] #monitoring .platform-panel{
+    height:392px!important;
+  }
+  body[data-page="product"] #knowledge-base .knowledge-panel{
+    height:246px!important;
+  }
+  body[data-page="product"] #sales-assistant .sales-panel{
+    height:340px!important;
+  }
+  body[data-page="diagnosis"] #free-report .step-row{
+    display:grid!important;
+    grid-template-columns:repeat(3,minmax(0,1fr))!important;
+    gap:24px!important;
+    min-height:0!important;
+    background:none!important;
+    border:0!important;
+    box-shadow:none!important;
+  }
+  body[data-page="diagnosis"] #free-report .step-card{
+    display:block!important;
+    opacity:1!important;
+    pointer-events:auto!important;
+    min-height:132px!important;
+    padding:24px 26px!important;
+  }
+  body[data-page="diagnosis"] #report-sample .report-grid{
+    min-height:238px!important;
+  }
+}
+
+/* Final product clean-slice correction: avoid duplicated flow artwork inside later modules. */
+@media (min-width:901px){
+  body[data-page="product"] #monitoring .platform-panel{
+    height:258px!important;
+    min-height:258px!important;
+    background-image:url("/assets/img/slices/product-monitor-clean.webp")!important;
+    background-size:cover!important;
+  }
+  body[data-page="product"] #sales-assistant .sales-panel{
+    height:220px!important;
+    min-height:220px!important;
+    background-image:url("/assets/img/slices/product-sales-clean.webp")!important;
+    background-size:cover!important;
+  }
+}
