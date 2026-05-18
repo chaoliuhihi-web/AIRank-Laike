@@ -75,6 +75,8 @@ class BrowserProviderConfig:
     profile_dir: Path
     headless: bool
     timeout_seconds: float
+    channel: str | None
+    executable_path: str | None
 
     def public_metadata(self) -> dict[str, str | bool | float]:
         return {
@@ -84,6 +86,8 @@ class BrowserProviderConfig:
             "profile_dir": str(self.profile_dir),
             "headless": self.headless,
             "timeout_seconds": self.timeout_seconds,
+            "channel": self.channel or "",
+            "executable_path": self.executable_path or "",
         }
 
 
@@ -136,6 +140,8 @@ def browser_provider_config(provider: str) -> BrowserProviderConfig:
         profile_dir=profile_dir,
         headless=os.getenv("AIRANK_BROWSER_HEADLESS", "1").strip().lower() not in {"0", "false", "no"},
         timeout_seconds=browser_timeout_seconds(),
+        channel=empty_env_to_none(os.getenv("AIRANK_BROWSER_CHANNEL")),
+        executable_path=empty_env_to_none(os.getenv("AIRANK_BROWSER_EXECUTABLE_PATH")),
     )
 
 
@@ -145,6 +151,27 @@ def browser_timeout_seconds() -> float:
         return max(15.0, float(raw_timeout))
     except ValueError:
         return DEFAULT_BROWSER_TIMEOUT_SECONDS
+
+
+def empty_env_to_none(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    return value.strip()
+
+
+def launch_provider_context(playwright: Any, config: BrowserProviderConfig, *, headless: bool | None = None) -> Any:
+    launch_kwargs: dict[str, Any] = {
+        "user_data_dir": str(config.profile_dir),
+        "headless": config.headless if headless is None else headless,
+        "viewport": {"width": 1440, "height": 1000},
+        "locale": "zh-CN",
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
+    if config.channel:
+        launch_kwargs["channel"] = config.channel
+    if config.executable_path:
+        launch_kwargs["executable_path"] = config.executable_path
+    return playwright.chromium.launch_persistent_context(**launch_kwargs)
 
 
 def call_provider_for_brand_rank(
@@ -246,13 +273,7 @@ def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
 
 def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadinessResult:
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(config.profile_dir),
-            headless=config.headless,
-            viewport={"width": 1440, "height": 1000},
-            locale="zh-CN",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        context = launch_provider_context(playwright, config)
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(int(config.timeout_seconds * 1000))
         try:
@@ -325,13 +346,7 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, s
     deadline = time.monotonic() + config.timeout_seconds
     trace_id = f"browser:{config.provider}:{int(time.time())}"
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(config.profile_dir),
-            headless=config.headless,
-            viewport={"width": 1440, "height": 1000},
-            locale="zh-CN",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        context = launch_provider_context(playwright, config)
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(int(config.timeout_seconds * 1000))
         try:

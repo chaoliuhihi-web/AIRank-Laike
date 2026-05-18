@@ -18,6 +18,8 @@ class FakeLocator:
 def test_browser_provider_config_uses_persistent_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AIRANK_BROWSER_PROFILE_DIR", str(tmp_path / "profiles"))
     monkeypatch.setenv("AIRANK_BROWSER_HEADLESS", "1")
+    monkeypatch.setenv("AIRANK_BROWSER_CHANNEL", "chrome")
+    monkeypatch.setenv("AIRANK_BROWSER_EXECUTABLE_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     monkeypatch.delenv("AIRANK_CHATGPT_WEB_URL", raising=False)
 
     config = browser_provider_config("chatgpt")
@@ -25,8 +27,11 @@ def test_browser_provider_config_uses_persistent_profile(monkeypatch: pytest.Mon
     assert config.url == "https://chatgpt.com/"
     assert config.profile_dir == (tmp_path / "profiles" / "chatgpt").resolve()
     assert config.headless is True
+    assert config.channel == "chrome"
+    assert config.executable_path == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     assert config.profile_dir.exists()
     assert config.public_metadata()["provider"] == "chatgpt"
+    assert config.public_metadata()["channel"] == "chrome"
 
 
 def test_provider_execution_mode_defaults_to_browser(monkeypatch: pytest.MonkeyPatch) -> None:

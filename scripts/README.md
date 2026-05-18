@@ -71,6 +71,15 @@ AIRANK_BROWSER_PROFILE_DIR=/var/lib/airank/browser-profiles \
   scripts/provider-profile-login.sh chatgpt
 ```
 
+如果消费端平台对 Playwright 自带测试浏览器触发真人验证，可改用部署机已安装的
+Chrome，同时继续使用 AIRank 的独立持久 profile：
+
+```bash
+AIRANK_BROWSER_CHANNEL=chrome \
+AIRANK_BROWSER_PROFILE_DIR=/var/lib/airank/browser-profiles \
+  scripts/provider-profile-login.sh chatgpt
+```
+
 也可以用 `all` 顺序初始化全部 provider。完成后必须重跑带 `--require-browser-providers` 的上线门禁。
 
 ## 本地真实控制台数据
