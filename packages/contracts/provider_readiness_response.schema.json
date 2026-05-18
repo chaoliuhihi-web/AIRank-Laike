@@ -30,6 +30,10 @@
               "url": { "type": "string" },
               "profile_dir": { "type": "string" },
               "headless": { "type": "boolean" },
+              "blocker_code": {
+                "type": "string",
+                "enum": ["login_required", "captcha_required", "prompt_input_missing", "timeout", "network_error", "unknown_blocked"]
+              },
               "reason": { "type": "string" },
               "screenshot_path": { "type": "string" }
             }

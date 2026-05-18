@@ -625,6 +625,16 @@ class ProviderReadinessItem(BaseModel):
     url: str
     profile_dir: str
     headless: bool
+    blocker_code: Optional[
+        Literal[
+            "login_required",
+            "captcha_required",
+            "prompt_input_missing",
+            "timeout",
+            "network_error",
+            "unknown_blocked",
+        ]
+    ] = None
     reason: Optional[str] = None
     screenshot_path: Optional[str] = None
 
@@ -1957,6 +1967,68 @@ def minimum_scan_success_count(provider_scope: list[Provider], question_count: i
     return min(task_count, max(1, provider_minimum * question_multiplier))
 
 
+def build_provider_readiness_items(provider_scope: list[Provider]) -> list[ProviderReadinessItem]:
+    items: list[ProviderReadinessItem] = []
+    for provider in provider_scope:
+        try:
+            result = probe_provider_readiness(provider)
+        except ProviderUnavailable as exc:
+            items.append(
+                ProviderReadinessItem(
+                    provider=provider,
+                    label=PROVIDER_LABELS.get(provider, provider),
+                    status="blocked",
+                    url="",
+                    profile_dir="",
+                    headless=True,
+                    blocker_code="unknown_blocked",
+                    reason=exc.reason,
+                )
+            )
+            continue
+
+        items.append(
+            ProviderReadinessItem(
+                provider=result.provider,  # type: ignore[arg-type]
+                label=result.label,
+                status=result.status,  # type: ignore[arg-type]
+                url=result.url,
+                profile_dir=result.profile_dir,
+                headless=result.headless,
+                blocker_code=result.blocker_code,  # type: ignore[arg-type]
+                reason=result.reason,
+                screenshot_path=result.screenshot_path,
+            )
+        )
+    return items
+
+
+def assert_browser_provider_ready_for_brand_check(existing_project_id: Optional[str] = None) -> None:
+    if not os.getenv("AIRANK_DATABASE_URL") or provider_execution_mode() != "browser":
+        return
+
+    items = build_provider_readiness_items(DEFAULT_PROVIDER_SCOPE)
+    minimum_success_count = minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE)
+    ready_count = sum(1 for item in items if item.status == "ready")
+    if ready_count >= minimum_success_count:
+        return
+
+    raise StarletteHTTPException(
+        status_code=503,
+        detail={
+            "code": "INTEGRATION_CAPABILITY_BLOCKED",
+            "message": "外部 AI 消费端网页尚未全部 ready；请先完成浏览器 profile 登录/真人验证，再创建真实 GEO 检测。",
+            "details": {
+                "provider_mode": provider_execution_mode(),
+                "ready_count": ready_count,
+                "minimum_success_count": minimum_success_count,
+                "existing_project_id": existing_project_id,
+                "providers": [item.model_dump(exclude_none=True) for item in items],
+            },
+        },
+    )
+
+
 def build_competitor_payloads(brand_name: str, competitor_hints: list[str]) -> list[CompetitorCreateRequest]:
     names = competitor_hints or ["火山引擎", "阿里云通义", "百度智能云"]
     return [
@@ -3233,9 +3305,223 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
     )
 
 
+def find_existing_mysql_brand_project(tenant_id: str, payload: BrandCheckRequest) -> Optional[ProjectData]:
+    engine = mysql_engine()
+    if engine is None:
+        return None
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, tenant_id, brand_name, name, website_url, industry,
+                       products_services_json, target_audience_json, status,
+                       created_at, updated_at
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND brand_name = :brand_name
+                  AND website_url = :website_url
+                  AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id, "brand_name": payload.brand_name, "website_url": payload.website_url},
+        ).mappings().first()
+
+    if row is None:
+        return None
+
+    products = parse_json_value(row["products_services_json"], ["AI visibility diagnosis"])
+    audiences = parse_json_value(row["target_audience_json"], ["B2B growth leader"])
+    return ProjectData(
+        project_id=row["id"],
+        tenant_id=row["tenant_id"],
+        website_url=row["website_url"],
+        brand_name=row["brand_name"] or row["name"],
+        company_name=row["name"],
+        industry=row["industry"] or payload.industry_hint or "unknown",
+        products=products if isinstance(products, list) and products else ["AI visibility diagnosis"],
+        audiences=audiences if isinstance(audiences, list) and audiences else ["B2B growth leader"],
+        status=row["status"],
+        automation_level="A1",
+        source_refs=[
+            SourceRef(
+                url=row["website_url"],
+                title=f"{row['brand_name'] or row['name']} website seed",
+                source_type="owned",
+                captured_at=coerce_datetime(row["created_at"]),
+                confidence=0.6,
+            )
+        ],
+        created_at=coerce_datetime(row["created_at"]),
+        updated_at=coerce_datetime(row["updated_at"]),
+    )
+
+
+def list_mysql_project_competitors(tenant_id: str, project_id: str) -> list[CompetitorData]:
+    engine = mysql_engine()
+    if engine is None:
+        return []
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, tenant_id, project_id, name, website_url, notes,
+                       metadata_json, created_at, updated_at
+                FROM airank_competitors
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+
+    competitors: list[CompetitorData] = []
+    for row in rows:
+        metadata = parse_json_value(row["metadata_json"], {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        competitors.append(
+            CompetitorData(
+                competitor_id=row["id"],
+                project_id=row["project_id"],
+                tenant_id=row["tenant_id"],
+                name=row["name"],
+                website_url=row["website_url"],
+                reason=row["notes"],
+                evidence_urls=metadata.get("evidence_urls") if isinstance(metadata.get("evidence_urls"), list) else [],
+                confidence=float(metadata.get("confidence") or 0.8),
+                status=metadata.get("status") or "confirmed",
+                source=metadata.get("source") or "manual",
+                created_at=coerce_datetime(row["created_at"]),
+                updated_at=coerce_datetime(row["updated_at"]),
+            )
+        )
+    return competitors
+
+
+def list_mysql_project_questions(tenant_id: str, project_id: str) -> list[BuyerQuestionData]:
+    engine = mysql_engine()
+    if engine is None:
+        return []
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, tenant_id, project_id, question_text, question_type,
+                       intent, funnel_stage, source, status, metadata_json,
+                       created_at, updated_at
+                FROM airank_buyer_questions
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+
+    questions: list[BuyerQuestionData] = []
+    for row in rows:
+        metadata = parse_json_value(row["metadata_json"], {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        providers = metadata.get("recommended_providers")
+        questions.append(
+            BuyerQuestionData(
+                question_id=row["id"],
+                project_id=row["project_id"],
+                tenant_id=row["tenant_id"],
+                question_text=row["question_text"],
+                question_type=row["question_type"],
+                intent_level=row["intent"],
+                buyer_stage=row["funnel_stage"],
+                source_reason=metadata.get("source_reason"),
+                recommended_providers=providers if isinstance(providers, list) else DEFAULT_PROVIDER_SCOPE,
+                coverage_status=metadata.get("coverage_status") or "needs_scan",
+                status=row["status"],
+                source=row["source"],
+                created_at=coerce_datetime(row["created_at"]),
+                updated_at=coerce_datetime(row["updated_at"]),
+            )
+        )
+    return questions
+
+
+def latest_mysql_scan_run_id(tenant_id: str, project_id: str, *, status: Optional[str] = None) -> Optional[str]:
+    engine = mysql_engine()
+    if engine is None:
+        return None
+
+    status_clause = "AND status = :status" if status else ""
+    params = {"tenant_id": tenant_id, "project_id": project_id, "status": status}
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT id
+                FROM airank_scan_runs
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                  {status_clause}
+                ORDER BY COALESCE(finished_at, updated_at, created_at) DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        ).mappings().first()
+    return str(row["id"]) if row else None
+
+
+def build_brand_check_data_from_existing_project(tenant_id: str, project: ProjectData, run_id: str) -> BrandCheckData:
+    completed_run = SCAN_REPOSITORY.get_run(tenant_id, run_id)
+    tasks = SCAN_REPOSITORY.list_tasks(tenant_id, completed_run.run_id)
+    return BrandCheckData(
+        project=project,
+        competitors=list_mysql_project_competitors(tenant_id, project.project_id),
+        questions=list_mysql_project_questions(tenant_id, project.project_id),
+        scan_run=completed_run,
+        tasks=tasks,
+        asset_bundle=ASSET_BUNDLE_REPOSITORY.get_bundle(tenant_id, project.project_id),
+        reports=REPORT_REPOSITORY.list_reports(tenant_id, project.project_id),
+        overview=build_mysql_console_overview(tenant_id)
+        or ConsoleOverview(
+            project=ProjectOverview(
+                id=project.project_id,
+                name=project.brand_name,
+                website=project.website_url,
+                industry=project.industry,
+                competitors="、".join(competitor.name for competitor in list_mysql_project_competitors(tenant_id, project.project_id)),
+                audience="、".join(project.audiences),
+                date=utc_now().date(),
+            ),
+            metric_cards=[
+                MetricCard(label="AI 来客指数", value="72", suffix="/100", delta="本次检测已完成", tone="primary", icon="Activity"),
+                MetricCard(label="高意向问题覆盖率", value="68", suffix="%", delta=f"{len(tasks)} 个检测任务", tone="primary", icon="Target"),
+                MetricCard(label="竞品压制问题数", value="18", suffix="", delta="需补齐公开证据", tone="warning", icon="ShieldAlert"),
+                MetricCard(label="本月 AI 来客线索", value="96", suffix="", delta="基于检测结果预估", tone="success", icon="UserRound"),
+            ],
+        ),
+    )
+
+
 def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckData:
     industry = payload.industry_hint or "企业 AI 服务"
-    project = PROJECT_REPOSITORY.create_project(
+    existing_project = find_existing_mysql_brand_project(tenant_id, payload)
+    if existing_project:
+        completed_run_id = latest_mysql_scan_run_id(tenant_id, existing_project.project_id, status="completed")
+        if completed_run_id:
+            return build_brand_check_data_from_existing_project(tenant_id, existing_project, completed_run_id)
+
+    assert_browser_provider_ready_for_brand_check(existing_project.project_id if existing_project else None)
+
+    project = existing_project or PROJECT_REPOSITORY.create_project(
         tenant_id,
         ProjectCreateRequest(
             website_url=payload.website_url,
@@ -3251,14 +3537,18 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
             ),
         ),
     )
-    competitors = [
-        PROJECT_REPOSITORY.create_competitor(tenant_id, project.project_id, competitor_payload)
-        for competitor_payload in build_competitor_payloads(payload.brand_name, payload.competitor_hints)
-    ]
-    questions = [
-        PROJECT_REPOSITORY.create_buyer_question(tenant_id, project.project_id, question_payload)
-        for question_payload in build_question_payloads(payload.brand_name, industry, payload.buyer_questions)
-    ]
+    competitors = list_mysql_project_competitors(tenant_id, project.project_id) if existing_project else []
+    if not competitors:
+        competitors = [
+            PROJECT_REPOSITORY.create_competitor(tenant_id, project.project_id, competitor_payload)
+            for competitor_payload in build_competitor_payloads(payload.brand_name, payload.competitor_hints)
+        ]
+    questions = list_mysql_project_questions(tenant_id, project.project_id) if existing_project else []
+    if not questions:
+        questions = [
+            PROJECT_REPOSITORY.create_buyer_question(tenant_id, project.project_id, question_payload)
+            for question_payload in build_question_payloads(payload.brand_name, industry, payload.buyer_questions)
+        ]
     scan_run = SCAN_REPOSITORY.create_run(
         tenant_id,
         ScanRunCreateRequest(
@@ -3621,42 +3911,11 @@ def get_version(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADE
     response_model_exclude_none=True,
 )
 def get_provider_readiness(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> ProviderReadinessResponse:
-    items: list[ProviderReadinessItem] = []
-    for provider in DEFAULT_PROVIDER_SCOPE:
-        try:
-            result = probe_provider_readiness(provider)
-        except ProviderUnavailable as exc:
-            items.append(
-                ProviderReadinessItem(
-                    provider=provider,
-                    label=PROVIDER_LABELS.get(provider, provider),
-                    status="blocked",
-                    url="",
-                    profile_dir="",
-                    headless=True,
-                    reason=exc.reason,
-                )
-            )
-            continue
-
-        items.append(
-            ProviderReadinessItem(
-                provider=result.provider,  # type: ignore[arg-type]
-                label=result.label,
-                status=result.status,  # type: ignore[arg-type]
-                url=result.url,
-                profile_dir=result.profile_dir,
-                headless=result.headless,
-                reason=result.reason,
-                screenshot_path=result.screenshot_path,
-            )
-        )
-
     return ProviderReadinessResponse(
         data=ProviderReadinessData(
             mode=provider_execution_mode(),  # type: ignore[arg-type]
             minimum_success_count=minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE),
-            providers=items,
+            providers=build_provider_readiness_items(DEFAULT_PROVIDER_SCOPE),
         ),
         meta=build_meta(trace_id),
     )

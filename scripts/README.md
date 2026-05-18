@@ -12,6 +12,7 @@ scan-manual.sh         手动触发 AI 平台采样
 dev-setup.sh           本地开发环境初始化
 db-migrate.sh          数据库迁移
 export-report.sh       手动导出报告
+provider-profile-login.sh  打开指定消费端 AI 网页 profile，供运维完成登录/真人验证
 ```
 
 ## 使用说明
@@ -62,6 +63,15 @@ python3 scripts/release_readiness.py \
 ```
 
 `--require-browser-providers` 会打开 ChatGPT、DeepSeek、Kimi、通义、豆包、百度 AI 搜索和腾讯元宝的持久浏览器 profile。任何平台未登录、需要真人验证或找不到可输入问题的控件，都会让 release gate 返回非零。
+
+首次部署或 cookie 过期时，用非 headless 方式初始化对应 profile：
+
+```bash
+AIRANK_BROWSER_PROFILE_DIR=/var/lib/airank/browser-profiles \
+  scripts/provider-profile-login.sh chatgpt
+```
+
+也可以用 `all` 顺序初始化全部 provider。完成后必须重跑带 `--require-browser-providers` 的上线门禁。
 
 ## 本地真实控制台数据
 

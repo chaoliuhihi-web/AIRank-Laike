@@ -68,6 +68,7 @@ def test_provider_readiness_returns_enveloped_contract(monkeypatch) -> None:
             url=f"https://{provider}.example.test/",
             profile_dir=f"/tmp/airank/{provider}",
             headless=True,
+            blocker_code="login_required",
             reason="login required",
         )
 
@@ -85,6 +86,7 @@ def test_provider_readiness_returns_enveloped_contract(monkeypatch) -> None:
     assert body["data"]["minimum_success_count"] == len(api_main.DEFAULT_PROVIDER_SCOPE)
     assert len(body["data"]["providers"]) == len(api_main.DEFAULT_PROVIDER_SCOPE)
     assert {item["status"] for item in body["data"]["providers"]} == {"blocked"}
+    assert {item["blocker_code"] for item in body["data"]["providers"]} == {"login_required"}
     validate_response("provider_readiness_response.schema.json", body)
 
 

@@ -95,6 +95,7 @@ class ProviderReadinessResult:
     url: str
     profile_dir: str
     headless: bool
+    blocker_code: str | None = None
     reason: str | None = None
     screenshot_path: str | None = None
 
@@ -216,6 +217,7 @@ def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            blocker_code="timeout",
             reason=f"browser timeout: {str(exc)[:300]}",
         )
     except PlaywrightError as exc:
@@ -226,6 +228,7 @@ def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            blocker_code="network_error",
             reason=f"browser automation failed: {str(exc)[:300]}",
         )
     except RuntimeError as exc:
@@ -236,6 +239,7 @@ def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            blocker_code=classify_blocker_reason(str(exc)),
             reason=str(exc)[:300],
         )
 
@@ -273,6 +277,7 @@ def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadin
             url=page_url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            blocker_code=classify_login_blocker(body_text),
             reason="login or human verification is visible",
             screenshot_path=screenshot_path,
         )
@@ -284,6 +289,7 @@ def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadin
             url=page_url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            blocker_code="prompt_input_missing",
             reason="prompt input was not found",
             screenshot_path=screenshot_path,
         )
@@ -294,6 +300,7 @@ def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadin
         url=page_url,
         profile_dir=str(config.profile_dir),
         headless=config.headless,
+        blocker_code=None,
         screenshot_path=screenshot_path,
     )
 
@@ -550,6 +557,29 @@ def trim_control_text(text: str) -> str:
 def looks_login_blocked(text: str) -> bool:
     lowered = text.lower()
     return any(pattern in lowered for pattern in LOGIN_BLOCK_PATTERNS)
+
+
+def classify_login_blocker(text: str) -> str:
+    lowered = text.lower()
+    captcha_markers = ("验证码", "验证你是真人", "verify you are human", "captcha")
+    if any(marker in lowered for marker in captcha_markers):
+        return "captcha_required"
+    return "login_required"
+
+
+def classify_blocker_reason(reason: str) -> str:
+    lowered = reason.lower()
+    if "timeout" in lowered:
+        return "timeout"
+    if "prompt input" in lowered:
+        return "prompt_input_missing"
+    if any(marker in lowered for marker in ("login", "sign_in", "sign in", "human verification", "captcha", "验证码")):
+        if any(marker in lowered for marker in ("human verification", "captcha", "验证码")):
+            return "captcha_required"
+        return "login_required"
+    if any(marker in lowered for marker in ("net::", "network", "browser automation")):
+        return "network_error"
+    return "unknown_blocked"
 
 
 def answer_mentions_any_brand(answer_text: str, names: list[str]) -> bool:
