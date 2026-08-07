@@ -815,7 +815,23 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         assert {item["code"] for item in quality["checks"] if item["status"] == "blocked"} >= {
             "valid_sample_rate",
             "raw_response_hashes_present",
+            "consumer_screenshots_complete",
+            "consumer_source_panels_inspected",
+            "consumer_source_panel_evidence_consistent",
         }
+        assert quality["surface_evidence"] == [
+            {
+                "surface": "web",
+                "evidence_level": "consumer_web",
+                "sample_count": 12,
+                "valid_sample_count": 1,
+                "evidence_complete_count": 0,
+                "screenshot_count": 0,
+                "source_panel_captured_count": 0,
+                "source_panel_not_present_count": 0,
+                "blocker_count": 1,
+            }
+        ]
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -850,8 +866,8 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                       JSON_OBJECT(
                         'summary', '真实 MySQL 报告列表验证',
                         'report_status', 'generated',
-                        'baseline_quality', JSON_OBJECT('publishable', TRUE),
-                        'compare_quality', JSON_OBJECT('publishable', TRUE)
+                        'baseline_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v2', 'publishable', TRUE),
+                        'compare_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v2', 'publishable', TRUE)
                       ),
                       CURRENT_TIMESTAMP(3)
                     )

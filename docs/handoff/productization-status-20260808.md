@@ -64,15 +64,17 @@
 54. 新增 M1 客户授权问题观察批次与记录：来源类型、名称、访问方式、证据等级、日期范围、payload SHA-256、记录数、来源内频次、授权声明和导入人均不可变保存；重复 payload 幂等回放同一批次。
 55. 导入门禁会拦截邮箱、中国手机号和身份证号；被拦截原文不写入数据库或响应，只保留不可逆内容 hash 与原因。`occurrence_count` 只表示该来源内出现次数，API 和控制台明确标注“不是搜索量”“客户提供、未独立核验”。
 56. Alembic `20260808_0010` 在真实 MySQL 完成，AIRank 表数增至 47。真实浏览器完成授权导入、1 条安全记录/频次 7、1 条 PII 阻断、观察问题编译、人工确认和刷新持久化；390px 有效视口无页面级横向溢出，控制台 `0 error / 0 warning`，页面与持久化层均未出现被拦截邮箱。
-57. 新增内容寻址的 `airank.measurement-quality.v1`：按 ScanRun 重算 9 项质量检查，覆盖样本存在、签名数量、样本 ID、采样位重复、状态分区、有效样本、有效率、回答 hash、原始响应 hash 和提及分类；结果包含 data/report SHA-256 与 known limitations。
+57. 新增内容寻址的 `airank.measurement-quality.v1`：按 ScanRun 重算 10 项基础质量检查，覆盖样本存在、签名数量、样本 ID、采样位重复、状态分区、有效样本、有效率、回答 hash、原始响应 hash 和提及分类；结果包含 data/report SHA-256 与 known limitations。
 58. 质量门明确保留正常未提及样本并计入有效分母；没有 Provider 引用、未评测引用支持度/事实准确率或缺少重复稳定性会进入限制项，不会被偷偷补值。
 59. 复测报告只有在基线/复测各自 `publishable=true` 且样本契约可比时才写为 `generated`；否则写为 `quality_blocked/completed_with_limitations`。下载接口对阻断及旧版无质量清单报告返回 `409 REPORT_QUALITY_BLOCKED`，不再把文件存在等同于可交付。
 60. 报表中心真实展示质量阻断说明并禁用下载。真实 MySQL 验证 12 个任务仅 1 个有效时质量报告阻断有效率和缺失原始失败快照；浏览器 390px 有效视口显示禁用按钮、无页面级横向溢出，console `0 error / 0 warning`。
+61. 质量契约升级为 `airank.measurement-quality.v2`：每个任务样本独立绑定 Evidence Manifest，总计 21 项检查。API 必须关联 Provider 请求审计；Web/App 必须有不可变截图并明确来源面板为 `captured/not_present`；有引用时必须保存来源面板对象；App 额外要求设备/App 环境 hash；manual_import 要求导入源 hash。各采集面独立输出样本数、有效数、证据完整数、截图数、来源面板状态和阻断数。历史 v1/无版本报告在列表中降级为 `quality_blocked`，下载回执接口拒绝放行，必须按 v2 重算。
+62. 浏览器真实 MySQL 验收使用一条有效且未提及的豆包 Web 样本：有效率为 100%、未提及正确计入分母、来源面板明确记录为“界面未呈现（已检查）”，但因截图对象缺失，质量报告仍为 `blocked`。证据中心展示具体阻断和 `web/consumer_web` 汇总；390px 有效视口无页面级溢出，console `0 error / 0 warning`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`229 passed, 13 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
+- `python3 -m pytest -q`：`232 passed, 13 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -80,6 +82,7 @@
 - 问题地图浏览器复验：升级 taxonomy 后使用同一输入重新编译，页面显示 `airank-question-taxonomy-v1.1.0`、12 个唯一问题、0 个新增候选、13 个重复拦截，证明新版本清单可回放且不会重复写问题。390×844 下页面宽度保持 390px，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 观察问题浏览器复验：隔离租户通过真实 API/MySQL 导入一个 M1 批次，保存 1 条安全记录、来源内频次 7，并阻断 1 条含邮箱记录；页面显示 `airank-question-taxonomy-v1.2.0`、`user_provided_snapshot` 和“客户提供观察记录（未独立核验）”。编译候选经人工确认后刷新仍存在；390px 有效视口的 html/body `scrollWidth` 均为 390，console `0 error / 0 warning`。
 - 数据质量浏览器复验：真实 MySQL `quality_blocked` 报告显示“未通过数据质量门禁；不可作为客户交付物下载”，按钮禁用；直接调用下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。390px 有效视口 html/body `scrollWidth` 均为 390，console `0 error / 0 warning`。
+- 终端证据浏览器复验：真实 MySQL `airank.measurement-quality.v2` 返回唯一阻断 `consumer_screenshots_complete`，同时证明 `consumer_source_panels_inspected` 和无来源状态一致性通过。证据中心展示 Web 样本 1、有效 1、证据完整 0、截图 0、来源面板明确无 1、阻断 1；样本下钻可见原始回答、双 hash、外部会话 ID 与“界面未呈现（已检查）”。390px 有效视口无页面级横向溢出，console `0 error / 0 warning`；截图为 `/tmp/airank-surface-evidence-mobile.png`。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
 - MySQL：Alembic `20260808_0010`；47 张 AIRank 表校验通过；新增观察批次/记录及来源 provenance 真实落库，PII 原文不落库。迁移同时通过在线中断重跑；离线发布 SQL 纳入最终门禁。
 - 本地真实 MySQL integration：`11 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增观察批次幂等导入、PII 阻断、provenance 编译及持久化断言；既有问题治理、对象引用、Provider store、Publisher 与复测链仍通过。

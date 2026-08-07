@@ -17,6 +17,7 @@ from airank_domain.measurement import (
     SampleContext,
     SampleStatus,
 )
+from airank_score import SampleEvidenceManifest
 from apps.api import delivery_routes, retest_routes
 from apps.api.main import app
 
@@ -59,6 +60,17 @@ def sample(index: int, *, mentioned: bool) -> MeasurementSample:
     )
 
 
+def evidence(index: int) -> SampleEvidenceManifest:
+    return SampleEvidenceManifest(
+        sample_id=f"sample_{index}",
+        surface=CollectorSurface.API,
+        evidence_level=EvidenceLevel.PROVIDER_API,
+        request_metadata_sha256=f"{index + 1:064x}",
+        external_trace_id=f"provider-request-{index}",
+        provider_request_audit_id=f"provider-audit-{index}",
+    )
+
+
 def test_window_completion_recomputes_same_contract_and_is_idempotent(
     client: tuple[TestClient, retest_routes.InMemoryRetestRepository],
 ) -> None:
@@ -95,8 +107,9 @@ def test_window_completion_recomputes_same_contract_and_is_idempotent(
         f"question_{index}|qianwen|blind|api|1|prompt_{index}|qwen3.6-plus||True|zh-CN|"
         for index in range(12)
     )
-    repository.register_run("tenant_1", "run_t0", retest_routes.RunEvidence("project_1", baseline, signature))
-    repository.register_run("tenant_1", "run_t7", retest_routes.RunEvidence("project_1", compare, signature))
+    manifests = tuple(evidence(index) for index in range(12))
+    repository.register_run("tenant_1", "run_t0", retest_routes.RunEvidence("project_1", baseline, signature, manifests))
+    repository.register_run("tenant_1", "run_t7", retest_routes.RunEvidence("project_1", compare, signature, manifests))
 
     quality = http.get(
         "/api/v1/projects/project_1/scan-runs/run_t0/quality-report",
@@ -173,8 +186,9 @@ def test_window_completion_keeps_non_comparable_report_quality_blocked(
     compare = tuple(sample(index, mentioned=True) for index in range(12))
     baseline_signature = tuple(f"baseline-{index}" for index in range(12))
     compare_signature = tuple(f"compare-{index}" for index in range(12))
-    repository.register_run("tenant_bad", "run_bad_t0", retest_routes.RunEvidence("project_bad", baseline, baseline_signature))
-    repository.register_run("tenant_bad", "run_bad_t7", retest_routes.RunEvidence("project_bad", compare, compare_signature))
+    manifests = tuple(evidence(index) for index in range(12))
+    repository.register_run("tenant_bad", "run_bad_t0", retest_routes.RunEvidence("project_bad", baseline, baseline_signature, manifests))
+    repository.register_run("tenant_bad", "run_bad_t7", retest_routes.RunEvidence("project_bad", compare, compare_signature, manifests))
     windows = http.get("/api/v1/projects/project_bad/retest-windows", headers={"tenant-id": "tenant_bad"})
     window_id = next(item["window_id"] for item in windows.json()["data"] if item["window_label"] == "T+7")
 

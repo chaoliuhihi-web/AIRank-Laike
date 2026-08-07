@@ -514,7 +514,7 @@ Reviewer: Codex
 
 Passed:
 
-- Added content-addressed `airank.measurement-quality.v1` reports with 9 blocking checks across sample/signature cardinality, duplicate sample IDs/contracts, status partition, valid samples/rate, answer hash, raw-response hash and explicit mention classification.
+- Added content-addressed `airank.measurement-quality.v1` reports with 10 blocking checks across sample/signature cardinality, duplicate sample IDs/contracts, status partition, valid samples/rate, answer hash, raw-response hash and explicit mention classification.
 - Normal valid-but-not-mentioned answers remain in the valid denominator. Missing citations, citation-support review, fact-accuracy review and repeat stability are explicit known limitations rather than invented values.
 - Retest reports are `generated` only when both run-quality reports are publishable and the baseline/compare sample contracts are comparable. Otherwise they persist as `quality_blocked` and the observation window remains `completed_with_limitations`.
 - Report downloads fail closed with `409 REPORT_QUALITY_BLOCKED` for quality-blocked and legacy reports without the signed quality manifest. No audit receipt is written for a rejected download.
@@ -523,10 +523,39 @@ Passed:
 
 Blocking conditions:
 
-- Consumer Web/App screenshot and source-panel integrity are not yet inputs to this run-quality contract; API quality passing must not be presented as consumer-surface proof.
+- Superseded by the `airank.measurement-quality.v2` gate below: Consumer Web/App screenshot and source-panel integrity are now blocking inputs. Actual App collection remains unavailable.
 - Full warehouse rebuild checks, derivation lineage, and HTML/PDF/DOCX visual/accessibility gates are not implemented.
 - Production runtime, Yudao, HTTPS object storage, consumer browser Provider sessions and remote-main blockers from the prior release gate remain unchanged.
 
 Decision:
 
 - AIRank can now distinguish a stored report from a publishable customer report. Commercial launch remains `NO-GO` until the broader evidence and production gates pass.
+
+## 2026-08-08 Surface-Specific Evidence Integrity Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this surface-evidence commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Upgraded the content-addressed quality contract to `airank.measurement-quality.v2`. Every task sample now has a separate Evidence Manifest; analytical labels cannot upgrade API, Consumer Web, Consumer App, or manual-import evidence.
+- The report executes 21 checks: the prior 10 sample/data checks plus manifest cardinality/uniqueness, surface-level matching, request metadata, trace IDs, API provider audits, Consumer screenshots, source-panel inspection/consistency, App capture metadata, and manual-import provenance.
+- API samples require an actual `airank_provider_request_audits` link. Consumer Web/App samples require immutable screenshot references and SHA-256. Source panels must be explicitly `captured` or `not_present`; citations on a Consumer surface require an immutable source-panel object. App samples additionally require content-addressed device/App capture metadata, while manual imports require a source SHA-256.
+- Browser capture now records a conservative source-panel state. Visible external links tied to answer text are captured using the immutable whole-page screenshot and stored as a distinct source-panel object; a page with no accepted source links records `not_present` instead of leaving provenance ambiguous.
+- The Evidence Center loads the real quality API for the selected run and shows per-surface sample, valid, evidence-complete, screenshot, source-panel, and blocker counts. Sample drill-down renders the explicit source-panel status.
+- Report listing and download now require both baseline and comparison quality manifests to use the current v2 contract. A previously `generated` v1/legacy report is exposed as `quality_blocked` and cannot create a download audit receipt until it is recomputed.
+- Full local regression passed `232 passed, 13 skipped`; real MySQL integration passed `11 passed, 2 skipped`; Web TypeScript/Vite build passed with the known Node patch-version warning.
+- Real MySQL and browser QA proved fail-closed behavior with one valid Consumer Web sample: valid rate `1.0`, not-mentioned count `1`, source panel explicitly `not_present`, but no screenshot object. The report blocked only `consumer_screenshots_complete`; the UI displayed `web / consumer_web`, `1 valid`, `0 evidence complete`, and `1 blocker`. The 390px effective viewport had no page overflow and browser logs contained `0 error / 0 warning`. Screenshot: `/tmp/airank-surface-evidence-mobile.png`.
+
+Blocking conditions:
+
+- Consumer App task execution is still unimplemented, so its stricter manifest is a fail-closed contract rather than a passed production collector.
+- Consumer browser Provider readiness remains `0/4`; the new Web persistence path still needs real logged-in platform sessions with screenshots and source panels across the four planned platforms.
+- Full warehouse rebuild checks, derivation lineage, HTML/PDF/DOCX visual/accessibility gates, production runtime, Yudao, HTTPS object storage, external Publisher, remote-main synchronization, and end-to-end customer reporting remain open.
+
+Decision:
+
+- AIRank can no longer publish a Consumer-surface report when the database has only answer text and hashes. Commercial launch remains `NO-GO` until real Consumer sessions and the broader production gates pass.

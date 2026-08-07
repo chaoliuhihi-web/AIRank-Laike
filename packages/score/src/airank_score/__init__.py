@@ -2,7 +2,14 @@
 
 from .calculator import ScoreComponent, ScoreResult, calculate_airank_score
 from .measurement import CohortMetrics, calculate_cohort_metrics, calculate_repeat_stability
-from .quality import MeasurementQualityReport, QualityCheck, build_measurement_quality_report
+from .quality import (
+    QUALITY_CONTRACT_VERSION,
+    MeasurementQualityReport,
+    QualityCheck,
+    SampleEvidenceManifest,
+    SurfaceEvidenceSummary,
+    build_measurement_quality_report,
+)
 from .retest import RetestComparison, compare_retest_metrics
 
 __all__ = [
@@ -11,7 +18,10 @@ __all__ = [
     "ScoreResult",
     "RetestComparison",
     "MeasurementQualityReport",
+    "QUALITY_CONTRACT_VERSION",
     "QualityCheck",
+    "SampleEvidenceManifest",
+    "SurfaceEvidenceSummary",
     "calculate_airank_score",
     "calculate_cohort_metrics",
     "calculate_repeat_stability",

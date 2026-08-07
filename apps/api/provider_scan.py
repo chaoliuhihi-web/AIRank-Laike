@@ -471,6 +471,10 @@ def call_provider_for_brand_rank(
             "capture_title": browser_result["title"],
             "screenshot_path": browser_result["screenshot_path"],
             "screenshot_sha256": browser_result.get("screenshot_sha256", ""),
+            "source_panel_status": browser_result.get("source_panel_status", "not_inspected"),
+            "source_panel_screenshot_path": browser_result.get("source_panel_screenshot_path", ""),
+            "source_panel_screenshot_sha256": browser_result.get("source_panel_screenshot_sha256", ""),
+            "source_panel_capture_mode": browser_result.get("source_panel_capture_mode", "not_inspected"),
             "answer_parse_mode": parsed["parse_mode"],
             "capture_mode": "consumer_browser",
             "collector_surface": "web",
@@ -632,7 +636,7 @@ def build_brand_rank_prompt(
     )
 
 
-def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, str]:
+def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeout_seconds
     trace_id = f"browser:{config.provider}:{int(time.time())}"
     with sync_playwright() as playwright:
@@ -661,6 +665,8 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, s
             submit_prompt(page, input_locator)
             answer_text = wait_for_answer_text(page, before_text, prompt, deadline)
             screenshot_path, screenshot_sha256 = save_page_screenshot(page, config.provider)
+            source_links = extract_visible_source_links(page, answer_text)
+            source_panel_status = "captured" if source_links else "not_present"
             return {
                 "trace_id": trace_id,
                 "page_url": page.url,
@@ -668,7 +674,15 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, s
                 "answer_text": answer_text,
                 "screenshot_path": screenshot_path,
                 "screenshot_sha256": screenshot_sha256,
-                "source_links": extract_visible_source_links(page, answer_text),
+                "source_links": source_links,
+                "source_panel_status": source_panel_status,
+                # The full-page capture is valid source-panel evidence only when
+                # every accepted source link was visible in the captured answer.
+                "source_panel_screenshot_path": screenshot_path if source_links else "",
+                "source_panel_screenshot_sha256": screenshot_sha256 if source_links else "",
+                "source_panel_capture_mode": (
+                    "whole_page_visible_source_links" if source_links else "visible_page_inspected_no_sources"
+                ),
             }
         finally:
             context.close()

@@ -3,12 +3,19 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Literal, Sequence
 
-from airank_domain.measurement import MeasurementSample, MentionClass, SampleStatus, canonical_json_sha256
+from airank_domain.measurement import (
+    CollectorSurface,
+    EvidenceLevel,
+    MeasurementSample,
+    MentionClass,
+    SampleStatus,
+    canonical_json_sha256,
+)
 
 from .measurement import CohortMetrics, calculate_cohort_metrics
 
 
-QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v1"
+QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v2"
 
 
 @dataclass(frozen=True)
@@ -18,6 +25,57 @@ class QualityCheck:
     actual: int | float | str | bool | None
     expected: str
     detail: str
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+SourcePanelStatus = Literal["captured", "not_present", "not_inspected", "not_applicable"]
+
+
+@dataclass(frozen=True)
+class SampleEvidenceManifest:
+    """Immutable references used to decide whether a sample is deliverable evidence.
+
+    MeasurementSample intentionally contains only analytical fields. This manifest
+    keeps capture provenance separate so an analysis label can never upgrade the
+    evidence grade of an API, browser, app, or imported sample.
+    """
+
+    sample_id: str
+    surface: CollectorSurface
+    evidence_level: EvidenceLevel
+    request_metadata_sha256: str | None = None
+    external_trace_id: str | None = None
+    provider_request_audit_id: str | None = None
+    screenshot_ref_id: str | None = None
+    screenshot_sha256: str | None = None
+    screenshot_immutable: bool = False
+    source_panel_status: SourcePanelStatus = "not_applicable"
+    source_panel_ref_id: str | None = None
+    source_panel_sha256: str | None = None
+    source_panel_immutable: bool = False
+    app_capture_metadata_sha256: str | None = None
+    import_source_sha256: str | None = None
+
+    def to_record(self) -> dict[str, Any]:
+        record = asdict(self)
+        record["surface"] = self.surface.value
+        record["evidence_level"] = self.evidence_level.value
+        return record
+
+
+@dataclass(frozen=True)
+class SurfaceEvidenceSummary:
+    surface: str
+    evidence_level: str
+    sample_count: int
+    valid_sample_count: int
+    evidence_complete_count: int
+    screenshot_count: int
+    source_panel_captured_count: int
+    source_panel_not_present_count: int
+    blocker_count: int
 
     def to_record(self) -> dict[str, Any]:
         return asdict(self)
@@ -33,6 +91,7 @@ class MeasurementQualityReport:
     report_sha256: str
     metrics: CohortMetrics
     checks: tuple[QualityCheck, ...]
+    surface_evidence: tuple[SurfaceEvidenceSummary, ...]
     known_limitations: tuple[str, ...]
 
     def to_record(self) -> dict[str, Any]:
@@ -45,6 +104,7 @@ class MeasurementQualityReport:
             "report_sha256": self.report_sha256,
             "metrics": self.metrics.to_record(),
             "checks": [item.to_record() for item in self.checks],
+            "surface_evidence": [item.to_record() for item in self.surface_evidence],
             "known_limitations": list(self.known_limitations),
         }
 
@@ -54,10 +114,13 @@ def build_measurement_quality_report(
     run_id: str,
     samples: Iterable[MeasurementSample],
     signatures: Sequence[str],
+    evidence_manifests: Iterable[SampleEvidenceManifest] = (),
     minimum_valid_sample_rate: float = 0.8,
 ) -> MeasurementQualityReport:
     sample_list = list(samples)
     signature_list = list(signatures)
+    manifest_list = list(evidence_manifests)
+    manifests_by_sample_id = {item.sample_id: item for item in manifest_list}
     metrics = calculate_cohort_metrics(sample_list)
     checks: list[QualityCheck] = []
 
@@ -110,7 +173,7 @@ def build_measurement_quality_report(
         "有效样本率过低时结果易被失败/阻塞偏差主导。",
     )
     missing_answer_hash = sum(
-        item.status == SampleStatus.VALID and not item.answer_sha256 for item in sample_list
+        item.status == SampleStatus.VALID and not _is_sha256(item.answer_sha256) for item in sample_list
     )
     add_check(
         "valid_answer_hashes_present",
@@ -119,7 +182,7 @@ def build_measurement_quality_report(
         "= 0 missing",
         "每个有效回答必须绑定逐字回答 SHA-256。",
     )
-    missing_raw_hash = sum(not item.raw_response_sha256 for item in sample_list)
+    missing_raw_hash = sum(not _is_sha256(item.raw_response_sha256) for item in sample_list)
     add_check(
         "raw_response_hashes_present",
         missing_raw_hash == 0,
@@ -138,6 +201,214 @@ def build_measurement_quality_report(
         "= 0 unknown",
         "有效样本必须明确区分推荐、候选、提及、负面和未提及。",
     )
+
+    add_check(
+        "evidence_manifest_count_matches",
+        len(manifest_list) == len(sample_list),
+        len(manifest_list),
+        f"= {len(sample_list)}",
+        "每个任务样本都必须有独立证据清单，分析字段不能代替采集证据。",
+    )
+    manifest_sample_ids = [item.sample_id for item in manifest_list]
+    add_check(
+        "evidence_manifest_sample_ids_unique",
+        len(manifest_sample_ids) == len(set(manifest_sample_ids)),
+        len(manifest_sample_ids) - len(set(manifest_sample_ids)),
+        "= 0 duplicates",
+        "同一样本不能用多份证据清单重复满足门禁。",
+    )
+    surface_mismatches = sum(
+        manifest is None
+        or manifest.surface != sample.context.surface
+        or manifest.evidence_level != sample.context.evidence_level
+        for sample in sample_list
+        for manifest in [manifests_by_sample_id.get(sample.sample_id)]
+    )
+    add_check(
+        "surface_evidence_levels_match",
+        surface_mismatches == 0,
+        surface_mismatches,
+        "= 0 mismatches",
+        "API、Web、App 和人工导入必须保留各自证据等级，不得互相升级。",
+    )
+
+    valid_pairs = [
+        (sample, manifests_by_sample_id.get(sample.sample_id))
+        for sample in sample_list
+        if sample.status == SampleStatus.VALID
+    ]
+    missing_request_metadata = sum(
+        manifest is None or not _is_sha256(manifest.request_metadata_sha256)
+        for _sample, manifest in valid_pairs
+    )
+    add_check(
+        "valid_request_metadata_present",
+        missing_request_metadata == 0,
+        missing_request_metadata,
+        "= 0 missing",
+        "每个有效样本必须绑定内容寻址的请求与采集元数据。",
+    )
+    traced_pairs = [
+        (sample, manifest)
+        for sample, manifest in valid_pairs
+        if sample.context.surface in {CollectorSurface.API, CollectorSurface.WEB, CollectorSurface.APP}
+    ]
+    missing_external_trace = sum(
+        manifest is None or not manifest.external_trace_id
+        for _sample, manifest in traced_pairs
+    )
+    add_check(
+        "provider_trace_ids_present",
+        missing_external_trace == 0,
+        missing_external_trace,
+        "= 0 missing",
+        "API、Web 和 App 有效样本必须保留 Provider 请求或采集会话追踪 ID。",
+    )
+    api_pairs = [
+        (sample, manifest)
+        for sample, manifest in valid_pairs
+        if sample.context.surface == CollectorSurface.API
+    ]
+    missing_provider_audit = sum(
+        manifest is None or not manifest.provider_request_audit_id
+        for _sample, manifest in api_pairs
+    )
+    add_check(
+        "api_provider_audits_present",
+        missing_provider_audit == 0,
+        missing_provider_audit,
+        "= 0 missing",
+        "Provider API 样本必须关联真实请求审计，不能用浏览器截图冒充 API 调用。",
+    )
+
+    consumer_pairs = [
+        (sample, manifest)
+        for sample, manifest in valid_pairs
+        if sample.context.surface in {CollectorSurface.WEB, CollectorSurface.APP}
+    ]
+    missing_consumer_screenshot = sum(
+        manifest is None
+        or not manifest.screenshot_ref_id
+        or not _is_sha256(manifest.screenshot_sha256)
+        or not manifest.screenshot_immutable
+        for _sample, manifest in consumer_pairs
+    )
+    add_check(
+        "consumer_screenshots_complete",
+        missing_consumer_screenshot == 0,
+        missing_consumer_screenshot,
+        "= 0 missing",
+        "Consumer Web/App 有效样本必须绑定不可变截图对象及 SHA-256。",
+    )
+    uninspected_source_panels = sum(
+        manifest is None or manifest.source_panel_status not in {"captured", "not_present"}
+        for _sample, manifest in consumer_pairs
+    )
+    add_check(
+        "consumer_source_panels_inspected",
+        uninspected_source_panels == 0,
+        uninspected_source_panels,
+        "= 0 uninspected",
+        "Consumer Web/App 必须明确记录来源面板已捕获或界面未呈现，不能留空猜测。",
+    )
+    inconsistent_source_panels = sum(
+        manifest is None
+        or (
+            sample.citation_count > 0
+            and (
+                manifest.source_panel_status != "captured"
+                or not manifest.source_panel_ref_id
+                or not _is_sha256(manifest.source_panel_sha256)
+                or not manifest.source_panel_immutable
+            )
+        )
+        or (
+            manifest.source_panel_status == "captured"
+            and (
+                not manifest.source_panel_ref_id
+                or not _is_sha256(manifest.source_panel_sha256)
+                or not manifest.source_panel_immutable
+            )
+        )
+        for sample, manifest in consumer_pairs
+    )
+    add_check(
+        "consumer_source_panel_evidence_consistent",
+        inconsistent_source_panels == 0,
+        inconsistent_source_panels,
+        "= 0 inconsistent",
+        "出现可引用来源时必须保存不可变来源面板对象；无来源时必须明确记录 not_present。",
+    )
+    app_pairs = [
+        (sample, manifest)
+        for sample, manifest in valid_pairs
+        if sample.context.surface == CollectorSurface.APP
+    ]
+    missing_app_metadata = sum(
+        manifest is None or not _is_sha256(manifest.app_capture_metadata_sha256)
+        for _sample, manifest in app_pairs
+    )
+    add_check(
+        "app_capture_metadata_present",
+        missing_app_metadata == 0,
+        missing_app_metadata,
+        "= 0 missing",
+        "Consumer App 样本必须记录内容寻址的设备、App 版本和采集环境元数据。",
+    )
+    import_pairs = [
+        (sample, manifest)
+        for sample, manifest in valid_pairs
+        if sample.context.surface == CollectorSurface.MANUAL_IMPORT
+    ]
+    missing_import_provenance = sum(
+        manifest is None or not _is_sha256(manifest.import_source_sha256)
+        for _sample, manifest in import_pairs
+    )
+    add_check(
+        "manual_import_provenance_present",
+        missing_import_provenance == 0,
+        missing_import_provenance,
+        "= 0 missing",
+        "人工导入样本必须保留导入源 SHA-256，且证据等级保持 manual_import。",
+    )
+
+    surface_evidence: list[SurfaceEvidenceSummary] = []
+    for surface in CollectorSurface:
+        surface_samples = [item for item in sample_list if item.context.surface == surface]
+        if not surface_samples:
+            continue
+        valid_surface_samples = [item for item in surface_samples if item.status == SampleStatus.VALID]
+        complete_count = 0
+        screenshot_count = 0
+        source_panel_captured_count = 0
+        source_panel_not_present_count = 0
+        for sample in valid_surface_samples:
+            manifest = manifests_by_sample_id.get(sample.sample_id)
+            if manifest is None:
+                continue
+            if manifest.screenshot_ref_id and _is_sha256(manifest.screenshot_sha256) and manifest.screenshot_immutable:
+                screenshot_count += 1
+            if manifest.source_panel_status == "captured":
+                source_panel_captured_count += 1
+            elif manifest.source_panel_status == "not_present":
+                source_panel_not_present_count += 1
+            if _surface_evidence_complete(sample, manifest):
+                complete_count += 1
+        surface_evidence.append(
+            SurfaceEvidenceSummary(
+                surface=surface.value,
+                evidence_level=valid_surface_samples[0].context.evidence_level.value
+                if valid_surface_samples
+                else surface_samples[0].context.evidence_level.value,
+                sample_count=len(surface_samples),
+                valid_sample_count=len(valid_surface_samples),
+                evidence_complete_count=complete_count,
+                screenshot_count=screenshot_count,
+                source_panel_captured_count=source_panel_captured_count,
+                source_panel_not_present_count=source_panel_not_present_count,
+                blocker_count=len(valid_surface_samples) - complete_count,
+            )
+        )
 
     limitations: list[str] = []
     valid_samples = [item for item in sample_list if item.status == SampleStatus.VALID]
@@ -168,6 +439,7 @@ def build_measurement_quality_report(
             }
             for item in sample_list
         ],
+        "evidence_manifests": [item.to_record() for item in manifest_list],
     }
     data_sha256 = canonical_json_sha256(data_payload)
     publishable = all(item.status != "blocked" for item in checks)
@@ -178,6 +450,7 @@ def build_measurement_quality_report(
         "data_sha256": data_sha256,
         "metrics": metrics.to_record(),
         "checks": [item.to_record() for item in checks],
+        "surface_evidence": [item.to_record() for item in surface_evidence],
         "known_limitations": limitations,
     }
     return MeasurementQualityReport(
@@ -189,5 +462,45 @@ def build_measurement_quality_report(
         report_sha256=canonical_json_sha256(report_payload),
         metrics=metrics,
         checks=tuple(checks),
+        surface_evidence=tuple(surface_evidence),
         known_limitations=tuple(limitations),
+    )
+
+
+def _surface_evidence_complete(sample: MeasurementSample, manifest: SampleEvidenceManifest) -> bool:
+    if (
+        manifest.surface != sample.context.surface
+        or manifest.evidence_level != sample.context.evidence_level
+        or not _is_sha256(manifest.request_metadata_sha256)
+    ):
+        return False
+    if sample.context.surface == CollectorSurface.API:
+        return bool(manifest.external_trace_id and manifest.provider_request_audit_id)
+    if sample.context.surface in {CollectorSurface.WEB, CollectorSurface.APP}:
+        screenshot_complete = bool(
+            manifest.external_trace_id
+            and manifest.screenshot_ref_id
+            and _is_sha256(manifest.screenshot_sha256)
+            and manifest.screenshot_immutable
+        )
+        source_panel_complete = (
+            manifest.source_panel_status == "not_present" and sample.citation_count == 0
+        ) or bool(
+            manifest.source_panel_status == "captured"
+            and manifest.source_panel_ref_id
+            and _is_sha256(manifest.source_panel_sha256)
+            and manifest.source_panel_immutable
+        )
+        app_complete = sample.context.surface != CollectorSurface.APP or bool(
+            _is_sha256(manifest.app_capture_metadata_sha256)
+        )
+        return screenshot_complete and source_panel_complete and app_complete
+    return _is_sha256(manifest.import_source_sha256)
+
+
+def _is_sha256(value: str | None) -> bool:
+    return bool(
+        value
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value.lower())
     )

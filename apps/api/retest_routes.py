@@ -23,7 +23,11 @@ from airank_domain.measurement import (
     SampleStatus,
     SURFACE_EVIDENCE_LEVEL,
 )
-from airank_score.quality import MeasurementQualityReport, build_measurement_quality_report
+from airank_score.quality import (
+    MeasurementQualityReport,
+    SampleEvidenceManifest,
+    build_measurement_quality_report,
+)
 from airank_score.retest import compare_retest_metrics
 
 try:
@@ -118,6 +122,7 @@ class RunEvidence:
     project_id: str
     samples: tuple[MeasurementSample, ...]
     signature: tuple[str, ...]
+    evidence_manifests: tuple[SampleEvidenceManifest, ...] = ()
 
 
 class RetestRepository(Protocol):
@@ -153,6 +158,7 @@ class InMemoryRetestRepository:
             run_id=run_id,
             samples=evidence.samples,
             signatures=evidence.signature,
+            evidence_manifests=evidence.evidence_manifests,
         ).to_record()
 
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
@@ -179,11 +185,13 @@ class InMemoryRetestRepository:
                 run_id=baseline_run_id,
                 samples=baseline.samples,
                 signatures=baseline.signature,
+                evidence_manifests=baseline.evidence_manifests,
             ),
             compare_quality=build_measurement_quality_report(
                 run_id=payload.compare_run_id,
                 samples=compare.samples,
                 signatures=compare.signature,
+                evidence_manifests=compare.evidence_manifests,
             ),
             baseline_signature=baseline.signature,
             compare_signature=compare.signature,
@@ -216,6 +224,7 @@ class MySQLRetestRepository:
             run_id=run_id,
             samples=evidence.samples,
             signatures=evidence.signature,
+            evidence_manifests=evidence.evidence_manifests,
         ).to_record()
 
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
@@ -248,11 +257,13 @@ class MySQLRetestRepository:
                     run_id=baseline_run_id,
                     samples=baseline.samples,
                     signatures=baseline.signature,
+                    evidence_manifests=baseline.evidence_manifests,
                 ),
                 compare_quality=build_measurement_quality_report(
                     run_id=payload.compare_run_id,
                     samples=compare.samples,
                     signatures=compare.signature,
+                    evidence_manifests=compare.evidence_manifests,
                 ),
                 baseline_signature=baseline.signature,
                 compare_signature=compare.signature,
@@ -306,12 +317,27 @@ class MySQLRetestRepository:
                    t.error_code, s.id AS sample_id, s.sample_status, s.answer_text,
                    s.answer_sha256, s.raw_response_sha256, s.mention_class,
                    s.brand_rank, s.model_name, s.model_version, s.search_enabled,
-                   s.locale, s.region,
+                   s.locale, s.region, s.external_trace_id,
+                   e.request_metadata_json, e.screenshot_ref_id,
+                   e.source_panel_ref_id,
+                   screenshot.sha256 AS screenshot_sha256,
+                   screenshot.metadata_json AS screenshot_metadata_json,
+                   source_panel.sha256 AS source_panel_sha256,
+                   source_panel.metadata_json AS source_panel_metadata_json,
+                   (SELECT a.id FROM airank_provider_request_audits a
+                    WHERE a.tenant_id=t.tenant_id AND a.answer_snapshot_id=s.id
+                    ORDER BY a.created_at ASC, a.id ASC LIMIT 1) AS provider_request_audit_id,
                    (SELECT COUNT(*) FROM airank_source_citations c
                     WHERE c.tenant_id=t.tenant_id AND c.snapshot_id=s.id) AS citation_count
             FROM airank_scan_tasks t
             LEFT JOIN airank_answer_snapshots s
               ON s.tenant_id=t.tenant_id AND s.task_id=t.id
+            LEFT JOIN airank_evidence_snapshots e
+              ON e.tenant_id=t.tenant_id AND e.answer_snapshot_id=s.id
+            LEFT JOIN airank_object_refs screenshot
+              ON screenshot.tenant_id=t.tenant_id AND screenshot.id=e.screenshot_ref_id
+            LEFT JOIN airank_object_refs source_panel
+              ON source_panel.tenant_id=t.tenant_id AND source_panel.id=e.source_panel_ref_id
             WHERE t.tenant_id=:tenant_id AND t.project_id=:project_id AND t.run_id=:run_id
             ORDER BY t.question_id, t.provider, t.cohort_type,
                      t.collector_surface, t.sample_index, t.id
@@ -320,7 +346,13 @@ class MySQLRetestRepository:
             raise _conflict("RETEST_COMPARE_RUN_REQUIRED", {"run_id": run_id, "reason": "no_samples"})
         samples = tuple(_measurement_sample(dict(row)) for row in rows)
         signature = tuple(_sample_signature(dict(row)) for row in rows)
-        return RunEvidence(project_id=project_id, samples=samples, signature=signature)
+        evidence_manifests = tuple(_sample_evidence_manifest(dict(row)) for row in rows)
+        return RunEvidence(
+            project_id=project_id,
+            samples=samples,
+            signature=signature,
+            evidence_manifests=evidence_manifests,
+        )
 
 
 def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
@@ -376,6 +408,56 @@ def _sample_signature(row: dict[str, Any]) -> str:
         row.get("locale"), row.get("region"),
     )
     return "|".join("" if value is None else str(value) for value in values)
+
+
+def _sample_evidence_manifest(row: dict[str, Any]) -> SampleEvidenceManifest:
+    surface = CollectorSurface(row["collector_surface"])
+    try:
+        evidence_level = EvidenceLevel(row["evidence_level"])
+    except ValueError:
+        evidence_level = SURFACE_EVIDENCE_LEVEL[surface]
+    request_metadata = _json_value(row.get("request_metadata_json"), {})
+    provider_request = request_metadata.get("provider_request", {}) if isinstance(request_metadata, dict) else {}
+    if not isinstance(provider_request, dict):
+        provider_request = {}
+    screenshot_metadata = _json_value(row.get("screenshot_metadata_json"), {})
+    source_panel_metadata = _json_value(row.get("source_panel_metadata_json"), {})
+    source_panel_status = provider_request.get("source_panel_status")
+    if source_panel_status not in {"captured", "not_present", "not_inspected", "not_applicable"}:
+        source_panel_status = "not_inspected" if surface in {CollectorSurface.WEB, CollectorSurface.APP} else "not_applicable"
+    app_metadata = provider_request.get("app_capture_metadata")
+    import_source_sha256 = provider_request.get("import_source_sha256")
+    return SampleEvidenceManifest(
+        sample_id=row.get("sample_id") or row["task_id"],
+        surface=surface,
+        evidence_level=evidence_level,
+        request_metadata_sha256=(
+            canonical_json_sha256(request_metadata)
+            if isinstance(request_metadata, dict) and request_metadata
+            else None
+        ),
+        external_trace_id=row.get("external_trace_id"),
+        provider_request_audit_id=row.get("provider_request_audit_id"),
+        screenshot_ref_id=row.get("screenshot_ref_id"),
+        screenshot_sha256=row.get("screenshot_sha256"),
+        screenshot_immutable=bool(
+            isinstance(screenshot_metadata, dict) and screenshot_metadata.get("immutable") is True
+        ),
+        source_panel_status=source_panel_status,
+        source_panel_ref_id=row.get("source_panel_ref_id"),
+        source_panel_sha256=row.get("source_panel_sha256"),
+        source_panel_immutable=bool(
+            isinstance(source_panel_metadata, dict) and source_panel_metadata.get("immutable") is True
+        ),
+        app_capture_metadata_sha256=(
+            canonical_json_sha256(app_metadata) if isinstance(app_metadata, dict) and app_metadata else None
+        ),
+        import_source_sha256=(
+            str(import_source_sha256)
+            if isinstance(import_source_sha256, str) and import_source_sha256
+            else None
+        ),
+    )
 
 
 def _comparison_data(

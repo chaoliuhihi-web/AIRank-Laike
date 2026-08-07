@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from airank_domain import govern_question
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
+from airank_score import QUALITY_CONTRACT_VERSION
 from airank_skills import build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
 
 try:
@@ -2084,8 +2085,27 @@ class MySQLReportRepository:
                 detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}},
             )
 
-    def _report_desc(self, row: Any) -> str:
-        if row["status"] == "quality_blocked":
+    @staticmethod
+    def _quality_publishable(metrics: Any) -> bool:
+        return (
+            isinstance(metrics, dict)
+            and metrics.get("report_status") == "generated"
+            and isinstance(metrics.get("baseline_quality"), dict)
+            and metrics["baseline_quality"].get("contract_version") == QUALITY_CONTRACT_VERSION
+            and metrics["baseline_quality"].get("publishable") is True
+            and isinstance(metrics.get("compare_quality"), dict)
+            and metrics["compare_quality"].get("contract_version") == QUALITY_CONTRACT_VERSION
+            and metrics["compare_quality"].get("publishable") is True
+        )
+
+    def _effective_status(self, row: Any) -> str:
+        if row["status"] != "generated":
+            return row["status"]
+        metrics = parse_json_value(row["metrics_json"], {})
+        return "generated" if self._quality_publishable(metrics) else "quality_blocked"
+
+    def _report_desc(self, row: Any, effective_status: str) -> str:
+        if effective_status == "quality_blocked":
             return "复测报告未通过数据质量门禁；只能查看限制项，不可作为客户交付物下载。"
         metrics = parse_json_value(row["metrics_json"], {})
         if isinstance(metrics, dict):
@@ -2114,16 +2134,17 @@ class MySQLReportRepository:
         return ReportListData(
             project_id=project_id,
             tenant_id=tenant_id,
-            reports=[
-                ReportItem(
-                    report_id=row["id"],
-                    title=row["title"],
-                    desc=self._report_desc(row),
-                    date=coerce_datetime(row["generated_at"] or row["created_at"]).date().isoformat(),
-                    status=row["status"],
-                )
-                for row in rows
-            ],
+            reports=[self._report_item(row) for row in rows],
+        )
+
+    def _report_item(self, row: Any) -> ReportItem:
+        effective_status = self._effective_status(row)
+        return ReportItem(
+            report_id=row["id"],
+            title=row["title"],
+            desc=self._report_desc(row, effective_status),
+            date=coerce_datetime(row["generated_at"] or row["created_at"]).date().isoformat(),
+            status=effective_status,
         )
 
     def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
@@ -2148,14 +2169,7 @@ class MySQLReportRepository:
                     detail={"code": "REPORT_NOT_FOUND", "details": {"report_id": report_id}},
                 )
             metrics = parse_json_value(row["metrics_json"], {})
-            quality_publishable = (
-                isinstance(metrics, dict)
-                and metrics.get("report_status") == "generated"
-                and isinstance(metrics.get("baseline_quality"), dict)
-                and metrics["baseline_quality"].get("publishable") is True
-                and isinstance(metrics.get("compare_quality"), dict)
-                and metrics["compare_quality"].get("publishable") is True
-            )
+            quality_publishable = self._quality_publishable(metrics)
             if row["status"] != "generated" or not quality_publishable:
                 raise StarletteHTTPException(
                     status_code=409,
@@ -2723,6 +2737,32 @@ def persist_provider_screenshot(
     )
 
 
+def persist_provider_source_panel(
+    tenant_id: str,
+    project_id: str,
+    result: ProviderScanResult,
+    *,
+    object_storage: Any | None = None,
+) -> StoredObject | None:
+    if result.raw_metadata.get("source_panel_status") != "captured":
+        return None
+    screenshot_path = str(result.raw_metadata.get("source_panel_screenshot_path") or "")
+    screenshot_sha256 = str(result.raw_metadata.get("source_panel_screenshot_sha256") or "")
+    if not screenshot_path or not screenshot_sha256:
+        raise ObjectStorageError("captured source panel must include both screenshot path and SHA-256")
+    storage = object_storage or build_object_storage_from_env()
+    object_partition = sha256_text(f"{tenant_id}:{project_id}")[:24]
+    return storage.put_file(
+        screenshot_path,
+        key=(
+            f"evidence/{object_partition}/provider-source-panel/"
+            f"{screenshot_sha256[:2]}/{screenshot_sha256}.png"
+        ),
+        content_type="image/png",
+        expected_sha256=screenshot_sha256,
+    )
+
+
 def complete_mysql_real_brand_scan(
     tenant_id: str,
     project: ProjectData,
@@ -2852,6 +2892,7 @@ def complete_mysql_real_brand_scan(
         successes.append(({**row, "started_at": task_started_at}, result))
 
     durable_screenshots: dict[str, StoredObject] = {}
+    durable_source_panels: dict[str, StoredObject] = {}
     persisted_successes: list[tuple[dict[str, Any], ProviderScanResult]] = []
     object_storage = None
     for row, result in successes:
@@ -2873,14 +2914,32 @@ def complete_mysql_real_brand_scan(
             )
             assert stored is not None
             durable_screenshots[str(row["id"])] = stored
+            source_panel = persist_provider_source_panel(
+                tenant_id,
+                project.project_id,
+                result,
+                object_storage=object_storage,
+            )
+            if source_panel is not None:
+                durable_source_panels[str(row["id"])] = source_panel
             result.raw_metadata.update(
                 {
                     "screenshot_object_key": stored.key,
                     "screenshot_object_uri": stored.uri,
                     "screenshot_storage_driver": stored.driver,
+                    **(
+                        {
+                            "source_panel_object_key": source_panel.key,
+                            "source_panel_object_uri": source_panel.uri,
+                            "source_panel_storage_driver": source_panel.driver,
+                        }
+                        if source_panel is not None
+                        else {}
+                    ),
                 }
             )
             result.raw_metadata.pop("screenshot_path", None)
+            result.raw_metadata.pop("source_panel_screenshot_path", None)
             persisted_successes.append((row, result))
         except ObjectStorageError as exc:
             failures.append(
@@ -2940,6 +2999,7 @@ def complete_mysql_real_brand_scan(
             raw_response_json = json.dumps(raw_response, ensure_ascii=False, sort_keys=True, default=str)
             raw_response_sha256 = sha256_text(raw_response_json)
             screenshot_ref_id = None
+            source_panel_ref_id = None
             durable_screenshot = durable_screenshots.get(str(row["id"]))
             if durable_screenshot is not None:
                 screenshot_ref_id = f"object_{uuid4().hex[:12]}"
@@ -2978,6 +3038,45 @@ def complete_mysql_real_brand_scan(
                         "created_at": finished_at,
                     },
                 )
+            durable_source_panel = durable_source_panels.get(str(row["id"]))
+            if durable_source_panel is not None:
+                source_panel_ref_id = f"object_{uuid4().hex[:12]}"
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_object_refs (
+                          id, tenant_id, project_id, object_type, object_uri,
+                          content_type, byte_size, sha256, metadata_json, created_at
+                        )
+                        VALUES (
+                          :id, :tenant_id, :project_id, :object_type, :object_uri,
+                          :content_type, :byte_size, :sha256, :metadata_json, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": source_panel_ref_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "object_type": "provider_source_panel_screenshot",
+                        "object_uri": durable_source_panel.uri,
+                        "content_type": durable_source_panel.content_type,
+                        "byte_size": durable_source_panel.byte_size,
+                        "sha256": durable_source_panel.sha256,
+                        "metadata_json": json.dumps(
+                            {
+                                "provider": result.provider,
+                                "session_id": row["session_id"],
+                                "immutable": True,
+                                "capture_mode": result.raw_metadata.get("source_panel_capture_mode"),
+                                "object_key": durable_source_panel.key,
+                                "storage_driver": durable_source_panel.driver,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "created_at": finished_at,
+                    },
+                )
             conn.execute(
                 text(
                     """
@@ -2989,7 +3088,7 @@ def complete_mysql_real_brand_scan(
                       brand_mentioned, brand_rank, mention_class, target_entity_mentions_json,
                       model_name, search_enabled,
                       competitor_mentions_json, sentiment, confidence,
-                      raw_response_ref_id, screenshot_ref_id, request_metadata_ref_id,
+                      raw_response_ref_id, screenshot_ref_id, source_panel_ref_id, request_metadata_ref_id,
                       external_trace_id, created_at
                     )
                     VALUES (
@@ -3000,7 +3099,7 @@ def complete_mysql_real_brand_scan(
                       :brand_mentioned, :brand_rank, :mention_class, :target_entity_mentions_json,
                       :model_name, :search_enabled,
                       :competitor_mentions_json, :sentiment, :confidence,
-                      :raw_response_ref_id, :screenshot_ref_id, :request_metadata_ref_id,
+                      :raw_response_ref_id, :screenshot_ref_id, :source_panel_ref_id, :request_metadata_ref_id,
                       :external_trace_id, :created_at
                     )
                     """
@@ -3034,6 +3133,7 @@ def complete_mysql_real_brand_scan(
                     "confidence": result.confidence,
                     "raw_response_ref_id": evidence_snapshot_id,
                     "screenshot_ref_id": screenshot_ref_id,
+                    "source_panel_ref_id": source_panel_ref_id,
                     "request_metadata_ref_id": evidence_snapshot_id,
                     "external_trace_id": result.external_trace_id,
                     "created_at": finished_at,
@@ -3062,7 +3162,7 @@ def complete_mysql_real_brand_scan(
                     "raw_response_json": raw_response_json,
                     "raw_response_sha256": raw_response_sha256,
                     "screenshot_ref_id": screenshot_ref_id,
-                    "source_panel_ref_id": None,
+                    "source_panel_ref_id": source_panel_ref_id,
                     "request_metadata_json": json.dumps(
                         {
                             "task_request": parse_json_value(row.get("request_json"), {}),

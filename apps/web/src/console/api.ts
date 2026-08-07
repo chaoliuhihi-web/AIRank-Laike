@@ -239,6 +239,35 @@ export type AnswerSampleCollection = {
   citationSampleCount: number;
 };
 
+export type MeasurementQualityReport = {
+  contract_version: "airank.measurement-quality.v2";
+  run_id: string;
+  status: "pass" | "blocked";
+  publishable: boolean;
+  data_sha256: string;
+  report_sha256: string;
+  metrics: Record<string, unknown>;
+  checks: Array<{
+    code: string;
+    status: "pass" | "blocked" | "warning";
+    actual: unknown;
+    expected: string;
+    detail: string;
+  }>;
+  surface_evidence: Array<{
+    surface: "api" | "web" | "app" | "manual_import";
+    evidence_level: "provider_api" | "consumer_web" | "consumer_app" | "manual_import";
+    sample_count: number;
+    valid_sample_count: number;
+    evidence_complete_count: number;
+    screenshot_count: number;
+    source_panel_captured_count: number;
+    source_panel_not_present_count: number;
+    blocker_count: number;
+  }>;
+  known_limitations: string[];
+};
+
 export type GovernedContentAsset = {
   asset_id: string;
   tenant_id: string;
@@ -994,6 +1023,18 @@ export async function fetchAnswerSamples(
 
 export function fetchAnswerSample(snapshotId: string, signal?: AbortSignal): Promise<AnswerSampleDetail> {
   return fetchData(`/api/v1/samples/${snapshotId}`, "trc_web_sample", signal);
+}
+
+export function fetchMeasurementQuality(
+  projectId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<MeasurementQualityReport> {
+  return fetchData(
+    `/api/v1/projects/${projectId}/scan-runs/${runId}/quality-report`,
+    "trc_web_measurement_quality",
+    signal,
+  );
 }
 
 export async function fetchEvidenceObject(objectRefId: string, signal?: AbortSignal): Promise<Blob> {

@@ -134,7 +134,7 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
                 VALUES (
                   'report_real', 'tenant_report', 'project_report',
                   'diagnostic', 'AI 来客诊断报告', 'generated',
-                  '{"summary": "真实报告摘要", "report_status": "generated", "baseline_quality": {"publishable": true}, "compare_quality": {"publishable": true}}',
+                  '{"summary": "真实报告摘要", "report_status": "generated", "baseline_quality": {"contract_version": "airank.measurement-quality.v2", "publishable": true}, "compare_quality": {"contract_version": "airank.measurement-quality.v2", "publishable": true}}',
                   '2026-05-17 12:00:00', '2026-05-17 11:00:00'
                 )
                 """
@@ -200,9 +200,32 @@ def test_mysql_report_receipt_rejects_quality_blocked_or_legacy_report() -> None
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_reports (
+                  id, tenant_id, project_id, report_type, title, status,
+                  metrics_json, generated_at, created_at
+                ) VALUES (
+                  'report_legacy', 'tenant_report', 'project_report', 'retest',
+                  '旧版质量报告', 'generated',
+                  '{"report_status": "generated", "baseline_quality": {"publishable": true}, "compare_quality": {"publishable": true}}',
+                  '2026-08-08 12:01:00', '2026-08-08 12:01:00'
+                )
+                """
+            )
+        )
 
     with pytest.raises(Exception) as exc_info:
         repository.record_download_receipt("tenant_report", "report_blocked", "trc_report_blocked")
 
     assert getattr(exc_info.value, "status_code") == 409
     assert exc_info.value.detail["code"] == "REPORT_QUALITY_BLOCKED"
+    report_list = repository.list_reports("tenant_report", "project_report")
+    legacy = next(item for item in report_list.reports if item.report_id == "report_legacy")
+    assert legacy.status == "quality_blocked"
+    assert "不可作为客户交付物" in legacy.desc
+    with pytest.raises(Exception) as legacy_exc_info:
+        repository.record_download_receipt("tenant_report", "report_legacy", "trc_report_legacy")
+    assert getattr(legacy_exc_info.value, "status_code") == 409
+    assert legacy_exc_info.value.detail["code"] == "REPORT_QUALITY_BLOCKED"

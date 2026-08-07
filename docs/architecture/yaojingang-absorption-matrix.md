@@ -52,7 +52,7 @@
 | geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot 与内容寻址 screenshot 已落库；读取时复验 SHA-256/大小，真实 MinIO write/read/delete 已通过 | 批量完整性巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 单对象篡改会返回完整性错误；仍需全库巡检与派生表重建 |
 | geo-citation-lab | 来源类型与权威度治理 | 支撑来源结构、缺口和人工复核 | `data/reference/source_types.csv` | 域名 → 类型/状态/置信度/证据 | 参考表和人工审核 | CC-BY-4.0 | citation 有 source_type | 无分类方法、置信度和治理状态 | absorb | Source Registry | P1 | planned | 精确映射优先；未知来源保持 unclassified，不猜测 |
 | geo-citation-lab | 214,119 条 CN-GEO 引用数据 | 提供平台差异和引用分析基准 | `03-cn-geo-citation-dataset/data` | 原始引用 → 标准表/质量报告 | 数据版本 2.0.1 | CC-BY-4.0/上游条款 | 无公开 benchmark | 缺回归数据 | reference_only | Eval datasets | P1 | planned | 只用于引用/终端/来源评测；禁止计算推荐率、趋势和情感 |
-| geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | 已有 `airank.measurement-quality.v1` 可重算报告，检查样本/签名数量、重复、状态分区、有效率、回答/原始响应 hash 与提及分类；阻断报告不可下载 | Web/App 截图完整性、全库派生表重建和多格式交付物视觉门禁仍缺 | adapt | Evidence data gate | P1 | partial | 质量报告具备 data/report SHA-256 与 known limitations；任一阻断检查或复测口径不一致时 `publishable=false`、报告状态 `quality_blocked` |
+| geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | `airank.measurement-quality.v2` 对每个样本加载独立 Evidence Manifest，执行 21 项检查；除分母、hash 和分类外，还强制 API 请求审计、Web/App 不可变截图、来源面板检查状态、App 环境元数据和人工导入来源 hash；阻断报告不可下载 | App 采集器、全库派生表重建和多格式交付物视觉门禁仍缺 | adapt | Evidence data gate | P1 | partial | 质量报告具备 data/report SHA-256、分采集面完整性汇总与 known limitations；终端证据缺失或复测口径不一致时 `publishable=false`、报告状态 `quality_blocked` |
 
 ## GEOFlow：知识、审校、发布与恢复
 
@@ -142,7 +142,7 @@
 - `20260808_0006`—`0010` 已在真实 MySQL 执行，Alembic head 为 `20260808_0010`；47 张 AIRank 表完成核验。`0010` 新增不可变问题观察批次与记录，并针对 MySQL 保留字导致的半迁移验证了安全重跑。
 - 买家问题现在使用 `airank-question-taxonomy-v1.2.0`，分别记录问题类型、意图、买家阶段、风格、时效、场景、来源、输入 hash、去重 hash、稳定问题版本和 provenance records；未确认问题以及与 ScanRun Cohort 不一致的问题不会被编译成采样任务。
 - `research.intent-miner` 已吸收 M0/M1 边界：无数据时只生成假设候选；客户授权数据进入 `user_provided_snapshot` 批次并明确“未独立核验”。来源内出现次数只保存为 occurrence count，不作为搜索量；疑似邮箱、手机号或身份证的原文只计算内容 hash 和阻断原因，不进入数据库、API 响应或问题版本。
-- `airank.measurement-quality.v1` 将复测报告的“已生成”与“可交付”分开：每个 ScanRun 都能重算内容寻址质量报告，未提及仍计入有效分母；样本为空/重复、签名错位、有效率低、回答或原始响应 hash 缺失会阻断。基线与复测任一质量失败或口径不可比时，报告只保存为 `quality_blocked` 且下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。
+- `airank.measurement-quality.v2` 将复测报告的“已生成”与“可交付”分开：每个 ScanRun 都能重算内容寻址质量报告，未提及仍计入有效分母；除样本、签名、有效率、回答/原始响应 hash 外，API/Web/App/manual_import 分别执行证据门禁。Web/App 的 `source_panel_status` 必须为 `captured` 或 `not_present`；有引用时还必须绑定不可变来源面板对象。基线与复测任一质量失败或口径不可比时，报告只保存为 `quality_blocked` 且下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。
 - 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
 - 千问、豆包、Kimi、DeepSeek（当前可用型号为 `deepseek-v3.2`）均已通过本仓 Provider Gateway 真实 L3 调用并返回真实 request ID；凭证只从本机私密环境映射到进程。Kimi 已暴露过的验收密钥必须在生产前轮换，DeepSeek 新型号额度和旧型号下架迁移仍是上线门禁。
 - 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。

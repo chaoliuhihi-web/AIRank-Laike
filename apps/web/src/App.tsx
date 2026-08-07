@@ -80,6 +80,7 @@ import {
   fetchInternalSkills,
   fetchKnowledgeGovernance,
   fetchKnowledgeSources,
+  fetchMeasurementQuality,
   fetchProviderReadiness,
   fetchPublishAttempts,
   fetchPublishPackages,
@@ -118,6 +119,7 @@ import {
   type KnowledgeGovernance,
   type KnowledgeSearch,
   type KnowledgeSource,
+  type MeasurementQualityReport,
   type ProviderReadiness,
   type QuestionMapResult,
   type QuestionObservationBatch,
@@ -188,6 +190,18 @@ const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOve
 const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
 const assetCardIcons: LucideIcon[] = [FileText, Box, UsersRound, MessageCircle, Scale, Lightbulb, Code2, Workflow];
 const reportCardIcons: LucideIcon[] = [CalendarDays, NotebookTabs, Crown, FileChartColumn];
+const qualityLimitationLabels: Record<string, string> = {
+  valid_samples_have_no_provider_citations: "有效样本没有 Provider 原生引用",
+  citation_support_not_evaluated: "引用支持度尚未评测",
+  fact_accuracy_not_evaluated: "事实准确率尚未评测",
+  repeat_stability_unavailable: "重复采样稳定性不可用",
+};
+const sourcePanelStatusLabels: Record<string, string> = {
+  captured: "已捕获并存证",
+  not_present: "界面未呈现（已检查）",
+  not_inspected: "未检查",
+  not_applicable: "不适用",
+};
 const publishingSteps: [string, string][] = [
   ["事实核验", "只使用已审核且未过期的事实"],
   ["内容风险审核", "记录风险结果和人工 override"],
@@ -1560,6 +1574,8 @@ function EvidencePage() {
     limit: 200,
   });
   const [selected, setSelected] = useState<AnswerSampleDetail | null>(null);
+  const [quality, setQuality] = useState<MeasurementQualityReport | null>(null);
+  const [qualityError, setQualityError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
@@ -1614,6 +1630,26 @@ function EvidencePage() {
   }, [project.id, selectedRunId]);
 
   useEffect(() => {
+    if (!project.id || !selectedRunId) {
+      setQuality(null);
+      setQualityError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchMeasurementQuality(project.id, selectedRunId, controller.signal)
+      .then((report) => {
+        setQuality(report);
+        setQualityError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setQuality(null);
+        setQualityError(error instanceof Error ? error.message : "质量报告接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id, selectedRunId]);
+
+  useEffect(() => {
     const controller = new AbortController();
     const createdUrls: string[] = [];
     let disposed = false;
@@ -1654,6 +1690,13 @@ function EvidencePage() {
       setLoadingDetail(null);
     }
   };
+  const selectedProviderRequest = selected?.request_metadata.provider_request;
+  const selectedSourcePanelStatus = selectedProviderRequest
+    && typeof selectedProviderRequest === "object"
+    && "source_panel_status" in selectedProviderRequest
+    && typeof selectedProviderRequest.source_panel_status === "string"
+      ? selectedProviderRequest.source_panel_status
+      : null;
 
   return (
     <>
@@ -1662,6 +1705,37 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
+      {quality && (
+        <Panel title={`测量质量门禁 · ${quality.publishable ? "可交付" : "已阻断"}`}>
+          <DataStateCard
+            title={quality.publishable ? "样本证据通过质量门禁" : "样本证据不可作为客户报告交付"}
+            desc={quality.publishable
+              ? `报告 ${quality.report_sha256.slice(0, 12)}… 可按当前契约重算；API、Web、App 与人工导入仍按各自证据等级统计。`
+              : quality.checks.filter((check) => check.status === "blocked").map((check) => check.detail).join("；")}
+            tone={quality.publishable ? "success" : "danger"}
+          />
+          <div className="airank-console-card table-card evidence-table-wrap">
+            <table className="question-table evidence-table">
+              <thead><tr><th>采集面 / 等级</th><th>样本</th><th>有效</th><th>证据完整</th><th>截图</th><th>来源面板</th><th>阻断</th></tr></thead>
+              <tbody>
+                {quality.surface_evidence.map((surface) => (
+                  <tr key={surface.surface}>
+                    <td><strong>{surface.surface}</strong><small>{surface.evidence_level}</small></td>
+                    <td>{surface.sample_count}</td>
+                    <td>{surface.valid_sample_count}</td>
+                    <td>{surface.evidence_complete_count}</td>
+                    <td>{surface.screenshot_count}</td>
+                    <td>{surface.source_panel_captured_count} 已捕获<small>{surface.source_panel_not_present_count} 明确无面板</small></td>
+                    <td><Badge tone={surface.blocker_count === 0 ? "success" : "danger"}>{surface.blocker_count}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {quality.known_limitations.length > 0 && <p className="rail-caption">已知限制：{quality.known_limitations.map((item) => qualityLimitationLabels[item] ?? item).join(" · ")}</p>}
+        </Panel>
+      )}
+      {qualityError && <DataStateCard title="当前批次尚无可重算质量报告" desc={qualityError} tone="warning" />}
       <section className="summary-band evidence-summary">
         <SummaryMetric label="样本总数" value={String(sampleSummary.total)} tone="primary" />
         <SummaryMetric label="有效样本" value={String(sampleSummary.validCount)} tone="success" />
@@ -1718,6 +1792,7 @@ function EvidencePage() {
               <div><dt>联网状态</dt><dd>{selected.search_enabled === null ? "未记录" : selected.search_enabled ? "已联网" : "未联网"}</dd></div>
               <div><dt>外部请求 ID</dt><dd>{selected.external_trace_id || "未返回"}</dd></div>
               <div><dt>截图对象</dt><dd>{selected.screenshot.object_ref_id || "未采集"}</dd></div>
+              <div><dt>来源面板状态</dt><dd>{selectedSourcePanelStatus ? sourcePanelStatusLabels[selectedSourcePanelStatus] ?? selectedSourcePanelStatus : "未记录"}</dd></div>
               <div><dt>来源面板对象</dt><dd>{selected.source_panel.object_ref_id || "未采集"}</dd></div>
             </dl>
             {objectPreviewError && <DataStateCard title="证据对象读取失败" desc={objectPreviewError} tone="danger" />}

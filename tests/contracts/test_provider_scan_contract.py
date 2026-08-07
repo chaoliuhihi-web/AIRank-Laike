@@ -225,6 +225,7 @@ def test_valid_no_mention_answer_is_not_rejected(monkeypatch: pytest.MonkeyPatch
     assert result.brand_mentioned is False
     assert result.mention_class == "not_mentioned"
     assert result.brand_rank is None
+    assert result.raw_metadata["source_panel_status"] == "not_inspected"
 
 
 def test_strip_prompt_echo_removes_user_prompt_before_parsing_answer() -> None:
