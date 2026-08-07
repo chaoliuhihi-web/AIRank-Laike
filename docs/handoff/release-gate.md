@@ -503,3 +503,30 @@ Blocking conditions:
 Decision:
 
 - M1 observed-query provenance is operable and evidence-backed. AIRank remains `NO-GO` for commercial launch until connector/calibration and broader production gates pass.
+
+## 2026-08-08 Measurement Data Quality Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this measurement-quality commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Added content-addressed `airank.measurement-quality.v1` reports with 9 blocking checks across sample/signature cardinality, duplicate sample IDs/contracts, status partition, valid samples/rate, answer hash, raw-response hash and explicit mention classification.
+- Normal valid-but-not-mentioned answers remain in the valid denominator. Missing citations, citation-support review, fact-accuracy review and repeat stability are explicit known limitations rather than invented values.
+- Retest reports are `generated` only when both run-quality reports are publishable and the baseline/compare sample contracts are comparable. Otherwise they persist as `quality_blocked` and the observation window remains `completed_with_limitations`.
+- Report downloads fail closed with `409 REPORT_QUALITY_BLOCKED` for quality-blocked and legacy reports without the signed quality manifest. No audit receipt is written for a rejected download.
+- Full local regression passed `229 passed, 13 skipped`; real MySQL integration passed `11 passed, 2 skipped`; core Skill evaluation remained `24/24` with all 8 Skills retained as `partial`.
+- Real MySQL proved a 12-task run with only 1 valid sample is non-publishable and reports the low valid rate plus missing raw failure snapshots. Browser QA showed the quality-blocked report, truthful limitation copy and disabled download at a 390px effective viewport with no page overflow and `0 error / 0 warning`; a direct real API call returned the expected 409.
+
+Blocking conditions:
+
+- Consumer Web/App screenshot and source-panel integrity are not yet inputs to this run-quality contract; API quality passing must not be presented as consumer-surface proof.
+- Full warehouse rebuild checks, derivation lineage, and HTML/PDF/DOCX visual/accessibility gates are not implemented.
+- Production runtime, Yudao, HTTPS object storage, consumer browser Provider sessions and remote-main blockers from the prior release gate remain unchanged.
+
+Decision:
+
+- AIRank can now distinguish a stored report from a publishable customer report. Commercial launch remains `NO-GO` until the broader evidence and production gates pass.

@@ -45,6 +45,7 @@ from apps.api.knowledge_routes import (
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
+from apps.api.retest_routes import MySQLRetestRepository
 from apps.api.question_routes import (
     MySQLQuestionGovernanceRepository,
     QuestionMapCompileRequest,
@@ -771,6 +772,50 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         assert detail.citations[0].url == "https://evidence.example.com/source"
         assert detail.raw_response["id"] == "provider_request_it"
         assert detail.screenshot.object_ref_id is None
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_scan_tasks
+                    SET status='failed', error_code='provider_not_executed'
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_scan_tasks
+                    SET status='completed', error_code=NULL
+                    WHERE tenant_id=:tenant_id AND id=:task_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "task_id": tasks[0].task_id},
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_scan_runs
+                    SET status='completed'
+                    WHERE tenant_id=:tenant_id AND id=:run_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            )
+        quality = MySQLRetestRepository(database_url()).get_quality_report(
+            tenant_id,
+            project.project_id,
+            run.run_id,
+        )
+        assert quality["publishable"] is False
+        assert quality["metrics"]["total_sample_count"] == 12
+        assert quality["metrics"]["valid_sample_count"] == 1
+        assert {item["code"] for item in quality["checks"] if item["status"] == "blocked"} >= {
+            "valid_sample_rate",
+            "raw_response_hashes_present",
+        }
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -801,8 +846,13 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                     )
                     VALUES (
                       'report_real_exec', :tenant_id, :project_id, 'executive',
-                      'AIRank 真实诊断报告', 'ready',
-                      JSON_OBJECT('summary', '真实 MySQL 报告列表验证'),
+                      'AIRank 真实诊断报告', 'generated',
+                      JSON_OBJECT(
+                        'summary', '真实 MySQL 报告列表验证',
+                        'report_status', 'generated',
+                        'baseline_quality', JSON_OBJECT('publishable', TRUE),
+                        'compare_quality', JSON_OBJECT('publishable', TRUE)
+                      ),
                       CURRENT_TIMESTAMP(3)
                     )
                     """
@@ -816,6 +866,28 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
 
         receipt = report_repo.record_download_receipt(tenant_id, "report_real_exec", "trc_real_report")
         assert receipt.status == "recorded"
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_reports (
+                      id, tenant_id, project_id, report_type, title, status,
+                      metrics_json, generated_at
+                    ) VALUES (
+                      'report_real_blocked', :tenant_id, :project_id, 'retest',
+                      'AIRank 质量阻断报告', 'quality_blocked',
+                      JSON_OBJECT('report_status', 'quality_blocked'),
+                      CURRENT_TIMESTAMP(3)
+                    )
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id},
+            )
+        with pytest.raises(StarletteHTTPException) as blocked_download:
+            report_repo.record_download_receipt(tenant_id, "report_real_blocked", "trc_real_blocked")
+        assert blocked_download.value.status_code == 409
+        assert blocked_download.value.detail["code"] == "REPORT_QUALITY_BLOCKED"
 
         with engine.connect() as conn:
             audit = conn.execute(

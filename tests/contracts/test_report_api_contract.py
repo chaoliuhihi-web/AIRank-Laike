@@ -134,7 +134,7 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
                 VALUES (
                   'report_real', 'tenant_report', 'project_report',
                   'diagnostic', 'AI 来客诊断报告', 'generated',
-                  '{"summary": "真实报告摘要"}',
+                  '{"summary": "真实报告摘要", "report_status": "generated", "baseline_quality": {"publishable": true}, "compare_quality": {"publishable": true}}',
                   '2026-05-17 12:00:00', '2026-05-17 11:00:00'
                 )
                 """
@@ -179,3 +179,30 @@ def test_mysql_report_receipt_rejects_missing_report() -> None:
 
     assert getattr(exc_info.value, "status_code") == 404
     assert exc_info.value.detail["code"] == "REPORT_NOT_FOUND"
+
+
+def test_mysql_report_receipt_rejects_quality_blocked_or_legacy_report() -> None:
+    repository = MySQLReportRepository("sqlite+pysqlite:///:memory:")
+    create_report_repository_tables(repository)
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_reports (
+                  id, tenant_id, project_id, report_type, title, status,
+                  metrics_json, generated_at, created_at
+                ) VALUES (
+                  'report_blocked', 'tenant_report', 'project_report', 'retest',
+                  '质量阻断报告', 'quality_blocked',
+                  '{"report_status": "quality_blocked"}',
+                  '2026-08-08 12:00:00', '2026-08-08 12:00:00'
+                )
+                """
+            )
+        )
+
+    with pytest.raises(Exception) as exc_info:
+        repository.record_download_receipt("tenant_report", "report_blocked", "trc_report_blocked")
+
+    assert getattr(exc_info.value, "status_code") == 409
+    assert exc_info.value.detail["code"] == "REPORT_QUALITY_BLOCKED"

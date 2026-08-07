@@ -114,6 +114,8 @@ M1 问题治理通过同一套 repository 契约支持测试内存实现与生�
 
 scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`canceled`。scan task 状态只允许 `queued`、`running`、`completed`、`failed`、`skipped`。
 
+每个已完成 ScanRun 可通过 `GET /api/v1/projects/{project_id}/scan-runs/{run_id}/quality-report` 重算 `airank.measurement-quality.v1`。响应使用 `measurement_quality_report_response.schema.json`，逐项检查样本/签名数量、样本 ID、采样位重复、状态分区、有效样本、有效率、回答 hash、原始响应 hash 和提及分类；未提及必须保留在有效分母。任一阻断检查失败时 `publishable=false`，报告只能保存为 `quality_blocked`，下载接口返回 `409 REPORT_QUALITY_BLOCKED`。
+
 ## M3 事实审核契约
 
 可信事实卡审核接口：

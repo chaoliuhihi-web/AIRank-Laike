@@ -23,7 +23,7 @@ from airank_domain.measurement import (
     SampleStatus,
     SURFACE_EVIDENCE_LEVEL,
 )
-from airank_score.measurement import CohortMetrics, calculate_cohort_metrics
+from airank_score.quality import MeasurementQualityReport, build_measurement_quality_report
 from airank_score.retest import compare_retest_metrics
 
 try:
@@ -93,6 +93,10 @@ class RetestComparisonData(BaseModel):
     metric_deltas: dict[str, Optional[float]]
     conclusion: str
     attribution_policy: Literal["observational_non_causal.v1"]
+    report_status: Literal["generated", "quality_blocked"]
+    baseline_quality: dict[str, Any]
+    compare_quality: dict[str, Any]
+    known_limitations: list[str]
     report_sha256: str
     evidence_refs: list[str]
     completed_at: datetime
@@ -101,6 +105,11 @@ class RetestComparisonData(BaseModel):
 
 class RetestComparisonResponse(BaseModel):
     data: RetestComparisonData
+    meta: dict[str, str]
+
+
+class MeasurementQualityReportResponse(BaseModel):
+    data: dict[str, Any]
     meta: dict[str, str]
 
 
@@ -113,6 +122,7 @@ class RunEvidence:
 
 class RetestRepository(Protocol):
     def list_windows(self, tenant_id: str, project_id: str) -> list[RetestWindowData]: ...
+    def get_quality_report(self, tenant_id: str, project_id: str, run_id: str) -> dict[str, Any]: ...
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData: ...
 
 
@@ -135,6 +145,16 @@ class InMemoryRetestRepository:
             if item_tenant == tenant_id and value["project_id"] == project_id
         ]
 
+    def get_quality_report(self, tenant_id: str, project_id: str, run_id: str) -> dict[str, Any]:
+        evidence = self.runs.get((tenant_id, run_id))
+        if evidence is None or evidence.project_id != project_id:
+            raise _not_found("SCAN_RUN_NOT_FOUND", {"project_id": project_id, "run_id": run_id})
+        return build_measurement_quality_report(
+            run_id=run_id,
+            samples=evidence.samples,
+            signatures=evidence.signature,
+        ).to_record()
+
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
         replay = self.results.get((tenant_id, window_id))
         if replay is not None:
@@ -155,8 +175,16 @@ class InMemoryRetestRepository:
             window=window,
             baseline_run_id=baseline_run_id,
             compare_run_id=payload.compare_run_id,
-            baseline_metrics=calculate_cohort_metrics(baseline.samples),
-            compare_metrics=calculate_cohort_metrics(compare.samples),
+            baseline_quality=build_measurement_quality_report(
+                run_id=baseline_run_id,
+                samples=baseline.samples,
+                signatures=baseline.signature,
+            ),
+            compare_quality=build_measurement_quality_report(
+                run_id=payload.compare_run_id,
+                samples=compare.samples,
+                signatures=compare.signature,
+            ),
             baseline_signature=baseline.signature,
             compare_signature=compare.signature,
         )
@@ -180,6 +208,15 @@ class MySQLRetestRepository:
                 ORDER BY due_at ASC, id ASC
             """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
         return [RetestWindowData.model_validate(dict(row)) for row in rows]
+
+    def get_quality_report(self, tenant_id: str, project_id: str, run_id: str) -> dict[str, Any]:
+        with self.engine.begin() as conn:
+            evidence = self._load_run(conn, tenant_id, project_id, run_id)
+        return build_measurement_quality_report(
+            run_id=run_id,
+            samples=evidence.samples,
+            signatures=evidence.signature,
+        ).to_record()
 
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
         completed_at = utc_now()
@@ -207,13 +244,21 @@ class MySQLRetestRepository:
                 window=dict(window),
                 baseline_run_id=baseline_run_id,
                 compare_run_id=payload.compare_run_id,
-                baseline_metrics=calculate_cohort_metrics(baseline.samples),
-                compare_metrics=calculate_cohort_metrics(compare.samples),
+                baseline_quality=build_measurement_quality_report(
+                    run_id=baseline_run_id,
+                    samples=baseline.samples,
+                    signatures=baseline.signature,
+                ),
+                compare_quality=build_measurement_quality_report(
+                    run_id=payload.compare_run_id,
+                    samples=compare.samples,
+                    signatures=compare.signature,
+                ),
                 baseline_signature=baseline.signature,
                 compare_signature=compare.signature,
                 completed_at=completed_at,
             )
-            status = "completed" if result.comparable else "completed_with_limitations"
+            status = "completed" if result.report_status == "generated" else "completed_with_limitations"
             result_json = result.model_dump(mode="json")
             conn.execute(text("""
                 UPDATE airank_retest_observation_windows
@@ -239,11 +284,11 @@ class MySQLRetestRepository:
                   run_id, retest_run_id, metrics_json, report_sha256,
                   evidence_index_json, generated_by, generated_at, created_at, updated_at
                 ) VALUES (
-                  :id, :tenant_id, :project_id, 'retest', :title, 'generated',
+                  :id, :tenant_id, :project_id, 'retest', :title, :report_status,
                   :compare_run_id, :retest_run_id, :metrics_json, :report_sha256,
                   :evidence_index_json, :generated_by, :generated_at, :generated_at, :generated_at
                 )
-            """), {"id": result.report_id, "tenant_id": tenant_id, "project_id": window["project_id"], "title": f"{window['window_label']} GEO 复测观察报告", "compare_run_id": payload.compare_run_id, "retest_run_id": result.retest_run_id, "metrics_json": json.dumps(result_json, ensure_ascii=False), "report_sha256": result.report_sha256, "evidence_index_json": json.dumps(evidence_index, ensure_ascii=False), "generated_by": payload.completed_by, "generated_at": completed_at})
+            """), {"id": result.report_id, "tenant_id": tenant_id, "project_id": window["project_id"], "title": f"{window['window_label']} GEO 复测观察报告", "report_status": result.report_status, "compare_run_id": payload.compare_run_id, "retest_run_id": result.retest_run_id, "metrics_json": json.dumps(result_json, ensure_ascii=False), "report_sha256": result.report_sha256, "evidence_index_json": json.dumps(evidence_index, ensure_ascii=False), "generated_by": payload.completed_by, "generated_at": completed_at})
         return result
 
     def _load_run(self, conn: Any, tenant_id: str, project_id: str, run_id: str) -> RunEvidence:
@@ -338,8 +383,8 @@ def _comparison_data(
     window: dict[str, Any],
     baseline_run_id: str,
     compare_run_id: str,
-    baseline_metrics: CohortMetrics,
-    compare_metrics: CohortMetrics,
+    baseline_quality: MeasurementQualityReport,
+    compare_quality: MeasurementQualityReport,
     baseline_signature: tuple[str, ...],
     compare_signature: tuple[str, ...],
     completed_at: Optional[datetime] = None,
@@ -347,8 +392,8 @@ def _comparison_data(
     comparison = compare_retest_metrics(
         baseline_run_id=baseline_run_id,
         compare_run_id=compare_run_id,
-        baseline_metrics=baseline_metrics,
-        compare_metrics=compare_metrics,
+        baseline_metrics=baseline_quality.metrics,
+        compare_metrics=compare_quality.metrics,
         baseline_signature=baseline_signature,
         compare_signature=compare_signature,
     )
@@ -356,7 +401,25 @@ def _comparison_data(
     retest_run_id = f"retest_{uuid4().hex[:12]}"
     report_id = f"report_{uuid4().hex[:12]}"
     evidence_refs = [f"scan_run:{baseline_run_id}", f"scan_run:{compare_run_id}", f"publish_package:{window['package_id']}", f"retest_window:{window['window_id'] if 'window_id' in window else window['id']}"]
-    hash_payload = {"comparison": comparison.to_record(), "window_label": window["window_label"], "evidence_refs": evidence_refs}
+    report_status: Literal["generated", "quality_blocked"] = (
+        "generated"
+        if comparison.comparable and baseline_quality.publishable and compare_quality.publishable
+        else "quality_blocked"
+    )
+    known_limitations = [
+        *[f"baseline:{item}" for item in baseline_quality.known_limitations],
+        *[f"compare:{item}" for item in compare_quality.known_limitations],
+        *[f"comparison:{item}" for item in comparison.mismatch_reasons],
+    ]
+    hash_payload = {
+        "comparison": comparison.to_record(),
+        "window_label": window["window_label"],
+        "evidence_refs": evidence_refs,
+        "report_status": report_status,
+        "baseline_quality": baseline_quality.to_record(),
+        "compare_quality": compare_quality.to_record(),
+        "known_limitations": known_limitations,
+    }
     return RetestComparisonData(
         retest_run_id=retest_run_id,
         report_id=report_id,
@@ -372,6 +435,10 @@ def _comparison_data(
         metric_deltas=dict(comparison.metric_deltas),
         conclusion=comparison.conclusion,
         attribution_policy="observational_non_causal.v1",
+        report_status=report_status,
+        baseline_quality=baseline_quality.to_record(),
+        compare_quality=compare_quality.to_record(),
+        known_limitations=known_limitations,
         report_sha256=canonical_json_sha256(hash_payload),
         evidence_refs=evidence_refs,
         completed_at=completed_at,
@@ -405,6 +472,22 @@ RETEST_REPOSITORY: RetestRepository = build_repository()
 @router.get("/projects/{project_id}/retest-windows", response_model=RetestWindowListResponse)
 def list_retest_windows(project_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> RetestWindowListResponse:
     return RetestWindowListResponse(data=RETEST_REPOSITORY.list_windows(tenant_id, project_id), meta=response_meta(trace_id))
+
+
+@router.get(
+    "/projects/{project_id}/scan-runs/{run_id}/quality-report",
+    response_model=MeasurementQualityReportResponse,
+)
+def get_measurement_quality_report(
+    project_id: str,
+    run_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> MeasurementQualityReportResponse:
+    return MeasurementQualityReportResponse(
+        data=RETEST_REPOSITORY.get_quality_report(tenant_id, project_id, run_id),
+        meta=response_meta(trace_id),
+    )
 
 
 @router.post("/retest-windows/{window_id}/complete", response_model=RetestComparisonResponse)

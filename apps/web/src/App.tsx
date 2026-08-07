@@ -2592,6 +2592,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       <section className="report-card-grid">
         {reports.reports.map((item, index) => {
           const ReportIcon = reportCardIcons[index] ?? FileChartColumn;
+          const qualityBlocked = item.status === "quality_blocked";
           return (
           <article className="airank-console-card report-card" data-testid="report-card" key={item.title}>
             <IconTile tone={index === 1 ? "success" : index === 2 ? "warning" : "primary"}>
@@ -2605,10 +2606,12 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <button
               className="outline-button"
               type="button"
-              disabled={downloadingReportId === (item.report_id ?? item.title)}
+              disabled={qualityBlocked || downloadingReportId === (item.report_id ?? item.title)}
               onClick={() => void downloadReport(item)}
             >
-              {downloadingReportId === (item.report_id ?? item.title) ? (
+              {qualityBlocked ? (
+                "质量阻断"
+              ) : downloadingReportId === (item.report_id ?? item.title) ? (
                 "记录中"
               ) : (
                 <>

@@ -98,6 +98,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "ASSET_NOT_FOUND": (404, "Asset not found"),
     "ASSET_REVIEW_REQUIRED": (409, "Asset review is required"),
     "REPORT_NOT_FOUND": (404, "Report not found"),
+    "REPORT_QUALITY_BLOCKED": (409, "Report did not pass the measurement quality gate"),
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
@@ -2084,6 +2085,8 @@ class MySQLReportRepository:
             )
 
     def _report_desc(self, row: Any) -> str:
+        if row["status"] == "quality_blocked":
+            return "复测报告未通过数据质量门禁；只能查看限制项，不可作为客户交付物下载。"
         metrics = parse_json_value(row["metrics_json"], {})
         if isinstance(metrics, dict):
             summary = metrics.get("summary") or metrics.get("desc")
@@ -2130,7 +2133,7 @@ class MySQLReportRepository:
             row = conn.execute(
                 text(
                     """
-                    SELECT id, project_id
+                    SELECT id, project_id, status, metrics_json
                     FROM airank_reports
                     WHERE tenant_id = :tenant_id
                       AND id = :report_id
@@ -2143,6 +2146,23 @@ class MySQLReportRepository:
                 raise StarletteHTTPException(
                     status_code=404,
                     detail={"code": "REPORT_NOT_FOUND", "details": {"report_id": report_id}},
+                )
+            metrics = parse_json_value(row["metrics_json"], {})
+            quality_publishable = (
+                isinstance(metrics, dict)
+                and metrics.get("report_status") == "generated"
+                and isinstance(metrics.get("baseline_quality"), dict)
+                and metrics["baseline_quality"].get("publishable") is True
+                and isinstance(metrics.get("compare_quality"), dict)
+                and metrics["compare_quality"].get("publishable") is True
+            )
+            if row["status"] != "generated" or not quality_publishable:
+                raise StarletteHTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "REPORT_QUALITY_BLOCKED",
+                        "details": {"report_id": report_id, "status": row["status"]},
+                    },
                 )
             conn.execute(
                 text(

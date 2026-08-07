@@ -89,6 +89,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `REPORT_NOT_FOUND` | 404 | 报告不存在 |
+| `REPORT_QUALITY_BLOCKED` | 409 | 报告未通过样本完整性、证据 hash、有效率或可比性门禁，禁止下载交付 |
 | `REPORT_EVIDENCE_MISSING` | 500 | 报告缺少证据链 |
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |
 | `EVIDENCE_OBJECT_UNAVAILABLE` | 503 | 对象存储不可用、配置不匹配或对象无法读取 |

@@ -58,6 +58,7 @@
             "ASSET_NOT_FOUND",
             "ASSET_REVIEW_REQUIRED",
             "REPORT_NOT_FOUND",
+            "REPORT_QUALITY_BLOCKED",
             "SKILL_NOT_FOUND",
             "REPORT_EVIDENCE_MISSING",
             "OBJECT_REF_NOT_FOUND",
