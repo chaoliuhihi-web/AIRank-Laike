@@ -243,6 +243,10 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
         f"/api/v1/publish-packages/{package.json()['data']['package_id']}/export",
         headers={"tenant-id": "tenant_1"},
     )
+    packages = client.get(
+        "/api/v1/projects/project_1/publish-packages",
+        headers={"tenant-id": "tenant_1"},
+    )
     published = client.post(
         f"/api/v1/publish-packages/{package.json()['data']['package_id']}/publication-evidence",
         headers={"tenant-id": "tenant_1"},
@@ -258,6 +262,8 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
     assert replay.json()["data"]["idempotent_replay"] is True
     assert exported.json()["data"]["content_sha256"] == package.json()["data"]["content_sha256"]
     assert exported.json()["data"]["manifest"]["immutable"] is True
+    assert packages.status_code == 200
+    assert [item["package_id"] for item in packages.json()["data"]] == [package.json()["data"]["package_id"]]
     assert published.json()["data"]["status"] == "published"
 
 

@@ -58,6 +58,90 @@ export type ReportList = {
   reports: ReportItem[];
 };
 
+export type KnowledgeSource = {
+  source_id: string;
+  title: string;
+  source_type: string;
+  source_uri: string | null;
+  content_sha256: string;
+  authority_level: string;
+  risk_level: string;
+  status: "active" | "stale" | "disabled";
+  revision_number: number;
+  segment_count: number;
+  captured_at: string;
+  valid_until: string | null;
+};
+
+export type FactRevision = {
+  fact_id: string;
+  revision_id: string;
+  title: string;
+  fact_type: string;
+  fact_text: string;
+  content_sha256: string;
+  revision_number: number;
+  status: "proposed" | "approved" | "superseded" | "rejected";
+  source_ids: string[];
+  risk_level: string;
+  disclosure: string;
+  created_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  valid_until: string | null;
+  eligible_for_generation: boolean;
+  eligibility_reason: string;
+};
+
+export type BuyerQuestion = {
+  question_id: string;
+  question_text: string;
+  question_type: string;
+  intent_level: "high" | "medium" | "low";
+  buyer_stage: "awareness" | "consideration" | "decision";
+  recommended_providers: string[];
+  coverage_status: "unknown" | "covered" | "gap" | "needs_scan";
+  status: "suggested" | "confirmed" | "archived";
+  source: string;
+  created_at: string;
+};
+
+export type PublishPackage = {
+  package_id: string;
+  asset_id: string;
+  snapshot_id: string;
+  channel: "export" | "wordpress" | "http";
+  status: "packaged" | "queued" | "published";
+  implementation_status: "ready" | "partial";
+  idempotency_key: string;
+  content_sha256: string;
+  published_url: string | null;
+  created_at: string;
+};
+
+export type RetestWindow = {
+  window_id: string;
+  package_id: string;
+  baseline_run_id: string | null;
+  window_label: "T0" | "T+7" | "T+14" | "T+30";
+  due_at: string;
+  status: "scheduled" | "running" | "completed" | "completed_with_limitations" | "failed";
+  compare_run_id: string | null;
+  completed_at: string | null;
+};
+
+export type ProviderReadiness = {
+  mode: "api" | "browser" | "mock";
+  minimum_success_count: number;
+  providers: Array<{
+    provider: string;
+    label: string;
+    status: "ready" | "blocked";
+    blocker_code?: string;
+    reason?: string;
+  }>;
+};
+
 export type ScanRunSummary = {
   run_id: string;
   status: "queued" | "running" | "completed" | "failed" | "canceled";
@@ -381,6 +465,39 @@ export async function fetchReports(projectId: string, signal?: AbortSignal): Pro
 
   const payload = (await response.json()) as ReportListPayload;
   return payload.data;
+}
+
+async function fetchData<T>(url: string, tracePrefix: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { headers: buildApiHeaders(tracePrefix), signal });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `${url} request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: T };
+  return payload.data;
+}
+
+export function fetchKnowledgeSources(projectId: string, signal?: AbortSignal): Promise<KnowledgeSource[]> {
+  return fetchData(`/api/v1/projects/${projectId}/knowledge-sources`, "trc_web_sources", signal);
+}
+
+export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<FactRevision[]> {
+  return fetchData(`/api/v1/projects/${projectId}/facts`, "trc_web_facts", signal);
+}
+
+export function fetchBuyerQuestions(projectId: string, signal?: AbortSignal): Promise<BuyerQuestion[]> {
+  return fetchData(`/api/v1/projects/${projectId}/buyer-questions`, "trc_web_questions", signal);
+}
+
+export function fetchPublishPackages(projectId: string, signal?: AbortSignal): Promise<PublishPackage[]> {
+  return fetchData(`/api/v1/projects/${projectId}/publish-packages`, "trc_web_publish", signal);
+}
+
+export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Promise<RetestWindow[]> {
+  return fetchData(`/api/v1/projects/${projectId}/retest-windows`, "trc_web_retest", signal);
+}
+
+export function fetchProviderReadiness(signal?: AbortSignal): Promise<ProviderReadiness> {
+  return fetchData("/api/v1/provider-readiness", "trc_web_provider_health", signal);
 }
 
 export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckResult> {

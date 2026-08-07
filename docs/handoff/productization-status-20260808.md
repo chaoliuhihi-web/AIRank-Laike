@@ -4,7 +4,7 @@
 
 状态：`partial / no-go for commercial launch`。
 
-已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”和“同口径复测归因”后端切片，但四平台真实重复采样、审核 UI、真实外部发布和浏览器客户报告尚未全部通过，不得宣称商业可用。
+已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”“同口径复测归因”后端切片，以及控制台静态业务结果清理和真实 API/显式能力状态改造；但四平台真实重复采样、审核操作 UI、真实外部发布和带项目数据的浏览器客户报告尚未全部通过，不得宣称商业可用。
 
 ## 本轮已落地
 
@@ -30,12 +30,16 @@
 20. 内容审核绑定内容 hash，执行事实覆盖和风险扫描；高风险 GEO 保证、绝对排名或竞品贬损必须记录人工 override，未经审核不能生成发布包。
 21. export 发布包已有不可变快照、租户级幂等键和发布 URL 证据；WordPress/HTTP 仍只标记 `partial` 并入队，不冒充已发布。
 22. 发布必须绑定已完成的 T0 基线，并自动建立 T0/T+7/T+14/T+30 窗口；复测从原始任务和回答样本重算，严格校验问题、Provider、Cohort、surface、Prompt、模型与联网上下文，只输出观察性、非因果的低/中置信度报告。
+23. 删除控制台 `data.ts` 中全部静态业务结果；工作台、体检、事实库、问题地图、缺口、内容资产、发布、报告和设置改为读取真实 API，未实现的 AI 来客助手明确标记 `disabled`。
+24. 新增买家问题和发布包列表 API，空项目时前端不再请求伪造的 `project_demo`，不产生隐藏 404；新增静态结果回归门禁。
+25. 在本地 dev-only 身份边界内完成 11 个控制台路由桌面与 390px 移动端浏览器验收：标题与显式空态正确、无横向页面溢出、无浏览器 console warning/error；该结果只证明空态和前端契约，不替代真实客户项目 E2E。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`172 passed, 6 skipped`。
+- `python3 -m pytest -q`：`175 passed, 6 skipped`。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
+- 浏览器：`/login -> /console` 登录通过；11 个控制台路由完成桌面/390px 空态验收，无横向溢出、无 console warning/error；发布报告按钮明确提示未开放，AI 来客助手显示 `disabled`。
 - MySQL 临时库：Alembic `20260808_0008`；42 张 AIRank 表校验通过；真实 MySQL 复测链路生成 1 个 RetestRun 和 1 个带 SHA-256/evidence index 的报告，临时库已删除。
 
 ## 下一实施顺序
@@ -45,5 +49,5 @@
 3. 为首批 8 个内部 Skill 补 holdout/对抗/真实 Provider eval 和 promotion evidence ledger。
 4. 补知识增量重嵌入、混合检索、过期提醒与冲突审核 UI。
 5. 实现安全的 WordPress/HTTP Publisher adapter、attempt 消费、重试/恢复和真实外部回执门禁。
-6. 清理剩余前端静态业务页面，接入知识、证据、审核、发布、复测和报告真实 API，未实现能力明确显示 `partial/blocked/disabled`。
-7. 用四平台真实重复样本从新建品牌跑到客户报告，完成浏览器 E2E 和上线门禁后再同步 GitHub/Gitee。
+6. 补事实审核、冲突处理、内容审核、发布执行和样本下钻等可写 UI；所有写操作绑定真实 API、权限、审计和失败恢复。
+7. 用四平台真实重复样本从新建品牌跑到客户报告，完成带数据的浏览器 E2E 和上线门禁后再同步 GitHub/Gitee。

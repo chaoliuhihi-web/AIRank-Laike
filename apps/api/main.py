@@ -297,6 +297,11 @@ class BuyerQuestionResponse(BaseModel):
     meta: ResponseMeta
 
 
+class BuyerQuestionListResponse(BaseModel):
+    data: list[BuyerQuestionData]
+    meta: ResponseMeta
+
+
 Provider = Literal["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
 ProjectId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
 QuestionId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^question_[A-Za-z0-9_-]+$")]
@@ -762,6 +767,9 @@ class ProjectRepository(Protocol):
     ) -> BuyerQuestionData:
         ...
 
+    def list_buyer_questions(self, tenant_id: str, project_id: str) -> list[BuyerQuestionData]:
+        ...
+
 
 class ScanRepository(Protocol):
     def create_run(self, tenant_id: str, payload: ScanRunCreateRequest) -> ScanRunData:
@@ -930,6 +938,14 @@ class InMemoryProjectRepository:
         )
         self._questions[(tenant_id, data.question_id)] = data
         return data
+
+    def list_buyer_questions(self, tenant_id: str, project_id: str) -> list[BuyerQuestionData]:
+        self._ensure_project(tenant_id, project_id)
+        return [
+            question
+            for (item_tenant, _), question in self._questions.items()
+            if item_tenant == tenant_id and question.project_id == project_id
+        ]
 
 
 class MySQLProjectRepository:
@@ -1134,6 +1150,9 @@ class MySQLProjectRepository:
                 },
             )
         return data
+
+    def list_buyer_questions(self, tenant_id: str, project_id: str) -> list[BuyerQuestionData]:
+        return list_mysql_project_questions(tenant_id, project_id)
 
 
 def build_project_repository() -> ProjectRepository:
@@ -3905,6 +3924,22 @@ def create_buyer_question(
 ) -> BuyerQuestionResponse:
     return BuyerQuestionResponse(
         data=PROJECT_REPOSITORY.create_buyer_question(tenant_id, project_id, payload),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/projects/{{project_id}}/buyer-questions",
+    response_model=BuyerQuestionListResponse,
+    response_model_exclude_none=True,
+)
+def list_buyer_questions(
+    project_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> BuyerQuestionListResponse:
+    return BuyerQuestionListResponse(
+        data=PROJECT_REPOSITORY.list_buyer_questions(tenant_id, project_id),
         meta=build_meta(trace_id),
     )
 

@@ -125,6 +125,11 @@ class PublishPackageResponse(BaseModel):
     meta: dict[str, str]
 
 
+class PublishPackageListResponse(BaseModel):
+    data: list[PublishPackageData]
+    meta: dict[str, str]
+
+
 class PublishEvidenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -160,6 +165,7 @@ class PublishExportResponse(BaseModel):
 class DeliveryRepository(Protocol):
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData: ...
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData: ...
+    def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]: ...
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData: ...
     def mark_published(self, tenant_id: str, package_id: str, payload: PublishEvidenceRequest) -> PublishPackageData: ...
 
@@ -209,6 +215,13 @@ class InMemoryDeliveryRepository:
         self.packages[(tenant_id, package_id)] = data
         self.idempotency[replay_key] = package_id
         return data
+
+    def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]:
+        return [
+            package
+            for (item_tenant, _), package in self.packages.items()
+            if item_tenant == tenant_id and package.project_id == project_id
+        ]
 
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         package = self.packages.get((tenant_id, package_id))
@@ -347,6 +360,17 @@ class MySQLDeliveryRepository:
             row = conn.execute(text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND id=:package_id"), {"tenant_id": tenant_id, "package_id": package_id}).mappings().one()
         return self._package_data(row)
 
+    def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]:
+        with self.engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT * FROM airank_publish_packages
+                WHERE tenant_id=:tenant_id AND project_id=:project_id
+                  AND channel IN ('export','wordpress','http')
+                  AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+            """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
+        return [self._package_data(row) for row in rows]
+
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         with self.engine.begin() as conn:
             row = conn.execute(text("""
@@ -450,6 +474,11 @@ def review_content(asset_id: str, payload: ContentReviewRequest, tenant_id: str 
 @router.post("/content-assets/{asset_id}/publish-packages", response_model=PublishPackageResponse, status_code=201)
 def create_publish_package(asset_id: str, payload: PublishPackageCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishPackageResponse:
     return PublishPackageResponse(data=DELIVERY_REPOSITORY.create_package(tenant_id, asset_id, payload), meta=response_meta(trace_id))
+
+
+@router.get("/projects/{project_id}/publish-packages", response_model=PublishPackageListResponse)
+def list_publish_packages(project_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishPackageListResponse:
+    return PublishPackageListResponse(data=DELIVERY_REPOSITORY.list_packages(tenant_id, project_id), meta=response_meta(trace_id))
 
 
 @router.get("/publish-packages/{package_id}/export", response_model=PublishExportResponse)

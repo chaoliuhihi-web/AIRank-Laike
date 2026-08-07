@@ -141,6 +141,7 @@
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
 - `20260808_0006`—`0008` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0008`；42 张 AIRank 表完成核验，知识导入、内容审核、不可变发布快照、观察窗口、复测结果和报告 hash 均落库，随后删除临时验收库。
 - 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
-- 全量 Python 测试：`172 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
+- 全量 Python 测试：`175 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
-- 当前阶段仍是 `partial`：Kimi 安全运行时注入、四平台真实重复采样、外部 Publisher、前端真实 API 与浏览器 E2E 尚未通过，因此不允许声明商业可用。
+- 控制台静态业务结果已删除，11 个路由改用真实 API 或显式 `partial/blocked/disabled` 状态；桌面与 390px 空项目浏览器验收通过。该证据不替代带真实项目数据的全链路 E2E。
+- 当前阶段仍是 `partial`：Kimi 安全运行时注入、四平台真实重复采样、外部 Publisher、审核操作 UI 与带数据浏览器 E2E 尚未通过，因此不允许声明商业可用。

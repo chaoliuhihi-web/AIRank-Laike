@@ -1081,6 +1081,43 @@ button:disabled {
   font: 600 14px / 22px var(--console-font-family);
 }
 
+.data-state-card {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-height: 92px;
+  margin: 16px 0;
+  padding: 18px 20px;
+  border-left: 4px solid var(--console-primary);
+}
+
+.data-state-card[data-tone="success"] {
+  border-left-color: var(--console-success);
+}
+
+.data-state-card[data-tone="warning"] {
+  border-left-color: var(--console-warning);
+}
+
+.data-state-card[data-tone="danger"] {
+  border-left-color: var(--console-danger);
+}
+
+.data-state-card > div {
+  display: grid;
+  gap: 5px;
+}
+
+.data-state-card strong {
+  color: var(--console-text-strong);
+  font: 800 17px / 24px var(--console-font-family);
+}
+
+.data-state-card span {
+  color: var(--console-text);
+  font: 600 14px / 22px var(--console-font-family);
+}
+
 .summary-band {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr 210px;

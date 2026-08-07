@@ -88,6 +88,14 @@ def test_project_competitor_question_dev_repository_contract_loop() -> None:
     assert question_body["data"]["coverage_status"] == "needs_scan"
     validate_response("buyer_question_response.schema.json", question_body)
 
+    question_list = client.get(
+        f"/api/v1/projects/{project_id}/buyer-questions",
+        headers={"tenant-id": "tenant_contract", "X-AIRank-Trace-Id": "trc_question_list"},
+    )
+    assert question_list.status_code == 200
+    assert question_list.json()["meta"]["trace_id"] == "trc_question_list"
+    assert [item["question_id"] for item in question_list.json()["data"]] == [question_body["data"]["question_id"]]
+
 
 def test_project_child_dev_repository_is_tenant_scoped() -> None:
     client = TestClient(app)
