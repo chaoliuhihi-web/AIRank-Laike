@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from jsonschema import Draft202012Validator
 
-from airank_skills import SKILL_RUNNERS, load_default_registry, run_skill
+from airank_skills import SKILL_RUNNERS, build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
+from airank_skills.evaluation import file_sha256, load_verified_promotion_evidence
 
 
 CORE_SKILL_IDS = {
@@ -43,6 +47,9 @@ def test_registry_contains_versioned_core_skills_with_complete_contracts() -> No
         assert manifest.failure_policy
         assert manifest.quality_rubric
         assert manifest.eval_cases
+        assert manifest.promotion_policy["required_suites"] == ["contract", "holdout", "adversarial"]
+        assert manifest.promotion_policy["minimum_pass_rate"] == 1.0
+        assert manifest.promotion_policy["required_evidence"]
         assert manifest.entrypoint.endswith(SKILL_RUNNERS[manifest.skill_id].__name__)
 
 
@@ -97,3 +104,63 @@ def test_retest_report_blocks_non_comparable_cohorts() -> None:
 
     assert output["status"] == "blocked"
     assert output["failure_code"] == "NON_COMPARABLE_WINDOWS"
+
+
+def test_every_core_skill_passes_contract_holdout_and_adversarial_suites() -> None:
+    reports = evaluate_registry()
+
+    assert len(reports) == 8
+    assert sum(report.total_cases for report in reports) == 24
+    assert all(report.local_eval_status == "passed" for report in reports)
+    assert all(report.passed_cases == report.total_cases == 3 for report in reports)
+    assert all(set(report.executed_suites) == {"contract", "holdout", "adversarial"} for report in reports)
+    assert all(not report.promotion_eligible for report in reports)
+    assert all(
+        any(blocker.startswith("missing_promotion_evidence:") for blocker in report.promotion_blockers)
+        for report in reports
+    )
+
+
+def test_promotion_evidence_requires_a_real_repository_artifact_hash(tmp_path) -> None:
+    registry_path = Path(__file__).resolve().parents[1] / "registry.json"
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "evidence_version": "1.0.0",
+                "evidence": [
+                    {
+                        "skill_id": "measurement.answer-parser",
+                        "evidence_type": "reviewed_labeled_benchmark",
+                        "artifact_path": "packages/skills/registry.json",
+                        "sha256": file_sha256(registry_path),
+                    },
+                    {
+                        "skill_id": "measurement.citation-extractor",
+                        "evidence_type": "provider_citation_benchmark",
+                        "artifact_path": "packages/skills/registry.json",
+                        "sha256": "0" * 64,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verified = load_verified_promotion_evidence(evidence_path)
+
+    assert verified == {"measurement.answer-parser": {"reviewed_labeled_benchmark"}}
+
+
+def test_promotion_ledger_is_content_addressed_and_retains_unproven_skills() -> None:
+    ledger = build_promotion_ledger()
+
+    assert set(ledger["source_sha256"]) == {
+        "registry",
+        "eval_corpus",
+        "promotion_evidence",
+        "implementation",
+        "evaluation_engine",
+    }
+    assert all(len(value) == 64 for value in ledger["source_sha256"].values())
+    assert {item["decision"] for item in ledger["skills"]} == {"retain_partial"}

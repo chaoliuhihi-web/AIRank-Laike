@@ -49,7 +49,7 @@
 | geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | ClaimSupport 已有原文边界、支持/矛盾/不足和审核字段 | 支持度自动评测与人工标注集仍缺 | absorb | Citation + ClaimSupport | P0 | partial | 同一引用分别计算召回与支持度，人工标注集可复算 |
 | geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | buyer question 只有 type/intent | 分类维度不足 | absorb | Prompt Cohort taxonomy | P0 | planned | 620 问题基准可导入评测且保留来源版本 |
 | geo-citation-lab | Web/App 平台字典 | 强制终端分开比较 | `data/reference/ai_platforms.csv` | 平台代码 → 产品族/终端/映射证据 | 版本化字典 | CC-BY-4.0 | API/Web/App/manual_import 契约与证据等级已分开 | App 采集器仍未实现 | absorb | CollectorSurface manifest | P0 | partial | Web/App 不会聚合到同一证据等级或同一分母 |
-| geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot、raw/screenshot hash 已落库 | 对象校验巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 篡改任一原始对象后校验失败；派生表可重建 |
+| geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot 与内容寻址 screenshot 已落库；读取时复验 SHA-256/大小，真实 MinIO write/read/delete 已通过 | 批量完整性巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 单对象篡改会返回完整性错误；仍需全库巡检与派生表重建 |
 | geo-citation-lab | 来源类型与权威度治理 | 支撑来源结构、缺口和人工复核 | `data/reference/source_types.csv` | 域名 → 类型/状态/置信度/证据 | 参考表和人工审核 | CC-BY-4.0 | citation 有 source_type | 无分类方法、置信度和治理状态 | absorb | Source Registry | P1 | planned | 精确映射优先；未知来源保持 unclassified，不猜测 |
 | geo-citation-lab | 214,119 条 CN-GEO 引用数据 | 提供平台差异和引用分析基准 | `03-cn-geo-citation-dataset/data` | 原始引用 → 标准表/质量报告 | 数据版本 2.0.1 | CC-BY-4.0/上游条款 | 无公开 benchmark | 缺回归数据 | reference_only | Eval datasets | P1 | planned | 只用于引用/终端/来源评测；禁止计算推荐率、趋势和情感 |
 | geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | 只有普通单测 | 无数据发布质量报告 | adapt | Evidence data gate | P1 | planned | 行数、hash、映射、重复、空表意图均自动验证 |
@@ -97,10 +97,10 @@
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 核心 8 Skill 已有 manifest/schema/entrypoint | 尚无 target compiler 和升级迁移 | adapt | `packages/skills` | P0 | partial | 核心 8 Skill 均能序列化、校验和升级 |
-| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 8 个 Skill 的 manifest eval 已执行真实代码 | holdout/对抗/真实 Provider eval 仍缺 | absorb | Skill Eval Lab | P0 | partial | train/dev/holdout/对抗样本和真实执行均通过 |
-| yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | registry 强制状态且当前全部为 partial | 自动 promotion evidence ledger 尚未实现 | adapt | Skill Registry | P0 | partial | 缺真实 provider/human 证据时 promotion 必须阻断 |
+| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 8 个 Skill 已执行 24 个 contract/holdout/adversarial 用例并通过 schema 与 rubric | 真实 Provider 和人工标注 benchmark 仍未绑定 | absorb | Skill Eval Lab | P0 | partial | `scripts/evaluate_core_skills.py` 必须 24/24；真实证据缺失时不晋级 |
+| yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | 已生成绑定 registry/eval/实现 hash 的 promotion ledger；8 个 Skill 均因外部证据缺失保留 partial | 尚需逐项提交可校验的真实 Provider/人工 benchmark artifact | adapt | Skill Registry | P0 | partial | artifact 路径与 SHA-256 校验通过才解除 blocker；伪造 header 无法访问管理员 API |
 | yao-meta-skill | trust/permission/package gate | 控制网络、凭证和可移植性 | trust/package/install scripts | Skill 包 → trust/report/package | sandbox/manifest | MIT | 无 | 无依赖与权限声明验证 | adapt | Skill Trust Gate | P1 | planned | 依赖、网络、secret、权限、安装模拟全部可审计 |
-| yao-open-tools | `tokscr` 本地网页截图 | 保存消费者页面与来源面板证据 | `tools/tokscr` | 页面 → PNG/PDF | 浏览器扩展 | MIT | Playwright 截图写临时目录 | 无不可变对象存储和裁剪元数据 | reference_only | Evidence Capture | P1 | planned | 截图 hash、viewport、URL、时间、裁剪参数一并保存 |
+| yao-open-tools | `tokscr` 本地网页截图 | 保存消费者页面与来源面板证据 | `tools/tokscr` | 页面 → PNG/PDF | 浏览器扩展 | MIT | Playwright 截图会先复制到内容寻址 filesystem/S3/MinIO，并以鉴权 API 读取和复验 hash | viewport、区域与来源面板裁剪元数据仍未完整保存 | reference_only | Evidence Capture | P1 | partial | 截图对象真实 MinIO 往返与租户隔离通过；继续补 viewport/区域/裁剪契约 |
 | yao-open-tools | TokKit exact/partial/estimated | 明确成本数据精度 | `tools/tokkit` | 日志/响应 → 用量台账 | 本地日志 | MIT | 无精度枚举 | 容易把估算当真实 | absorb | Usage provenance enum | P1 | planned | 任一成本字段都有 precision 和 source |
 | yao-open-tools | TokDoc 报告与版本快照 | 客户报告归档与公开交付 | `tools/TokDoc` | HTML/PDF/Word → 版本/链接 | 本地存储 | MIT | reports 表 | 无不可变交付包 | reference_only | Report Artifact Store | P2 | planned | 导出包 hash、版本、下载回执可追溯 |
 | yao-open-skills | 证据分级、版权、安全和决策 Skill | 补充治理 rubric | `skills/yao-*` | 任务 → 多格式报告 | 各 Skill 依赖 | MIT | 无统一 rubric | 与 GEO 主线部分重叠 | reference_only | Governance rubrics | P2 | planned | 只抽取 rubric/失败案例，不注册无关客户 Skill |
@@ -125,7 +125,7 @@
 7. `intervention.page-blueprint`
 8. `delivery.retest-report`
 
-核心 8 Skill 已完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric、entrypoint 和可执行 eval cases，并通过内部 Admin API 暴露；因尚未通过四平台真实执行证据，全部保持 `partial`。
+核心 8 Skill 已完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric、entrypoint，以及独立 contract/holdout/adversarial 评测。24/24 用例通过，Promotion Evidence Ledger 绑定 registry、评测语料、实现和评测引擎 hash；因真实 Provider/人工标注 benchmark 尚未逐项绑定，全部继续保持 `partial`。内部 Skill 控制台明确展示本地通过数、可晋级数和每项缺证 blocker。
 
 ## 阶段一完成判定
 

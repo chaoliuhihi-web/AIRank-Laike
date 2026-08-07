@@ -1352,6 +1352,21 @@ button:disabled {
   margin-top: 4px;
 }
 
+.skill-table-wrap {
+  overflow-x: auto;
+}
+
+.skill-table {
+  min-width: 1080px;
+}
+
+.skill-table td small {
+  display: block;
+  max-width: 300px;
+  color: var(--console-text-muted);
+  overflow-wrap: anywhere;
+}
+
 .evidence-detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);

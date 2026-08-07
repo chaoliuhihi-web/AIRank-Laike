@@ -22,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
-from airank_skills import load_default_registry, run_skill
+from airank_skills import build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
 
 try:
     from .provider_scan import (
@@ -64,6 +64,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "AUTH_TOKEN_INVALID": (401, "Authentication token is invalid"),
     "AUTH_LOGIN_FAILED": (401, "Login credentials are invalid"),
     "AUTH_YUDAO_UNAVAILABLE": (503, "Yudao authentication is unavailable"),
+    "AUTH_PERMISSION_FORBIDDEN": (403, "Required permission is missing"),
     "TENANT_MISMATCH": (403, "Tenant does not match the token"),
     "TENANT_FORBIDDEN": (403, "Tenant access is forbidden"),
     "PROJECT_NOT_FOUND": (404, "Project not found"),
@@ -573,12 +574,26 @@ class SkillManifestData(BaseModel):
     failure_policy: dict[str, Any]
     quality_rubric: list[dict[str, Any]]
     eval_cases: list[dict[str, Any]]
+    promotion_policy: dict[str, Any]
+    evaluation: "SkillEvaluationSummaryData"
     status: Literal["ready", "partial", "blocked", "disabled", "dev_only"]
     entrypoint: str
 
 
 class SkillRegistryData(BaseModel):
     skills: list[SkillManifestData]
+
+
+class SkillEvaluationSummaryData(BaseModel):
+    local_eval_status: Literal["passed", "failed"]
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    pass_rate: float
+    executed_suites: list[Literal["contract", "holdout", "adversarial"]]
+    promotion_eligible: bool
+    promotion_blockers: list[str]
+    evaluation_sha256: str
 
 
 class SkillRegistryResponse(BaseModel):
@@ -601,6 +616,11 @@ class SkillEvalData(BaseModel):
 
 class SkillEvalResponse(BaseModel):
     data: SkillEvalData
+    meta: ResponseMeta
+
+
+class SkillPromotionLedgerResponse(BaseModel):
+    data: dict[str, Any]
     meta: ResponseMeta
 
 
@@ -3750,6 +3770,35 @@ def extract_yudao_user(payload: dict[str, Any], username: str) -> AuthUser:
     return AuthUser(user_id=str(user_id), username=str(user_name), nickname=str(nickname))
 
 
+def extract_yudao_permissions(payload: dict[str, Any]) -> tuple[str, ...]:
+    data = payload.get("data")
+    raw_permissions = data.get("permissions") if isinstance(data, dict) else None
+    if not isinstance(raw_permissions, (list, tuple, set)):
+        return ()
+    return tuple(sorted({str(permission).strip() for permission in raw_permissions if str(permission).strip()}))
+
+
+def skill_admin_permission() -> str:
+    return os.getenv("AIRANK_SKILL_ADMIN_PERMISSION", "airank:skill:admin").strip() or "airank:skill:admin"
+
+
+def permission_allows(granted: tuple[str, ...], required: str) -> bool:
+    namespace = required.rsplit(":", 1)[0]
+    return bool({required, "*", "*:*:*", f"{namespace}:*"}.intersection(granted))
+
+
+def require_skill_admin(permission_header: Optional[str]) -> None:
+    if not auth_enforcement_required():
+        return
+    granted = tuple(item.strip() for item in (permission_header or "").split(",") if item.strip())
+    required = skill_admin_permission()
+    if not permission_allows(granted, required):
+        raise StarletteHTTPException(
+            status_code=403,
+            detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"required_permission": required}},
+        )
+
+
 def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
     token = f"dev_only_{uuid4().hex}"
     expires_in = 3600
@@ -3758,6 +3807,11 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
             "tenant_id": get_airank_default_tenant_id(),
             "yudao_tenant_id": payload.yudao_tenant_id,
             "user_id": payload.username,
+            "permissions": tuple(
+                item.strip()
+                for item in os.getenv("AIRANK_DEV_PERMISSIONS", skill_admin_permission()).split(",")
+                if item.strip()
+            ),
             "expires_at": datetime.now(timezone.utc).timestamp() + expires_in,
         }
     return AuthLoginResponse(
@@ -3997,7 +4051,10 @@ def trusted_authenticated_actor(requested_actor: str, authenticated_actor: Optio
     return authenticated_actor
 
 
-def validate_yudao_request_token(token: str, yudao_tenant_id: str) -> Optional[AuthUser]:
+def validate_yudao_request_token(
+    token: str,
+    yudao_tenant_id: str,
+) -> Optional[tuple[AuthUser, tuple[str, ...]]]:
     try:
         permission_payload = request_external_json(
             build_yudao_url("YUDAO_PERMISSION_INFO_URL", "/admin-api/system/auth/get-permission-info"),
@@ -4008,7 +4065,10 @@ def validate_yudao_request_token(token: str, yudao_tenant_id: str) -> Optional[A
         return None
     if not yudao_business_success(permission_payload):
         return None
-    return extract_yudao_user(permission_payload, "authenticated-user")
+    return (
+        extract_yudao_user(permission_payload, "authenticated-user"),
+        extract_yudao_permissions(permission_payload),
+    )
 
 
 @app.middleware("http")
@@ -4045,6 +4105,7 @@ async def enforce_api_authentication(request: Request, call_next):
             return build_error_response(request, "TENANT_MISMATCH")
         inject_trusted_header(request, "X-AIRank-User-Id", str(session["user_id"]))
         inject_trusted_header(request, "X-Yudao-Tenant-Id", str(session["yudao_tenant_id"]))
+        inject_trusted_header(request, "X-AIRank-Permissions", ",".join(session.get("permissions", ())))
         return await call_next(request)
 
     if tenant_id != get_airank_default_tenant_id():
@@ -4052,10 +4113,12 @@ async def enforce_api_authentication(request: Request, call_next):
     yudao_tenant_id = request.headers.get("x-yudao-tenant-id", "").strip()
     if not yudao_tenant_id:
         return build_error_response(request, "AUTH_TOKEN_INVALID", details={"reason": "X-Yudao-Tenant-Id header is required"})
-    user = await run_in_threadpool(validate_yudao_request_token, token, yudao_tenant_id)
-    if user is None:
+    identity = await run_in_threadpool(validate_yudao_request_token, token, yudao_tenant_id)
+    if identity is None:
         return build_error_response(request, "AUTH_TOKEN_INVALID")
+    user, permissions = identity
     inject_trusted_header(request, "X-AIRank-User-Id", user.user_id)
+    inject_trusted_header(request, "X-AIRank-Permissions", ",".join(permissions))
     return await call_next(request)
 
 
@@ -4337,8 +4400,11 @@ def record_console_action(
 @app.get(f"{API_PREFIX}/admin/skills", response_model=SkillRegistryResponse)
 def get_skill_registry(
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
 ) -> SkillRegistryResponse:
+    require_skill_admin(permissions)
     registry = load_default_registry()
+    evaluations = {report.skill_id: report for report in evaluate_registry(registry)}
     return SkillRegistryResponse(
         data=SkillRegistryData(
             skills=[
@@ -4355,6 +4421,10 @@ def get_skill_registry(
                     failure_policy=dict(manifest.failure_policy),
                     quality_rubric=[dict(item) for item in manifest.quality_rubric],
                     eval_cases=[dict(item) for item in manifest.eval_cases],
+                    promotion_policy=dict(manifest.promotion_policy),
+                    evaluation=SkillEvaluationSummaryData(
+                        **evaluations[manifest.skill_id].to_dict(include_cases=False)
+                    ),
                     status=manifest.status,  # type: ignore[arg-type]
                     entrypoint=manifest.entrypoint,
                 )
@@ -4365,12 +4435,23 @@ def get_skill_registry(
     )
 
 
+@app.get(f"{API_PREFIX}/admin/skills/promotion-ledger", response_model=SkillPromotionLedgerResponse)
+def get_skill_promotion_ledger(
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> SkillPromotionLedgerResponse:
+    require_skill_admin(permissions)
+    return SkillPromotionLedgerResponse(data=build_promotion_ledger(), meta=build_meta(trace_id))
+
+
 @app.post(f"{API_PREFIX}/admin/skills/{{skill_id}}/eval", response_model=SkillEvalResponse)
 def evaluate_skill(
     skill_id: str,
     payload: SkillEvalRequest,
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
 ) -> SkillEvalResponse:
+    require_skill_admin(permissions)
     registry = load_default_registry()
     try:
         manifest = registry.get(skill_id)

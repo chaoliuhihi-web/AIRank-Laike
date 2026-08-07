@@ -26,6 +26,7 @@ class SkillManifest:
     failure_policy: Mapping[str, Any]
     quality_rubric: tuple[Mapping[str, Any], ...]
     eval_cases: tuple[Mapping[str, Any], ...]
+    promotion_policy: Mapping[str, Any]
     status: str
     entrypoint: str
 
@@ -54,6 +55,7 @@ class SkillManifest:
             failure_policy=payload["failure_policy"],
             quality_rubric=tuple(payload["quality_rubric"]),
             eval_cases=tuple(payload["eval_cases"]),
+            promotion_policy=payload["promotion_policy"],
             status=str(payload["status"]),
             entrypoint=str(payload["entrypoint"]),
         )

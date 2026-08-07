@@ -30,6 +30,7 @@
       "failure_policy": { "keep_failed_tasks": true, "keep_blocked_tasks": true, "not_mentioned_is_valid": true },
       "quality_rubric": [{ "key": "independent_sessions", "threshold": "all session_id values unique per planned sample" }],
       "eval_cases": [{ "case_id": "three-repeats", "input": { "questions": ["企业 GEO 工具有哪些？"], "providers": ["qianwen"], "cohort_type": "blind", "repetitions": 3, "surfaces": ["api"] }, "expected": { "status": "planned", "task_count": 3 } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["real_queue_execution", "provider_repetition_evidence"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:sample_runner"
     },
@@ -46,6 +47,7 @@
       "failure_policy": { "empty_answer": "failed", "not_mentioned": "valid" },
       "quality_rubric": [{ "key": "no_inferred_rank", "threshold": "rank only from explicit ordinal expression" }],
       "eval_cases": [{ "case_id": "valid-not-mentioned", "input": { "answer_text": "可以考虑甲平台和乙平台。", "brand_name": "AIRank" }, "expected": { "status": "valid", "brand_mentioned": false, "mention_class": "not_mentioned", "confidence": null } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["reviewed_labeled_benchmark"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:answer_parser"
     },
@@ -62,6 +64,7 @@
       "failure_policy": { "no_citation": "valid_with_missing_reason", "invalid_url": "discard_with_audit" },
       "quality_rubric": [{ "key": "traceable_url", "threshold": "every citation has an http(s) URL from provider evidence" }],
       "eval_cases": [{ "case_id": "dedupe-native", "input": { "native_citations": [{ "url": "https://example.com/a", "title": "A" }, { "url": "https://example.com/a", "title": "A" }] }, "expected": { "status": "valid", "citation_count": 1 } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["provider_citation_benchmark"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:citation_extractor"
     },
@@ -78,6 +81,7 @@
       "failure_policy": { "empty_input": "blocked", "duplicates": "retain first with source" },
       "quality_rubric": [{ "key": "deduplication", "threshold": "normalized duplicates removed without inventing volume" }],
       "eval_cases": [{ "case_id": "dedupe-and-classify", "input": { "seed_questions": ["价格是多少？", "价格是多少？", "和竞品对比"] }, "expected": { "status": "valid", "question_count": 2 } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["observed_query_or_provider_expansion_evidence"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:intent_miner"
     },
@@ -94,6 +98,7 @@
       "failure_policy": { "missing_source": "blocked", "unsupported_claim": "needs_evidence" },
       "quality_rubric": [{ "key": "source_boundary", "threshold": "claim includes source id, exact excerpt, and content hash" }],
       "eval_cases": [{ "case_id": "exact-support", "input": { "source_id": "source_1", "source_excerpt": "AIRank 于 2026 年上线。", "claim": "AIRank 于 2026 年上线。" }, "expected": { "status": "pending_review", "support_mode": "exact_excerpt" } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["reviewed_fact_extraction_benchmark"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:fact_builder"
     },
@@ -109,7 +114,8 @@
       "fact_policy": { "mode": "approved_only", "rule": "only approved facts may support publishable claims" },
       "failure_policy": { "no_support": "needs_evidence", "conflict": "blocked_for_human_review" },
       "quality_rubric": [{ "key": "support_coverage", "threshold": "every publishable claim has at least one approved support id" }],
-      "eval_cases": [{ "case_id": "approved-exact-fact", "input": { "claim": "支持私有化部署", "approved_facts": [{ "fact_id": "fact_1", "fact_text": "支持私有化部署", "status": "approved" }] }, "expected": { "status": "supported", "support_ids": ["fact_1"] } }],
+      "eval_cases": [{ "case_id": "approved-exact-fact", "input": { "claim": "支持私有化部署", "approved_facts": [{ "fact_id": "fact_1", "fact_text": "支持私有化部署", "status": "approved", "eligible_for_generation": true, "support_ids": ["support_1"] }] }, "expected": { "status": "supported", "support_ids": ["support_1"], "fact_ids": ["fact_1"] } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["fact_conflict_and_expiry_integration"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:claim_verifier"
     },
@@ -126,6 +132,7 @@
       "failure_policy": { "unapproved_fact": "needs_evidence", "empty_fact_set": "needs_evidence" },
       "quality_rubric": [{ "key": "fact_binding", "threshold": "every generated section references approved fact/support ids" }],
       "eval_cases": [{ "case_id": "reject-unapproved", "input": { "facts": [{ "fact_id": "fact_1", "status": "draft", "support_ids": [] }] }, "expected": { "status": "needs_evidence", "sections": [] } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["reviewed_content_quality_benchmark"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:page_blueprint"
     },
@@ -142,6 +149,7 @@
       "failure_policy": { "different_cohort": "blocked", "insufficient_sample": "low_confidence" },
       "quality_rubric": [{ "key": "attribution_language", "threshold": "uses observed/may relate/confidence wording only" }],
       "eval_cases": [{ "case_id": "comparable-low-confidence", "input": { "baseline": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 0.2, "valid_sample_count": 3 }, "followup": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 0.4, "valid_sample_count": 3 } }, "expected": { "status": "observed", "mention_rate_delta": 0.2, "confidence": "low" } }],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["real_t0_t7_retest_evidence"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:retest_report"
     }

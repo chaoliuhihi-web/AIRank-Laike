@@ -254,6 +254,46 @@ export type ProviderReadiness = {
   }>;
 };
 
+export type InternalSkill = {
+  skill_id: string;
+  version: string;
+  category: "measurement" | "research" | "knowledge" | "intervention" | "governance" | "delivery";
+  dependencies: string[];
+  provider_requirements: string[];
+  evidence_level: string[];
+  quality_rubric: Array<Record<string, unknown>>;
+  promotion_policy: {
+    required_suites: Array<"contract" | "holdout" | "adversarial">;
+    minimum_pass_rate: number;
+    required_evidence: string[];
+  };
+  evaluation: {
+    local_eval_status: "passed" | "failed";
+    total_cases: number;
+    passed_cases: number;
+    failed_cases: number;
+    pass_rate: number;
+    executed_suites: Array<"contract" | "holdout" | "adversarial">;
+    promotion_eligible: boolean;
+    promotion_blockers: string[];
+    evaluation_sha256: string;
+  };
+  status: "ready" | "partial" | "blocked" | "disabled" | "dev_only";
+  entrypoint: string;
+};
+
+export type SkillPromotionLedger = {
+  ledger_version: string;
+  source_sha256: Record<string, string>;
+  skills: Array<{
+    skill_id: string;
+    version: string;
+    decision: "promote_ready" | "retain_partial";
+    evaluation_sha256: string;
+    promotion_blockers: string[];
+  }>;
+};
+
 export type ScanRunSummary = {
   run_id: string;
   status: "queued" | "running" | "completed" | "failed" | "canceled";
@@ -760,6 +800,15 @@ export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Pro
 
 export function fetchProviderReadiness(signal?: AbortSignal): Promise<ProviderReadiness> {
   return fetchData("/api/v1/provider-readiness", "trc_web_provider_health", signal);
+}
+
+export async function fetchInternalSkills(signal?: AbortSignal): Promise<InternalSkill[]> {
+  const data = await fetchData<{ skills: InternalSkill[] }>("/api/v1/admin/skills", "trc_web_skills", signal);
+  return data.skills;
+}
+
+export function fetchSkillPromotionLedger(signal?: AbortSignal): Promise<SkillPromotionLedger> {
+  return fetchData("/api/v1/admin/skills/promotion-ledger", "trc_web_skill_ledger", signal);
 }
 
 export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckResult> {

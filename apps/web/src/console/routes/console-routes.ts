@@ -114,4 +114,12 @@ export const consoleRoutes: ConsoleRoute[] = [
     sourceImage: "AIRank素材/操作台/ChatGPT Image 2026年5月17日 13_41_11 (6).png",
     priority: "M1.5",
   },
+  {
+    id: "skills",
+    path: "/console/skills",
+    label: "Skill 控制台",
+    icon: "Workflow",
+    sourceImage: "",
+    priority: "M1.5",
+  },
 ];

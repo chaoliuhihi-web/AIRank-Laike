@@ -74,11 +74,13 @@ import {
   fetchContentAssets,
   fetchEvidenceObject,
   fetchFacts,
+  fetchInternalSkills,
   fetchKnowledgeSources,
   fetchProviderReadiness,
   fetchPublishAttempts,
   fetchPublishPackages,
   fetchRetestWindows,
+  fetchSkillPromotionLedger,
   fetchScanRuns,
   fetchScanTasks,
   fallbackReportList,
@@ -102,6 +104,7 @@ import {
   type ConsoleOverview,
   type GovernedContentAsset,
   type FactRevision,
+  type InternalSkill,
   type KnowledgeSource,
   type ProviderReadiness,
   type PublishPackage,
@@ -110,6 +113,7 @@ import {
   type RetestWindow,
   type ScanRun,
   type ScanTask,
+  type SkillPromotionLedger,
 } from "./console/api";
 import type { Tone } from "./console/data";
 
@@ -161,6 +165,7 @@ const iconMap: Record<string, LucideIcon> = {
   Target,
   UserRound,
   UsersRound,
+  Workflow,
   Zap,
 };
 
@@ -629,6 +634,7 @@ function ConsolePage({
   if (path === "/console/assistant") return <AssistantPage />;
   if (path === "/console/reports") return <ReportsPage onNavigate={onNavigate} />;
   if (path === "/console/settings") return <SettingsPage />;
+  if (path === "/console/skills") return <SkillConsolePage />;
   return <DashboardPage onNavigate={onNavigate} onBrandCheckComplete={onBrandCheckComplete} />;
 }
 
@@ -2147,6 +2153,81 @@ function SettingsPage() {
           rows={[["事实与证据", "partial"], ["导出发布包", "ready"], ["WordPress / HTTP", "partial"], ["AI 来客助手", "disabled"], ["商业上线", "blocked"]]}
         />
       </section>
+    </>
+  );
+}
+
+function SkillConsolePage() {
+  const [skills, setSkills] = useState<InternalSkill[]>([]);
+  const [ledger, setLedger] = useState<SkillPromotionLedger | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([fetchInternalSkills(controller.signal), fetchSkillPromotionLedger(controller.signal)])
+      .then(([nextSkills, nextLedger]) => {
+        setSkills(nextSkills);
+        setLedger(nextLedger);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setSkills([]);
+        setLedger(null);
+        setLoadError(error instanceof Error ? error.message : "Skill 控制台接口不可用");
+      });
+    return () => controller.abort();
+  }, []);
+
+  const locallyPassed = skills.filter((skill) => skill.evaluation.local_eval_status === "passed").length;
+  const promotionEligible = skills.filter((skill) => skill.evaluation.promotion_eligible).length;
+  const retainedPartial = ledger?.skills.filter((item) => item.decision === "retain_partial").length ?? 0;
+
+  return (
+    <>
+      <PageHeader
+        title="内部 Skill 控制台"
+        subtitle="展示版本化契约、独立评测和内容寻址晋级账本；本地用例通过不等于生产证据齐备。"
+        action={<Badge tone="warning">internal · read-only</Badge>}
+      />
+      <section className="summary-band evidence-summary">
+        <SummaryMetric label="核心 Skill" value={String(skills.length)} tone="primary" />
+        <SummaryMetric label="本地评测通过" value={String(locallyPassed)} tone={locallyPassed === skills.length && skills.length > 0 ? "success" : "warning"} />
+        <SummaryMetric label="可晋级 ready" value={String(promotionEligible)} tone={promotionEligible > 0 ? "success" : "warning"} />
+        <SummaryMetric label="保留 partial" value={String(retainedPartial)} tone="warning" />
+      </section>
+      {loadError && <DataStateCard title="Skill 状态读取失败" desc={loadError} tone="danger" />}
+      {!loadError && skills.length === 0 && <DataStateCard title="尚无已注册 Skill" desc="系统不会用演示 Skill 或固定评测结果补位。" tone="warning" />}
+      {skills.length > 0 && (
+        <div className="airank-console-card table-card skill-table-wrap">
+          <table className="question-table skill-table">
+            <thead><tr><th>Skill / 版本</th><th>类别</th><th>Manifest</th><th>评测</th><th>套件</th><th>晋级</th><th>证据阻断</th></tr></thead>
+            <tbody>
+              {skills.map((skill) => (
+                <tr key={skill.skill_id}>
+                  <td><strong>{skill.skill_id}</strong><small>v{skill.version} · {skill.evaluation.evaluation_sha256.slice(0, 12)}…</small></td>
+                  <td>{skill.category}</td>
+                  <td><Badge tone={skill.status === "ready" ? "success" : "warning"}>{skill.status}</Badge></td>
+                  <td><Badge tone={skill.evaluation.local_eval_status === "passed" ? "success" : "danger"}>{skill.evaluation.passed_cases}/{skill.evaluation.total_cases} {skill.evaluation.local_eval_status}</Badge></td>
+                  <td><small>{skill.evaluation.executed_suites.join(" · ")}</small></td>
+                  <td><Badge tone={skill.evaluation.promotion_eligible ? "success" : "warning"}>{skill.evaluation.promotion_eligible ? "eligible" : "blocked"}</Badge></td>
+                  <td><small>{skill.evaluation.promotion_blockers.map((item) => item.replace("missing_promotion_evidence:", "缺证：")).join("；") || "无"}</small></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {ledger && (
+        <Panel title="Promotion Evidence Ledger">
+          <dl className="evidence-metadata">
+            <div><dt>Ledger 版本</dt><dd>{ledger.ledger_version}</dd></div>
+            <div><dt>Registry SHA-256</dt><dd>{ledger.source_sha256.registry}</dd></div>
+            <div><dt>Eval Corpus SHA-256</dt><dd>{ledger.source_sha256.eval_corpus}</dd></div>
+            <div><dt>Implementation SHA-256</dt><dd>{ledger.source_sha256.implementation}</dd></div>
+          </dl>
+        </Panel>
+      )}
     </>
   );
 }

@@ -185,6 +185,56 @@ def test_required_yudao_auth_revalidates_permission_info(monkeypatch: Any) -> No
     assert calls[0]["headers"]["tenant-id"] == "8"
 
 
+def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_skill_admin")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "console:read")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "ordinary-user", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    forbidden = client.get(
+        "/api/v1/admin/skills",
+        headers={
+            "tenant-id": "tenant_skill_admin",
+            "Authorization": f"Bearer {token}",
+            "X-AIRank-Permissions": "airank:skill:admin",
+        },
+    )
+
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
+
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:skill:admin")
+    admin_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "skill-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+    allowed = client.get(
+        "/api/v1/admin/skills",
+        headers={"tenant-id": "tenant_skill_admin", "Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert allowed.status_code == 200
+    assert len(allowed.json()["data"]["skills"]) == 8
+
+
+def test_yudao_permission_extraction_and_admin_wildcards_are_explicit() -> None:
+    permissions = api_main.extract_yudao_permissions(
+        {"code": 0, "data": {"permissions": ["airank:skill:admin", "airank:skill:admin", "console:read"]}}
+    )
+
+    assert permissions == ("airank:skill:admin", "console:read")
+    assert api_main.permission_allows(permissions, "airank:skill:admin") is True
+    assert api_main.permission_allows(("airank:skill:*",), "airank:skill:admin") is True
+    assert api_main.permission_allows(("*:*:*",), "airank:skill:admin") is True
+    assert api_main.permission_allows(("console:read",), "airank:skill:admin") is False
+
+
 def test_audited_actor_comes_from_authenticated_session(monkeypatch: Any) -> None:
     monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
     monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")

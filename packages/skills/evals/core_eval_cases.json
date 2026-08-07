@@ -1,0 +1,117 @@
+{
+  "corpus_version": "1.0.0",
+  "cases": [
+    {
+      "skill_id": "measurement.sample-runner",
+      "case_id": "holdout-matrix-cardinality",
+      "suite": "holdout",
+      "input": { "questions": ["问题一", "问题二"], "providers": ["qianwen", "doubao"], "cohort_type": "comparison", "repetitions": 2, "surfaces": ["web"] },
+      "expected": { "status": "planned", "task_count": 8 }
+    },
+    {
+      "skill_id": "measurement.sample-runner",
+      "case_id": "adversarial-empty-surface",
+      "suite": "adversarial",
+      "input": { "questions": ["问题"], "providers": ["qianwen"], "cohort_type": "blind", "repetitions": 3, "surfaces": [] },
+      "expected": { "status": "blocked", "failure_code": "SAMPLE_SCOPE_EMPTY", "tasks": [] }
+    },
+    {
+      "skill_id": "measurement.answer-parser",
+      "case_id": "holdout-explicit-rank",
+      "suite": "holdout",
+      "input": { "answer_text": "在本轮对比中，AIRank 位列第 2 名，值得选择。", "brand_name": "AIRank" },
+      "expected": { "status": "valid", "brand_mentioned": true, "brand_rank": 2, "mention_class": "recommended" }
+    },
+    {
+      "skill_id": "measurement.answer-parser",
+      "case_id": "adversarial-unbound-rank",
+      "suite": "adversarial",
+      "input": { "answer_text": "第一名是甲平台。AIRank 也出现在候选名单中。", "brand_name": "AIRank" },
+      "expected": { "status": "valid", "brand_mentioned": true, "brand_rank": null, "mention_class": "candidate" }
+    },
+    {
+      "skill_id": "measurement.citation-extractor",
+      "case_id": "holdout-filter-and-dedupe",
+      "suite": "holdout",
+      "input": { "native_citations": [{ "url": "https://example.com/a", "title": "A" }, { "url": "ftp://example.com/a", "title": "bad" }, { "url": "https://example.com/a", "title": "duplicate" }] },
+      "expected": { "status": "valid", "citation_count": 1, "missing_reason": null }
+    },
+    {
+      "skill_id": "measurement.citation-extractor",
+      "case_id": "adversarial-script-url",
+      "suite": "adversarial",
+      "input": { "native_citations": [{ "url": "javascript:alert(1)", "title": "bad" }, { "url": "", "title": "empty" }] },
+      "expected": { "status": "valid", "citation_count": 0, "citations": [], "missing_reason": "provider_returned_no_traceable_native_citation" }
+    },
+    {
+      "skill_id": "research.intent-miner",
+      "case_id": "holdout-normalize-intents",
+      "suite": "holdout",
+      "input": { "seed_questions": [" 多少钱？ ", "多少钱？", "有什么风险？"] },
+      "expected": { "status": "valid", "question_count": 2 }
+    },
+    {
+      "skill_id": "research.intent-miner",
+      "case_id": "adversarial-empty-seeds",
+      "suite": "adversarial",
+      "input": { "seed_questions": ["", "   "] },
+      "expected": { "status": "blocked", "question_count": 0, "questions": [] }
+    },
+    {
+      "skill_id": "knowledge.fact-builder",
+      "case_id": "holdout-exact-sentence",
+      "suite": "holdout",
+      "input": { "source_id": "source_2", "source_excerpt": "AIRank 提供私有化部署。数据保留在客户环境。", "claim": "AIRank 提供私有化部署" },
+      "expected": { "status": "pending_review", "support_mode": "exact_excerpt" }
+    },
+    {
+      "skill_id": "knowledge.fact-builder",
+      "case_id": "adversarial-negated-substring",
+      "suite": "adversarial",
+      "input": { "source_id": "source_3", "source_excerpt": "AIRank 不提供私有化部署。", "claim": "AIRank 提供私有化部署" },
+      "expected": { "status": "needs_evidence", "support_mode": "not_supported" }
+    },
+    {
+      "skill_id": "governance.claim-verifier",
+      "case_id": "holdout-approved-support",
+      "suite": "holdout",
+      "input": { "claim": "支持私有化部署", "approved_facts": [{ "fact_id": "fact_2", "fact_text": "支持私有化部署", "status": "approved", "eligible_for_generation": true, "conflict_status": "none", "support_ids": ["support_2"] }] },
+      "expected": { "status": "supported", "support_ids": ["support_2"], "fact_ids": ["fact_2"] }
+    },
+    {
+      "skill_id": "governance.claim-verifier",
+      "case_id": "adversarial-open-conflict",
+      "suite": "adversarial",
+      "input": { "claim": "支持私有化部署", "approved_facts": [{ "fact_id": "fact_3", "fact_text": "支持私有化部署", "status": "approved", "eligible_for_generation": true, "conflict_status": "open", "support_ids": ["support_3"] }] },
+      "expected": { "status": "needs_evidence", "support_ids": [], "fact_ids": [] }
+    },
+    {
+      "skill_id": "intervention.page-blueprint",
+      "case_id": "holdout-approved-blueprint",
+      "suite": "holdout",
+      "input": { "facts": [{ "fact_id": "fact_4", "status": "approved", "support_ids": ["support_4"] }] },
+      "expected": { "status": "draft" }
+    },
+    {
+      "skill_id": "intervention.page-blueprint",
+      "case_id": "adversarial-empty-facts",
+      "suite": "adversarial",
+      "input": { "facts": [] },
+      "expected": { "status": "needs_evidence", "missing_fact_ids": [], "sections": [] }
+    },
+    {
+      "skill_id": "delivery.retest-report",
+      "case_id": "holdout-high-confidence-decline",
+      "suite": "holdout",
+      "input": { "baseline": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 0.5, "valid_sample_count": 30 }, "followup": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 0.4, "valid_sample_count": 30 } },
+      "expected": { "status": "observed", "mention_rate_delta": -0.1, "confidence": "high" }
+    },
+    {
+      "skill_id": "delivery.retest-report",
+      "case_id": "adversarial-invalid-rate",
+      "suite": "adversarial",
+      "input": { "baseline": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 1.2, "valid_sample_count": 3 }, "followup": { "cohort_type": "blind", "provider_scope": ["qianwen"], "collector_surfaces": ["api"], "question_version": "v1", "mention_rate": 0.4, "valid_sample_count": 3 } },
+      "expected": { "status": "blocked", "failure_code": "INVALID_OBSERVATION_METRICS" }
+    }
+  ]
+}

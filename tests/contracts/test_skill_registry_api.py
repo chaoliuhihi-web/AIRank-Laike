@@ -16,6 +16,10 @@ def test_admin_skill_registry_exposes_eight_partial_internal_skills() -> None:
     assert len(body["data"]["skills"]) == 8
     assert {item["status"] for item in body["data"]["skills"]} == {"partial"}
     assert all(item["eval_cases"] for item in body["data"]["skills"])
+    assert all(item["evaluation"]["local_eval_status"] == "passed" for item in body["data"]["skills"])
+    assert all(item["evaluation"]["total_cases"] == 3 for item in body["data"]["skills"])
+    assert all(item["evaluation"]["promotion_eligible"] is False for item in body["data"]["skills"])
+    assert all(item["evaluation"]["promotion_blockers"] for item in body["data"]["skills"])
 
 
 def test_admin_skill_eval_executes_versioned_runner() -> None:
@@ -53,3 +57,23 @@ def test_admin_skill_eval_rejects_invalid_input_and_unknown_skill() -> None:
     )
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "SKILL_NOT_FOUND"
+
+
+def test_admin_skill_promotion_ledger_is_hash_bound_and_does_not_auto_promote() -> None:
+    response = TestClient(app).get(
+        "/api/v1/admin/skills/promotion-ledger",
+        headers={"X-AIRank-Trace-Id": "trc_skill_ledger"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["trace_id"] == "trc_skill_ledger"
+    assert set(body["data"]["source_sha256"]) == {
+        "registry",
+        "eval_corpus",
+        "promotion_evidence",
+        "implementation",
+        "evaluation_engine",
+    }
+    assert len(body["data"]["skills"]) == 8
+    assert {item["decision"] for item in body["data"]["skills"]} == {"retain_partial"}

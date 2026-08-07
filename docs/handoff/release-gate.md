@@ -366,3 +366,26 @@ Blocking conditions:
 Decision:
 
 - Durable screenshot evidence is implemented and locally verified, but commercial launch remains `NO-GO` until the remaining external and production-runtime gates pass.
+
+## 2026-08-08 Core Skill Evaluation Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: pending core Skill evaluation commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Eight versioned internal Skills each passed contract, holdout, and adversarial suites: `24/24` executable cases.
+- The gate fixed four discovered guardrail defects: empty facts no longer generate a page blueprint, negated excerpts no longer support a positive fact by substring, unrelated ranking language no longer assigns a brand rank, and invalid observation rates/counts are blocked.
+- Promotion Evidence Ledger binds the registry, eval corpus, promotion evidence list, implementation, and evaluation engine by SHA-256.
+- Admin Skill APIs require trusted `airank:skill:admin` permission. The auth middleware overwrites a spoofed client permission header; the contract test proves an ordinary dev session receives `403 AUTH_PERMISSION_FORBIDDEN`.
+- Full local regression passed `213 passed, 10 skipped`; core Skill package passed 7 tests; Web build and npm audit passed.
+- Browser QA showed 8 Skills, 8 local passes, 0 promotion-eligible, and 8 retained partial. Desktop had no console warning/error; the 390px check had no page-level horizontal overflow and contained the wide table scroll inside its card.
+
+Blocking conditions:
+
+- All eight Skills remain `partial`. Local tests are not accepted as substitutes for the real queue, reviewed labeled benchmark, Provider citation benchmark, reviewed fact/content benchmark, or real T0/T+7 evidence required by each promotion policy.
+- Production Yudao must expose and grant the configured Skill admin permission before this console is production-accessible.
+- The broader commercial blockers from the durable evidence gate remain unchanged.

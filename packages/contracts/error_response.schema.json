@@ -25,6 +25,7 @@
             "AUTH_TOKEN_INVALID",
             "AUTH_LOGIN_FAILED",
             "AUTH_YUDAO_UNAVAILABLE",
+            "AUTH_PERMISSION_FORBIDDEN",
             "TENANT_MISMATCH",
             "TENANT_FORBIDDEN",
             "PROJECT_NOT_FOUND",

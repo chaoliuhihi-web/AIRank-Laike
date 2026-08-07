@@ -408,6 +408,7 @@ def release_checks(
         command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),
         command_check("score tests", "cd packages/score && python3 -m pytest -q", remove_database_urls=True),
         command_check("evidence tests", "cd packages/evidence && python3 -m pytest -q", remove_database_urls=True),
+        command_check("core skill evaluation", "python3 scripts/evaluate_core_skills.py", remove_database_urls=True),
         command_check(
             "xinghe adapter tests",
             "cd packages/xinghe-adapter && python3 -m pytest -q",

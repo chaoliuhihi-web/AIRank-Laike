@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 import re
 from typing import Any
 from uuid import uuid4
@@ -56,7 +57,11 @@ def answer_parser(payload: dict[str, Any]) -> dict[str, Any]:
     mentions = find_entity_mentions(answer, entity)
     explicit_rank = None
     for name, _entity_type in entity.names_by_type():
-        match = re.search(rf"(?:第\s*(\d+)\s*[名位].{{0,40}}{re.escape(name)}|{re.escape(name)}.{{0,40}}第\s*(\d+)\s*[名位])", answer)
+        match = re.search(
+            rf"(?:第\s*(\d+)\s*[名位]\s*[:：、-]?\s*{re.escape(name)}|"
+            rf"{re.escape(name)}\s*(?:排名|位列|排在)?\s*第\s*(\d+)\s*[名位])",
+            answer,
+        )
         if match:
             explicit_rank = int(next(group for group in match.groups() if group is not None))
             break
@@ -131,7 +136,12 @@ def fact_builder(payload: dict[str, Any]) -> dict[str, Any]:
     claim = str(payload.get("claim", "")).strip()
     if not source_id or not excerpt or not claim:
         return {"status": "blocked", "failure_code": "SOURCE_EVIDENCE_REQUIRED"}
-    supported = claim in excerpt
+    source_sentences = {
+        sentence.strip()
+        for sentence in re.split(r"[。！？!?；;\n]+", excerpt)
+        if sentence.strip()
+    }
+    supported = claim == excerpt or claim in source_sentences
     return {
         "status": "pending_review" if supported else "needs_evidence",
         "fact_text": claim,
@@ -145,16 +155,40 @@ def fact_builder(payload: dict[str, Any]) -> dict[str, Any]:
 def claim_verifier(payload: dict[str, Any]) -> dict[str, Any]:
     claim = str(payload.get("claim", "")).strip()
     approved_facts = payload.get("approved_facts", [])
-    supports = [fact for fact in approved_facts if fact.get("status") == "approved" and claim == str(fact.get("fact_text", "")).strip()]
+    now = datetime.now(timezone.utc)
+
+    def is_eligible(fact: dict[str, Any]) -> bool:
+        valid_until = fact.get("valid_until")
+        if valid_until:
+            try:
+                expires_at = datetime.fromisoformat(str(valid_until).replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= now:
+                return False
+        return (
+            fact.get("status") == "approved"
+            and fact.get("eligible_for_generation") is True
+            and fact.get("conflict_status", "none") != "open"
+            and bool(fact.get("support_ids"))
+            and claim == str(fact.get("fact_text", "")).strip()
+        )
+
+    supports = [fact for fact in approved_facts if is_eligible(fact)]
     return {
         "status": "supported" if supports else "needs_evidence",
         "claim": claim,
-        "support_ids": [str(fact.get("fact_id")) for fact in supports],
+        "support_ids": sorted({str(support_id) for fact in supports for support_id in fact.get("support_ids", [])}),
+        "fact_ids": [str(fact.get("fact_id")) for fact in supports],
     }
 
 
 def page_blueprint(payload: dict[str, Any]) -> dict[str, Any]:
     facts = payload.get("facts", [])
+    if not facts:
+        return {"status": "needs_evidence", "missing_fact_ids": [], "sections": []}
     unapproved = [fact for fact in facts if fact.get("status") != "approved" or not fact.get("support_ids")]
     if unapproved:
         return {"status": "needs_evidence", "missing_fact_ids": [fact.get("fact_id") for fact in unapproved], "sections": []}
@@ -179,8 +213,16 @@ def retest_report(payload: dict[str, Any]) -> dict[str, Any]:
         return {"status": "blocked", "failure_code": "NON_COMPARABLE_WINDOWS", "conclusion": "无法比较不同口径的样本。"}
     baseline_rate = float(baseline.get("mention_rate", 0))
     followup_rate = float(followup.get("mention_rate", 0))
+    baseline_count = int(baseline.get("valid_sample_count", 0))
+    followup_count = int(followup.get("valid_sample_count", 0))
+    if not 0 <= baseline_rate <= 1 or not 0 <= followup_rate <= 1 or baseline_count <= 0 or followup_count <= 0:
+        return {
+            "status": "blocked",
+            "failure_code": "INVALID_OBSERVATION_METRICS",
+            "conclusion": "观察窗口缺少有效样本或指标超出合法范围。",
+        }
     delta = round(followup_rate - baseline_rate, 6)
-    sample_floor = min(int(baseline.get("valid_sample_count", 0)), int(followup.get("valid_sample_count", 0)))
+    sample_floor = min(baseline_count, followup_count)
     confidence = "high" if sample_floor >= 30 else "medium" if sample_floor >= 10 else "low"
     return {
         "status": "observed",
