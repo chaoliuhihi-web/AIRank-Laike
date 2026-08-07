@@ -14,7 +14,7 @@ from airank_domain import (
     heartbeat_job,
     timeout_job,
 )
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 
 
 class InMemoryJobLeaseStore:
@@ -36,12 +36,20 @@ class InMemoryJobLeaseStore:
     def all(self) -> list[AsyncJob]:
         return list(self._jobs.values())
 
-    def claim_next(self, worker_id: str, now: datetime) -> AsyncJob | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        now: datetime,
+        *,
+        job_types: set[str] | None = None,
+    ) -> AsyncJob | None:
         self.sweep_timeouts(now)
         claimable = [
             job
             for job in self._jobs.values()
-            if job.status == AsyncJobStatus.QUEUED and job.is_due(now)
+            if job.status == AsyncJobStatus.QUEUED
+            and job.is_due(now)
+            and (not job_types or job.job_type in job_types)
         ]
         if not claimable:
             return None
@@ -166,21 +174,33 @@ class MySQLJobLeaseStore:
             rows = conn.execute(text("SELECT * FROM airank_async_jobs ORDER BY created_at ASC, id ASC")).mappings().all()
         return [self._row_to_job(row) for row in rows]
 
-    def claim_next(self, worker_id: str, now: datetime) -> AsyncJob | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        now: datetime,
+        *,
+        job_types: set[str] | None = None,
+    ) -> AsyncJob | None:
         self.sweep_timeouts(now)
         with self._engine.begin() as conn:
+            query = text(
+                """
+                SELECT *
+                FROM airank_async_jobs
+                WHERE status = 'queued'
+                  AND scheduled_at <= :now
+                  {job_type_clause}
+                ORDER BY priority ASC, scheduled_at ASC, id ASC
+                LIMIT 1
+                """.format(job_type_clause="AND job_type IN :job_types" if job_types else "")
+            )
+            params: dict[str, object] = {"now": now}
+            if job_types:
+                query = query.bindparams(bindparam("job_types", expanding=True))
+                params["job_types"] = sorted(job_types)
             row = conn.execute(
-                text(
-                    """
-                    SELECT *
-                    FROM airank_async_jobs
-                    WHERE status = 'queued'
-                      AND scheduled_at <= :now
-                    ORDER BY priority ASC, scheduled_at ASC, id ASC
-                    LIMIT 1
-                    """
-                ),
-                {"now": now},
+                query,
+                params,
             ).mappings().first()
             if row is None:
                 return None

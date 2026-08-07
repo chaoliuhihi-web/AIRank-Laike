@@ -69,6 +69,7 @@ import {
   fetchFacts,
   fetchKnowledgeSources,
   fetchProviderReadiness,
+  fetchPublishAttempts,
   fetchPublishPackages,
   fetchRetestWindows,
   fallbackReportList,
@@ -1454,7 +1455,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
-  const { openPanel } = useActionFeedback();
+  const { notify, openPanel } = useActionFeedback();
   const [packages, setPackages] = useState<PublishPackage[]>([]);
   const [windows, setWindows] = useState<RetestWindow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1479,7 +1480,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
     <>
       <PageHeader
         title="发布提交中心"
-        subtitle="保存审核后的不可变发布快照、真实发布证据与复测窗口；外部自动发布仍为 partial。"
+        subtitle="保存审核后的不可变发布快照、Worker 执行回执、真实发布证据与复测窗口；未拿到外部回执的渠道保持 partial。"
         action={<HeaderActions primary="开始复测" icon={Play} onPrimary={() => onNavigate("/console/reports")} />}
       />
       <ProcessSteps
@@ -1489,7 +1490,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       <section className="metric-grid publishing-stats">
         <MiniStat label="发布包" value={String(packages.length)} icon={CloudUpload} />
         <MiniStat label="已发布" value={String(packages.filter((item) => item.status === "published").length)} icon={BadgeCheck} />
-        <MiniStat label="待处理" value={String(packages.filter((item) => item.status === "queued").length)} icon={SearchCheck} />
+        <MiniStat label="待处理/失败" value={String(packages.filter((item) => ["queued", "publishing", "failed"].includes(item.status)).length)} icon={SearchCheck} />
         <MiniStat label="复测窗口" value={String(windows.length)} icon={RotateCw} />
       </section>
       {loadError && <DataStateCard title="发布中心读取失败" desc={loadError} tone="danger" />}
@@ -1504,7 +1505,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
               <tr key={item.package_id}>
                 <td><strong>{item.package_id}</strong></td>
                 <td>{item.channel}</td>
-                <td><Badge tone={item.status === "published" ? "success" : item.status === "queued" ? "warning" : "primary"}>{item.status}</Badge></td>
+                <td><Badge tone={["published", "delivered"].includes(item.status) ? "success" : item.status === "failed" ? "danger" : item.status === "queued" ? "warning" : "primary"}>{item.status}</Badge></td>
                 <td><Badge tone={item.implementation_status === "ready" ? "success" : "warning"}>{item.implementation_status}</Badge></td>
                 <td>{item.content_sha256.slice(0, 12)}…</td>
                 <td>{formatDateTime(item.created_at)}</td>
@@ -1512,15 +1513,32 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
                   <button
                     className="table-action"
                     type="button"
-                    onClick={() =>
-                      openPanel({
-                        title: item.package_id,
-                        desc: "发布包与内容审核、不可变快照和复测窗口关联。",
-                        items: [`发布渠道：${item.channel}`, `状态：${item.status}`, `快照：${item.snapshot_id}`, `发布 URL：${item.published_url || "尚未登记"}`],
-                        primaryLabel: "查看复测报告",
-                        onPrimary: () => onNavigate("/console/reports"),
-                      })
-                    }
+                    onClick={async () => {
+                      try {
+                        const attempts = await fetchPublishAttempts(item.package_id);
+                        const latest = attempts[attempts.length - 1];
+                        openPanel({
+                          title: item.package_id,
+                          desc: "发布包与内容审核、不可变快照、Worker attempt 和复测窗口关联。",
+                          items: [
+                            `发布渠道：${item.channel}`,
+                            `状态：${item.status}`,
+                            `快照：${item.snapshot_id}`,
+                            `发布 URL：${item.published_url || "尚未登记"}`,
+                            `执行次数：${attempts.length}`,
+                            `最近执行：${latest ? `${latest.status}${latest.error_code ? ` / ${latest.error_code}` : ""}` : "尚未执行"}`,
+                          ],
+                          primaryLabel: "查看复测报告",
+                          onPrimary: () => onNavigate("/console/reports"),
+                        });
+                      } catch (error) {
+                        notify({
+                          title: "发布执行记录读取失败",
+                          desc: error instanceof Error ? error.message : "请稍后重试。",
+                          tone: "danger",
+                        });
+                      }
+                    }}
                   >
                     查看
                   </button>

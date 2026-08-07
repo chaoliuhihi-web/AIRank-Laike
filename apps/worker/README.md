@@ -37,6 +37,33 @@ Failed and timed-out jobs are terminal by default. They do not silently return t
 `queued`; retry requires an explicit `requeue_for_retry` call and remaining
 attempts.
 
+`claim_next(..., job_types={...})` lets each handler claim only the job types it
+can execute. This prevents a publish-only worker from consuming scan jobs.
+
+## Governed HTTP / WordPress publisher
+
+`airank_worker.publisher` executes only immutable, approved publish snapshots.
+It requires an explicit `AIRANK_PUBLISH_ALLOWED_HOSTS` allowlist, credential-free
+HTTPS URLs, public DNS addresses, and process-environment credentials. Generic
+HTTP uses `Idempotency-Key`; WordPress first looks up a deterministic slug before
+creating a post. Request and response bodies are represented in MySQL by SHA-256
+receipts, not credentials or raw authorization headers.
+
+Successful transport changes the package to `delivered`. It does not create
+retest windows or claim publication evidence. The separate publication-evidence
+API must bind a completed T0 run and optional screenshot before the package
+becomes `published`.
+
+Run one publish job:
+
+```bash
+PYTHONPATH=apps/worker:packages/domain/src \
+  python3 -m airank_worker.main --once
+```
+
+Omit `--once` for the polling process. A failed job records a structured attempt
+and remains terminal until an explicit retry transition.
+
 ## M2 mock scan provider
 
 `airank_worker.scan.run_next_mock_scan_job` claims the next due job and uses

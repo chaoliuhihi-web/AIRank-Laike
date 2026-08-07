@@ -131,6 +131,21 @@ def test_exhausted_job_uses_registered_error_code() -> None:
     assert exhausted.error_code == "JOB_MAX_ATTEMPTS_EXCEEDED"
 
 
+def test_claim_can_be_limited_to_handler_job_types() -> None:
+    store = InMemoryJobLeaseStore(
+        [
+            AsyncJob(id="job_scan_first", tenant_id="tenant_1", job_type="scan.provider", priority=1, scheduled_at=NOW),
+            AsyncJob(id="job_publish_second", tenant_id="tenant_1", job_type="publish.package", priority=2, scheduled_at=NOW),
+        ]
+    )
+
+    claimed = store.claim_next("publisher", NOW, job_types={"publish.package"})
+
+    assert claimed is not None
+    assert claimed.id == "job_publish_second"
+    assert store.get("job_scan_first").status == AsyncJobStatus.QUEUED
+
+
 def create_mysql_lease_table(store: MySQLJobLeaseStore) -> None:
     with store._engine.begin() as conn:
         conn.execute(
@@ -230,6 +245,19 @@ def test_mysql_lease_store_preserves_owner_checks() -> None:
 
     with pytest.raises(JobOwnershipError):
         store.succeed("job_db_owner", "worker-b", NOW + timedelta(seconds=1), None)
+
+
+def test_mysql_lease_store_filters_job_type_before_claim() -> None:
+    store = MySQLJobLeaseStore("sqlite+pysqlite:///:memory:")
+    create_mysql_lease_table(store)
+    store.add(AsyncJob(id="job_db_scan", tenant_id="tenant_1", job_type="scan.provider", priority=1, scheduled_at=NOW))
+    store.add(AsyncJob(id="job_db_publish", tenant_id="tenant_1", job_type="publish.package", priority=2, scheduled_at=NOW))
+
+    claimed = store.claim_next("publisher", NOW, job_types={"publish.package"})
+
+    assert claimed is not None
+    assert claimed.id == "job_db_publish"
+    assert store.get("job_db_scan").status == AsyncJobStatus.QUEUED
 
 
 def test_mysql_datetime_coercion_normalizes_naive_values_to_utc() -> None:

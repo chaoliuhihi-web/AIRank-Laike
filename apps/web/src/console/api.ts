@@ -111,12 +111,27 @@ export type PublishPackage = {
   asset_id: string;
   snapshot_id: string;
   channel: "export" | "wordpress" | "http";
-  status: "packaged" | "queued" | "published";
+  status: "packaged" | "queued" | "publishing" | "delivered" | "failed" | "published";
   implementation_status: "ready" | "partial";
   idempotency_key: string;
   content_sha256: string;
   published_url: string | null;
   created_at: string;
+};
+
+export type PublishAttempt = {
+  attempt_id: string;
+  package_id: string;
+  attempt_number: number;
+  channel: string;
+  status: "running" | "succeeded" | "failed";
+  request_sha256: string;
+  response_status: number | null;
+  response_sha256: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
 };
 
 export type RetestWindow = {
@@ -490,6 +505,10 @@ export function fetchBuyerQuestions(projectId: string, signal?: AbortSignal): Pr
 
 export function fetchPublishPackages(projectId: string, signal?: AbortSignal): Promise<PublishPackage[]> {
   return fetchData(`/api/v1/projects/${projectId}/publish-packages`, "trc_web_publish", signal);
+}
+
+export function fetchPublishAttempts(packageId: string, signal?: AbortSignal): Promise<PublishAttempt[]> {
+  return fetchData(`/api/v1/publish-packages/${packageId}/attempts`, "trc_web_publish_attempts", signal);
 }
 
 export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Promise<RetestWindow[]> {

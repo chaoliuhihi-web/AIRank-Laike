@@ -26,6 +26,18 @@ from apps.api.main import (
     ProjectCreateRequest,
     ScanRunCreateRequest,
 )
+from apps.api.delivery_routes import (
+    ContentReviewRequest,
+    MySQLDeliveryRepository,
+    PublishPackageCreateRequest,
+)
+from apps.api.knowledge_routes import (
+    FactProposalRequest,
+    FactRevisionReviewRequest,
+    GovernedContentCreateRequest,
+    KnowledgeSourceCreateRequest,
+    MySQLKnowledgeRepository,
+)
 from apps.api.provider_operations import MySQLProviderOperations
 from airank_provider_gateway import (
     HealthState,
@@ -41,7 +53,13 @@ sys.path.insert(0, str(ROOT / "packages" / "domain" / "src"))
 sys.path.insert(0, str(ROOT / "packages" / "xinghe-adapter" / "src"))
 
 from airank_domain import AsyncJob, AsyncJobStatus  # noqa: E402
-from airank_worker import MySQLJobLeaseStore  # noqa: E402
+from airank_worker import (  # noqa: E402
+    MySQLJobLeaseStore,
+    MySQLPublishExecutionRepository,
+    PublisherError,
+    PublisherGateway,
+    run_next_publish_job,
+)
 from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig  # noqa: E402
 
 
@@ -600,6 +618,291 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
             )
         cleanup_tenant(engine, tenant_id)
         cleanup_tenant(engine, race_tenant_id)
+
+
+def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_publish_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    knowledge_repo = MySQLKnowledgeRepository(database_url())
+    delivery_repo = MySQLDeliveryRepository(database_url())
+    execution_repo = MySQLPublishExecutionRepository(database_url())
+    job_store = MySQLJobLeaseStore(database_url())
+
+    class FakeTransport:
+        calls: list[dict[str, Any]] = []
+
+        def request(self, method, url, *, headers, payload, timeout_seconds):
+            self.calls.append({"method": method, "url": url, "headers": dict(headers), "payload": payload})
+            return 201, {}, {
+                "id": "remote_publish_it",
+                "published_url": "https://publisher.example.test/pages/airank-proof",
+            }
+
+    class FailingTransport:
+        def request(self, method, url, *, headers, payload, timeout_seconds):
+            raise PublisherError("PUBLISH_NETWORK_FAILED", "simulated network failure", retryable=True)
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-publish.example.com",
+                brand_name_hint="AIRank Publish",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        source = knowledge_repo.create_source(
+            tenant_id,
+            project.project_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="publish-source-it",
+                source_type="official_website",
+                title="AIRank 官方事实",
+                content_text="AIRank 提供带原始回答和引用证据的多平台 GEO 测量。",
+                source_uri="https://airank-publish.example.com/facts",
+                authority_level="official",
+                risk_level="low",
+            ),
+        )
+        fact = knowledge_repo.propose_fact(
+            tenant_id,
+            project.project_id,
+            FactProposalRequest(
+                title="AIRank 产品能力",
+                fact_text="AIRank 提供带原始回答和引用证据的多平台 GEO 测量。",
+                source_ids=[source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration-test",
+            ),
+        )
+        knowledge_repo.review_revision(
+            tenant_id,
+            project.project_id,
+            fact.revision_id,
+            FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        asset = knowledge_repo.create_governed_content(
+            tenant_id,
+            project.project_id,
+            GovernedContentCreateRequest(
+                asset_type="fact_page",
+                title="AIRank 企业事实页",
+                direction="只陈述审核通过的事实",
+                fact_revision_ids=[fact.revision_id],
+                created_by="integration-test",
+            ),
+        )
+        delivery_repo.review_content(
+            tenant_id,
+            asset.asset_id,
+            ContentReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        package = delivery_repo.create_package(
+            tenant_id,
+            asset.asset_id,
+            PublishPackageCreateRequest(
+                channel="http",
+                idempotency_key="publish-package-it",
+                requested_by="integration-test",
+                target_endpoint="https://publisher.example.test/v1/publish",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                    """
+                ),
+                {"tenant_id": tenant_id},
+            )
+        transport = FakeTransport()
+        gateway = PublisherGateway(
+            env={
+                "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+                "AIRANK_PUBLISH_HTTP_BEARER_TOKEN": "integration-secret",
+            },
+            transport=transport,
+            resolver=lambda host, port, **_: [(2, 1, 6, "", ("93.184.216.34", port))],
+        )
+
+        receipt = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-integration",
+        )
+
+        assert receipt is not None
+        assert receipt.published_url == "https://publisher.example.test/pages/airank-proof"
+        assert "integration-secret" not in repr(receipt)
+        with engine.connect() as conn:
+            package_row = conn.execute(
+                text(
+                    """
+                    SELECT status, published_url, published_at, metadata_json
+                    FROM airank_publish_packages
+                    WHERE tenant_id = :tenant_id AND id = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package.package_id},
+            ).mappings().one()
+            attempt = conn.execute(
+                text(
+                    """
+                    SELECT status, request_sha256, response_sha256, response_status
+                    FROM airank_publish_attempts
+                    WHERE tenant_id = :tenant_id AND package_id = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package.package_id},
+            ).mappings().one()
+            retest_count = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM airank_retest_observation_windows
+                    WHERE tenant_id = :tenant_id AND package_id = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package.package_id},
+            ).scalar_one()
+        assert package_row["status"] == "delivered"
+        assert package_row["published_at"] is None
+        assert attempt["status"] == "succeeded"
+        assert len(attempt["request_sha256"]) == 64
+        assert len(attempt["response_sha256"]) == 64
+        assert int(attempt["response_status"]) == 201
+        assert retest_count == 0
+        assert "integration-secret" not in str(package_row["metadata_json"])
+        assert transport.calls[0]["headers"]["Idempotency-Key"] == "publish-package-it"
+
+        retry_package = delivery_repo.create_package(
+            tenant_id,
+            asset.asset_id,
+            PublishPackageCreateRequest(
+                channel="http",
+                idempotency_key="publish-retry-package-it",
+                requested_by="integration-test",
+                target_endpoint="https://publisher.example.test/v1/publish",
+            ),
+        )
+        with engine.begin() as conn:
+            retry_job_id = conn.execute(
+                text(
+                    """
+                    SELECT id FROM airank_async_jobs
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": retry_package.package_id},
+            ).scalar_one()
+            conn.execute(
+                text("UPDATE airank_async_jobs SET priority = -1000 WHERE id = :id"),
+                {"id": retry_job_id},
+            )
+        failing_gateway = PublisherGateway(
+            env={
+                "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+                "AIRANK_PUBLISH_HTTP_BEARER_TOKEN": "integration-secret",
+            },
+            transport=FailingTransport(),
+            resolver=lambda host, port, **_: [(2, 1, 6, "", ("93.184.216.34", port))],
+        )
+        with pytest.raises(PublisherError) as failed_publish:
+            run_next_publish_job(
+                job_store,
+                execution_repo,
+                failing_gateway,
+                worker_id="publisher-integration",
+            )
+        assert failed_publish.value.code == "PUBLISH_NETWORK_FAILED"
+        assert job_store.get(retry_job_id).status.value == "failed"
+
+        job_store.requeue_for_retry(retry_job_id, datetime.now(timezone.utc))
+        recovered = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-integration-retry",
+        )
+        assert recovered is not None
+        with engine.connect() as conn:
+            retry_package_status = conn.execute(
+                text(
+                    """
+                    SELECT status FROM airank_publish_packages
+                    WHERE tenant_id = :tenant_id AND id = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": retry_package.package_id},
+            ).scalar_one()
+            attempt_statuses = conn.execute(
+                text(
+                    """
+                    SELECT status FROM airank_publish_attempts
+                    WHERE tenant_id = :tenant_id AND package_id = :package_id
+                    ORDER BY attempt_number
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": retry_package.package_id},
+            ).scalars().all()
+        assert retry_package_status == "delivered"
+        assert attempt_statuses == ["failed", "succeeded"]
+
+        stale_package = delivery_repo.create_package(
+            tenant_id,
+            asset.asset_id,
+            PublishPackageCreateRequest(
+                channel="http",
+                idempotency_key="publish-stale-package-it",
+                requested_by="integration-test",
+                target_endpoint="https://publisher.example.test/v1/publish",
+            ),
+        )
+        stale_snapshot = execution_repo.load_snapshot(tenant_id, stale_package.package_id)
+        execution_repo.begin_attempt(
+            stale_snapshot,
+            gateway.request_sha256(stale_snapshot),
+            datetime.now(timezone.utc) - timedelta(seconds=700),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": stale_package.package_id},
+            )
+        recovered_stale = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-stale-recovery",
+        )
+        assert recovered_stale is not None
+        with engine.connect() as conn:
+            stale_attempts = conn.execute(
+                text(
+                    """
+                    SELECT status, error_code FROM airank_publish_attempts
+                    WHERE tenant_id = :tenant_id AND package_id = :package_id
+                    ORDER BY attempt_number
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": stale_package.package_id},
+            ).mappings().all()
+        assert [row["status"] for row in stale_attempts] == ["failed", "succeeded"]
+        assert stale_attempts[0]["error_code"] == "PUBLISH_ATTEMPT_ABANDONED"
+    finally:
+        cleanup_tenant(engine, tenant_id)
 
 
 def test_real_yudao_login_permission_and_capability_probe() -> None:

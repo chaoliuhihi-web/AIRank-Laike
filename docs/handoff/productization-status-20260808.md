@@ -34,15 +34,17 @@
 24. 新增买家问题和发布包列表 API，空项目时前端不再请求伪造的 `project_demo`，不产生隐藏 404；新增静态结果回归门禁。
 25. 在本地 dev-only 身份边界内完成 11 个控制台路由桌面与 390px 移动端浏览器验收：标题与显式空态正确、无横向页面溢出、无浏览器 console warning/error；该结果只证明空态和前端契约，不替代真实客户项目 E2E。
 26. Provider Gateway 在配置 MySQL 时启用跨进程 circuit/quota/probe store：熔断按 Provider + 配置指纹隔离，配额按租户和 UTC 日锁行预留，任务幂等键阻止重复并发调用，过期预留可恢复；Manifest 与 L1/L2/L3 probe 只保存公开配置和单向指纹。
+27. 新增受治理的 HTTP/WordPress Publisher worker：只读取审核后不可变快照，要求显式 HTTPS 主机白名单和公网 DNS，拒绝重定向/私网目标，凭证只从进程环境注入；每次执行保存 request/response SHA-256、状态码和结构化错误，支持显式重试恢复。
+28. 外部调用成功仅把发布包置为 `delivered`，不会自动制造 `published` 或复测结论；仍须通过 publication-evidence API 绑定真实 URL、可选截图和已完成 T0 基线后，才创建 T0/T+7/T+14/T+30 窗口。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`178 passed, 7 skipped`。
+- `python3 -m pytest -q`：`184 passed, 8 skipped`。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - 浏览器：`/login -> /console` 登录通过；11 个控制台路由完成桌面/390px 空态验收，无横向溢出、无 console warning/error；发布报告按钮明确提示未开放，AI 来客助手显示 `disabled`。
 - MySQL 临时库：Alembic `20260808_0008`；42 张 AIRank 表校验通过；真实 MySQL 复测链路生成 1 个 RetestRun 和 1 个带 SHA-256/evidence index 的报告，临时库已删除。
-- 本地真实 MySQL integration：`6 passed, 1 skipped`（仅 Yudao 外部服务跳过）；两个独立 Provider store 实例通过共享熔断、重复幂等阻断、并发配额竞争（仅一个成功）、commit 记账和 probe 落库测试；未使用真实 Provider 凭证。
+- 本地真实 MySQL integration：`7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。Provider store 已通过共享熔断、重复幂等阻断、并发配额竞争（仅一个成功）、commit 记账和 probe 落库；Publisher 已通过审核事实→内容→发布包→worker delivery、失败 attempt→显式重试→成功 attempt、陈旧 running attempt 恢复的完整数据库链。均未使用真实外部 Provider/站点凭证。
 
 ## 下一实施顺序
 
@@ -50,6 +52,6 @@
 2. 将当前单机 QPS/并发限制扩展为 Redis/数据库分布式令牌桶，并补长时崩溃恢复和负载压测；MySQL circuit/quota/probe 状态已接入。
 3. 为首批 8 个内部 Skill 补 holdout/对抗/真实 Provider eval 和 promotion evidence ledger。
 4. 补知识增量重嵌入、混合检索、过期提醒与冲突审核 UI。
-5. 实现安全的 WordPress/HTTP Publisher adapter、attempt 消费、重试/恢复和真实外部回执门禁。
+5. 使用客户授权的 WordPress/HTTP 测试站点完成一次真实外部回执、截图和撤回/更新验收；适配器、attempt 消费与重试恢复已实现，但无外部账号时保持 `partial`。
 6. 补事实审核、冲突处理、内容审核、发布执行和样本下钻等可写 UI；所有写操作绑定真实 API、权限、审计和失败恢复。
 7. 用四平台真实重复样本从新建品牌跑到客户报告，完成带数据的浏览器 E2E 和上线门禁后再同步 GitHub/Gitee。

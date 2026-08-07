@@ -61,7 +61,7 @@
 | GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | KnowledgeSource/FactRevision/FactConflict、版本、有效期和人工审核契约已实现 | 导入 worker、冲突队列和操作 UI 仍缺 | adapt | Knowledge domain | P0 | partial | 增量同步不覆盖已审核版本；冲突进入队列 |
 | GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | 已有 source/content hash 幂等导入和保持原文拼接一致的边界切片 | embedding worker、混合检索和变更后局部重嵌入仍缺 | adapt | Knowledge ingestion | P1 | partial | 相同 hash 幂等；变更仅更新受影响切片 |
 | GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 已有 Claim 覆盖核验、风险规则、内容 hash 绑定审核和高风险 override 审计 | 风险规则集和审核 UI 仍需扩充 | adapt | Governance Skills | P0 | partial | 未过事实/风险门禁不能生成发布任务 |
-| GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | 审核后不可变发布快照和 export 发布包已可用；WordPress/HTTP 只入可靠队列并标记 partial | 缺真实外部 publisher adapter、凭证和线上回执 | adapt | Delivery Gateway | P1 | partial | WordPress/HTTP contract tests；幂等重试不重复发布 |
+| GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | 审核后不可变发布快照、export、受白名单保护的 WordPress/HTTP worker、attempt 哈希回执与失败恢复已实现 | 缺客户真实站点凭证和线上回执；未验证的渠道仍为 partial | adapt | Delivery Gateway | P1 | partial | WordPress/HTTP contract + 真实 MySQL attempt/retry 通过；客户站点 E2E 后晋级 |
 | GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | 发布包具备租户级幂等键、不可变快照、attempt ledger 和异步 job | worker 尚未消费发布 attempt，外部副作用恢复门禁未过 | absorb | Delivery job runtime | P1 | partial | worker 崩溃后可续跑；相同 key 只有一个外部副作用 |
 | GEOFlow | SSRF 和出站安全 | 保护官网抓取与发布端点 | `Services/Outbound/*` | URL/request → allowed/blocked | DNS 重解析、大小限制 | Apache-2.0 | provider URL 安全零散 | 缺统一出站策略 | adapt | Outbound Security Gateway | P0 | planned | 私网、重定向、DNS rebinding、超大响应均被阻断 |
 | GEOFlow | 可见度采集模型 | 参考 run/source 分表与 provider normalizer | `AiVisibility*` | provider response → run/sources | provider client | Apache-2.0 | scan run/snapshot/citation | 缺 surface、session、raw object | reference_only | Measurement schema | P0 | partial | 只吸收结构，不复用其业务实现；新契约通过迁移测试 |
@@ -141,7 +141,7 @@
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
 - `20260808_0006`—`0008` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0008`；42 张 AIRank 表完成核验，知识导入、内容审核、不可变发布快照、观察窗口、复测结果和报告 hash 均落库，随后删除临时验收库。
 - 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
-- 全量 Python 测试：`178 passed, 7 skipped`；本地真实 MySQL integration 为 `6 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。
+- 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
 - 控制台静态业务结果已删除，11 个路由改用真实 API 或显式 `partial/blocked/disabled` 状态；桌面与 390px 空项目浏览器验收通过。该证据不替代带真实项目数据的全链路 E2E。
 - 当前阶段仍是 `partial`：Kimi 安全运行时注入、四平台真实重复采样、外部 Publisher、审核操作 UI 与带数据浏览器 E2E 尚未通过，因此不允许声明商业可用。

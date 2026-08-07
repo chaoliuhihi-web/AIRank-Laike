@@ -111,7 +111,7 @@ class PublishPackageData(BaseModel):
     snapshot_id: str
     content_review_id: str
     channel: Literal["export", "wordpress", "http"]
-    status: Literal["packaged", "queued", "published"]
+    status: Literal["packaged", "queued", "publishing", "delivered", "failed", "published"]
     implementation_status: Literal["ready", "partial"]
     idempotency_key: str
     content_sha256: str
@@ -127,6 +127,26 @@ class PublishPackageResponse(BaseModel):
 
 class PublishPackageListResponse(BaseModel):
     data: list[PublishPackageData]
+    meta: dict[str, str]
+
+
+class PublishAttemptData(BaseModel):
+    attempt_id: str
+    package_id: str
+    attempt_number: int
+    channel: str
+    status: Literal["running", "succeeded", "failed"]
+    request_sha256: str
+    response_status: Optional[int] = None
+    response_sha256: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+
+
+class PublishAttemptListResponse(BaseModel):
+    data: list[PublishAttemptData]
     meta: dict[str, str]
 
 
@@ -166,6 +186,7 @@ class DeliveryRepository(Protocol):
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData: ...
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData: ...
     def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]: ...
+    def list_attempts(self, tenant_id: str, package_id: str) -> list[PublishAttemptData]: ...
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData: ...
     def mark_published(self, tenant_id: str, package_id: str, payload: PublishEvidenceRequest) -> PublishPackageData: ...
 
@@ -222,6 +243,11 @@ class InMemoryDeliveryRepository:
             for (item_tenant, _), package in self.packages.items()
             if item_tenant == tenant_id and package.project_id == project_id
         ]
+
+    def list_attempts(self, tenant_id: str, package_id: str) -> list[PublishAttemptData]:
+        if (tenant_id, package_id) not in self.packages:
+            raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+        return []
 
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         package = self.packages.get((tenant_id, package_id))
@@ -302,7 +328,8 @@ class MySQLDeliveryRepository:
         status = "queued" if row["status"] in {"draft", "packaged", "queued"} and row["channel"] != "export" else row["status"]
         if row["channel"] == "export" and status == "draft":
             status = "packaged"
-        return PublishPackageData(package_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"], asset_id=row["asset_id"], snapshot_id=row["snapshot_id"], content_review_id=row["content_review_id"], channel=row["channel"], status=status, implementation_status="ready" if row["channel"] == "export" else "partial", idempotency_key=row["idempotency_key"], content_sha256=metadata.get("content_sha256", ""), published_url=row["published_url"], created_at=row["created_at"], idempotent_replay=replay)
+        implementation_status = "ready" if row["channel"] == "export" or metadata.get("implementation_status") == "ready" else "partial"
+        return PublishPackageData(package_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"], asset_id=row["asset_id"], snapshot_id=row["snapshot_id"], content_review_id=row["content_review_id"], channel=row["channel"], status=status, implementation_status=implementation_status, idempotency_key=row["idempotency_key"], content_sha256=metadata.get("content_sha256", ""), published_url=row["published_url"], created_at=row["created_at"], idempotent_replay=replay)
 
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData:
         created_at = utc_now()
@@ -370,6 +397,47 @@ class MySQLDeliveryRepository:
                 ORDER BY created_at DESC, id DESC
             """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
         return [self._package_data(row) for row in rows]
+
+    def list_attempts(self, tenant_id: str, package_id: str) -> list[PublishAttemptData]:
+        with self.engine.begin() as conn:
+            package = conn.execute(
+                text(
+                    """
+                    SELECT id FROM airank_publish_packages
+                    WHERE tenant_id=:tenant_id AND id=:package_id AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package_id},
+            ).first()
+            if package is None:
+                raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT * FROM airank_publish_attempts
+                    WHERE tenant_id=:tenant_id AND package_id=:package_id
+                    ORDER BY attempt_number ASC
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package_id},
+            ).mappings().all()
+        return [
+            PublishAttemptData(
+                attempt_id=row["id"],
+                package_id=row["package_id"],
+                attempt_number=row["attempt_number"],
+                channel=row["channel"],
+                status=row["status"],
+                request_sha256=row["request_sha256"],
+                response_status=row["response_status"],
+                response_sha256=row["response_sha256"],
+                error_code=row["error_code"],
+                error_message=row["error_message"],
+                started_at=row["started_at"],
+                finished_at=row["finished_at"],
+            )
+            for row in rows
+        ]
 
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         with self.engine.begin() as conn:
@@ -484,6 +552,11 @@ def list_publish_packages(project_id: str, tenant_id: str = Header(default="tena
 @router.get("/publish-packages/{package_id}/export", response_model=PublishExportResponse)
 def export_publish_package(package_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishExportResponse:
     return PublishExportResponse(data=DELIVERY_REPOSITORY.get_export(tenant_id, package_id), meta=response_meta(trace_id))
+
+
+@router.get("/publish-packages/{package_id}/attempts", response_model=PublishAttemptListResponse)
+def list_publish_attempts(package_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishAttemptListResponse:
+    return PublishAttemptListResponse(data=DELIVERY_REPOSITORY.list_attempts(tenant_id, package_id), meta=response_meta(trace_id))
 
 
 @router.post("/publish-packages/{package_id}/publication-evidence", response_model=PublishPackageResponse)
