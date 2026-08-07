@@ -95,7 +95,10 @@ def test_minimum_provider_success_count_defaults_to_full_browser_scope(monkeypat
     monkeypatch.delenv("AIRANK_MIN_PROVIDER_SUCCESS_COUNT", raising=False)
 
     assert api_main.minimum_provider_success_count(api_main.DEFAULT_PROVIDER_SCOPE) == len(api_main.DEFAULT_PROVIDER_SCOPE)
-    assert api_main.minimum_scan_success_count(api_main.DEFAULT_PROVIDER_SCOPE, question_count=3, task_count=21) == 21
+    expected_task_count = len(api_main.DEFAULT_PROVIDER_SCOPE) * 3
+    assert api_main.minimum_scan_success_count(
+        api_main.DEFAULT_PROVIDER_SCOPE, question_count=3, task_count=expected_task_count
+    ) == expected_task_count
 
 
 def test_minimum_provider_success_count_can_be_lowered_for_partial_beta(monkeypatch) -> None:

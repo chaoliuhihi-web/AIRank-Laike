@@ -27,7 +27,7 @@ def test_brand_check_without_real_provider_is_explicitly_unverified() -> None:
     assert body["data"]["project"]["brand_name"] == "中关村软件园孵化器"
     assert body["data"]["scan_run"]["status"] == "failed"
     assert body["data"]["scan_run"]["metrics"]["data_status"] == "unverified_no_provider_evidence"
-    assert len(body["data"]["tasks"]) == 21
+    assert len(body["data"]["tasks"]) == len(api_main.DEFAULT_PROVIDER_SCOPE) * 3
     assert {task["status"] for task in body["data"]["tasks"]} == {"failed"}
     assert body["data"]["asset_bundle"]["assets"] == []
     assert body["data"]["reports"]["reports"] == []

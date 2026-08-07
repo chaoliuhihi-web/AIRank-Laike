@@ -27,6 +27,7 @@ try:
         ProviderCallError,
         ProviderScanResult,
         ProviderUnavailable,
+        call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
         probe_provider_readiness,
         provider_execution_mode,
@@ -36,6 +37,7 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
         ProviderCallError,
         ProviderScanResult,
         ProviderUnavailable,
+        call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
         probe_provider_readiness,
         provider_execution_mode,
@@ -250,7 +252,7 @@ class BuyerQuestionCreateRequest(BaseModel):
     buyer_stage: Literal["awareness", "consideration", "decision"] = "consideration"
     source_reason: Optional[str] = Field(default=None, min_length=1, max_length=500)
     recommended_providers: list[
-        Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+        Literal["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
     ] = Field(default_factory=list, max_length=8)
     status: Literal["suggested", "confirmed", "archived"] = "suggested"
     source: Literal["hermes_generated", "manual", "imported"] = "manual"
@@ -283,7 +285,7 @@ class BuyerQuestionResponse(BaseModel):
     meta: ResponseMeta
 
 
-Provider = Literal["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+Provider = Literal["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
 ProjectId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
 QuestionId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^question_[A-Za-z0-9_-]+$")]
 FactId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^fact_[A-Za-z0-9_-]+$")]
@@ -705,6 +707,12 @@ class ProviderReadinessItem(BaseModel):
             "timeout",
             "network_error",
             "unknown_blocked",
+            "provider_not_configured",
+            "provider_disabled",
+            "provider_auth_failed",
+            "provider_model_failed",
+            "provider_generation_failed",
+            "provider_circuit_open",
         ]
     ] = None
     reason: Optional[str] = None
@@ -712,7 +720,7 @@ class ProviderReadinessItem(BaseModel):
 
 
 class ProviderReadinessData(BaseModel):
-    mode: Literal["browser", "mock"]
+    mode: Literal["api", "browser", "mock"]
     minimum_success_count: int
     providers: list[ProviderReadinessItem]
 
@@ -2039,13 +2047,14 @@ def build_console_action_repository() -> ConsoleActionRepository:
 CONSOLE_ACTION_REPOSITORY: ConsoleActionRepository = build_console_action_repository()
 
 
-DEFAULT_PROVIDER_SCOPE: list[Provider] = ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao"]
+DEFAULT_PROVIDER_SCOPE: list[Provider] = ["doubao", "qianwen", "kimi", "deepseek"]
 
 PROVIDER_LABELS: dict[str, str] = {
     "chatgpt": "ChatGPT",
     "deepseek": "DeepSeek",
     "kimi": "Kimi",
     "tongyi": "通义",
+    "qianwen": "千问",
     "doubao": "豆包",
     "baidu_ai_search": "百度 AI 搜索",
     "yuanbao": "腾讯元宝",
@@ -2463,9 +2472,14 @@ def complete_mysql_real_brand_scan(
         question_text = question_by_id.get(str(row["question_id"]), f"{project.brand_name} 是否值得选择？")
         task_started_at = utc_now()
         try:
-            if row["collector_surface"] != "web":
-                raise ProviderUnavailable(provider, f"collector surface {row['collector_surface']} is not implemented by browser scanner")
-            result = call_provider_for_brand_rank(
+            surface = str(row["collector_surface"])
+            if surface == "api":
+                provider_call = call_api_provider_for_brand_rank
+            elif surface == "web":
+                provider_call = call_provider_for_brand_rank
+            else:
+                raise ProviderUnavailable(provider, f"collector surface {surface} is not implemented")
+            result = provider_call(
                 provider=provider,
                 brand_name=project.brand_name,
                 website_url=project.website_url,
@@ -2518,6 +2532,10 @@ def complete_mysql_real_brand_scan(
                     "error_code": code,
                     "error_message": exc.reason[:1000],
                     "blocked": code == "SCAN_PROVIDER_BLOCKED",
+                    "provider_error_code": exc.error_code,
+                    "upstream_error_code": exc.provider_code,
+                    "retryable": exc.retryable,
+                    "provider_metadata": exc.public_metadata,
                 }
             )
             continue
@@ -2551,12 +2569,13 @@ def complete_mysql_real_brand_scan(
             "browser login or human verification may be required."
         )
     elif run_status == "failed":
-        run_error_message = "No configured external AI provider completed successfully; AIRank did not generate ranking results."
+        run_error_message = "No configured external AI provider completed successfully; AIRank did not generate visibility results."
 
     with engine.begin() as conn:
         for row, result in successes:
             snapshot_id = f"snap_{uuid4().hex[:12]}"
             evidence_snapshot_id = f"evidence_{uuid4().hex[:12]}"
+            provider_audit_id = f"provider_audit_{uuid4().hex[:12]}"
             raw_response = {
                 "provider": result.provider,
                 "answer_text": result.answer_text,
@@ -2611,6 +2630,7 @@ def complete_mysql_real_brand_scan(
                       session_id, collector_surface, evidence_level, sample_status,
                       answer_text, answer_sha256, raw_response_sha256,
                       brand_mentioned, brand_rank, mention_class, target_entity_mentions_json,
+                      model_name, search_enabled,
                       competitor_mentions_json, sentiment, confidence,
                       raw_response_ref_id, screenshot_ref_id, request_metadata_ref_id,
                       external_trace_id, created_at
@@ -2621,6 +2641,7 @@ def complete_mysql_real_brand_scan(
                       :session_id, :collector_surface, :evidence_level, :sample_status,
                       :answer_text, :answer_sha256, :raw_response_sha256,
                       :brand_mentioned, :brand_rank, :mention_class, :target_entity_mentions_json,
+                      :model_name, :search_enabled,
                       :competitor_mentions_json, :sentiment, :confidence,
                       :raw_response_ref_id, :screenshot_ref_id, :request_metadata_ref_id,
                       :external_trace_id, :created_at
@@ -2640,7 +2661,7 @@ def complete_mysql_real_brand_scan(
                     "sample_index": row["sample_index"],
                     "session_id": row["session_id"],
                     "collector_surface": row["collector_surface"],
-                    "evidence_level": row["evidence_level"],
+                    "evidence_level": result.raw_metadata.get("evidence_level") or row["evidence_level"],
                     "sample_status": "valid",
                     "answer_text": result.answer_text,
                     "answer_sha256": result.raw_metadata["answer_sha256"],
@@ -2649,6 +2670,8 @@ def complete_mysql_real_brand_scan(
                     "brand_rank": result.brand_rank,
                     "mention_class": result.mention_class,
                     "target_entity_mentions_json": json.dumps(result.target_entity_mentions, ensure_ascii=False),
+                    "model_name": result.raw_metadata.get("model_name"),
+                    "search_enabled": result.raw_metadata.get("search_used"),
                     "competitor_mentions_json": json.dumps(result.competitor_mentions, ensure_ascii=False),
                     "sentiment": result.sentiment,
                     "confidence": result.confidence,
@@ -2684,12 +2707,99 @@ def complete_mysql_real_brand_scan(
                     "screenshot_ref_id": screenshot_ref_id,
                     "source_panel_ref_id": None,
                     "request_metadata_json": json.dumps(
-                        parse_json_value(row.get("request_json"), {}), ensure_ascii=False, default=str
+                        {
+                            "task_request": parse_json_value(row.get("request_json"), {}),
+                            "provider_request": {
+                                key: value
+                                for key, value in result.raw_metadata.items()
+                                if key != "provider_raw_response"
+                            },
+                        },
+                        ensure_ascii=False,
+                        default=str,
                     ),
                     "captured_at": finished_at,
                     "created_at": finished_at,
                 },
             )
+            if result.raw_metadata.get("capture_mode") == "provider_api":
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_provider_request_audits (
+                          id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
+                          provider_key, model_name, endpoint_host, configuration_fingerprint,
+                          provider_request_id, prompt_sha256, outcome, evidence_grade,
+                          attempt_count, duration_ms, requested_at, completed_at, metadata_json
+                        )
+                        VALUES (
+                          :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
+                          :provider_key, :model_name, :endpoint_host, :configuration_fingerprint,
+                          :provider_request_id, :prompt_sha256, 'success', :evidence_grade,
+                          :attempt_count, :duration_ms, :requested_at, :completed_at, :metadata_json
+                        )
+                        """
+                    ),
+                    {
+                        "id": provider_audit_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "run_id": run.run_id,
+                        "task_id": row["id"],
+                        "answer_snapshot_id": snapshot_id,
+                        "provider_key": result.provider,
+                        "model_name": result.raw_metadata["model_name"],
+                        "endpoint_host": result.raw_metadata["endpoint_host"],
+                        "configuration_fingerprint": result.raw_metadata["configuration_fingerprint"],
+                        "provider_request_id": result.external_trace_id,
+                        "prompt_sha256": result.raw_metadata["prompt_sha256"],
+                        "evidence_grade": result.raw_metadata.get("evidence_level"),
+                        "attempt_count": int(result.raw_metadata.get("attempt_count") or 1),
+                        "duration_ms": result.raw_metadata.get("duration_ms"),
+                        "requested_at": result.raw_metadata.get("requested_at") or finished_at,
+                        "completed_at": result.raw_metadata.get("completed_at") or finished_at,
+                        "metadata_json": json.dumps(
+                            {
+                                "search_requested": result.raw_metadata.get("search_requested"),
+                                "search_used": result.raw_metadata.get("search_used"),
+                                "source_extraction": result.raw_metadata.get("source_extraction"),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+                usage = result.raw_metadata.get("usage")
+                if isinstance(usage, dict):
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_provider_usage_events (
+                              id, tenant_id, project_id, request_audit_id,
+                              provider_key, model_name, input_tokens, output_tokens,
+                              total_tokens, precision_status, usage_source, occurred_at
+                            )
+                            VALUES (
+                              :id, :tenant_id, :project_id, :request_audit_id,
+                              :provider_key, :model_name, :input_tokens, :output_tokens,
+                              :total_tokens, :precision_status, :usage_source, :occurred_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": f"provider_usage_{uuid4().hex[:12]}",
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "request_audit_id": provider_audit_id,
+                            "provider_key": result.provider,
+                            "model_name": result.raw_metadata["model_name"],
+                            "input_tokens": usage.get("input_tokens"),
+                            "output_tokens": usage.get("output_tokens"),
+                            "total_tokens": usage.get("total_tokens"),
+                            "precision_status": usage.get("precision") or "unknown",
+                            "usage_source": usage.get("source") or "provider_response",
+                            "occurred_at": result.raw_metadata.get("completed_at") or finished_at,
+                        },
+                    )
             for citation_order, citation in enumerate(result.native_citations, start=1):
                 conn.execute(
                     text(
@@ -2716,10 +2826,14 @@ def complete_mysql_real_brand_scan(
                         "url": citation.get("url"),
                         "host": citation.get("host"),
                         "source_type": "provider_native",
-                        "cited_text": citation.get("title"),
+                        "cited_text": citation.get("cited_text") or citation.get("title"),
                         "relevance_score": None,
                         "metadata_json": json.dumps(
-                            {"extraction": "visible_anchor_text_match", "provider": result.provider}, ensure_ascii=False
+                            {
+                                "extraction": result.raw_metadata.get("source_extraction", "unknown"),
+                                "provider": result.provider,
+                            },
+                            ensure_ascii=False,
                         ),
                         "created_at": finished_at,
                     },
@@ -2750,7 +2864,15 @@ def complete_mysql_real_brand_scan(
                     "started_at": started_at,
                     "finished_at": finished_at,
                     "response_meta_json": json.dumps(
-                        {"mode": "consumer_browser", "provider": result.provider, **result.raw_metadata},
+                        {
+                            "mode": result.raw_metadata.get("capture_mode", "unknown"),
+                            "provider": result.provider,
+                            **{
+                                key: value
+                                for key, value in result.raw_metadata.items()
+                                if key != "provider_raw_response"
+                            },
+                        },
                         ensure_ascii=False,
                         default=str,
                     ),
@@ -2784,6 +2906,53 @@ def complete_mysql_real_brand_scan(
             )
 
         for failure in failures:
+            provider_metadata = failure.get("provider_metadata")
+            if isinstance(provider_metadata, dict) and provider_metadata.get("capture_mode") == "provider_api":
+                required_audit_values = (
+                    provider_metadata.get("model_name"),
+                    provider_metadata.get("endpoint_host"),
+                    provider_metadata.get("configuration_fingerprint"),
+                    provider_metadata.get("prompt_sha256"),
+                )
+                if all(required_audit_values):
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_provider_request_audits (
+                              id, tenant_id, project_id, run_id, task_id,
+                              provider_key, model_name, endpoint_host, configuration_fingerprint,
+                              prompt_sha256, outcome, attempt_count, error_code,
+                              provider_error_code, requested_at, completed_at, metadata_json
+                            )
+                            VALUES (
+                              :id, :tenant_id, :project_id, :run_id, :task_id,
+                              :provider_key, :model_name, :endpoint_host, :configuration_fingerprint,
+                              :prompt_sha256, 'failed', :attempt_count, :error_code,
+                              :provider_error_code, :requested_at, :completed_at, :metadata_json
+                            )
+                            """
+                        ),
+                        {
+                            "id": f"provider_audit_{uuid4().hex[:12]}",
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "run_id": run.run_id,
+                            "task_id": failure["id"],
+                            "provider_key": failure["provider"],
+                            "model_name": provider_metadata["model_name"],
+                            "endpoint_host": provider_metadata["endpoint_host"],
+                            "configuration_fingerprint": provider_metadata["configuration_fingerprint"],
+                            "prompt_sha256": provider_metadata["prompt_sha256"],
+                            "attempt_count": 1,
+                            "error_code": failure.get("provider_error_code") or failure["error_code"],
+                            "provider_error_code": failure.get("upstream_error_code"),
+                            "requested_at": failure["started_at"],
+                            "completed_at": failure["finished_at"],
+                            "metadata_json": json.dumps(
+                                {"retryable": bool(failure.get("retryable"))}, ensure_ascii=False
+                            ),
+                        },
+                    )
             conn.execute(
                 text(
                     """
@@ -2813,9 +2982,12 @@ def complete_mysql_real_brand_scan(
                     "error_message": failure["error_message"],
                     "response_meta_json": json.dumps(
                         {
-                            "mode": "consumer_browser",
+                            "mode": str(failure.get("collector_surface") or "unknown"),
                             "provider": failure["provider"],
                             "blocked": failure.get("blocked", False),
+                            "provider_error_code": failure.get("provider_error_code"),
+                            "upstream_error_code": failure.get("upstream_error_code"),
+                            "retryable": failure.get("retryable", False),
                         },
                         ensure_ascii=False,
                     ),
@@ -2895,7 +3067,7 @@ def complete_mysql_real_brand_scan(
             status_code=503,
             detail={
                 "code": "INTEGRATION_CAPABILITY_BLOCKED",
-                "message": "外部 AI 消费端网页真实采样未达到生产门槛，请先为浏览器 profile 完成网页登录态或处理真人验证。",
+                "message": "外部 AI 真实采样未达到生产门槛，请检查 Provider 凭证、模型、联网能力或浏览器登录态。",
                 "details": {
                     "run_id": run.run_id,
                     "provider_mode": provider_execution_mode(),

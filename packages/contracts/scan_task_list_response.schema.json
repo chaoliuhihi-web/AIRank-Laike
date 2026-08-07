@@ -37,7 +37,7 @@
           "question_id": { "type": "string", "pattern": "^question_[A-Za-z0-9_-]+$" },
           "provider": {
             "type": "string",
-            "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+            "enum": ["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
           },
           "cohort_type": { "type": "string", "enum": ["blind", "assisted", "comparison", "fact_verification"] },
           "prompt_version_id": { "type": "string", "pattern": "^prompt_v_[A-Za-z0-9_-]+$" },

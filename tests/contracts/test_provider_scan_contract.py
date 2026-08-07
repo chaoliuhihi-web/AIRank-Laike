@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -8,12 +9,14 @@ from apps.api.provider_scan import (
     BrowserProviderConfig,
     browser_provider_config,
     build_brand_rank_prompt,
+    call_api_provider_for_brand_rank,
     call_provider_for_brand_rank,
     is_login_input,
     parse_provider_answer,
     provider_execution_mode,
     strip_prompt_echo,
 )
+from airank_provider_gateway import ProviderCitation, ProviderResult, ProviderUsage, UsagePrecision
 
 
 class FakeLocator:
@@ -47,6 +50,58 @@ def test_provider_execution_mode_defaults_to_browser(monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("AIRANK_PROVIDER_MODE", raising=False)
 
     assert provider_execution_mode() == "browser"
+
+
+def test_provider_execution_mode_supports_real_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
+
+    assert provider_execution_mode() == "api"
+
+
+def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 8, 8, tzinfo=timezone.utc)
+
+    class FakeGateway:
+        def generate(self, provider: str, prompt: str) -> ProviderResult:
+            assert provider == "qianwen"
+            assert prompt == "企业 GEO 工具有哪些？"
+            return ProviderResult(
+                provider="qianwen",
+                model="qwen-test",
+                answer_text="可选方案包括 AIRank。",
+                request_id="request_real_1",
+                requested_at=now,
+                completed_at=now,
+                duration_ms=15,
+                attempt_count=1,
+                evidence_grade="provider_api_with_web_search",
+                web_search_requested=True,
+                web_search_used=True,
+                citations=(ProviderCitation(url="https://example.com/a", title="来源 A"),),
+                usage=ProviderUsage(total_tokens=10, precision=UsagePrecision.EXACT),
+                raw_response={"id": "request_real_1"},
+                endpoint_host="dashscope.example.com",
+                configuration_fingerprint="a" * 64,
+            )
+
+    monkeypatch.setattr("apps.api.provider_scan.get_api_gateway", lambda: FakeGateway())
+    result = call_api_provider_for_brand_rank(
+        provider="qianwen",
+        brand_name="AIRank",
+        website_url="https://airank.example",
+        industry="GEO",
+        competitor_names=[],
+        question_text="企业 GEO 工具有哪些？",
+        cohort_type="blind",
+        session_id="session_1",
+        prompt_version_id="prompt_v_1",
+    )
+
+    assert result.external_trace_id == "request_real_1"
+    assert result.brand_mentioned is True
+    assert result.native_citations[0]["url"] == "https://example.com/a"
+    assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
+    assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}
 
 
 def test_provider_answer_parser_extracts_rank_from_browser_text() -> None:

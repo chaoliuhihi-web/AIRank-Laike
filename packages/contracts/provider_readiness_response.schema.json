@@ -11,7 +11,7 @@
       "required": ["mode", "minimum_success_count", "providers"],
       "additionalProperties": false,
       "properties": {
-        "mode": { "type": "string", "enum": ["browser", "mock"] },
+        "mode": { "type": "string", "enum": ["api", "browser", "mock"] },
         "minimum_success_count": { "type": "integer", "minimum": 0 },
         "providers": {
           "type": "array",
@@ -23,7 +23,7 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao"]
+                "enum": ["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao"]
               },
               "label": { "type": "string", "minLength": 1 },
               "status": { "type": "string", "enum": ["ready", "blocked"] },
@@ -32,7 +32,7 @@
               "headless": { "type": "boolean" },
               "blocker_code": {
                 "type": "string",
-                "enum": ["login_required", "captcha_required", "prompt_input_missing", "timeout", "network_error", "unknown_blocked"]
+                "enum": ["login_required", "captcha_required", "prompt_input_missing", "timeout", "network_error", "unknown_blocked", "provider_not_configured", "provider_disabled", "provider_auth_failed", "provider_model_failed", "provider_generation_failed", "provider_circuit_open"]
               },
               "reason": { "type": "string" },
               "screenshot_path": { "type": "string" }

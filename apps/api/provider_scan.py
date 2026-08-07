@@ -18,6 +18,12 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from airank_domain.measurement import BrandEntity, MentionClass, PromptCohortType, find_entity_mentions, sha256_text
+from airank_provider_gateway import (
+    HealthState,
+    ProbeLevel,
+    ProviderGateway,
+    ProviderGatewayError,
+)
 
 
 DEFAULT_PROVIDER_LABELS: dict[str, str] = {
@@ -25,6 +31,7 @@ DEFAULT_PROVIDER_LABELS: dict[str, str] = {
     "deepseek": "DeepSeek",
     "kimi": "Kimi",
     "tongyi": "通义",
+    "qianwen": "千问",
     "doubao": "豆包",
     "baidu_ai_search": "百度 AI 搜索",
     "yuanbao": "腾讯元宝",
@@ -35,6 +42,7 @@ PROVIDER_WEB_URLS: dict[str, str] = {
     "deepseek": "https://chat.deepseek.com/",
     "kimi": "https://www.kimi.com/",
     "tongyi": "https://www.tongyi.com/qianwen/",
+    "qianwen": "https://www.tongyi.com/qianwen/",
     "doubao": "https://www.doubao.com/chat/",
     "baidu_ai_search": "https://chat.baidu.com/",
     "yuanbao": "https://yuanbao.tencent.com/",
@@ -56,6 +64,7 @@ ANSWER_STABLE_SECONDS = 3.0
 DEFAULT_BROWSER_TIMEOUT_SECONDS = 90.0
 PROVIDER_LOCKS: dict[str, threading.Lock] = {}
 PROVIDER_LOCKS_LOCK = threading.Lock()
+_API_GATEWAY: ProviderGateway | None = None
 
 
 @dataclass(frozen=True)
@@ -120,18 +129,193 @@ class ProviderUnavailable(RuntimeError):
 
 
 class ProviderCallError(RuntimeError):
-    def __init__(self, provider: str, reason: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        provider: str,
+        reason: str,
+        status_code: int | None = None,
+        *,
+        error_code: str | None = None,
+        provider_code: str | None = None,
+        retryable: bool = False,
+        public_metadata: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(reason)
         self.provider = provider
         self.reason = reason
         self.status_code = status_code
+        self.error_code = error_code
+        self.provider_code = provider_code
+        self.retryable = retryable
+        self.public_metadata = dict(public_metadata or {})
 
 
 def provider_execution_mode() -> str:
     mode = os.getenv("AIRANK_PROVIDER_MODE", "browser").strip().lower()
     if mode in {"mock", "generated", "fixture", "dev"}:
         return "mock"
+    if mode in {"api", "provider_api"}:
+        return "api"
     return "browser"
+
+
+def get_api_gateway() -> ProviderGateway:
+    global _API_GATEWAY
+    if _API_GATEWAY is None:
+        try:
+            max_attempts = int(os.getenv("AIRANK_PROVIDER_MAX_ATTEMPTS", "3"))
+        except ValueError:
+            max_attempts = 3
+        try:
+            timeout_seconds = float(os.getenv("AIRANK_PROVIDER_TIMEOUT_SECONDS", "90"))
+        except ValueError:
+            timeout_seconds = 90.0
+        _API_GATEWAY = ProviderGateway(max_attempts=max_attempts, timeout_seconds=timeout_seconds)
+    return _API_GATEWAY
+
+
+def call_api_provider_for_brand_rank(
+    provider: str,
+    brand_name: str,
+    website_url: str,
+    industry: str,
+    competitor_names: list[str],
+    question_text: str,
+    cohort_type: PromptCohortType | str = PromptCohortType.BLIND,
+    session_id: str | None = None,
+    prompt_version_id: str | None = None,
+    brand_aliases: list[str] | None = None,
+    company_names: list[str] | None = None,
+    product_names: list[str] | None = None,
+) -> ProviderScanResult:
+    normalized_cohort = PromptCohortType(cohort_type)
+    isolated_session_id = session_id or f"session_{uuid4().hex}"
+    prompt = build_brand_rank_prompt(
+        brand_name,
+        website_url,
+        industry,
+        competitor_names,
+        question_text,
+        cohort_type=normalized_cohort,
+        brand_aliases=brand_aliases,
+        company_names=company_names,
+        product_names=product_names,
+    )
+    gateway = get_api_gateway()
+    try:
+        api_result = gateway.generate(provider, prompt)
+    except ProviderGatewayError as exc:
+        if exc.code in {
+            "PROVIDER_NOT_CONFIGURED",
+            "PROVIDER_DISABLED",
+            "PROVIDER_MODEL_EXPIRED",
+            "PROVIDER_MODEL_MIGRATION_REQUIRED",
+        }:
+            raise ProviderUnavailable(provider, exc.message) from exc
+        settings = gateway.settings(provider)
+        raise ProviderCallError(
+            provider,
+            exc.message,
+            exc.status_code,
+            error_code=exc.code,
+            provider_code=exc.provider_code,
+            retryable=exc.retryable,
+            public_metadata={
+                "prompt_sha256": sha256_text(prompt),
+                "model_name": settings.model,
+                "endpoint_host": settings.endpoint_host,
+                "configuration_fingerprint": settings.configuration_fingerprint(provider),
+                "capture_mode": "provider_api",
+            },
+        ) from exc
+
+    parsed = parse_provider_answer(
+        api_result.answer_text,
+        brand_name,
+        competitor_names,
+        brand_aliases=brand_aliases,
+        company_names=company_names,
+        product_names=product_names,
+    )
+    native_citations = [
+        {
+            "url": citation.url,
+            "title": citation.title or "",
+            "host": urlparse(citation.url).netloc.lower(),
+            "cited_text": citation.cited_text or "",
+        }
+        for citation in api_result.citations
+    ]
+    return ProviderScanResult(
+        provider=api_result.provider,
+        provider_label=DEFAULT_PROVIDER_LABELS.get(api_result.provider, api_result.provider),
+        answer_text=parsed["answer_text"],
+        brand_mentioned=parsed["brand_mentioned"],
+        brand_rank=parsed["brand_rank"],
+        competitor_mentions=parsed["competitor_mentions"],
+        sentiment=parsed["sentiment"],
+        mention_class=parsed["mention_class"],
+        target_entity_mentions=parsed["target_entity_mentions"],
+        confidence=parsed["confidence"],
+        external_trace_id=api_result.request_id,
+        native_citations=native_citations,
+        raw_metadata={
+            "capture_mode": "provider_api",
+            "collector_surface": "api",
+            "evidence_level": api_result.evidence_grade,
+            "cohort_type": normalized_cohort.value,
+            "session_id": isolated_session_id,
+            "prompt_version_id": prompt_version_id,
+            "prompt_sha256": sha256_text(prompt),
+            "answer_sha256": sha256_text(parsed["answer_text"]),
+            "answer_parse_mode": parsed["parse_mode"],
+            "model_name": api_result.model,
+            "search_requested": api_result.web_search_requested,
+            "search_used": api_result.web_search_used,
+            "provider_request_id": api_result.request_id,
+            "requested_at": api_result.requested_at.isoformat(),
+            "completed_at": api_result.completed_at.isoformat(),
+            "duration_ms": api_result.duration_ms,
+            "attempt_count": api_result.attempt_count,
+            "usage": {
+                "input_tokens": api_result.usage.input_tokens,
+                "output_tokens": api_result.usage.output_tokens,
+                "total_tokens": api_result.usage.total_tokens,
+                "precision": api_result.usage.precision.value,
+                "source": api_result.usage.source,
+            },
+            "endpoint_host": api_result.endpoint_host,
+            "configuration_fingerprint": api_result.configuration_fingerprint,
+            "source_extraction": "provider_native_payload",
+            "provider_raw_response": api_result.raw_response,
+        },
+    )
+
+
+def probe_api_provider_readiness(provider: str) -> ProviderReadinessResult:
+    gateway = get_api_gateway()
+    settings = gateway.settings(provider)
+    result = gateway.probe(provider, ProbeLevel.GENERATION)
+    ready = result.state == HealthState.HEALTHY
+    blocker_code_by_state = {
+        HealthState.UNCONFIGURED: "provider_not_configured",
+        HealthState.DISABLED: "provider_disabled",
+        HealthState.NETWORK_FAILED: "network_error",
+        HealthState.AUTH_FAILED: "provider_auth_failed",
+        HealthState.MODEL_FAILED: "provider_model_failed",
+        HealthState.GENERATION_FAILED: "provider_generation_failed",
+        HealthState.CIRCUIT_OPEN: "provider_circuit_open",
+    }
+    return ProviderReadinessResult(
+        provider=result.provider,
+        label=DEFAULT_PROVIDER_LABELS.get(result.provider, result.provider),
+        status="ready" if ready else "blocked",
+        url=f"https://{settings.endpoint_host}" if settings.endpoint_host else "",
+        profile_dir="",
+        headless=True,
+        blocker_code=None if ready else blocker_code_by_state.get(result.state, "unknown_blocked"),
+        reason=result.message,
+    )
 
 
 def browser_provider_config(provider: str) -> BrowserProviderConfig:
@@ -273,6 +457,8 @@ def provider_lock(provider: str) -> threading.Lock:
 
 
 def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
+    if provider_execution_mode() == "api":
+        return probe_api_provider_readiness(provider)
     config = browser_provider_config(provider)
     try:
         with provider_lock(provider):

@@ -39,7 +39,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["chatgpt", "deepseek", "kimi", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
+            "enum": ["chatgpt", "deepseek", "kimi", "qianwen", "tongyi", "doubao", "baidu_ai_search", "yuanbao", "manual_import"]
           },
           "uniqueItems": true
         },

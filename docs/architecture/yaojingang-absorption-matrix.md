@@ -76,18 +76,18 @@
 | GEORank | 关键词/问题扩展结构 | 扩充买家问题覆盖 | `keyword_expansion.py` | seed → 8 维词包 | LLM 或规则 fallback | Apache-2.0 | buyer question 手工创建 | 无质量/来源字段 | adapt | Intent Miner Skill | P1 | planned | 保留生成来源与版本；固定 hash 分数永不进入商业结果 |
 | GEORank | 确定性 fallback 分数 | 无模型时生成漂亮结果 | `keyword_expansion.py::_stable_score` | seed → 35-99 分 | 无 | Apache-2.0 | 当前 API 也有固定数字 | 属于伪业务结果 | reject | 无 | P0 | rejected | 生产扫描禁止 fallback；静态扫描门禁无此模式 |
 | GEORank | BYOK 请求策略 | 降低平台模型成本并支持客户密钥 | `ai_usage.py`、SDK `byok.ts` | 客户 key/header → provider call | 安全前端/短生命周期 | Apache-2.0 | provider 凭证来自服务端 env | 无租户级安全 BYOK | adapt | Credential Vault / Provider Gateway | P2 | planned | key 不落日志/DB 明文；撤销、轮换和租户隔离测试通过 |
-| GEORank | Provider URL 安全 | 避免 BYOK 自定义地址 SSRF | `provider_url_security.py` | base URL → allow/block | DNS/协议策略 | Apache-2.0 | 部分 endpoint 校验 | 未统一 | absorb | Outbound Security Gateway | P0 | planned | 与 GEOFlow 策略合并并通过恶意 URL corpus |
+| GEORank | Provider URL 安全 | 避免 BYOK 自定义地址 SSRF | `provider_url_security.py` | base URL → allow/block | DNS/协议策略 | Apache-2.0 | Provider Gateway 已强制 HTTPS、无 URL 凭证和官方 host allowlist | 通用 HTTP 发布/抓取与 DNS rebinding corpus 仍缺 | absorb | Outbound Security Gateway | P0 | partial | 与 GEOFlow 策略合并并通过恶意 URL corpus |
 | GEORank | 公共公司/专家/教程目录 | 内容门户和公开排名 | `apps/web`、companies/experts/tutorials | 内容 → 公开目录 | 内容运营 | Apache-2.0/数据另行许可 | 无 | 不能证明付费闭环 | reject | 无 | P3 | rejected | 不进入产品主线 |
 
 ## TokHub：Provider Gateway
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| TokHub | Provider manifest | 统一模型、端点、能力和生命周期 | channel/store models | manifest → eligible upstreams | provider catalog | Apache-2.0 | provider 名录写死在 API | 无能力/终端/下架模型 | adapt | Provider Manifest | P0 | planned | manifest schema、版本与迁移测试通过 |
-| TokHub | L1/L2/L3 探测 | 区分网络、鉴权、模型和生成故障 | probe services/`probe_runs` | channel → layer results | 凭证、网络 | Apache-2.0 | 只有浏览器 readiness | 无 API 分层探测 | absorb | Provider Health | P0 | planned | 四平台各产生真实 L1/L2/L3 记录和 request id |
-| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 无统一 gateway | 无熔断/退避/eligibility | adapt | Provider Gateway | P1 | planned | 故障注入下不调用熔断通道，恢复后半开探测 |
-| TokHub | QPS、并发与配额预留 | 避免超额和预算并发穿透 | quota/reservation/store | request → reserve/commit/release | Redis/事务 | Apache-2.0 | 只有 job lease | 无 provider 配额预留 | adapt | Quota Service | P1 | planned | 并发测试不超额度，失败归还预留 |
-| TokHub | 用量 exact/estimated 标记 | 不把估算成本冒充精确成本 | usage events/rollups | response → tokens/cost/provenance | 价格版本 | Apache-2.0 | 尚无正式成本领域 | 缺精度状态 | absorb | Usage Ledger | P1 | planned | 缺上游 usage 时标 estimated，报告可过滤 |
+| TokHub | Provider manifest | 统一模型、端点、能力和生命周期 | channel/store models | manifest → eligible upstreams | provider catalog | Apache-2.0 | 四平台 manifest、别名、能力、官方 host、模型生命周期契约已实现 | manifest 持久化同步与后台编辑仍缺 | adapt | Provider Manifest | P0 | partial | manifest schema、版本与迁移测试通过 |
+| TokHub | L1/L2/L3 探测 | 区分网络、鉴权、模型和生成故障 | probe services/`probe_runs` | channel → layer results | 凭证、网络 | Apache-2.0 | Gateway 已区分网络、鉴权/模型和真实生成状态；三平台完成真实 L2/L3 | Kimi 安全运行时注入和四平台持久化 probe 记录仍缺 | absorb | Provider Health | P0 | partial | 四平台各产生真实 L1/L2/L3 记录和 request id |
+| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 统一 Gateway 已有重试、退避、进程内熔断和半开恢复 | 跨进程 Redis/MySQL circuit state 与多上游路由仍缺 | adapt | Provider Gateway | P1 | partial | 故障注入下不调用熔断通道，恢复后半开探测 |
+| TokHub | QPS、并发与配额预留 | 避免超额和预算并发穿透 | quota/reservation/store | request → reserve/commit/release | Redis/事务 | Apache-2.0 | 已有进程内 QPS/并发、预留/提交/失败释放与持久化表 | 事务型租户配额 repository 尚未接入 runtime | adapt | Quota Service | P1 | partial | 并发测试不超额度，失败归还预留 |
+| TokHub | 用量 exact/estimated 标记 | 不把估算成本冒充精确成本 | usage events/rollups | response → tokens/cost/provenance | 价格版本 | Apache-2.0 | ProviderUsage 与 usage events 已区分 exact/estimated/unknown；真实三平台均返回 exact | 价格版本、成本计算和报表筛选仍缺 | absorb | Usage Ledger | P1 | partial | 缺上游 usage 时标 estimated，报告可过滤 |
 | TokHub | 凭证加密、指纹、轮换 | 支撑安全私有 Provider | credential store/migrations | secret → ciphertext/fingerprint | 主密钥/KMS | Apache-2.0 | env 注入 | 无租户级 vault 与轮换审计 | adapt | Credential Vault | P1 | planned | 明文扫描为零；轮换不暴露旧值；删除执行 scrub |
 | TokHub | reason + idempotency + audit | 让高风险操作可审计 | admin agent contracts/store | write → idempotent result/audit | RBAC | Apache-2.0 | 有 audit/outbox 表 | API 写操作未统一执行 | absorb | Operation Guard | P1 | planned | 重放同 key 不重复副作用，冲突 payload 被拒绝 |
 | TokHub | 公开示例通道与固定健康分 | 让首页可演示 | seed/store example rows | seed → 静态通道分数 | 无 | Apache-2.0 | AIRank 有相似固定 overview | 会伪装真实健康 | reject | 无 | P0 | rejected | 生产构建与 seed 扫描不得出现静态健康/业务分数 |
@@ -139,6 +139,8 @@
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
-- 全量 Python 测试：`145 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
+- `20260808_0005_provider_gateway_operations.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0005`；36 张 AIRank 表和 7 张 Provider 运维表完成核验，随后删除临时验收库。
+- 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
+- 全量 Python 测试：`159 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
 - 当前阶段仍是 `partial`：尚未把四个 API Provider Gateway 迁入本仓，尚未跑四平台真实重复采样和浏览器 E2E，因此不允许声明商业可用。
