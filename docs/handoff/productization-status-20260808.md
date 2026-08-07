@@ -49,13 +49,14 @@
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`193 passed, 8 skipped`。
+- `python3 -m pytest -q`：`194 passed, 8 skipped`。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
 - 浏览器：`/login -> /console` 登录通过；13 个控制台路由在 1491×1055 桌面和 390×844 移动端共 26 项检查全部通过，无横向溢出、认证丢失或显式接口失败。证据中心已下钻到一条真实豆包样本，原始回答、双 SHA-256、EvidenceSnapshot、session、证据等级和真实 request ID 均可见；任务中心显示最终 ScanRun 的 12 个任务及 Kimi 明确失败原因。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
 - MySQL 临时库：Alembic `20260808_0008`；42 张 AIRank 表校验通过；真实 MySQL 复测链路生成 1 个 RetestRun 和 1 个带 SHA-256/evidence index 的报告，临时库已删除。
 - 本地真实 MySQL integration：`7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。Provider store 已通过共享熔断、重复幂等阻断、并发配额竞争（仅一个成功）、commit 记账和 probe 落库；Publisher 已通过审核事实→内容→发布包→worker delivery、失败 attempt→显式重试→成功 attempt、陈旧 running attempt 恢复的完整数据库链。均未使用真实外部 Provider/站点凭证。
+- 完整上线门禁：工作树、认证配置、分包测试、Web 构建、真实 MySQL integration、Alembic 离线/真实迁移均通过；总状态仍为 `BLOCKED`，真实阻塞为 GitHub/Gitee `main` 未同步、生产 Yudao 未配置、对象存储仍为 `dev_only`、消费端浏览器 Provider `0/4`（三平台需登录、DeepSeek 需登录/人机验证）。
 
 ## 下一实施顺序
 

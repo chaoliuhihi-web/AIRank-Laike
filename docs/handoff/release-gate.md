@@ -310,3 +310,31 @@ Passed:
 Residual risks:
 
 - Browser QA covers the Vite dev build and local FastAPI/MySQL path. Production reverse-proxy/CDN headers still need environment-specific verification during deployment.
+
+## 2026-08-08 03:23 +08:00 Evidence Productization Gate
+
+Release Gate: BLOCKED
+
+Commit: `4f14da1`
+
+Reviewer: Codex
+
+Passed:
+
+- Clean worktree, diff check, tracked-runtime-artifact check, and production auth configuration (`required` + `yudao`).
+- Contracts 98, acceptance 39, worker 17, score 7, evidence 11, and Xinghe adapter 5 tests.
+- Web production build, real MySQL integration `7 passed, 1 skipped`, Alembic offline SQL, and real MySQL migration.
+- Release runner now loads all internal package source paths before the browser-provider gate; the previous `ModuleNotFoundError` false blocker is removed.
+- Separate browser product QA passed 13 routes at desktop and 390px mobile, and the real evidence center showed server-aggregated ScanRun totals without cross-run mixing.
+
+Blocking conditions:
+
+- Local branch `codex/evidence-productization` is not merged or synchronized to GitHub/Gitee `main`; both remote refs remain at `495655c`.
+- Production Yudao permission-info and tenant/user capability are not configured in this gate environment.
+- Object storage is still local `dev_only`; production durable object storage has not passed its probe.
+- Consumer Web/App collection is not ready: browser readiness was `0/4`; Doubao, Qianwen, and Kimi require authenticated sessions, while DeepSeek requires login/human verification. API sampling success does not satisfy this evidence grade.
+- Node 20.18.2 remains below Vite's supported minimum; the build passes but runtime must be upgraded before launch.
+
+Decision:
+
+- Keep commercial launch at `NO-GO`. Do not use the earlier 2026-05-17 PASS as evidence for the expanded GEO productization scope.
