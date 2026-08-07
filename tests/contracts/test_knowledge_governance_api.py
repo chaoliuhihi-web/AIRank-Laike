@@ -263,6 +263,100 @@ def test_governance_queue_exposes_expiry_alerts_and_open_conflicts(client: TestC
     assert after.json()["data"]["action_required_count"] == 3
 
 
+def test_source_revision_stales_parent_invalidates_fact_and_searches_only_current_segments(client: TestClient) -> None:
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    fact = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload([source["source_id"]]),
+    ).json()["data"]
+    assert client.patch(
+        f"/api/v1/projects/project_1/fact-revisions/{fact['revision_id']}/review",
+        headers={"tenant-id": "tenant_1"},
+        json={"action": "approved", "reviewed_by": "reviewer_1"},
+    ).json()["data"]["eligible_for_generation"] is True
+
+    revision_payload = source_payload() | {
+        "idempotency_key": "source-import-0002",
+        "title": "AIRank 产品说明 2026-08",
+        "content_text": "AIRank 支持私有化部署和审计日志。\n\n旧版本没有审计日志说明。",
+    }
+    revised = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/revisions",
+        headers={"tenant-id": "tenant_1"},
+        json=revision_payload,
+    )
+    replay = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/revisions",
+        headers={"tenant-id": "tenant_1"},
+        json=revision_payload,
+    )
+    sources = client.get(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+    ).json()["data"]
+    facts = client.get(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+    ).json()["data"]
+    governance = client.get(
+        "/api/v1/projects/project_1/knowledge-governance?within_days=30",
+        headers={"tenant-id": "tenant_1"},
+    ).json()["data"]
+    search = client.get(
+        "/api/v1/projects/project_1/knowledge-search",
+        headers={"tenant-id": "tenant_1"},
+        params={"q": "审计日志", "limit": 10},
+    )
+    other_tenant_search = client.get(
+        "/api/v1/projects/project_1/knowledge-search",
+        headers={"tenant-id": "tenant_2"},
+        params={"q": "审计日志", "limit": 10},
+    )
+
+    assert revised.status_code == 201
+    revised_data = revised.json()["data"]
+    assert revised_data["parent_source_id"] == source["source_id"]
+    assert revised_data["revision_number"] == 2
+    assert revised_data["status"] == "active"
+    assert replay.status_code == 201
+    assert replay.json()["data"]["source_id"] == revised_data["source_id"]
+    assert replay.json()["data"]["idempotent_replay"] is True
+    assert {item["source_id"]: item["status"] for item in sources} == {
+        source["source_id"]: "stale",
+        revised_data["source_id"]: "active",
+    }
+    approved_fact = next(item for item in facts if item["revision_id"] == fact["revision_id"])
+    assert approved_fact["eligible_for_generation"] is False
+    assert approved_fact["eligibility_reason"] == "source_stale"
+    assert governance["stale_source_count"] == 1
+    assert any(item["kind"] == "source_stale" and item["entity_id"] == source["source_id"] for item in governance["alerts"])
+    assert search.status_code == 200
+    search_data = search.json()["data"]
+    assert search_data["retrieval_mode"] == "lexical_only"
+    assert search_data["vector_status"] == "not_configured"
+    assert search_data["returned_count"] >= 1
+    assert {item["source_id"] for item in search_data["results"]} == {revised_data["source_id"]}
+    assert all(item["text"] == revision_payload["content_text"] for item in search_data["results"])
+    assert other_tenant_search.status_code == 200
+    assert other_tenant_search.json()["data"]["results"] == []
+
+    stale_parent_retry = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/revisions",
+        headers={"tenant-id": "tenant_1"},
+        json=revision_payload | {
+            "idempotency_key": "source-import-0003",
+            "content_text": "AIRank 支持私有化部署、审计日志和混合检索。",
+        },
+    )
+    assert stale_parent_retry.status_code == 409
+    assert stale_parent_retry.json()["error"]["code"] == "STATE_CONFLICT"
+
+
 def test_content_generation_uses_only_approved_exact_source_facts(client: TestClient) -> None:
     source = client.post(
         "/api/v1/projects/project_1/knowledge-sources",

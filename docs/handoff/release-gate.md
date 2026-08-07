@@ -417,3 +417,31 @@ Not claimed as passed:
 Decision:
 
 - Knowledge expiry and conflict handling is now an operable, evidence-backed slice, but AIRank remains `NO-GO` for commercial launch until the production and external gates above pass.
+
+## 2026-08-08 Knowledge Source Revision Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this knowledge-source-revision commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Knowledge source updates create immutable child revisions and exact-boundary segments; the previous active source becomes `stale` without deleting its content, hash, or audit identity.
+- Approved facts backed by a stale source dynamically lose generation eligibility with `source_stale`; raw evidence is not rewritten and an operator must re-propose/review the fact against current evidence.
+- Project-scoped search only considers active, currently valid source segments. Results expose source/version, exact text, character boundaries, content hash, match mode, and matched terms.
+- Retrieval truthfulness is explicit: the API and console report `lexical_only` and `vector_status=not_configured`. No vector, embedding, or hybrid claim is made.
+- Targeted contract/acceptance tests passed `18`; real MySQL integration passed `9` with `2` external-service skips; Web production build passed with the already-known Node floor warning.
+- Real browser QA updated a MySQL-backed source from v1 to v2, observed the old fact become `source_stale`, retrieved the v2-only phrase with exact boundaries/hash, and confirmed a v1-only phrase was absent from current retrieval. Desktop and direct 390×844 viewport checks had no page-level overflow and console `0 error / 0 warning`.
+- Screenshot review found and fixed a product layout defect where the full-width guide button compressed Chinese copy into a vertical column.
+
+Not claimed as passed:
+
+- Customer-owned automatic source synchronization, parser connectors, embeddings, incremental re-embedding, vector/hybrid retrieval, and retrieval relevance benchmarks are not implemented or verified.
+- The local browser used `dev_only` authentication for product-flow QA. This does not satisfy production Yudao authentication.
+- The commercial blockers remain: branch not merged to both remote `main`, production HTTPS S3/MinIO absent, Python/Node below the enforced floor, Yudao permission-info missing, and consumer Web/App Provider readiness `0/4`.
+
+Decision:
+
+- Immutable source revision and truthful current-source retrieval are now operable, but the overall product remains `NO-GO` for commercial launch.

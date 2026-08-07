@@ -972,6 +972,63 @@ def test_real_mysql_knowledge_governance_derives_expiry_and_conflict_queue() -> 
         assert duplicate_error.value.status_code == 409
         assert duplicate_error.value.detail["code"] == "STATE_CONFLICT"
         assert duplicate_error.value.detail["details"]["status"] == "resolved_left"
+
+        source_revision = knowledge_repo.revise_source(
+            tenant_id,
+            project.project_id,
+            expiring_source.source_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="knowledge-source-revision-it",
+                source_type="official_website",
+                title="AIRank 产品说明 2026-08",
+                content_text="AIRank 提供可追溯的多平台 GEO 测量和审计日志。",
+                source_uri="https://airank-knowledge.example.com/facts",
+                authority_level="official",
+                risk_level="low",
+            ),
+        )
+        source_replay = knowledge_repo.revise_source(
+            tenant_id,
+            project.project_id,
+            expiring_source.source_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="knowledge-source-revision-it",
+                source_type="official_website",
+                title="AIRank 产品说明 2026-08",
+                content_text="AIRank 提供可追溯的多平台 GEO 测量和审计日志。",
+                source_uri="https://airank-knowledge.example.com/facts",
+                authority_level="official",
+                risk_level="low",
+            ),
+        )
+        sources_after_revision = knowledge_repo.list_sources(tenant_id, project.project_id)
+        facts_after_source_revision = knowledge_repo.list_facts(tenant_id, project.project_id)
+        search = knowledge_repo.search_segments(tenant_id, project.project_id, "审计日志", 10)
+        governance_after_revision = derive_knowledge_governance(
+            sources_after_revision,
+            facts_after_source_revision,
+            knowledge_repo.list_conflicts(tenant_id, project.project_id, "open"),
+            within_days=7,
+            as_of=now,
+        )
+
+        assert source_revision.parent_source_id == expiring_source.source_id
+        assert source_revision.revision_number == 2
+        assert source_replay.source_id == source_revision.source_id
+        assert source_replay.idempotent_replay is True
+        assert next(item for item in sources_after_revision if item.source_id == expiring_source.source_id).status == "stale"
+        invalidated = next(
+            item for item in facts_after_source_revision
+            if item.revision_id == approved.revision_id
+        )
+        assert invalidated.eligible_for_generation is False
+        assert invalidated.eligibility_reason == "source_stale"
+        assert governance_after_revision.stale_source_count == 1
+        assert search.retrieval_mode == "lexical_only"
+        assert search.vector_status == "not_configured"
+        assert search.returned_count == 1
+        assert search.results[0].source_id == source_revision.source_id
+        assert search.results[0].text == "AIRank 提供可追溯的多平台 GEO 测量和审计日志。"
     finally:
         cleanup_tenant(engine, tenant_id)
 

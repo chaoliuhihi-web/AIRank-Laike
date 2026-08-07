@@ -158,6 +158,8 @@ def test_knowledge_governance_openapi_exposes_review_and_conflict_workflow() -> 
 
     required_routes = (
         '/projects/{project_id}/knowledge-sources',
+        '/projects/{project_id}/knowledge-sources/{source_id}/revisions',
+        '/projects/{project_id}/knowledge-search',
         '/projects/{project_id}/facts',
         '/projects/{project_id}/facts/{fact_id}/revisions',
         '/projects/{project_id}/fact-revisions/{revision_id}/review',

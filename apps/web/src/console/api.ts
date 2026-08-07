@@ -73,6 +73,43 @@ export type KnowledgeSource = {
   valid_until: string | null;
 };
 
+export type KnowledgeSourceInput = {
+  idempotency_key: string;
+  source_type: string;
+  title: string;
+  content_text: string;
+  source_uri?: string;
+  authority_level: "official" | "verified_third_party" | "community" | "unclassified";
+  risk_level: "low" | "medium" | "high" | "restricted";
+  valid_until?: string;
+};
+
+export type KnowledgeSearchResult = {
+  rank: number;
+  segment_id: string;
+  source_id: string;
+  source_revision_number: number;
+  source_title: string;
+  source_uri: string | null;
+  segment_index: number;
+  text: string;
+  source_start: number;
+  source_end: number;
+  content_sha256: string;
+  match_type: "exact" | "terms";
+  matched_terms: string[];
+};
+
+export type KnowledgeSearch = {
+  query: string;
+  retrieval_mode: "lexical_only";
+  vector_status: "not_configured";
+  matched_count: number;
+  returned_count: number;
+  candidate_limit_reached: boolean;
+  results: KnowledgeSearchResult[];
+};
+
 export type FactRevision = {
   fact_id: string;
   revision_id: string;
@@ -109,7 +146,7 @@ export type FactConflict = {
 
 export type KnowledgeGovernanceAlert = {
   alert_id: string;
-  kind: "source_expired" | "source_expiring" | "fact_expired" | "fact_expiring" | "open_conflict";
+  kind: "source_stale" | "source_expired" | "source_expiring" | "fact_expired" | "fact_expiring" | "open_conflict";
   severity: "critical" | "warning";
   entity_type: "knowledge_source" | "fact_revision" | "fact_conflict";
   entity_id: string;
@@ -125,6 +162,7 @@ export type KnowledgeGovernance = {
   within_days: number;
   source_count: number;
   approved_fact_count: number;
+  stale_source_count: number;
   expired_source_count: number;
   expiring_source_count: number;
   expired_fact_count: number;
@@ -717,6 +755,32 @@ async function fetchData<T>(url: string, tracePrefix: string, signal?: AbortSign
 
 export function fetchKnowledgeSources(projectId: string, signal?: AbortSignal): Promise<KnowledgeSource[]> {
   return fetchData(`/api/v1/projects/${projectId}/knowledge-sources`, "trc_web_sources", signal);
+}
+
+export async function saveKnowledgeSource(
+  projectId: string,
+  input: KnowledgeSourceInput,
+  parentSourceId?: string,
+): Promise<KnowledgeSource> {
+  const suffix = parentSourceId ? `/knowledge-sources/${parentSourceId}/revisions` : "/knowledge-sources";
+  const response = await fetch(`/api/v1/projects/${projectId}${suffix}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_source_save"),
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Knowledge source request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: KnowledgeSource };
+  return payload.data;
+}
+
+export function searchKnowledge(projectId: string, query: string, signal?: AbortSignal): Promise<KnowledgeSearch> {
+  const params = new URLSearchParams({ q: query, limit: "20" });
+  return fetchData(`/api/v1/projects/${projectId}/knowledge-search?${params.toString()}`, "trc_web_knowledge_search", signal);
 }
 
 export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<FactRevision[]> {

@@ -94,6 +94,8 @@ import {
   reviewContentAsset,
   reviewFactRevision,
   resolveFactConflict,
+  saveKnowledgeSource,
+  searchKnowledge,
   runBrandCheck,
   storeAuthSession,
   type AuthSession,
@@ -110,6 +112,7 @@ import {
   type FactRevision,
   type InternalSkill,
   type KnowledgeGovernance,
+  type KnowledgeSearch,
   type KnowledgeSource,
   type ProviderReadiness,
   type PublishPackage,
@@ -1121,6 +1124,22 @@ function FactsPage() {
   const [resolvingConflictId, setResolvingConflictId] = useState<string | null>(null);
   const [conflictNotes, setConflictNotes] = useState<Record<string, string>>({});
   const [conflictResolutions, setConflictResolutions] = useState<Record<string, "resolved_left" | "resolved_right" | "resolved_new_revision" | "dismissed">>({});
+  const [sourceEditor, setSourceEditor] = useState<{
+    parent: KnowledgeSource | null;
+    idempotencyKey: string;
+    title: string;
+    sourceType: string;
+    sourceUri: string;
+    contentText: string;
+    authorityLevel: "official" | "verified_third_party" | "community" | "unclassified";
+    riskLevel: "low" | "medium" | "high" | "restricted";
+    validUntil: string;
+  } | null>(null);
+  const [savingSource, setSavingSource] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [knowledgeSearch, setKnowledgeSearch] = useState<KnowledgeSearch | null>(null);
+  const [searchingKnowledge, setSearchingKnowledge] = useState(false);
+  const [knowledgeSearchError, setKnowledgeSearchError] = useState<string | null>(null);
 
   const refreshKnowledge = useCallback(async (signal?: AbortSignal) => {
     if (!project.id) return;
@@ -1201,27 +1220,171 @@ function FactsPage() {
     }
   };
 
+  const openSourceEditor = (parent: KnowledgeSource | null) => {
+    setSourceEditor({
+      parent,
+      idempotencyKey: `web-source-${crypto.randomUUID()}`,
+      title: parent?.title ?? "",
+      sourceType: parent?.source_type ?? "official_document",
+      sourceUri: parent?.source_uri ?? "",
+      contentText: "",
+      authorityLevel: (parent?.authority_level as "official" | "verified_third_party" | "community" | "unclassified" | undefined) ?? "official",
+      riskLevel: (parent?.risk_level as "low" | "medium" | "high" | "restricted" | undefined) ?? "medium",
+      validUntil: parent?.valid_until ? parent.valid_until.slice(0, 16) : "",
+    });
+  };
+
+  const submitSource = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project.id || !sourceEditor) return;
+    if (!sourceEditor.title.trim() || !sourceEditor.contentText.trim()) {
+      notify({ title: "来源资料不完整", desc: "标题和完整原文不能为空。更新来源时必须提交完整新快照。", tone: "warning" });
+      return;
+    }
+    setSavingSource(true);
+    try {
+      const saved = await saveKnowledgeSource(project.id, {
+        idempotency_key: sourceEditor.idempotencyKey,
+        source_type: sourceEditor.sourceType.trim(),
+        title: sourceEditor.title.trim(),
+        source_uri: sourceEditor.sourceUri.trim() || undefined,
+        content_text: sourceEditor.contentText,
+        authority_level: sourceEditor.authorityLevel,
+        risk_level: sourceEditor.riskLevel,
+        valid_until: sourceEditor.validUntil ? new Date(sourceEditor.validUntil).toISOString() : undefined,
+      }, sourceEditor.parent?.source_id);
+      setSourceEditor(null);
+      notify({
+        title: sourceEditor.parent ? "来源新版本已保存" : "知识来源已导入",
+        desc: `${saved.title} 已保存为 v${saved.revision_number}；原文、边界和 hash 均由服务端生成。`,
+        tone: "success",
+      });
+      void refreshKnowledge().catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "事实库刷新失败");
+      });
+    } catch (error) {
+      notify({ title: "来源保存失败", desc: error instanceof Error ? error.message : "知识来源接口不可用", tone: "danger" });
+    } finally {
+      setSavingSource(false);
+    }
+  };
+
+  const submitKnowledgeSearch = async (event: FormEvent) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!project.id || query.length < 2) {
+      setKnowledgeSearchError("请输入至少 2 个字符，检索只覆盖当前有效来源。");
+      return;
+    }
+    setSearchingKnowledge(true);
+    setKnowledgeSearchError(null);
+    try {
+      setKnowledgeSearch(await searchKnowledge(project.id, query));
+    } catch (error) {
+      setKnowledgeSearchError(error instanceof Error ? error.message : "知识检索接口不可用");
+    } finally {
+      setSearchingKnowledge(false);
+    }
+  };
+
   return (
     <>
       <PageHeader
         title="企业事实库"
         subtitle="AI 认识你的前提，是企业事实足够清晰、可信、可公开。"
         action={
-          <button
-            className="airank-console-primary-button"
-            type="button"
-            onClick={() =>
-              openPanel({
-                title: "事实审核门禁",
-                desc: "当前页面只展示真实 FactRevision。审核必须逐条绑定来源、风险、公开范围和有效期，尚未提供虚假的批量确认。",
-                items: ["缺少来源不能批准", "开放冲突会阻断", "过期事实不能生成公开内容"],
-              })
-            }
-          >
-            查看审核规则
-          </button>
+          <div className="header-actions">
+            <button className="outline-button" type="button" onClick={() => openSourceEditor(null)}>导入知识来源</button>
+            <button
+              className="airank-console-primary-button"
+              type="button"
+              onClick={() =>
+                openPanel({
+                  title: "事实审核门禁",
+                  desc: "当前页面只展示真实 FactRevision。审核必须逐条绑定来源、风险、公开范围和有效期，尚未提供虚假的批量确认。",
+                  items: ["缺少来源不能批准", "开放冲突会阻断", "过期事实不能生成公开内容"],
+                })
+              }
+            >
+              查看审核规则
+            </button>
+          </div>
         }
       />
+      {sourceEditor && (
+        <Panel title={sourceEditor.parent ? `更新来源 · ${sourceEditor.parent.title}` : "导入知识来源"}>
+          <form className="knowledge-source-form" onSubmit={submitSource}>
+            <label>
+              <span>来源标题</span>
+              <input value={sourceEditor.title} onChange={(event) => setSourceEditor({ ...sourceEditor, title: event.target.value })} placeholder="例如：企业官方产品说明" />
+            </label>
+            <label>
+              <span>来源类型</span>
+              <input value={sourceEditor.sourceType} onChange={(event) => setSourceEditor({ ...sourceEditor, sourceType: event.target.value })} placeholder="official_document" />
+            </label>
+            <label className="knowledge-source-form-wide">
+              <span>公开原文 URL（可选）</span>
+              <input type="url" value={sourceEditor.sourceUri} onChange={(event) => setSourceEditor({ ...sourceEditor, sourceUri: event.target.value })} placeholder="https://example.com/facts" />
+            </label>
+            <label>
+              <span>权威等级</span>
+              <select value={sourceEditor.authorityLevel} onChange={(event) => setSourceEditor({ ...sourceEditor, authorityLevel: event.target.value as "official" | "verified_third_party" | "community" | "unclassified" })}>
+                <option value="official">官方</option>
+                <option value="verified_third_party">已核验第三方</option>
+                <option value="community">社区来源</option>
+                <option value="unclassified">未分类</option>
+              </select>
+            </label>
+            <label>
+              <span>风险等级</span>
+              <select value={sourceEditor.riskLevel} onChange={(event) => setSourceEditor({ ...sourceEditor, riskLevel: event.target.value as "low" | "medium" | "high" | "restricted" })}>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="restricted">受限</option>
+              </select>
+            </label>
+            <label>
+              <span>有效期（可选）</span>
+              <input type="datetime-local" value={sourceEditor.validUntil} onChange={(event) => setSourceEditor({ ...sourceEditor, validUntil: event.target.value })} />
+            </label>
+            <label className="knowledge-source-form-wide">
+              <span>{sourceEditor.parent ? "完整新版本原文" : "完整原文"}</span>
+              <textarea value={sourceEditor.contentText} onChange={(event) => setSourceEditor({ ...sourceEditor, contentText: event.target.value })} placeholder="粘贴完整、未经改写的企业资料；系统会保存不可变快照和精确字符边界。" rows={7} />
+            </label>
+            <div className="knowledge-source-form-actions">
+              <button className="outline-button" type="button" disabled={savingSource} onClick={() => setSourceEditor(null)}>取消</button>
+              <button className="airank-console-primary-button" type="submit" disabled={savingSource}>{savingSource ? "保存中…" : sourceEditor.parent ? "保存新版本" : "导入并切片"}</button>
+            </div>
+          </form>
+        </Panel>
+      )}
+      <Panel title="当前有效原文检索">
+        <form className="knowledge-search-form" onSubmit={submitKnowledgeSearch}>
+          <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="检索产品参数、资质、案例或公开主张" />
+          <button className="airank-console-primary-button" type="submit" disabled={searchingKnowledge}>{searchingKnowledge ? "检索中…" : "检索原文"}</button>
+        </form>
+        <div className="knowledge-search-policy">
+          <Badge tone="primary">lexical_only</Badge>
+          <span>只检索 active 且在有效期内的不可变切片；向量检索未配置，不冒充混合检索。</span>
+        </div>
+        {knowledgeSearchError && <DataStateCard title="知识检索失败" desc={knowledgeSearchError} tone="danger" />}
+        {knowledgeSearch && knowledgeSearch.results.length === 0 && <DataStateCard title="当前有效来源无匹配" desc="旧版本、过期来源和未命中切片不会补造搜索结果。" tone="warning" />}
+        {knowledgeSearch && knowledgeSearch.results.length > 0 && (
+          <ol className="knowledge-search-results">
+            {knowledgeSearch.results.map((result) => (
+              <li key={result.segment_id}>
+                <div>
+                  <strong>#{result.rank} · {result.source_title} · v{result.source_revision_number}</strong>
+                  <Badge tone={result.match_type === "exact" ? "success" : "primary"}>{result.match_type}</Badge>
+                </div>
+                <p>{result.text}</p>
+                <span>边界 {result.source_start}—{result.source_end} · hash {result.content_sha256.slice(0, 12)}… · 命中 {result.matched_terms.join(" / ")}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Panel>
       <section className="summary-band">
         <SummaryMetric label="知识来源" value={String(sources.length)} tone="primary" />
         <SummaryMetric label="已审核事实" value={String(approved)} tone="success" />
@@ -1236,7 +1399,7 @@ function FactsPage() {
           title={governance.status === "healthy" ? "事实与来源当前无到期或冲突提醒" : `${governance.action_required_count} 项事实治理工作待处理`}
           desc={governance.status === "healthy"
             ? `系统按 ${governance.within_days} 天观察窗检查来源、已批准事实与开放冲突。`
-            : `已过期来源 ${governance.expired_source_count}、即将到期来源 ${governance.expiring_source_count}、已过期事实 ${governance.expired_fact_count}、即将到期事实 ${governance.expiring_fact_count}、开放冲突 ${governance.open_conflict_count}。`}
+            : `旧版本来源 ${governance.stale_source_count}、已过期来源 ${governance.expired_source_count}、即将到期来源 ${governance.expiring_source_count}、已过期事实 ${governance.expired_fact_count}、即将到期事实 ${governance.expiring_fact_count}、开放冲突 ${governance.open_conflict_count}。`}
           tone={governance.status === "healthy" ? "primary" : "danger"}
         />
       )}
@@ -1349,6 +1512,7 @@ function FactsPage() {
                 <strong>{source.segment_count} 段</strong>
                 <span>{source.valid_until ? `有效至 ${formatDateTime(source.valid_until)}` : "长期有效 · 无到期日"}</span>
                 <Badge tone="primary">v{source.revision_number}</Badge>
+                {source.status === "active" && <button className="table-action gap-row-action" type="button" onClick={() => openSourceEditor(source)}>更新来源</button>}
               </div>
             ))}
           </div>

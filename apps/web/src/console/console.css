@@ -1602,6 +1602,16 @@ button:disabled {
   color: var(--console-primary);
 }
 
+.bottom-guide > div {
+  min-width: 0;
+}
+
+.bottom-guide > .outline-button {
+  flex: 0 0 auto;
+  width: auto;
+  padding-inline: 18px;
+}
+
 .project-strip {
   display: grid;
   grid-template-columns: 1fr 1fr 1.4fr 1.5fr;
@@ -1882,7 +1892,7 @@ button:disabled {
 
 .gap-row {
   display: grid;
-  grid-template-columns: 42px 1.3fr 62px 52px 1.5fr 48px;
+  grid-template-columns: 42px minmax(180px, 1.3fr) 72px 58px minmax(160px, 1.5fr) 48px auto;
   gap: 12px;
   align-items: center;
   min-height: 66px;
@@ -1908,6 +1918,124 @@ button:disabled {
   display: block;
   color: var(--console-text-muted);
   font: 600 12px / 18px var(--console-font-family);
+}
+
+.knowledge-source-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.knowledge-source-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--console-text);
+  font: 700 13px / 18px var(--console-font-family);
+}
+
+.knowledge-source-form input,
+.knowledge-source-form select,
+.knowledge-source-form textarea,
+.knowledge-search-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--console-text-strong);
+  font: 600 14px / 20px var(--console-font-family);
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.knowledge-source-form input,
+.knowledge-source-form select,
+.knowledge-search-form input {
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.knowledge-source-form textarea {
+  resize: vertical;
+  padding: 12px;
+}
+
+.knowledge-source-form input:focus,
+.knowledge-source-form select:focus,
+.knowledge-source-form textarea:focus,
+.knowledge-search-form input:focus {
+  border-color: var(--console-primary);
+  box-shadow: 0 0 0 3px rgba(68, 62, 253, 0.1);
+}
+
+.knowledge-source-form-wide,
+.knowledge-source-form-actions {
+  grid-column: 1 / -1;
+}
+
+.knowledge-source-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.knowledge-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.knowledge-search-policy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--console-text-muted);
+  font: 600 12px / 18px var(--console-font-family);
+}
+
+.knowledge-search-results {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-search-results li {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-page-bg);
+}
+
+.knowledge-search-results li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.knowledge-search-results strong {
+  color: var(--console-text-strong);
+  font: 800 14px / 20px var(--console-font-family);
+}
+
+.knowledge-search-results p {
+  margin: 10px 0 8px;
+  color: var(--console-text);
+  font: 600 14px / 22px var(--console-font-family);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.knowledge-search-results li > span {
+  display: block;
+  color: var(--console-text-muted);
+  font: 600 11px / 17px var(--console-font-family);
+  overflow-wrap: anywhere;
 }
 
 .bottom-action-band {
@@ -2553,6 +2681,28 @@ button:disabled {
     width: 100%;
   }
 
+  .knowledge-source-form,
+  .knowledge-search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-source-form-wide,
+  .knowledge-source-form-actions {
+    grid-column: auto;
+  }
+
+  .knowledge-source-form-actions,
+  .knowledge-search-policy,
+  .knowledge-search-results li > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-source-form-actions > button,
+  .knowledge-search-form > button {
+    width: 100%;
+  }
+
   .evidence-detail-grid > :last-child {
     grid-column: auto;
   }
@@ -2607,6 +2757,10 @@ button:disabled {
     align-items: start;
   }
 
+  .bottom-guide > .outline-button {
+    width: 100%;
+  }
+
   .bottom-action-band dl {
     grid-template-columns: 1fr;
     width: 100%;
@@ -2624,7 +2778,8 @@ button:disabled {
 
   .gap-row > .airank-console-badge,
   .gap-row > strong,
-  .gap-row > span {
+  .gap-row > span,
+  .gap-row > .gap-row-action {
     grid-column: 2;
   }
 

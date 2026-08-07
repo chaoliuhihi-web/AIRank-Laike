@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from math import ceil
 import json
 import os
+import re
 from typing import Any, Literal, Mapping, Optional, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -103,6 +104,37 @@ class KnowledgeSourceResponse(BaseModel):
 
 class KnowledgeSourceListResponse(BaseModel):
     data: list[KnowledgeSourceData]
+    meta: dict[str, str]
+
+
+class KnowledgeSearchResultData(BaseModel):
+    rank: int
+    segment_id: str
+    source_id: str
+    source_revision_number: int
+    source_title: str
+    source_uri: Optional[str]
+    segment_index: int
+    text: str
+    source_start: int
+    source_end: int
+    content_sha256: str
+    match_type: Literal["exact", "terms"]
+    matched_terms: list[str]
+
+
+class KnowledgeSearchData(BaseModel):
+    query: str
+    retrieval_mode: Literal["lexical_only"] = "lexical_only"
+    vector_status: Literal["not_configured"] = "not_configured"
+    matched_count: int
+    returned_count: int
+    candidate_limit_reached: bool
+    results: list[KnowledgeSearchResultData]
+
+
+class KnowledgeSearchResponse(BaseModel):
+    data: KnowledgeSearchData
     meta: dict[str, str]
 
 
@@ -221,7 +253,7 @@ class FactConflictListResponse(BaseModel):
 
 class KnowledgeGovernanceAlertData(BaseModel):
     alert_id: str
-    kind: Literal["source_expired", "source_expiring", "fact_expired", "fact_expiring", "open_conflict"]
+    kind: Literal["source_stale", "source_expired", "source_expiring", "fact_expired", "fact_expiring", "open_conflict"]
     severity: Literal["critical", "warning"]
     entity_type: Literal["knowledge_source", "fact_revision", "fact_conflict"]
     entity_id: str
@@ -237,6 +269,7 @@ class KnowledgeGovernanceData(BaseModel):
     within_days: int
     source_count: int
     approved_fact_count: int
+    stale_source_count: int
     expired_source_count: int
     expiring_source_count: int
     expired_fact_count: int
@@ -295,7 +328,9 @@ class GovernedContentListResponse(BaseModel):
 
 class KnowledgeRepository(Protocol):
     def create_source(self, tenant_id: str, project_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData: ...
+    def revise_source(self, tenant_id: str, project_id: str, source_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData: ...
     def list_sources(self, tenant_id: str, project_id: str) -> list[KnowledgeSourceData]: ...
+    def search_segments(self, tenant_id: str, project_id: str, query: str, limit: int) -> KnowledgeSearchData: ...
     def propose_fact(self, tenant_id: str, project_id: str, payload: FactProposalRequest) -> FactRevisionData: ...
     def revise_fact(self, tenant_id: str, project_id: str, fact_id: str, payload: FactProposalRequest) -> FactRevisionData: ...
     def list_facts(self, tenant_id: str, project_id: str) -> list[FactRevisionData]: ...
@@ -313,6 +348,7 @@ class InMemoryKnowledgeRepository:
     def __init__(self) -> None:
         self.sources: dict[tuple[str, str], KnowledgeSourceData] = {}
         self.source_contents: dict[tuple[str, str], str] = {}
+        self.source_segments: dict[tuple[str, str], tuple[Any, ...]] = {}
         self.idempotency: dict[tuple[str, str, str], str] = {}
         self.facts: dict[tuple[str, str], FactRevisionData] = {}
         self.conflicts: dict[tuple[str, str], FactConflictData] = {}
@@ -323,6 +359,29 @@ class InMemoryKnowledgeRepository:
         if replay_key in self.idempotency:
             existing = self.sources[(tenant_id, self.idempotency[replay_key])]
             return existing.model_copy(update={"idempotent_replay": True})
+        content_sha256 = sha256_text(payload.content_text)
+        duplicate = next((
+            source
+            for (item_tenant, _), source in self.sources.items()
+            if item_tenant == tenant_id
+            and source.project_id == project_id
+            and source.content_sha256 == content_sha256
+        ), None)
+        if duplicate is not None:
+            self.idempotency[replay_key] = duplicate.source_id
+            return duplicate.model_copy(update={"idempotent_replay": True})
+        parent = None
+        revision_number = 1
+        if payload.parent_source_id:
+            parent = self.sources.get((tenant_id, payload.parent_source_id))
+            if parent is None or parent.project_id != project_id:
+                raise _not_found("KNOWLEDGE_SOURCE_NOT_FOUND", {"source_id": payload.parent_source_id})
+            if parent.status != "active":
+                raise StarletteHTTPException(status_code=409, detail={
+                    "code": "STATE_CONFLICT",
+                    "details": {"source_id": parent.source_id, "status": parent.status},
+                })
+            revision_number = parent.revision_number + 1
         source_id = f"source_{uuid4().hex[:12]}"
         segments = segment_source_text(source_id, payload.content_text, max_characters=payload.segment_max_characters)
         data = KnowledgeSourceData(
@@ -332,12 +391,12 @@ class InMemoryKnowledgeRepository:
             source_type=payload.source_type,
             title=payload.title,
             source_uri=payload.source_uri,
-            content_sha256=sha256_text(payload.content_text),
+            content_sha256=content_sha256,
             byte_size=len(payload.content_text.encode("utf-8")),
             authority_level=payload.authority_level,
             risk_level=payload.risk_level,
             status="active",
-            revision_number=1,
+            revision_number=revision_number,
             parent_source_id=payload.parent_source_id,
             segment_count=len(segments),
             captured_at=payload.captured_at or utc_now(),
@@ -346,11 +405,48 @@ class InMemoryKnowledgeRepository:
         )
         self.sources[(tenant_id, source_id)] = data
         self.source_contents[(tenant_id, source_id)] = payload.content_text
+        self.source_segments[(tenant_id, source_id)] = segments
         self.idempotency[replay_key] = source_id
+        if parent is not None:
+            self.sources[(tenant_id, parent.source_id)] = parent.model_copy(update={"status": "stale"})
         return data
+
+    def revise_source(self, tenant_id: str, project_id: str, source_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData:
+        return self.create_source(
+            tenant_id,
+            project_id,
+            payload.model_copy(update={"parent_source_id": source_id}),
+        )
 
     def list_sources(self, tenant_id: str, project_id: str) -> list[KnowledgeSourceData]:
         return [value for (item_tenant, _), value in self.sources.items() if item_tenant == tenant_id and value.project_id == project_id]
+
+    def search_segments(self, tenant_id: str, project_id: str, query: str, limit: int) -> KnowledgeSearchData:
+        candidates: list[dict[str, Any]] = []
+        now = utc_now()
+        for (item_tenant, source_id), segments in self.source_segments.items():
+            source = self.sources.get((item_tenant, source_id))
+            if (
+                item_tenant != tenant_id
+                or source is None
+                or source.project_id != project_id
+                or source.status != "active"
+                or (source.valid_from is not None and _as_utc(source.valid_from) > now)
+                or (source.valid_until is not None and _as_utc(source.valid_until) <= now)
+            ):
+                continue
+            for segment in segments:
+                match = _lexical_match(query, segment.text)
+                if match is None:
+                    continue
+                candidates.append({
+                    "segment": segment,
+                    "source": source,
+                    "match_type": match[0],
+                    "matched_terms": match[1],
+                    "first_match": match[2],
+                })
+        return _knowledge_search_data(query, candidates, limit=limit, candidate_limit_reached=False)
 
     def propose_fact(self, tenant_id: str, project_id: str, payload: FactProposalRequest) -> FactRevisionData:
         missing = [source_id for source_id in payload.source_ids if (tenant_id, source_id) not in self.sources]
@@ -632,9 +728,14 @@ class MySQLKnowledgeRepository:
                 return self._source_data(existing, replay=True)
             revision_number = 1
             if payload.parent_source_id:
-                parent = conn.execute(text("SELECT revision_number FROM airank_knowledge_sources WHERE tenant_id=:tenant_id AND project_id=:project_id AND id=:source_id FOR UPDATE"), {"tenant_id": tenant_id, "project_id": project_id, "source_id": payload.parent_source_id}).mappings().first()
+                parent = conn.execute(text("SELECT id, revision_number, status FROM airank_knowledge_sources WHERE tenant_id=:tenant_id AND project_id=:project_id AND id=:source_id FOR UPDATE"), {"tenant_id": tenant_id, "project_id": project_id, "source_id": payload.parent_source_id}).mappings().first()
                 if parent is None:
                     raise _not_found("KNOWLEDGE_SOURCE_NOT_FOUND", {"source_id": payload.parent_source_id})
+                if parent["status"] != "active":
+                    raise StarletteHTTPException(status_code=409, detail={
+                        "code": "STATE_CONFLICT",
+                        "details": {"source_id": parent["id"], "status": parent["status"]},
+                    })
                 revision_number = int(parent["revision_number"]) + 1
             source_id = f"source_{uuid4().hex[:12]}"
             segments = segment_source_text(source_id, payload.content_text, max_characters=payload.segment_max_characters)
@@ -669,7 +770,20 @@ class MySQLKnowledgeRepository:
                       :segment_text, :source_start, :source_end, :content_sha256
                     )
                 """), {"id": segment.id, "tenant_id": tenant_id, "project_id": project_id, "knowledge_source_id": source_id, "segment_index": segment.segment_index, "segment_text": segment.text, "source_start": segment.source_start, "source_end": segment.source_end, "content_sha256": segment.content_sha256})
+            if payload.parent_source_id:
+                conn.execute(text("""
+                    UPDATE airank_knowledge_sources SET status='stale'
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                      AND id=:source_id AND status='active'
+                """), {"tenant_id": tenant_id, "project_id": project_id, "source_id": payload.parent_source_id})
         return KnowledgeSourceData(source_id=source_id, tenant_id=tenant_id, project_id=project_id, source_type=payload.source_type, title=payload.title, source_uri=payload.source_uri, content_sha256=content_sha256, byte_size=byte_size, authority_level=payload.authority_level, risk_level=payload.risk_level, status="active", revision_number=revision_number, parent_source_id=payload.parent_source_id, segment_count=len(segments), captured_at=captured_at, valid_from=payload.valid_from, valid_until=payload.valid_until)
+
+    def revise_source(self, tenant_id: str, project_id: str, source_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData:
+        return self.create_source(
+            tenant_id,
+            project_id,
+            payload.model_copy(update={"parent_source_id": source_id}),
+        )
 
     def list_sources(self, tenant_id: str, project_id: str) -> list[KnowledgeSourceData]:
         with self.engine.begin() as conn:
@@ -682,6 +796,48 @@ class MySQLKnowledgeRepository:
                 ORDER BY s.captured_at DESC, s.id ASC
             """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
         return [self._source_data(row) for row in rows]
+
+    def search_segments(self, tenant_id: str, project_id: str, query: str, limit: int) -> KnowledgeSearchData:
+        candidate_limit = 5000
+        now = utc_now()
+        with self.engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            rows = conn.execute(text("""
+                SELECT g.id AS segment_id, g.knowledge_source_id, g.segment_index,
+                       g.segment_text, g.source_start, g.source_end, g.content_sha256,
+                       s.revision_number, s.title, s.source_uri
+                FROM airank_knowledge_segments g
+                JOIN airank_knowledge_sources s ON s.id=g.knowledge_source_id
+                WHERE g.tenant_id=:tenant_id AND g.project_id=:project_id
+                  AND s.tenant_id=:tenant_id AND s.project_id=:project_id
+                  AND s.status='active'
+                  AND (s.valid_from IS NULL OR s.valid_from<=:now)
+                  AND (s.valid_until IS NULL OR s.valid_until>:now)
+                ORDER BY s.revision_number DESC, g.segment_index ASC, g.id ASC
+                LIMIT :candidate_limit
+            """), {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "now": now,
+                "candidate_limit": candidate_limit + 1,
+            }).mappings().all()
+        candidates: list[dict[str, Any]] = []
+        for row in rows[:candidate_limit]:
+            match = _lexical_match(query, row["segment_text"])
+            if match is None:
+                continue
+            candidates.append({
+                "row": row,
+                "match_type": match[0],
+                "matched_terms": match[1],
+                "first_match": match[2],
+            })
+        return _knowledge_search_data(
+            query,
+            candidates,
+            limit=limit,
+            candidate_limit_reached=len(rows) > candidate_limit,
+        )
 
     @staticmethod
     def _fact_data(row: Mapping[str, Any], open_conflict_count: int = 0) -> FactRevisionData:
@@ -1060,6 +1216,100 @@ def _optional_utc(value: Optional[datetime]) -> Optional[datetime]:
     return _as_utc(value) if value is not None else None
 
 
+def _lexical_terms(query: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", query.strip().lower())
+    terms: list[str] = [normalized]
+    for token in re.findall(r"[a-z0-9][a-z0-9._+-]*|[\u3400-\u9fff]+", normalized):
+        terms.append(token)
+        if re.fullmatch(r"[\u3400-\u9fff]+", token) and len(token) > 2:
+            terms.extend(token[index : index + 2] for index in range(len(token) - 1))
+    return list(dict.fromkeys(term for term in terms if term))[:32]
+
+
+def _lexical_match(query: str, text_value: str) -> Optional[tuple[Literal["exact", "terms"], list[str], int]]:
+    normalized_query = re.sub(r"\s+", " ", query.strip().lower())
+    normalized_text = text_value.lower()
+    terms = _lexical_terms(query)
+    matched_terms = [term for term in terms if term in normalized_text]
+    if not matched_terms:
+        return None
+    exact = normalized_query in normalized_text
+    first_match = normalized_text.find(normalized_query) if exact else min(normalized_text.find(term) for term in matched_terms)
+    return ("exact" if exact else "terms", matched_terms, first_match)
+
+
+def _knowledge_search_data(
+    query: str,
+    candidates: list[dict[str, Any]],
+    *,
+    limit: int,
+    candidate_limit_reached: bool,
+) -> KnowledgeSearchData:
+    def row_values(candidate: dict[str, Any]) -> tuple[Any, Any]:
+        if "row" in candidate:
+            return candidate["row"], None
+        return candidate["segment"], candidate["source"]
+
+    def sort_key(candidate: dict[str, Any]) -> tuple[int, int, int, int, int, str]:
+        record, source = row_values(candidate)
+        revision_number = int(record["revision_number"]) if source is None else source.revision_number
+        segment_index = int(record["segment_index"]) if source is None else record.segment_index
+        segment_id = str(record["segment_id"]) if source is None else record.id
+        return (
+            0 if candidate["match_type"] == "exact" else 1,
+            -len(candidate["matched_terms"]),
+            candidate["first_match"],
+            -revision_number,
+            segment_index,
+            segment_id,
+        )
+
+    ordered = sorted(candidates, key=sort_key)
+    results: list[KnowledgeSearchResultData] = []
+    for rank, candidate in enumerate(ordered[:limit], start=1):
+        record, source = row_values(candidate)
+        if source is None:
+            result = KnowledgeSearchResultData(
+                rank=rank,
+                segment_id=record["segment_id"],
+                source_id=record["knowledge_source_id"],
+                source_revision_number=int(record["revision_number"]),
+                source_title=record["title"],
+                source_uri=record["source_uri"],
+                segment_index=int(record["segment_index"]),
+                text=record["segment_text"],
+                source_start=int(record["source_start"]),
+                source_end=int(record["source_end"]),
+                content_sha256=record["content_sha256"],
+                match_type=candidate["match_type"],
+                matched_terms=candidate["matched_terms"],
+            )
+        else:
+            result = KnowledgeSearchResultData(
+                rank=rank,
+                segment_id=record.id,
+                source_id=source.source_id,
+                source_revision_number=source.revision_number,
+                source_title=source.title,
+                source_uri=source.source_uri,
+                segment_index=record.segment_index,
+                text=record.text,
+                source_start=record.source_start,
+                source_end=record.source_end,
+                content_sha256=record.content_sha256,
+                match_type=candidate["match_type"],
+                matched_terms=candidate["matched_terms"],
+            )
+        results.append(result)
+    return KnowledgeSearchData(
+        query=query.strip(),
+        matched_count=len(ordered),
+        returned_count=len(results),
+        candidate_limit_reached=candidate_limit_reached,
+        results=results,
+    )
+
+
 def derive_knowledge_governance(
     sources: list[KnowledgeSourceData],
     facts: list[FactRevisionData],
@@ -1100,7 +1350,17 @@ def derive_knowledge_governance(
         ))
 
     for source in sources:
-        if source.status != "disabled" and source.valid_until is not None:
+        if source.status == "stale":
+            alerts.append(KnowledgeGovernanceAlertData(
+                alert_id=f"source_stale:{source.source_id}",
+                kind="source_stale",
+                severity="critical",
+                entity_type="knowledge_source",
+                entity_id=source.source_id,
+                title=source.title,
+                message="知识来源已有新版本，引用旧来源的事实必须重新核验。",
+            ))
+        elif source.status == "active" and source.valid_until is not None:
             add_expiry_alert(
                 entity_type="knowledge_source",
                 entity_id=source.source_id,
@@ -1136,6 +1396,7 @@ def derive_knowledge_governance(
         within_days=within_days,
         source_count=len(sources),
         approved_fact_count=sum(fact.status == "approved" for fact in facts),
+        stale_source_count=kinds.count("source_stale"),
         expired_source_count=kinds.count("source_expired"),
         expiring_source_count=kinds.count("source_expiring"),
         expired_fact_count=kinds.count("fact_expired"),
@@ -1176,6 +1437,28 @@ def create_knowledge_source(project_id: str, payload: KnowledgeSourceCreateReque
 @router.get("/projects/{project_id}/knowledge-sources", response_model=KnowledgeSourceListResponse)
 def list_knowledge_sources(project_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> KnowledgeSourceListResponse:
     return KnowledgeSourceListResponse(data=KNOWLEDGE_REPOSITORY.list_sources(tenant_id, project_id), meta=response_meta(trace_id))
+
+
+@router.post("/projects/{project_id}/knowledge-sources/{source_id}/revisions", response_model=KnowledgeSourceResponse, status_code=201)
+def revise_knowledge_source(project_id: str, source_id: str, payload: KnowledgeSourceCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> KnowledgeSourceResponse:
+    return KnowledgeSourceResponse(
+        data=KNOWLEDGE_REPOSITORY.revise_source(tenant_id, project_id, source_id, payload),
+        meta=response_meta(trace_id),
+    )
+
+
+@router.get("/projects/{project_id}/knowledge-search", response_model=KnowledgeSearchResponse)
+def search_knowledge(
+    project_id: str,
+    q: str = Query(min_length=2, max_length=200),
+    limit: int = Query(default=10, ge=1, le=50),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> KnowledgeSearchResponse:
+    return KnowledgeSearchResponse(
+        data=KNOWLEDGE_REPOSITORY.search_segments(tenant_id, project_id, q, limit),
+        meta=response_meta(trace_id),
+    )
 
 
 @router.post("/projects/{project_id}/facts", response_model=FactRevisionResponse, status_code=201)

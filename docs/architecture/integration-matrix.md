@@ -6,7 +6,7 @@
 | 模型配置 | 环境变量或项目级 provider config | yudao 模型与 API Key 权威源 | MVP 自有，接入时只读星河权威源 |
 | 官网抓取 | `crawler-lite` HTTP + sitemap + 人工补录 | Crawler Gateway fetch/job/run/audit/version | MVP 自有，复杂抓取接 Crawler Gateway |
 | 竞品/第三方信源抓取 | `crawler-lite` | Crawler Gateway connector + blocked taxonomy | 先半自动，逐步增强 |
-| 事实库 | `kb-lite` SQL + 简单检索 | KB Service / Qdrant / Brand Corpus | AIRank 主存自有，向量召回可替换 |
+| 事实库 | `kb-lite` SQL + 不可变来源版本 + `lexical_only` 当前有效切片检索 | KB Service / Qdrant / Brand Corpus | AIRank 主存和版本治理自有；向量/混合召回未配置时必须显式降级，不得冒充已接入 |
 | 可信事实卡 | `packages/domain/src/fact-atom` | Brand Corpus 审校队列和导出经验 | 客户侧叫事实卡，工程内部用 FactAtom；审校模式复用 |
 | AI 平台扫描 | worker + provider plugins + 人工录入 | Hermes / browser automation / workflow-runner | MVP 自有，自动化增强后接 Hermes |
 | AIRank Score | `packages/score` | AIScore 治理经验 | 算法自有，治理口径借鉴 |
