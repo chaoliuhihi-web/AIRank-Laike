@@ -90,6 +90,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | `REPORT_NOT_FOUND` | 404 | 报告不存在 |
 | `REPORT_EVIDENCE_MISSING` | 500 | 报告缺少证据链 |
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |
+| `EVIDENCE_OBJECT_UNAVAILABLE` | 503 | 对象存储不可用、配置不匹配或对象无法读取 |
+| `EVIDENCE_INTEGRITY_FAILED` | 409 | 对象内容与数据库记录的 SHA-256 或字节数不一致 |
 
 ## 内部 Skill
 

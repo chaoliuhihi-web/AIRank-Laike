@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
+from airank_xinghe_adapter import capability as capability_module
 from airank_xinghe_adapter.capability import parse_timeout_seconds
 
 
@@ -77,6 +78,43 @@ def test_probe_reports_ready_for_writable_filesystem_object_storage(tmp_path: Pa
 
     assert results["object_storage"].status == CapabilityStatus.READY
     assert results["object_storage"].metadata["probe"] == "write-read-delete"
+
+
+def test_probe_reports_ready_for_verified_s3_object_storage(monkeypatch) -> None:
+    objects: dict[str, bytes] = {}
+
+    class FakeStorage:
+        def put_bytes(self, payload: bytes, *, key: str, content_type: str):
+            del content_type
+            objects[key] = payload
+            return type("Stored", (), {"byte_size": len(payload)})()
+
+        def get_bytes(self, key: str) -> bytes:
+            return objects[key]
+
+        def delete(self, key: str) -> None:
+            objects.pop(key, None)
+
+    monkeypatch.setattr(capability_module, "build_object_storage_from_env", lambda _env: FakeStorage())
+    config = ProbeConfig.from_env(
+        {
+            "AIRANK_OBJECT_STORAGE_DRIVER": "s3",
+            "AIRANK_S3_ENDPOINT_URL": "https://object-storage.example.com",
+            "AIRANK_S3_BUCKET": "airank-evidence",
+            "AIRANK_S3_ACCESS_KEY_ID": "access-key",
+            "AIRANK_S3_SECRET_ACCESS_KEY": "secret-key",
+        }
+    )
+
+    results = {result.capability: result for result in CapabilityProbe(config, now=NOW).run()}
+
+    assert results["object_storage"].status == CapabilityStatus.READY
+    assert results["object_storage"].metadata == {
+        "driver": "s3",
+        "bucket": "airank-evidence",
+        "probe": "write-read-delete",
+    }
+    assert objects == {}
 
 
 def test_probe_config_reads_positive_timeout_from_env() -> None:

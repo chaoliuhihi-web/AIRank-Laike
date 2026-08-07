@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
 from typing import Any, Mapping, Optional, Protocol
 from uuid import uuid4
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from airank_evidence import ObjectStorageError, build_object_storage_from_env, sha256_bytes
 
 
 TRACE_HEADER = "X-AIRank-Trace-Id"
@@ -66,6 +69,14 @@ class EvidenceObjectData(BaseModel):
     content_type: Optional[str]
     byte_size: Optional[int]
     sha256: Optional[str]
+    content_url: Optional[str]
+
+
+@dataclass(frozen=True)
+class EvidenceObjectContent:
+    payload: bytes
+    content_type: str
+    sha256: str
 
 
 class AnswerSampleDetailData(AnswerSampleData):
@@ -111,6 +122,7 @@ class EvidenceRepository(Protocol):
         limit: int,
     ) -> tuple[list[AnswerSampleData], dict[str, int]]: ...
     def get_sample(self, tenant_id: str, snapshot_id: str) -> AnswerSampleDetailData: ...
+    def read_object(self, tenant_id: str, object_ref_id: str) -> EvidenceObjectContent: ...
 
 
 class InMemoryEvidenceRepository:
@@ -134,6 +146,13 @@ class InMemoryEvidenceRepository:
         raise StarletteHTTPException(
             status_code=404,
             detail={"code": "OBJECT_REF_NOT_FOUND", "details": {"snapshot_id": snapshot_id}},
+        )
+
+    def read_object(self, tenant_id: str, object_ref_id: str) -> EvidenceObjectContent:
+        del tenant_id
+        raise StarletteHTTPException(
+            status_code=404,
+            detail={"code": "OBJECT_REF_NOT_FOUND", "details": {"object_ref_id": object_ref_id}},
         )
 
 
@@ -328,6 +347,57 @@ class MySQLEvidenceRepository:
             ],
         )
 
+    def read_object(self, tenant_id: str, object_ref_id: str) -> EvidenceObjectContent:
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, content_type, byte_size, sha256, metadata_json
+                    FROM airank_object_refs
+                    WHERE tenant_id=:tenant_id AND id=:object_ref_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "object_ref_id": object_ref_id},
+            ).mappings().first()
+        if row is None:
+            raise StarletteHTTPException(
+                status_code=404,
+                detail={"code": "OBJECT_REF_NOT_FOUND", "details": {"object_ref_id": object_ref_id}},
+            )
+
+        metadata = self._json_object(row["metadata_json"])
+        object_key = str(metadata.get("object_key") or "")
+        stored_driver = str(metadata.get("storage_driver") or "")
+        expected_sha256 = str(row["sha256"] or "")
+        if not object_key or not stored_driver or not expected_sha256:
+            raise StarletteHTTPException(
+                status_code=503,
+                detail={"code": "EVIDENCE_OBJECT_UNAVAILABLE", "details": {"object_ref_id": object_ref_id}},
+            )
+        try:
+            storage = build_object_storage_from_env()
+            if storage.driver != stored_driver:
+                raise ObjectStorageError("configured storage driver does not match evidence record")
+            payload = storage.get_bytes(object_key)
+        except ObjectStorageError as exc:
+            raise StarletteHTTPException(
+                status_code=503,
+                detail={"code": "EVIDENCE_OBJECT_UNAVAILABLE", "details": {"object_ref_id": object_ref_id}},
+            ) from exc
+
+        actual_sha256 = sha256_bytes(payload)
+        expected_size = int(row["byte_size"]) if row["byte_size"] is not None else None
+        if actual_sha256 != expected_sha256 or (expected_size is not None and len(payload) != expected_size):
+            raise StarletteHTTPException(
+                status_code=409,
+                detail={"code": "EVIDENCE_INTEGRITY_FAILED", "details": {"object_ref_id": object_ref_id}},
+            )
+        return EvidenceObjectContent(
+            payload=payload,
+            content_type=str(row["content_type"] or "application/octet-stream"),
+            sha256=expected_sha256,
+        )
+
     @staticmethod
     def _json_object(value: object) -> dict[str, Any]:
         if isinstance(value, Mapping):
@@ -346,6 +416,7 @@ class MySQLEvidenceRepository:
                 content_type=None,
                 byte_size=None,
                 sha256=None,
+                content_url=None,
             )
         return EvidenceObjectData(
             object_ref_id=row["id"],
@@ -353,6 +424,7 @@ class MySQLEvidenceRepository:
             content_type=row["content_type"],
             byte_size=row["byte_size"],
             sha256=row["sha256"],
+            content_url=f"/api/v1/evidence-objects/{row['id']}/content",
         )
 
 
@@ -393,4 +465,21 @@ def get_answer_sample(
     return AnswerSampleDetailResponse(
         data=EVIDENCE_REPOSITORY.get_sample(tenant_id, snapshot_id),
         meta=response_meta(trace_id),
+    )
+
+
+@router.get("/evidence-objects/{object_ref_id}/content")
+def get_evidence_object_content(
+    object_ref_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+) -> Response:
+    evidence_object = EVIDENCE_REPOSITORY.read_object(tenant_id, object_ref_id)
+    return Response(
+        content=evidence_object.payload,
+        media_type=evidence_object.content_type,
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": f'"sha256-{evidence_object.sha256}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.main import (
     BuyerQuestionCreateRequest,
@@ -41,6 +42,7 @@ from apps.api.knowledge_routes import (
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
+from airank_evidence import FilesystemObjectStorage
 from airank_provider_gateway import (
     HealthState,
     ProbeLevel,
@@ -159,6 +161,19 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             assert url_length == 2048
 
 
+def test_real_s3_compatible_object_storage_probe() -> None:
+    require_real_flag("AIRANK_RUN_REAL_OBJECT_STORAGE")
+    result = next(
+        item
+        for item in CapabilityProbe(ProbeConfig.from_env()).run()
+        if item.capability == "object_storage"
+    )
+
+    assert result.status == CapabilityStatus.READY
+    assert result.metadata["driver"] in {"s3", "minio"}
+    assert result.metadata["probe"] == "write-read-delete"
+
+
 def test_real_mysql_project_competitor_question_write_path() -> None:
     require_real_flag("AIRANK_RUN_REAL_MYSQL")
     tenant_id = f"tenant_it_{uuid4().hex[:10]}"
@@ -237,6 +252,71 @@ def test_real_mysql_project_competitor_question_write_path() -> None:
                 {"tenant_id": tenant_id, "question_id": question.question_id},
             ).scalar_one()
             assert json.loads(question_meta)["coverage_status"] == "needs_scan"
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_evidence_object_can_be_read_and_integrity_checked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    evidence_repo = MySQLEvidenceRepository(database_url())
+    object_root = tmp_path / "objects"
+    storage = FilesystemObjectStorage(object_root)
+    payload = b"real mysql durable evidence object"
+    stored = storage.put_bytes(payload, key="evidence/integration/object.png", content_type="image/png")
+    object_ref_id = f"object_it_{uuid4().hex[:10]}"
+    monkeypatch.setenv("AIRANK_OBJECT_STORAGE_DRIVER", "filesystem")
+    monkeypatch.setenv("AIRANK_OBJECT_STORAGE_ROOT", str(object_root))
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-real-object.example.com",
+                brand_name_hint="AIRank Real Object",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_object_refs (
+                      id, tenant_id, project_id, object_type, object_uri,
+                      content_type, byte_size, sha256, metadata_json, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'provider_answer_screenshot', :object_uri,
+                      :content_type, :byte_size, :sha256, :metadata_json, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": object_ref_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "object_uri": stored.uri,
+                    "content_type": stored.content_type,
+                    "byte_size": stored.byte_size,
+                    "sha256": stored.sha256,
+                    "metadata_json": json.dumps(
+                        {"object_key": stored.key, "storage_driver": stored.driver, "immutable": True}
+                    ),
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+
+        evidence_object = evidence_repo.read_object(tenant_id, object_ref_id)
+        assert evidence_object.payload == payload
+        assert evidence_object.content_type == "image/png"
+        assert evidence_object.sha256 == stored.sha256
+        with pytest.raises(StarletteHTTPException) as cross_tenant_error:
+            evidence_repo.read_object("tenant_other", object_ref_id)
+        assert getattr(cross_tenant_error.value, "status_code", None) == 404
     finally:
         cleanup_tenant(engine, tenant_id)
 

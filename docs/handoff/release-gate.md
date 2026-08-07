@@ -338,3 +338,31 @@ Blocking conditions:
 Decision:
 
 - Keep commercial launch at `NO-GO`. Do not use the earlier 2026-05-17 PASS as evidence for the expanded GEO productization scope.
+
+## 2026-08-08 Durable Evidence Object Gate
+
+Release Gate: BLOCKED
+
+Commit: pending evidence-object commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Browser screenshots are copied from temporary capture paths into content-addressed filesystem or S3/MinIO storage before a sample is committed as valid.
+- Evidence object reads are authenticated and tenant-scoped; the API verifies stored SHA-256 and byte size before returning bytes, and the console renders them through an authenticated Blob request.
+- Full local regression passed: `207 passed, 10 skipped`; Web build passed and npm high-severity audit reported zero vulnerabilities.
+- Real MySQL integration passed `8 passed, 2 skipped`, including object-reference lookup, durable readback, integrity verification, and cross-tenant rejection.
+- Real local MinIO integration passed its write/read/delete test, left zero probe objects, and removed the temporary test bucket. No object-storage credentials were written to source, Git, test output, or reports.
+- Production configuration now rejects filesystem-only storage, plaintext S3 endpoints, and `AIRANK_S3_ALLOW_HTTP=true`; CI uses Python 3.11.
+
+Blocking conditions:
+
+- This branch is not merged into GitHub/Gitee `main`.
+- Production Yudao authentication and consumer Web/App Provider sessions are still unavailable for the final gate.
+- The successful MinIO check used a local HTTP endpoint; the production HTTPS S3/MinIO environment remains unverified.
+- The current workstation uses Python 3.9.6 and Node 20.18.2. Both are now explicitly blocked by the production runtime gate; deployment requires Python 3.11+ and Node 20.19+ or 22.12+.
+
+Decision:
+
+- Durable screenshot evidence is implemented and locally verified, but commercial launch remains `NO-GO` until the remaining external and production-runtime gates pass.

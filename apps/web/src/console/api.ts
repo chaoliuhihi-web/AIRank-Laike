@@ -124,6 +124,7 @@ export type EvidenceObject = {
   content_type: string | null;
   byte_size: number | null;
   sha256: string | null;
+  content_url: string | null;
 };
 
 export type AnswerSampleDetail = AnswerSample & {
@@ -696,6 +697,17 @@ export async function fetchAnswerSamples(
 
 export function fetchAnswerSample(snapshotId: string, signal?: AbortSignal): Promise<AnswerSampleDetail> {
   return fetchData(`/api/v1/samples/${snapshotId}`, "trc_web_sample", signal);
+}
+
+export async function fetchEvidenceObject(objectRefId: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(`/api/v1/evidence-objects/${encodeURIComponent(objectRefId)}/content`, {
+    headers: buildApiHeaders("trc_web_evidence_object"),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence object request failed with ${response.status}`));
+  }
+  return response.blob();
 }
 
 export function fetchContentAssets(projectId: string, signal?: AbortSignal): Promise<GovernedContentAsset[]> {

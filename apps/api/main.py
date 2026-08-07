@@ -4,7 +4,6 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 import json
 import os
-from pathlib import Path as FileSystemPath
 import threading
 from typing import Annotated, Any, Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
@@ -22,6 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
+from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
 from airank_skills import load_default_registry, run_skill
 
 try:
@@ -99,6 +99,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
+    "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
+    "EVIDENCE_INTEGRITY_FAILED": (409, "Evidence object integrity verification failed"),
     "INTEGRATION_CAPABILITY_BLOCKED": (503, "Integration capability is blocked"),
     "INTEGRATION_CAPABILITY_DISABLED": (503, "Integration capability is disabled"),
     "YUDAO_MODEL_RESOLVE_FAILED": (502, "Yudao model resolution failed"),
@@ -2496,6 +2498,32 @@ def complete_in_memory_brand_scan(tenant_id: str, run_id: str) -> None:
     )
 
 
+def persist_provider_screenshot(
+    tenant_id: str,
+    project_id: str,
+    result: ProviderScanResult,
+    *,
+    object_storage: Any | None = None,
+) -> StoredObject | None:
+    screenshot_path = str(result.raw_metadata.get("screenshot_path") or "")
+    screenshot_sha256 = str(result.raw_metadata.get("screenshot_sha256") or "")
+    if not screenshot_path and not screenshot_sha256:
+        return None
+    if not screenshot_path or not screenshot_sha256:
+        raise ObjectStorageError("browser evidence must include both screenshot path and SHA-256")
+    storage = object_storage or build_object_storage_from_env()
+    object_partition = sha256_text(f"{tenant_id}:{project_id}")[:24]
+    return storage.put_file(
+        screenshot_path,
+        key=(
+            f"evidence/{object_partition}/provider-answer-screenshot/"
+            f"{screenshot_sha256[:2]}/{screenshot_sha256}.png"
+        ),
+        content_type="image/png",
+        expected_sha256=screenshot_sha256,
+    )
+
+
 def complete_mysql_real_brand_scan(
     tenant_id: str,
     project: ProjectData,
@@ -2622,7 +2650,50 @@ def complete_mysql_real_brand_scan(
                 }
             )
             continue
-        successes.append((row, result))
+        successes.append(({**row, "started_at": task_started_at}, result))
+
+    durable_screenshots: dict[str, StoredObject] = {}
+    persisted_successes: list[tuple[dict[str, Any], ProviderScanResult]] = []
+    object_storage = None
+    for row, result in successes:
+        screenshot_path = str(result.raw_metadata.get("screenshot_path") or "")
+        screenshot_sha256 = str(result.raw_metadata.get("screenshot_sha256") or "")
+        if not screenshot_path and not screenshot_sha256:
+            persisted_successes.append((row, result))
+            continue
+        try:
+            if not screenshot_path or not screenshot_sha256:
+                raise ObjectStorageError("browser evidence must include both screenshot path and SHA-256")
+            if object_storage is None:
+                object_storage = build_object_storage_from_env()
+            stored = persist_provider_screenshot(
+                tenant_id,
+                project.project_id,
+                result,
+                object_storage=object_storage,
+            )
+            assert stored is not None
+            durable_screenshots[str(row["id"])] = stored
+            result.raw_metadata.update(
+                {
+                    "screenshot_object_key": stored.key,
+                    "screenshot_object_uri": stored.uri,
+                    "screenshot_storage_driver": stored.driver,
+                }
+            )
+            result.raw_metadata.pop("screenshot_path", None)
+            persisted_successes.append((row, result))
+        except ObjectStorageError as exc:
+            failures.append(
+                {
+                    **row,
+                    "finished_at": utc_now(),
+                    "error_code": "EVIDENCE_STORAGE_FAILED",
+                    "error_message": str(exc)[:1000],
+                    "blocked": False,
+                }
+            )
+    successes = persisted_successes
 
     finished_at = utc_now()
     failed_count = len(failures)
@@ -2670,11 +2741,9 @@ def complete_mysql_real_brand_scan(
             raw_response_json = json.dumps(raw_response, ensure_ascii=False, sort_keys=True, default=str)
             raw_response_sha256 = sha256_text(raw_response_json)
             screenshot_ref_id = None
-            screenshot_path = str(result.raw_metadata.get("screenshot_path") or "")
-            screenshot_sha256 = str(result.raw_metadata.get("screenshot_sha256") or "")
-            if screenshot_path and screenshot_sha256:
+            durable_screenshot = durable_screenshots.get(str(row["id"]))
+            if durable_screenshot is not None:
                 screenshot_ref_id = f"object_{uuid4().hex[:12]}"
-                screenshot_file = FileSystemPath(screenshot_path)
                 conn.execute(
                     text(
                         """
@@ -2693,12 +2762,18 @@ def complete_mysql_real_brand_scan(
                         "tenant_id": tenant_id,
                         "project_id": project.project_id,
                         "object_type": "provider_answer_screenshot",
-                        "object_uri": screenshot_file.resolve().as_uri(),
-                        "content_type": "image/png",
-                        "byte_size": screenshot_file.stat().st_size if screenshot_file.exists() else None,
-                        "sha256": screenshot_sha256,
+                        "object_uri": durable_screenshot.uri,
+                        "content_type": durable_screenshot.content_type,
+                        "byte_size": durable_screenshot.byte_size,
+                        "sha256": durable_screenshot.sha256,
                         "metadata_json": json.dumps(
-                            {"provider": result.provider, "session_id": row["session_id"], "immutable": True},
+                            {
+                                "provider": result.provider,
+                                "session_id": row["session_id"],
+                                "immutable": True,
+                                "object_key": durable_screenshot.key,
+                                "storage_driver": durable_screenshot.driver,
+                            },
                             ensure_ascii=False,
                         ),
                         "created_at": finished_at,

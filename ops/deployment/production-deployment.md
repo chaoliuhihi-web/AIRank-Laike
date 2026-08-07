@@ -330,14 +330,22 @@ ops/deployment/env.example
 ```text
 AIRANK_ENV=production
 AIRANK_DATABASE_URL=生产 MySQL 连接串
-AIRANK_OBJECT_STORAGE_DRIVER=生产对象存储类型
-AIRANK_OBJECT_STORAGE_ROOT=生产持久化路径或对象存储配置
+AIRANK_OBJECT_STORAGE_DRIVER=s3 或 minio
+AIRANK_S3_ENDPOINT_URL=生产 HTTPS 对象存储地址（云厂商默认端点可留空）
+AIRANK_S3_BUCKET=生产证据桶
+AIRANK_S3_REGION=对象存储区域
+AIRANK_S3_ACCESS_KEY_ID=从 Secret 注入
+AIRANK_S3_SECRET_ACCESS_KEY=从 Secret 注入
+AIRANK_S3_ALLOW_HTTP=false
 AIRANK_AUTH_MODE=yudao
 AIRANK_API_AUTH_ENFORCEMENT=required
 YUDAO_BASE_URL=生产 yudao 地址
 YUDAO_BEARER_TOKEN=生产 token
 XINGHE_CAPABILITY_MODE=adapter
 ```
+
+生产运行时门禁为 Python 3.11+，Node 20.19+ 或 22.12+；CI 使用 Python
+3.11 与 Node 22。低于该版本即使本地构建偶然成功，也不视为可上线。
 
 真实生产密钥只允许放在部署平台、CI/CD Secret、systemd EnvironmentFile 或容器 secret 中，不允许提交到 Git。
 

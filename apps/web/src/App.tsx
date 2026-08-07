@@ -72,6 +72,7 @@ import {
   fetchAssetBundle,
   fetchConsoleOverview,
   fetchContentAssets,
+  fetchEvidenceObject,
   fetchFacts,
   fetchKnowledgeSources,
   fetchProviderReadiness,
@@ -1266,6 +1267,8 @@ function EvidencePage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState("");
+  const [objectPreviews, setObjectPreviews] = useState<{ screenshot: string | null; sourcePanel: string | null }>({ screenshot: null, sourcePanel: null });
+  const [objectPreviewError, setObjectPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) return;
@@ -1312,6 +1315,36 @@ function EvidencePage() {
       });
     return () => controller.abort();
   }, [project.id, selectedRunId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const createdUrls: string[] = [];
+    let disposed = false;
+    setObjectPreviews({ screenshot: null, sourcePanel: null });
+    setObjectPreviewError(null);
+
+    const loadPreview = async (kind: "screenshot" | "sourcePanel", objectRefId: string | null) => {
+      if (!objectRefId) return;
+      try {
+        const blob = await fetchEvidenceObject(objectRefId, controller.signal);
+        if (disposed) return;
+        const objectUrl = URL.createObjectURL(blob);
+        createdUrls.push(objectUrl);
+        setObjectPreviews((current) => ({ ...current, [kind]: objectUrl }));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setObjectPreviewError(error instanceof Error ? error.message : "证据对象读取失败");
+      }
+    };
+
+    void loadPreview("screenshot", selected?.screenshot.object_ref_id || null);
+    void loadPreview("sourcePanel", selected?.source_panel.object_ref_id || null);
+    return () => {
+      disposed = true;
+      controller.abort();
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [selected?.screenshot.object_ref_id, selected?.source_panel.object_ref_id]);
 
   const openSample = async (snapshotId: string) => {
     setLoadingDetail(snapshotId);
@@ -1390,6 +1423,9 @@ function EvidencePage() {
               <div><dt>截图对象</dt><dd>{selected.screenshot.object_ref_id || "未采集"}</dd></div>
               <div><dt>来源面板对象</dt><dd>{selected.source_panel.object_ref_id || "未采集"}</dd></div>
             </dl>
+            {objectPreviewError && <DataStateCard title="证据对象读取失败" desc={objectPreviewError} tone="danger" />}
+            {objectPreviews.screenshot && <figure className="evidence-object-preview"><img src={objectPreviews.screenshot} alt="Provider 回答截图证据" /><figcaption>回答截图 · 服务端读取时已复验 SHA-256</figcaption></figure>}
+            {objectPreviews.sourcePanel && <figure className="evidence-object-preview"><img src={objectPreviews.sourcePanel} alt="Provider 来源面板截图证据" /><figcaption>来源面板截图 · 服务端读取时已复验 SHA-256</figcaption></figure>}
             <details className="evidence-json"><summary>查看请求元数据</summary><pre>{JSON.stringify(selected.request_metadata, null, 2)}</pre></details>
             <details className="evidence-json"><summary>查看原始响应</summary><pre>{JSON.stringify(selected.raw_response, null, 2)}</pre></details>
           </Panel>

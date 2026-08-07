@@ -59,3 +59,40 @@ def test_evidence_center_scopes_server_aggregation_to_requested_run(
     assert repository.request == ("tenant_1", "project_1", "scan_run_1", 17)
     assert response.json()["meta"]["run_id"] == "scan_run_1"
     assert response.json()["meta"]["limit"] == 17
+
+
+def test_evidence_object_content_is_tenant_scoped_and_immutable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ObjectRepository(evidence_routes.InMemoryEvidenceRepository):
+        def read_object(self, tenant_id: str, object_ref_id: str) -> evidence_routes.EvidenceObjectContent:
+            assert tenant_id == "tenant_1"
+            assert object_ref_id == "object_1"
+            return evidence_routes.EvidenceObjectContent(
+                payload=b"verified-image",
+                content_type="image/png",
+                sha256="a" * 64,
+            )
+
+    monkeypatch.setattr(evidence_routes, "EVIDENCE_REPOSITORY", ObjectRepository())
+    response = TestClient(app).get(
+        "/api/v1/evidence-objects/object_1/content",
+        headers={"tenant-id": "tenant_1"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"verified-image"
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["etag"] == f'"sha256-{"a" * 64}"'
+    assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_evidence_object_content_does_not_synthesize_missing_object(client: TestClient) -> None:
+    response = client.get(
+        "/api/v1/evidence-objects/object_missing/content",
+        headers={"tenant-id": "tenant_1"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "OBJECT_REF_NOT_FOUND"

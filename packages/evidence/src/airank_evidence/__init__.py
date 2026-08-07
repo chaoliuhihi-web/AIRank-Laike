@@ -3,6 +3,14 @@
 from .fact_source import fact_source_ref_from_citation
 from .evidence_snapshot import EvidenceSnapshot
 from .gap import generate_gap_from_citations
+from .object_storage import (
+    FilesystemObjectStorage,
+    ObjectStorageError,
+    S3CompatibleObjectStorage,
+    StoredObject,
+    build_object_storage_from_env,
+    sha256_bytes,
+)
 from .provider import MockAnswerProvider, ProviderPayloadError
 from .report import EvidenceReport, ReportConclusion, build_report_conclusion
 from .snapshot import AnswerSnapshot, SourceCitation
@@ -13,8 +21,14 @@ __all__ = [
     "ProviderPayloadError",
     "EvidenceReport",
     "EvidenceSnapshot",
+    "FilesystemObjectStorage",
+    "ObjectStorageError",
     "ReportConclusion",
     "SourceCitation",
+    "S3CompatibleObjectStorage",
+    "StoredObject",
+    "build_object_storage_from_env",
+    "sha256_bytes",
     "build_report_conclusion",
     "fact_source_ref_from_citation",
     "generate_gap_from_citations",

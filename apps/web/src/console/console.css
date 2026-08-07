@@ -1362,6 +1362,28 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.evidence-object-preview {
+  margin: 16px 0 0;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: #f7f9fc;
+}
+
+.evidence-object-preview img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.evidence-object-preview figcaption {
+  padding: 10px 12px;
+  color: var(--console-text-muted);
+  font-size: 12px;
+}
+
 .evidence-answer {
   max-height: 360px;
   overflow: auto;

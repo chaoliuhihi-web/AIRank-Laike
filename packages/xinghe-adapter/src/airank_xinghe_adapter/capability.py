@@ -11,6 +11,8 @@ from typing import Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from airank_evidence import ObjectStorageError, build_object_storage_from_env
+
 
 class CapabilityStatus:
     READY = "ready"
@@ -58,6 +60,7 @@ class ProbeConfig:
     yudao_tenant_id: str | None
     object_storage_driver: str
     object_storage_root: str | None
+    object_storage_env: dict[str, str]
     crawler_gateway_base_url: str | None
     kb_service_base_url: str | None
     creator_marketing_base_url: str | None
@@ -77,8 +80,13 @@ class ProbeConfig:
             or empty_to_none(source.get("YUDAO_TOKEN")),
             yudao_tenant_id=empty_to_none(source.get("YUDAO_TENANT_ID"))
             or empty_to_none(source.get("TENANT_ID")),
-            object_storage_driver=source.get("AIRANK_OBJECT_STORAGE_DRIVER", "local"),
+            object_storage_driver=source.get("AIRANK_OBJECT_STORAGE_DRIVER", "local").strip().lower(),
             object_storage_root=empty_to_none(source.get("AIRANK_OBJECT_STORAGE_ROOT", ".runtime/objects")),
+            object_storage_env={
+                key: value
+                for key, value in source.items()
+                if key.startswith("AIRANK_OBJECT_STORAGE_") or key.startswith("AIRANK_S3_")
+            },
             crawler_gateway_base_url=empty_to_none(source.get("XINGHE_CRAWLER_GATEWAY_BASE_URL")),
             kb_service_base_url=empty_to_none(source.get("XINGHE_KB_SERVICE_BASE_URL")),
             creator_marketing_base_url=empty_to_none(source.get("XINGHE_CREATOR_MARKETING_BASE_URL")),
@@ -252,6 +260,8 @@ class CapabilityProbe:
                 "local filesystem object storage",
                 {"driver": driver, "root": str(path), "parent_exists": str(parent_exists).lower()},
             )
+        if driver in {"s3", "minio"}:
+            return self._probe_s3_object_storage()
         return self._result(
             "object_storage",
             CapabilityStatus.PARTIAL,
@@ -261,6 +271,46 @@ class CapabilityProbe:
             f"object storage driver {driver} requires deployment-specific credentials",
             None,
             {"driver": driver},
+        )
+
+    def _probe_s3_object_storage(self) -> CapabilityResult:
+        driver = self.config.object_storage_driver
+        endpoint = self.config.object_storage_env.get("AIRANK_S3_ENDPOINT_URL") or None
+        bucket = self.config.object_storage_env.get("AIRANK_S3_BUCKET", "")
+        probe_key = f"airank-probes/{uuid4().hex}.txt"
+        payload = b"airank object storage probe"
+        storage = None
+        try:
+            storage = build_object_storage_from_env(self.config.object_storage_env)
+            stored = storage.put_bytes(payload, key=probe_key, content_type="text/plain")
+            if storage.get_bytes(probe_key) != payload or stored.byte_size != len(payload):
+                raise ObjectStorageError("S3 write-read verification mismatch")
+            storage.delete(probe_key)
+        except Exception as exc:
+            if storage is not None:
+                try:
+                    storage.delete(probe_key)
+                except Exception:
+                    pass
+            return self._result(
+                "object_storage",
+                CapabilityStatus.BLOCKED,
+                "airank",
+                True,
+                endpoint,
+                f"{type(exc).__name__}: S3-compatible write-read-delete probe failed",
+                None,
+                {"driver": driver, "bucket": bucket},
+            )
+        return self._result(
+            "object_storage",
+            CapabilityStatus.READY,
+            "airank",
+            True,
+            endpoint or f"s3://{bucket}",
+            "",
+            None,
+            {"driver": driver, "bucket": bucket, "probe": "write-read-delete"},
         )
 
     def _probe_filesystem_object_storage(self, path: Path) -> CapabilityResult:

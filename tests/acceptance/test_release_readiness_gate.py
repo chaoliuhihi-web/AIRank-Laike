@@ -147,6 +147,48 @@ def test_api_auth_configuration_requires_yudao_with_enforcement() -> None:
     assert check.status == "PASS"
 
 
+def test_production_object_storage_requires_s3_or_minio_over_tls() -> None:
+    filesystem = release_readiness.production_object_storage_configuration_check(
+        {"AIRANK_ENV": "production", "AIRANK_OBJECT_STORAGE_DRIVER": "filesystem"}
+    )
+    insecure_minio = release_readiness.production_object_storage_configuration_check(
+        {
+            "AIRANK_ENV": "production",
+            "AIRANK_OBJECT_STORAGE_DRIVER": "minio",
+            "AIRANK_S3_ENDPOINT_URL": "http://minio.internal:9000",
+            "AIRANK_S3_ALLOW_HTTP": "true",
+        }
+    )
+    secure_s3 = release_readiness.production_object_storage_configuration_check(
+        {
+            "AIRANK_ENV": "production",
+            "AIRANK_OBJECT_STORAGE_DRIVER": "s3",
+            "AIRANK_S3_ENDPOINT_URL": "https://objects.example.com",
+        }
+    )
+
+    assert filesystem.status == "BLOCKED"
+    assert insecure_minio.status == "BLOCKED"
+    assert "plaintext HTTP" in insecure_minio.detail
+    assert secure_s3.status == "PASS"
+
+
+def test_runtime_version_gate_rejects_unsupported_python_and_node() -> None:
+    outdated = release_readiness.runtime_version_check(
+        python_version=(3, 9, 6),
+        node_version="v20.18.2",
+    )
+    supported = release_readiness.runtime_version_check(
+        python_version=(3, 11, 9),
+        node_version="v22.12.0",
+    )
+
+    assert outdated.status == "BLOCKED"
+    assert "production requires 3.11+" in outdated.detail
+    assert "Vite requires 20.19+ or 22.12+" in outdated.detail
+    assert supported.status == "PASS"
+
+
 def test_release_runner_can_import_internal_provider_modules() -> None:
     code, output = release_readiness.run_command(
         "python3 -c \"import runpy; "
@@ -167,6 +209,8 @@ def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.Mon
     monkeypatch.setattr(release_readiness, "command_check", lambda name, command, **kwargs: release_readiness.Check(name, "PASS", command, "ok"))
     monkeypatch.setattr(release_readiness, "tracked_runtime_artifact_check", lambda: release_readiness.Check("tracked runtime artifacts", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "api_auth_configuration_check", lambda: release_readiness.Check("API authentication configuration", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "production_object_storage_configuration_check", lambda: release_readiness.Check("production object storage configuration", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "runtime_version_check", lambda: release_readiness.Check("runtime versions", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "capability_check", lambda **kwargs: release_readiness.Check("capability probe", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "browser_provider_readiness_check", fake_check)
 

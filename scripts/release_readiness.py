@@ -156,6 +156,84 @@ def api_auth_configuration_check(env: Mapping[str, str] | None = None) -> Check:
     )
 
 
+def production_object_storage_configuration_check(env: Mapping[str, str] | None = None) -> Check:
+    source = os.environ if env is None else env
+    runtime_env = source.get("AIRANK_ENV", "local").strip().lower()
+    driver = source.get("AIRANK_OBJECT_STORAGE_DRIVER", "local").strip().lower()
+    endpoint = source.get("AIRANK_S3_ENDPOINT_URL", "").strip()
+    allow_http = source.get("AIRANK_S3_ALLOW_HTTP", "false").strip().lower() in {"1", "true", "yes", "on"}
+    blockers: list[str] = []
+    if runtime_env == "production" and driver not in {"s3", "minio"}:
+        blockers.append(f"AIRANK_OBJECT_STORAGE_DRIVER={driver or '<empty>'}; production requires s3/minio")
+    if runtime_env == "production" and endpoint.startswith("http://"):
+        blockers.append("AIRANK_S3_ENDPOINT_URL uses plaintext HTTP in production")
+    if runtime_env == "production" and allow_http:
+        blockers.append("AIRANK_S3_ALLOW_HTTP=true is forbidden in production")
+    return Check(
+        "production object storage configuration",
+        "BLOCKED" if blockers else "PASS",
+        "validate AIRANK_ENV and S3/MinIO transport configuration",
+        json.dumps(
+            {
+                "AIRANK_ENV": runtime_env,
+                "AIRANK_OBJECT_STORAGE_DRIVER": driver,
+                "endpoint_scheme": endpoint.partition(":")[0] if endpoint else "provider-default",
+                "allow_http": allow_http,
+                "blockers": blockers,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+
+
+def runtime_version_check(
+    *,
+    python_version: tuple[int, int, int] | None = None,
+    node_version: str | None = None,
+) -> Check:
+    current_python = python_version or tuple(sys.version_info[:3])
+    node_command_output = node_version
+    node_error = ""
+    if node_command_output is None:
+        node_code, node_command_output = run_command("node --version")
+        if node_code != 0:
+            node_error = node_command_output or "node executable is unavailable"
+            node_command_output = ""
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", (node_command_output or "").strip())
+    parsed_node = tuple(int(part) for part in match.groups()) if match else None
+    node_supported = bool(
+        parsed_node
+        and (
+            (parsed_node[0] == 20 and parsed_node >= (20, 19, 0))
+            or (parsed_node[0] >= 22 and (parsed_node[0] > 22 or parsed_node >= (22, 12, 0)))
+        )
+    )
+    blockers: list[str] = []
+    if current_python < (3, 11, 0):
+        blockers.append(f"Python {'.'.join(map(str, current_python))}; production requires 3.11+")
+    if not node_supported:
+        blockers.append(
+            node_error
+            or f"Node {(node_command_output or '<unavailable>').strip()}; Vite requires 20.19+ or 22.12+"
+        )
+    return Check(
+        "runtime versions",
+        "BLOCKED" if blockers else "PASS",
+        "validate Python and Node production runtime versions",
+        json.dumps(
+            {
+                "python": ".".join(map(str, current_python)),
+                "node": (node_command_output or "<unavailable>").strip(),
+                "required": {"python": "3.11+", "node": "20.19+ or 22.12+"},
+                "blockers": blockers,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+
+
 def remote_ref_check(remote: str) -> Check:
     head_code, head = run_command("git rev-parse HEAD")
     remote_code, remote_head = run_command(f"git ls-remote {remote} refs/heads/main")
@@ -323,6 +401,8 @@ def release_checks(
         command_check("diff check", "git diff --check"),
         tracked_runtime_artifact_check(),
         api_auth_configuration_check(),
+        production_object_storage_configuration_check(),
+        runtime_version_check(),
         command_check("contract tests", "python3 -m pytest tests/contracts -q", remove_database_urls=True),
         command_check("acceptance tests", "python3 -m pytest tests/acceptance -q", remove_database_urls=True),
         command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),
