@@ -147,6 +147,17 @@ def test_api_auth_configuration_requires_yudao_with_enforcement() -> None:
     assert check.status == "PASS"
 
 
+def test_release_runner_can_import_internal_provider_modules() -> None:
+    code, output = release_readiness.run_command(
+        "python3 -c \"import runpy; "
+        "runpy.run_path('scripts/release_readiness.py', run_name='release_import_test'); "
+        "import airank_domain, airank_provider_gateway; print('imports-ready')\""
+    )
+
+    assert code == 0, output
+    assert output == "imports-ready"
+
+
 def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_check() -> release_readiness.Check:
         return release_readiness.Check("browser provider readiness", "PASS", "fake", "ready")

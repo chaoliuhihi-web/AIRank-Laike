@@ -15,8 +15,19 @@ from typing import Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+INTERNAL_SOURCE_PATHS = (
+    ROOT,
+    ROOT / "apps" / "worker" / "src",
+    ROOT / "packages" / "domain" / "src",
+    ROOT / "packages" / "evidence" / "src",
+    ROOT / "packages" / "provider-gateway" / "src",
+    ROOT / "packages" / "score" / "src",
+    ROOT / "packages" / "skills" / "src",
+    ROOT / "packages" / "xinghe-adapter" / "src",
+)
+for source_path in reversed(INTERNAL_SOURCE_PATHS):
+    if str(source_path) not in sys.path:
+        sys.path.insert(0, str(source_path))
 TRACKED_RUNTIME_ARTIFACT_RE = re.compile(
     r"(^|/)(node_modules|dist|\.runtime)(/|$)|(^|/)\.env(\..*)?$|\.sqlite3?$|tsbuildinfo$"
 )
