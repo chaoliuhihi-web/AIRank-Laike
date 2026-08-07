@@ -37,13 +37,15 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, retest_routes.I
 
 def sample(index: int, *, mentioned: bool) -> MeasurementSample:
     answer = "AIRank 可作为候选。" if mentioned else "本次未发现目标品牌。"
+    question_index = index // 3
+    sample_index = index % 3 + 1
     return MeasurementSample(
         sample_id=f"sample_{index}",
-        question_id=f"question_{index}",
+        question_id=f"question_{question_index}",
         context=SampleContext(
-            prompt_version_id=f"prompt_{index}",
+            prompt_version_id=f"prompt_{question_index}",
             cohort_type=PromptCohortType.BLIND,
-            sample_index=1,
+            sample_index=sample_index,
             session_id=f"session_{index}",
             surface=CollectorSurface.API,
             evidence_level=EvidenceLevel.PROVIDER_API,
@@ -104,7 +106,7 @@ def test_window_completion_recomputes_same_contract_and_is_idempotent(
     baseline = tuple(sample(index, mentioned=index < 3) for index in range(12))
     compare = tuple(sample(index, mentioned=index < 6) for index in range(12))
     signature = tuple(
-        f"question_{index}|qianwen|blind|api|1|prompt_{index}|qwen3.6-plus||True|zh-CN|"
+        f"question_{index // 3}|qianwen|blind|api|{index % 3 + 1}|prompt_{index // 3}|qwen3.6-plus||True|zh-CN|"
         for index in range(12)
     )
     manifests = tuple(evidence(index) for index in range(12))

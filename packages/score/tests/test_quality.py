@@ -72,6 +72,64 @@ def test_quality_report_keeps_not_mentioned_in_valid_denominator() -> None:
     assert report.surface_evidence[0].blocker_count == 0
 
 
+def test_quality_report_blocks_single_sample_even_when_evidence_is_complete() -> None:
+    report = build_measurement_quality_report(
+        run_id="run_single",
+        samples=(sample(1),),
+        signatures=("question_1|qianwen|blind|api|1",),
+        evidence_manifests=(api_evidence(1),),
+    )
+
+    assert report.publishable is False
+    repetition_check = next(item for item in report.checks if item.code == "independent_repetitions_complete")
+    assert repetition_check.status == "blocked"
+    assert repetition_check.actual == 1
+    assert "repeat_stability_unavailable" in report.known_limitations
+
+
+def test_quality_report_rejects_reused_session_even_with_three_sample_indexes() -> None:
+    reused = tuple(
+        MeasurementSample(
+            sample_id=f"sample_reused_{index}",
+            question_id="question_1",
+            context=SampleContext(
+                prompt_version_id="prompt_1",
+                cohort_type=PromptCohortType.BLIND,
+                sample_index=index,
+                session_id="session_reused",
+                surface=CollectorSurface.API,
+                evidence_level=EvidenceLevel.PROVIDER_API,
+                provider="qianwen",
+                captured_at=NOW,
+            ),
+            status=SampleStatus.VALID,
+            answer_text="本次未发现目标品牌。",
+            raw_response_sha256=(str(index) * 64)[:64],
+            mention_class=MentionClass.NOT_MENTIONED,
+        )
+        for index in range(1, 4)
+    )
+    report = build_measurement_quality_report(
+        run_id="run_reused_session",
+        samples=reused,
+        signatures=tuple(f"question_1|qianwen|blind|api|{index}" for index in range(1, 4)),
+        evidence_manifests=tuple(
+            SampleEvidenceManifest(
+                sample_id=f"sample_reused_{index}",
+                surface=CollectorSurface.API,
+                evidence_level=EvidenceLevel.PROVIDER_API,
+                request_metadata_sha256="a" * 64,
+                external_trace_id=f"request-{index}",
+                provider_request_audit_id=f"audit-{index}",
+            )
+            for index in range(1, 4)
+        ),
+    )
+
+    assert report.publishable is False
+    assert next(item for item in report.checks if item.code == "independent_repetitions_complete").status == "blocked"
+
+
 def test_quality_report_blocks_duplicate_contract_missing_raw_hash_and_low_valid_rate() -> None:
     samples = (
         sample(1, raw_hash=False),

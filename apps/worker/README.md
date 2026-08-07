@@ -64,6 +64,27 @@ PYTHONPATH=apps/worker:packages/domain/src \
 Omit `--once` for the polling process. A failed job records a structured attempt
 and remains terminal until an explicit retry transition.
 
+Run one durable scan dispatch:
+
+```bash
+PYTHONPATH=.:apps/worker:packages/domain/src:packages/evidence/src:packages/provider-gateway/src:packages/score/src:packages/skills/src \
+  AIRANK_DATABASE_URL="$AIRANK_DATABASE_URL" \
+  python3 -m airank_worker.main --job-type scan --once
+```
+
+`scan.provider` jobs are run-level triggers in the current implementation. The
+first job atomically changes the ScanRun from `queued` to `running`, executes the
+versioned task set, and persists every success/failure snapshot before closing
+all jobs in that run. It refreshes the durable job heartbeat between Provider
+calls and persistence phases. Concurrent trigger jobs are deferred without
+spending an attempt, so multiple workers cannot drain the queue or duplicate
+Provider calls. If the owning lease expires, the next trigger fails the run
+closed with `SCAN_RUN_LEASE_EXPIRED` and writes an immutable infrastructure
+failure sample for every unpersisted task; it never automatically replays an
+external call with an unknown outcome. This remains `partial`: the next
+milestone is one-task-per-worker persistence with attempt-versioned evidence,
+rather than holding a whole run in one process.
+
 ## M2 mock scan provider
 
 `airank_worker.scan.run_next_mock_scan_job` claims the next due job and uses

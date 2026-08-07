@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from apps.api.main import scan_dispatch_mode
 from apps.api.provider_scan import (
     BrowserProbeError,
     BrowserProviderConfig,
@@ -59,6 +60,20 @@ def test_provider_execution_mode_supports_real_api(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
 
     assert provider_execution_mode() == "api"
+
+
+def test_scan_dispatch_defaults_to_durable_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AIRANK_SCAN_DISPATCH_MODE", raising=False)
+
+    assert scan_dispatch_mode() == "worker"
+
+
+def test_scan_dispatch_only_allows_explicit_inline_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIRANK_SCAN_DISPATCH_MODE", "inline")
+    assert scan_dispatch_mode() == "inline"
+
+    monkeypatch.setenv("AIRANK_SCAN_DISPATCH_MODE", "unexpected")
+    assert scan_dispatch_mode() == "worker"
 
 
 def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.MonkeyPatch) -> None:

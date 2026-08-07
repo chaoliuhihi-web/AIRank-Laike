@@ -838,12 +838,15 @@ function BrandCheckCard({
       });
       setLastResult(result);
       onComplete(result);
+      const completed = result.scanRun.status === "completed";
       notify({
-        title: "品牌检测已完成",
-        desc: `${result.project.brand_name} 已处理 ${result.taskCount} 个检测任务；请在体检页核对有效、失败、阻塞和未提及样本。`,
-        tone: "success",
+        title: completed ? "品牌检测已完成" : "品牌检测已进入队列",
+        desc: completed
+          ? `${result.project.brand_name} 已处理 ${result.taskCount} 个检测任务；请在体检页核对有效、失败、阻塞和未提及样本。`
+          : `${result.project.brand_name} 已创建 ${result.taskCount} 个真实采样任务；Worker 将异步执行，请在任务中心查看进度。`,
+        tone: completed ? "success" : "warning",
       });
-      onNavigate("/console/checkup");
+      onNavigate(completed ? "/console/checkup" : "/console/tasks");
     } catch (error) {
       const message = error instanceof Error ? error.message : "后端未能完成检测，请检查品牌和网址。";
       setLastError(message);
@@ -890,13 +893,13 @@ function BrandCheckCard({
           <input value={buyerQuestions} onChange={(event) => setBuyerQuestions(event.target.value)} placeholder="可留空，系统会自动生成 3 个高意向问题" />
         </label>
         <button className="airank-console-primary-button brand-check-submit" type="submit" disabled={submitting}>
-          {submitting ? "检测中" : "开始 AI 排名检测"}
+          {submitting ? "提交中" : "开始 AI 排名检测"}
           <ArrowRight size={18} />
         </button>
       </form>
       {lastResult && (
         <div className="brand-check-result" role="status">
-          <Badge tone="success">检测完成</Badge>
+          <Badge tone={lastResult.scanRun.status === "completed" ? "success" : "warning"}>{lastResult.scanRun.status === "completed" ? "检测完成" : "已进入队列"}</Badge>
           <span>{lastResult.project.brand_name}</span>
           <strong>{lastResult.scanRun.status === "completed" ? "真实采样已完成" : "检测任务已创建"}</strong>
           <span>{lastResult.taskCount} 个任务</span>
@@ -1819,17 +1822,24 @@ function TaskCenterPage() {
   useEffect(() => {
     if (!project.id) return;
     const controller = new AbortController();
-    fetchScanRuns(project.id, controller.signal)
-      .then((data) => {
-        setRuns(data);
-        setSelectedRunId((current) => current || data[0]?.run_id || "");
-        setLoadError(null);
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-        setLoadError(error instanceof Error ? error.message : "测量任务接口不可用");
-      });
-    return () => controller.abort();
+    const loadRuns = () => {
+      void fetchScanRuns(project.id, controller.signal)
+        .then((data) => {
+          setRuns(data);
+          setSelectedRunId((current) => current || data[0]?.run_id || "");
+          setLoadError(null);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          setLoadError(error instanceof Error ? error.message : "测量任务接口不可用");
+        });
+    };
+    loadRuns();
+    const poll = window.setInterval(loadRuns, 5000);
+    return () => {
+      window.clearInterval(poll);
+      controller.abort();
+    };
   }, [project.id]);
 
   useEffect(() => {
@@ -1838,16 +1848,23 @@ function TaskCenterPage() {
       return;
     }
     const controller = new AbortController();
-    fetchScanTasks(selectedRunId, controller.signal)
-      .then((data) => {
-        setTasks(data);
-        setLoadError(null);
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-        setLoadError(error instanceof Error ? error.message : "任务明细接口不可用");
-      });
-    return () => controller.abort();
+    const loadTasks = () => {
+      void fetchScanTasks(selectedRunId, controller.signal)
+        .then((data) => {
+          setTasks(data);
+          setLoadError(null);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          setLoadError(error instanceof Error ? error.message : "任务明细接口不可用");
+        });
+    };
+    loadTasks();
+    const poll = window.setInterval(loadTasks, 3000);
+    return () => {
+      window.clearInterval(poll);
+      controller.abort();
+    };
   }, [selectedRunId]);
 
   const selectedRun = runs.find((run) => run.run_id === selectedRunId);

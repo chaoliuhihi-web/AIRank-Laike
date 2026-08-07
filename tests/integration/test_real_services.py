@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.main import (
+    BrandCheckRequest,
     BuyerQuestionCreateRequest,
     CompetitorCreateRequest,
     MySQLAssetBundleRepository,
@@ -27,7 +28,8 @@ from apps.api.main import (
     MySQLScanRepository,
     ProjectCreateRequest,
     ScanRunCreateRequest,
-    complete_mysql_real_brand_scan,
+    run_brand_check,
+    scan_dispatch_mode,
 )
 from apps.api.provider_scan import ProviderScanResult, ProviderUnavailable
 from apps.api.delivery_routes import (
@@ -74,6 +76,8 @@ from airank_worker import (  # noqa: E402
     MySQLPublishExecutionRepository,
     PublisherError,
     PublisherGateway,
+    ScanWorkerError,
+    run_next_real_scan_job,
     run_next_publish_job,
 )
 from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig  # noqa: E402
@@ -838,6 +842,291 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         cleanup_tenant(engine, tenant_id)
 
 
+def test_real_mysql_brand_check_defaults_to_durable_worker_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_worker_dispatch_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
+    monkeypatch.delenv("AIRANK_SCAN_DISPATCH_MODE", raising=False)
+
+    try:
+        assert scan_dispatch_mode() == "worker"
+        result = run_brand_check(
+            tenant_id,
+            BrandCheckRequest(
+                brand_name="AIRank Worker Dispatch",
+                website_url="https://airank-worker-dispatch.example.com",
+                industry_hint="B2B SaaS",
+                buyer_questions=["企业应该如何选择 GEO 监测服务商？"],
+            ),
+        )
+
+        assert result.scan_run.status == "queued"
+        assert {task.status for task in result.tasks} == {"queued"}
+        with engine.connect() as conn:
+            counts = conn.execute(
+                text(
+                    """
+                    SELECT
+                      (SELECT COUNT(*) FROM airank_async_jobs
+                       WHERE tenant_id=:tenant_id AND job_type='scan.provider'
+                         AND status='queued') AS queued_jobs,
+                      (SELECT COUNT(*) FROM airank_answer_snapshots
+                       WHERE tenant_id=:tenant_id) AS snapshot_count
+                    """
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().one()
+        assert counts["queued_jobs"] == len(result.tasks)
+        assert counts["snapshot_count"] == 0
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_scan_worker_fail_closes_expired_run_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_scan_lease_expiry_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+    monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
+
+    def provider_must_not_run(**_kwargs: Any) -> ProviderScanResult:
+        raise AssertionError("expired run lease must not replay Provider calls")
+
+    monkeypatch.setattr("apps.api.main.call_api_provider_for_brand_rank", provider_must_not_run)
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-scan-lease.example.com",
+                brand_name_hint="AIRank Scan Lease",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="企业如何选择可审计的 GEO 监测服务？",
+                status="confirmed",
+                recommended_providers=["qianwen"],
+            ),
+        )
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                name="Expired worker lease",
+                repetitions=2,
+                collector_surfaces=["api"],
+                provider_scope=["qianwen"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+        store = MySQLJobLeaseStore(database_url())
+        owner_started_at = datetime.now(timezone.utc)
+        owner_job = store.claim_next(
+            "scan-worker-that-crashes",
+            owner_started_at,
+            job_types={"scan.provider"},
+        )
+        assert owner_job is not None
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_scan_runs
+                    SET status='running', started_at=:started_at, updated_at=:started_at
+                    WHERE tenant_id=:tenant_id AND id=:run_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id, "started_at": owner_started_at},
+            )
+
+        concurrent = run_next_real_scan_job(
+            store,
+            worker_id="scan-concurrent-worker",
+            now=owner_started_at + timedelta(seconds=1),
+        )
+        assert concurrent is not None
+        assert concurrent.status == "in_progress"
+        assert concurrent.idempotent_replay is True
+        with engine.connect() as conn:
+            deferred_job = conn.execute(
+                text(
+                    """
+                    SELECT status, attempt_count, locked_by
+                    FROM airank_async_jobs
+                    WHERE tenant_id=:tenant_id AND id=:job_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "job_id": concurrent.trigger_job_id},
+            ).mappings().one()
+        assert deferred_job == {"status": "queued", "attempt_count": 0, "locked_by": None}
+
+        recovered = run_next_real_scan_job(
+            store,
+            worker_id="scan-recovery-worker",
+            now=owner_started_at + timedelta(seconds=owner_job.timeout_seconds + 1),
+        )
+        assert recovered is not None
+        assert recovered.status == "failed"
+        assert recovered.task_count == 2
+        assert recovered.failed_count == 2
+
+        with engine.connect() as conn:
+            run_row = conn.execute(
+                text("SELECT status, error_message FROM airank_scan_runs WHERE tenant_id=:tenant_id AND id=:run_id"),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().one()
+            task_rows = conn.execute(
+                text(
+                    """
+                    SELECT status, error_code FROM airank_scan_tasks
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id ORDER BY id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
+            job_rows = conn.execute(
+                text(
+                    """
+                    SELECT status, error_code FROM airank_async_jobs
+                    WHERE tenant_id=:tenant_id
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id'))=:run_id
+                    ORDER BY id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
+            evidence_rows = conn.execute(
+                text(
+                    """
+                    SELECT a.answer_text, a.answer_sha256, a.raw_response_sha256,
+                           a.sample_status, e.raw_response_json, e.raw_response_sha256 AS evidence_sha256
+                    FROM airank_answer_snapshots a
+                    JOIN airank_evidence_snapshots e
+                      ON e.tenant_id=a.tenant_id AND e.answer_snapshot_id=a.id
+                    WHERE a.tenant_id=:tenant_id AND a.run_id=:run_id
+                    ORDER BY a.id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
+
+        assert run_row["status"] == "failed"
+        assert "Automatic replay was suppressed" in run_row["error_message"]
+        assert {(row["status"], row["error_code"]) for row in task_rows} == {
+            ("failed", "SCAN_RUN_LEASE_EXPIRED")
+        }
+        assert sorted(row["status"] for row in job_rows) == ["failed", "timeout"]
+        assert len(evidence_rows) == 2
+        for row in evidence_rows:
+            raw = json.loads(row["raw_response_json"])
+            assert row["answer_text"] == ""
+            assert row["answer_sha256"] is None
+            assert row["sample_status"] == "failed"
+            assert row["raw_response_sha256"] == row["evidence_sha256"]
+            assert raw["failure"]["error_code"] == "SCAN_RUN_LEASE_EXPIRED"
+            assert raw["failure"]["automatic_replay_suppressed"] is True
+            assert raw["capture_metadata"]["provider_response_available"] is False
+        assert run_next_real_scan_job(store, worker_id="scan-recovery-worker") is None
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_scan_worker_internal_failure_preserves_all_task_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_scan_internal_failure_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+    monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-worker-failure.example.com",
+                brand_name_hint="AIRank Worker Failure",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="企业如何验证 GEO 采样可追溯？",
+                status="confirmed",
+                recommended_providers=["qianwen"],
+            ),
+        )
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                name="Worker internal failure evidence",
+                repetitions=2,
+                collector_surfaces=["api"],
+                provider_scope=["qianwen"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+
+        def fail_before_provider(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("simulated internal dependency failure")
+
+        monkeypatch.setattr("apps.api.main.get_mysql_project", fail_before_provider)
+        with pytest.raises(ScanWorkerError) as caught:
+            run_next_real_scan_job(
+                MySQLJobLeaseStore(database_url()),
+                worker_id="scan-internal-failure-worker",
+            )
+        assert caught.value.code == "SCAN_WORKER_INTERNAL_ERROR"
+        assert caught.value.retryable is False
+
+        with engine.connect() as conn:
+            counts = conn.execute(
+                text(
+                    """
+                    SELECT
+                      (SELECT COUNT(*) FROM airank_scan_tasks
+                       WHERE tenant_id=:tenant_id AND run_id=:run_id
+                         AND status='failed' AND error_code='SCAN_WORKER_INTERNAL_ERROR') AS failed_tasks,
+                      (SELECT COUNT(*) FROM airank_async_jobs
+                       WHERE tenant_id=:tenant_id
+                         AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id'))=:run_id
+                         AND status='failed' AND error_code='SCAN_WORKER_INTERNAL_ERROR') AS failed_jobs,
+                      (SELECT COUNT(*) FROM airank_answer_snapshots
+                       WHERE tenant_id=:tenant_id AND run_id=:run_id
+                         AND sample_status='failed' AND raw_response_sha256 IS NOT NULL) AS failure_snapshots,
+                      (SELECT status FROM airank_scan_runs
+                       WHERE tenant_id=:tenant_id AND id=:run_id) AS run_status
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().one()
+        assert counts == {
+            "failed_tasks": 2,
+            "failed_jobs": 2,
+            "failure_snapshots": 2,
+            "run_status": "failed",
+        }
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
 def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -917,7 +1206,50 @@ def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
             ),
         )
 
-        complete_mysql_real_brand_scan(tenant_id, project, [], [question], run)
+        lease_store = MySQLJobLeaseStore(database_url())
+        dispatch = run_next_real_scan_job(
+            lease_store,
+            worker_id="scan-integration-worker",
+        )
+        assert dispatch is not None
+        assert dispatch.run_id == run.run_id
+        assert dispatch.status == "completed"
+        assert dispatch.task_count == 2
+        assert dispatch.completed_count == 1
+        assert dispatch.failed_count == 1
+
+        with engine.connect() as conn:
+            job_rows = conn.execute(
+                text(
+                    """
+                    SELECT id, status FROM airank_async_jobs
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id'))=:run_id
+                    ORDER BY id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+            ).mappings().all()
+        assert sorted(row["status"] for row in job_rows) == ["failed", "succeeded"]
+
+        failed_job_id = next(row["id"] for row in job_rows if row["status"] == "failed")
+        lease_store.requeue_for_retry(failed_job_id, datetime.now(timezone.utc))
+        replay = run_next_real_scan_job(lease_store, worker_id="scan-integration-worker")
+        assert replay is not None
+        assert replay.status == "failed"
+        assert replay.idempotent_replay is True
+        assert calls == 2
+        with engine.connect() as conn:
+            snapshot_count = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM airank_answer_snapshots
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).scalar_one()
+        assert snapshot_count == 2
 
         samples, summary = evidence_repo.list_samples(tenant_id, project.project_id, run.run_id, 20)
         assert summary == {
@@ -976,8 +1308,8 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                       JSON_OBJECT(
                         'summary', '真实 MySQL 报告列表验证',
                         'report_status', 'generated',
-                        'baseline_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v2', 'publishable', TRUE),
-                        'compare_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v2', 'publishable', TRUE)
+                        'baseline_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v3', 'publishable', TRUE),
+                        'compare_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v3', 'publishable', TRUE)
                       ),
                       CURRENT_TIMESTAMP(3)
                     )

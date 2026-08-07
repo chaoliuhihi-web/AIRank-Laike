@@ -587,3 +587,32 @@ Blocking conditions:
 Decision:
 
 - AIRank can now audit why a scan slot failed without corrupting visibility metrics or losing the browser failure scene. Commercial launch remains `NO-GO` until the broader production gates pass.
+
+## 2026-08-08 Durable Scan Worker Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this durable-scan-worker commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- MySQL-backed brand checks now default to durable `scan.provider` dispatch. The API returns the queued ScanRun and no longer holds the request open for a full Provider batch; inline execution requires an explicit diagnostic setting.
+- The first claimed job atomically owns the ScanRun. Provider calls and evidence-persistence phases refresh its heartbeat. Concurrent workers defer redundant triggers without consuming attempts, preventing the queue from being drained while the owner is alive.
+- Terminal replays settle jobs from persisted task state without another Provider call. If the owner lease expires with an unknown external outcome, automatic replay is suppressed and the run fails closed with `SCAN_RUN_LEASE_EXPIRED`.
+- Every unpersisted slot in an expired run receives an immutable empty-answer AnswerSnapshot and EvidenceSnapshot with a raw-response SHA-256, task request metadata, explicit infrastructure capture mode and `provider_response_available=false`.
+- The console distinguishes “queued” from “completed”, routes new queued checks to Task Center, and polls runs/tasks for durable asynchronous progress.
+- Real browser QA observed the same Qianwen API task move from `queued` to `completed` via polling. Model `qwen3.6-plus`, a real Provider request ID, answer/raw-response SHA-256, linked request audit and immutable EvidenceSnapshot were all visible; the valid not-mentioned result remained in the denominator.
+- That QA exposed a false-positive quality gate: one successful sample was labeled deliverable even though repeat stability was unavailable. `airank.measurement-quality.v3` now adds a blocking independent-repetition check, requiring three distinct sample indexes and sessions for every question/Provider/Cohort/surface/model group. Single samples and reused sessions are non-publishable.
+- Internal Worker exceptions also fail every unpersisted task/job and create immutable failure snapshots before returning a terminal error; they cannot leave a failed run with queued tasks and missing evidence.
+- Full local regression passed `246 passed, 17 skipped`; real MySQL integration passed `15 passed, 2 skipped`; Web TypeScript/Vite build passed and npm reported zero known vulnerabilities. The Node patch-version warning remains open.
+
+Blocking conditions:
+
+- Scan execution still persists an entire run in one batch. One-task-per-worker transactions, attempt-versioned evidence and safe task-level retry are not implemented, so this capability remains `partial`.
+- Four-platform same-cohort repetition, Consumer App collection, four logged-in Consumer Web sessions, production Yudao, HTTPS object storage, customer Publisher receipts, supported production runtimes, remote-main synchronization and complete customer-report E2E remain open.
+
+Decision:
+
+- AIRank now has a truthful durable queue boundary and fail-closed crash behavior for real scans. It is not yet commercially launchable because task-level durability and the broader external production gates are incomplete.

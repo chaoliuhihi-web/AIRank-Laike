@@ -146,6 +146,21 @@ def test_claim_can_be_limited_to_handler_job_types() -> None:
     assert store.get("job_scan_first").status == AsyncJobStatus.QUEUED
 
 
+def test_in_memory_claim_can_be_deferred_without_spending_an_attempt() -> None:
+    store = InMemoryJobLeaseStore(
+        [AsyncJob(id="job_defer", tenant_id="tenant_1", job_type="scan.provider", scheduled_at=NOW)]
+    )
+    store.claim_next("worker-a", NOW)
+
+    deferred = store.defer_claim("job_defer", "worker-a", NOW, delay_seconds=5)
+
+    assert deferred.status == AsyncJobStatus.QUEUED
+    assert deferred.attempt_count == 0
+    assert deferred.scheduled_at == NOW + timedelta(seconds=5)
+    assert store.claim_next("worker-b", NOW + timedelta(seconds=4)) is None
+    assert store.claim_next("worker-b", NOW + timedelta(seconds=5)) is not None
+
+
 def create_mysql_lease_table(store: MySQLJobLeaseStore) -> None:
     with store._engine.begin() as conn:
         conn.execute(
@@ -258,6 +273,23 @@ def test_mysql_lease_store_filters_job_type_before_claim() -> None:
     assert claimed is not None
     assert claimed.id == "job_db_publish"
     assert store.get("job_db_scan").status == AsyncJobStatus.QUEUED
+
+
+def test_mysql_lease_store_defers_redundant_claim_without_spending_attempt() -> None:
+    store = MySQLJobLeaseStore("sqlite+pysqlite:///:memory:")
+    create_mysql_lease_table(store)
+    store.add(AsyncJob(id="job_db_defer", tenant_id="tenant_1", job_type="scan.provider", scheduled_at=NOW))
+    store.claim_next("worker-a", NOW)
+
+    deferred = store.defer_claim("job_db_defer", "worker-a", NOW, delay_seconds=5)
+
+    assert deferred.status == AsyncJobStatus.QUEUED
+    assert deferred.attempt_count == 0
+    assert deferred.locked_by is None
+    assert store.claim_next("worker-b", NOW + timedelta(seconds=4)) is None
+    claimed_again = store.claim_next("worker-b", NOW + timedelta(seconds=5))
+    assert claimed_again is not None
+    assert claimed_again.attempt_count == 1
 
 
 def test_mysql_datetime_coercion_normalizes_naive_values_to_utc() -> None:

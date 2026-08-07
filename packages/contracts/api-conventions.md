@@ -114,7 +114,7 @@ M1 问题治理通过同一套 repository 契约支持测试内存实现与生�
 
 scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`canceled`。scan task 状态只允许 `queued`、`running`、`completed`、`failed`、`skipped`。
 
-每个已完成 ScanRun 可通过 `GET /api/v1/projects/{project_id}/scan-runs/{run_id}/quality-report` 重算 `airank.measurement-quality.v2`。响应使用 `measurement_quality_report_response.schema.json`，执行 10 项基础样本检查和 11 项采集面证据检查；未提及必须保留在有效分母。每个样本都必须有独立 Evidence Manifest，且 `surface/evidence_level` 必须与任务一致：API 要求请求元数据、追踪 ID 和 Provider 请求审计；Web/App 要求不可变截图对象与 SHA-256，并明确来源面板 `captured/not_present`，有引用时还要绑定不可变来源面板对象；App 另需设备/App 环境元数据 hash；manual_import 另需导入源 hash。任一阻断检查失败时 `publishable=false`，报告只能保存为 `quality_blocked`，下载接口返回 `409 REPORT_QUALITY_BLOCKED`。
+每个已完成 ScanRun 可通过 `GET /api/v1/projects/{project_id}/scan-runs/{run_id}/quality-report` 重算 `airank.measurement-quality.v3`。响应使用 `measurement_quality_report_response.schema.json`，执行 11 项基础样本检查和 11 项采集面证据检查；未提及必须保留在有效分母。每个问题、Provider、Cohort、采集面和模型口径必须有至少 3 个独立 sample index 和 session；单次样本或重用会话必须 `publishable=false`。每个样本都必须有独立 Evidence Manifest，且 `surface/evidence_level` 必须与任务一致：API 要求请求元数据、追踪 ID 和 Provider 请求审计；Web/App 要求不可变截图对象与 SHA-256，并明确来源面板 `captured/not_present`，有引用时还要绑定不可变来源面板对象；App 另需设备/App 环境元数据 hash；manual_import 另需导入源 hash。任一阻断检查失败时 `publishable=false`，报告只能保存为 `quality_blocked`，下载接口返回 `409 REPORT_QUALITY_BLOCKED`。
 
 ## M3 事实审核契约
 

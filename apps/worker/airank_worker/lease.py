@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Iterable
 
 from airank_domain import (
     AsyncJob,
     AsyncJobStatus,
+    JobOwnershipError,
     claim_job,
     complete_job,
     fail_job,
@@ -108,6 +109,32 @@ class InMemoryJobLeaseStore:
             locked_by=None,
             locked_at=None,
             heartbeat_at=None,
+            finished_at=None,
+            updated_at=now,
+        )
+        self._jobs[job_id] = updated
+        return updated
+
+    def defer_claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        now: datetime,
+        *,
+        delay_seconds: int = 5,
+    ) -> AsyncJob:
+        job = self._jobs[job_id]
+        if job.status != AsyncJobStatus.RUNNING or job.locked_by != worker_id:
+            raise JobOwnershipError(f"worker {worker_id} does not own running job {job_id}")
+        updated = replace(
+            job,
+            status=AsyncJobStatus.QUEUED,
+            scheduled_at=now + timedelta(seconds=max(1, delay_seconds)),
+            locked_by=None,
+            locked_at=None,
+            heartbeat_at=None,
+            attempt_count=max(0, job.attempt_count - 1),
+            started_at=None,
             finished_at=None,
             updated_at=now,
         )
@@ -299,6 +326,61 @@ class MySQLJobLeaseStore:
             updated_at=now,
         )
         self._update_job(updated)
+        return updated
+
+    def defer_claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        now: datetime,
+        *,
+        delay_seconds: int = 5,
+    ) -> AsyncJob:
+        job = self.get(job_id)
+        if job.status != AsyncJobStatus.RUNNING or job.locked_by != worker_id:
+            raise JobOwnershipError(f"worker {worker_id} does not own running job {job_id}")
+        updated = replace(
+            job,
+            status=AsyncJobStatus.QUEUED,
+            scheduled_at=now + timedelta(seconds=max(1, delay_seconds)),
+            locked_by=None,
+            locked_at=None,
+            heartbeat_at=None,
+            attempt_count=max(0, job.attempt_count - 1),
+            started_at=None,
+            finished_at=None,
+            updated_at=now,
+        )
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs
+                    SET status = :status,
+                        scheduled_at = :scheduled_at,
+                        locked_by = NULL,
+                        locked_at = NULL,
+                        heartbeat_at = NULL,
+                        attempt_count = :attempt_count,
+                        started_at = NULL,
+                        finished_at = NULL,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                      AND status = 'running'
+                      AND locked_by = :worker_id
+                    """
+                ),
+                {
+                    "id": job_id,
+                    "worker_id": worker_id,
+                    "status": updated.status.value,
+                    "scheduled_at": updated.scheduled_at,
+                    "attempt_count": updated.attempt_count,
+                    "updated_at": updated.updated_at,
+                },
+            )
+        if result.rowcount != 1:
+            raise JobOwnershipError(f"worker {worker_id} lost ownership of running job {job_id}")
         return updated
 
     def _select_job(self, conn: object, job_id: str) -> object | None:

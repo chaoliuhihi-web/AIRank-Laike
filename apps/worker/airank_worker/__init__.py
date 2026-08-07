@@ -8,6 +8,7 @@ from .publisher import (
     PublisherReceipt,
     run_next_publish_job,
 )
+from .scan import ScanDispatchResult, ScanWorkerError, run_next_real_scan_job
 
 __all__ = [
     "InMemoryJobLeaseStore",
@@ -17,4 +18,7 @@ __all__ = [
     "PublisherGateway",
     "PublisherReceipt",
     "run_next_publish_job",
+    "ScanDispatchResult",
+    "ScanWorkerError",
+    "run_next_real_scan_job",
 ]

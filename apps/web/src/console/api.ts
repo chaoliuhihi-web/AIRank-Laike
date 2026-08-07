@@ -240,7 +240,7 @@ export type AnswerSampleCollection = {
 };
 
 export type MeasurementQualityReport = {
-  contract_version: "airank.measurement-quality.v2";
+  contract_version: "airank.measurement-quality.v3";
   run_id: string;
   status: "pass" | "blocked";
   publishable: boolean;

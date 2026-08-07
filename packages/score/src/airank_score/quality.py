@@ -15,7 +15,7 @@ from airank_domain.measurement import (
 from .measurement import CohortMetrics, calculate_cohort_metrics
 
 
-QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v2"
+QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v3"
 
 
 @dataclass(frozen=True)
@@ -116,6 +116,7 @@ def build_measurement_quality_report(
     signatures: Sequence[str],
     evidence_manifests: Iterable[SampleEvidenceManifest] = (),
     minimum_valid_sample_rate: float = 0.8,
+    minimum_independent_repetitions: int = 3,
 ) -> MeasurementQualityReport:
     sample_list = list(samples)
     signature_list = list(signatures)
@@ -149,6 +150,35 @@ def build_measurement_quality_report(
         len(signature_list) - len(set(signature_list)),
         "= 0 duplicates",
         "同一问题、平台、终端和轮次不能重复占用一个采样位。",
+    )
+    repetition_groups: dict[tuple[object, ...], list[MeasurementSample]] = {}
+    for sample in sample_list:
+        key = (
+            sample.question_id,
+            sample.context.provider,
+            sample.context.cohort_type.value,
+            sample.context.surface.value,
+            sample.context.evidence_level.value,
+            sample.context.prompt_version_id,
+            sample.context.model_name,
+            sample.context.model_version,
+            sample.context.search_enabled,
+            sample.context.locale,
+            sample.context.region,
+        )
+        repetition_groups.setdefault(key, []).append(sample)
+    incomplete_repetition_groups = sum(
+        len(group) < minimum_independent_repetitions
+        or len({item.context.sample_index for item in group}) < minimum_independent_repetitions
+        or len({item.context.session_id for item in group}) < minimum_independent_repetitions
+        for group in repetition_groups.values()
+    )
+    add_check(
+        "independent_repetitions_complete",
+        bool(repetition_groups) and incomplete_repetition_groups == 0,
+        incomplete_repetition_groups,
+        f"= 0 groups below {minimum_independent_repetitions} distinct samples/sessions",
+        "每个问题、Provider、Cohort、采集面和模型口径必须有至少 3 次独立会话采样，否则不能评估稳定性或交付。",
     )
     partition_count = metrics.valid_sample_count + metrics.failed_sample_count + metrics.blocked_sample_count
     add_check(

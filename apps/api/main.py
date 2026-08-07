@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import json
 import os
 import threading
-from typing import Annotated, Any, Literal, Optional, Protocol
+from typing import Annotated, Any, Callable, Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
@@ -77,7 +77,11 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "QUESTION_LIMIT_EXCEEDED": (400, "Question limit exceeded"),
     "SCAN_RUN_NOT_FOUND": (404, "Scan run not found"),
     "SCAN_RUN_ALREADY_RUNNING": (409, "Scan run is already running"),
+    "SCAN_RUN_LEASE_EXPIRED": (500, "Scan worker lease expired"),
     "SCAN_TASK_NOT_FOUND": (404, "Scan task not found"),
+    "SCAN_JOB_INVALID": (500, "Scan job payload is invalid"),
+    "SCAN_JOB_SCOPE_MISMATCH": (409, "Scan job scope does not match its run"),
+    "SCAN_WORKER_INTERNAL_ERROR": (500, "Scan worker failed internally"),
     "SCAN_PROVIDER_TIMEOUT": (502, "Scan provider timed out"),
     "SCAN_PROVIDER_FAILED": (502, "Scan provider failed"),
     "SCAN_PROVIDER_BLOCKED": (502, "Scan provider is blocked"),
@@ -2351,6 +2355,13 @@ PROVIDER_LABELS: dict[str, str] = {
 }
 
 
+def scan_dispatch_mode() -> Literal["worker", "inline"]:
+    """Production defaults to durable queue dispatch; inline is an explicit diagnostic mode."""
+
+    configured = str(os.getenv("AIRANK_SCAN_DISPATCH_MODE") or "worker").strip().lower()
+    return "inline" if configured == "inline" else "worker"
+
+
 def build_default_brand_questions(brand_name: str, industry: str) -> list[str]:
     return [
         f"{industry}领域有哪些适合企业采购的服务商？",
@@ -2801,6 +2812,8 @@ def complete_mysql_real_brand_scan(
     competitors: list[CompetitorData],
     questions: list[BuyerQuestionData],
     run: ScanRunData,
+    *,
+    progress_hook: Callable[[str, str], None] | None = None,
 ) -> None:
     engine = mysql_engine()
     if engine is None:
@@ -2850,6 +2863,8 @@ def complete_mysql_real_brand_scan(
         provider = str(row["provider"])
         question_text = question_by_id.get(str(row["question_id"]), f"{project.brand_name} 是否值得选择？")
         task_started_at = utc_now()
+        if progress_hook is not None:
+            progress_hook(str(row["id"]), "provider_start")
         try:
             surface = str(row["collector_surface"])
             if surface == "api":
@@ -2923,11 +2938,15 @@ def complete_mysql_real_brand_scan(
             continue
         successes.append(({**row, "started_at": task_started_at}, result))
 
+    if progress_hook is not None:
+        progress_hook("", "evidence_persist_start")
     durable_screenshots: dict[str, StoredObject] = {}
     durable_source_panels: dict[str, StoredObject] = {}
     persisted_successes: list[tuple[dict[str, Any], ProviderScanResult]] = []
     object_storage = None
     for row, result in successes:
+        if progress_hook is not None:
+            progress_hook(str(row["id"]), "answer_evidence_persist")
         screenshot_path = str(result.raw_metadata.get("screenshot_path") or "")
         screenshot_sha256 = str(result.raw_metadata.get("screenshot_sha256") or "")
         if not screenshot_path and not screenshot_sha256:
@@ -3003,6 +3022,8 @@ def complete_mysql_real_brand_scan(
 
     durable_failure_screenshots: dict[str, StoredObject] = {}
     for failure in failures:
+        if progress_hook is not None:
+            progress_hook(str(failure["id"]), "failure_evidence_persist")
         provider_metadata = failure.get("provider_metadata")
         if not isinstance(provider_metadata, dict):
             continue
@@ -3028,6 +3049,8 @@ def complete_mysql_real_brand_scan(
             provider_metadata.pop("screenshot_path", None)
 
     finished_at = utc_now()
+    if progress_hook is not None:
+        progress_hook("", "database_persist_start")
     failed_count = len(failures)
     blocked_count = sum(1 for failure in failures if failure.get("blocked"))
     provider_minimum_success_count = minimum_provider_success_count(run.provider_scope)
@@ -3413,7 +3436,7 @@ def complete_mysql_real_brand_scan(
                 text(
                     """
                     UPDATE airank_async_jobs
-                    SET status = 'completed',
+                    SET status = 'succeeded',
                         started_at = COALESCE(started_at, :started_at),
                         finished_at = :finished_at,
                         result_json = :result_json,
@@ -3792,9 +3815,18 @@ def complete_mysql_brand_scan(
     competitors: list[CompetitorData],
     questions: list[BuyerQuestionData],
     run: ScanRunData,
+    *,
+    progress_hook: Callable[[str, str], None] | None = None,
 ) -> None:
     if provider_execution_mode() != "mock":
-        complete_mysql_real_brand_scan(tenant_id, project, competitors, questions, run)
+        complete_mysql_real_brand_scan(
+            tenant_id,
+            project,
+            competitors,
+            questions,
+            run,
+            progress_hook=progress_hook,
+        )
         return
 
     engine = mysql_engine()
@@ -3834,6 +3866,33 @@ def complete_mysql_brand_scan(
                 "project_id": project.project_id,
                 "run_id": run.run_id,
                 "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                "now": now,
+            },
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE airank_async_jobs j
+                JOIN airank_scan_tasks t
+                  ON t.tenant_id = j.tenant_id
+                 AND t.project_id = j.project_id
+                 AND t.id = JSON_UNQUOTE(JSON_EXTRACT(j.payload_json, '$.scan_task_id'))
+                SET j.status = 'failed',
+                    j.started_at = COALESCE(j.started_at, :now),
+                    j.finished_at = :now,
+                    j.updated_at = :now,
+                    j.error_code = 'PROVIDER_EVIDENCE_REQUIRED',
+                    j.error_message = 'Mock mode cannot produce commercial measurement evidence.'
+                WHERE j.tenant_id = :tenant_id
+                  AND j.project_id = :project_id
+                  AND j.job_type = 'scan.provider'
+                  AND t.run_id = :run_id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project.project_id,
+                "run_id": run.run_id,
                 "now": now,
             },
         )
@@ -3927,6 +3986,64 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
     )
 
 
+def mysql_project_from_row(row: Any, *, industry_fallback: str = "unknown") -> ProjectData:
+    products = parse_json_value(row["products_services_json"], ["AI visibility diagnosis"])
+    audiences = parse_json_value(row["target_audience_json"], ["B2B growth leader"])
+    return ProjectData(
+        project_id=row["id"],
+        tenant_id=row["tenant_id"],
+        website_url=row["website_url"],
+        brand_name=row["brand_name"] or row["name"],
+        company_name=row["name"],
+        industry=row["industry"] or industry_fallback,
+        products=products if isinstance(products, list) and products else ["AI visibility diagnosis"],
+        audiences=audiences if isinstance(audiences, list) and audiences else ["B2B growth leader"],
+        status=row["status"],
+        automation_level="A1",
+        source_refs=[
+            SourceRef(
+                url=row["website_url"],
+                title=f"{row['brand_name'] or row['name']} website seed",
+                source_type="owned",
+                captured_at=coerce_datetime(row["created_at"]),
+                confidence=0.6,
+            )
+        ],
+        created_at=coerce_datetime(row["created_at"]),
+        updated_at=coerce_datetime(row["updated_at"]),
+    )
+
+
+def get_mysql_project(tenant_id: str, project_id: str) -> ProjectData:
+    engine = mysql_engine()
+    if engine is None:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "INTEGRATION_CAPABILITY_BLOCKED", "details": {"capability": "mysql"}},
+        )
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, tenant_id, brand_name, name, website_url, industry,
+                       products_services_json, target_audience_json, status,
+                       created_at, updated_at
+                FROM airank_projects
+                WHERE tenant_id = :tenant_id
+                  AND id = :project_id
+                  AND deleted_at IS NULL
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().first()
+    if row is None:
+        raise StarletteHTTPException(
+            status_code=404,
+            detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id}},
+        )
+    return mysql_project_from_row(row)
+
+
 def find_existing_mysql_brand_project(tenant_id: str, payload: BrandCheckRequest) -> Optional[ProjectData]:
     engine = mysql_engine()
     if engine is None:
@@ -3954,31 +4071,7 @@ def find_existing_mysql_brand_project(tenant_id: str, payload: BrandCheckRequest
     if row is None:
         return None
 
-    products = parse_json_value(row["products_services_json"], ["AI visibility diagnosis"])
-    audiences = parse_json_value(row["target_audience_json"], ["B2B growth leader"])
-    return ProjectData(
-        project_id=row["id"],
-        tenant_id=row["tenant_id"],
-        website_url=row["website_url"],
-        brand_name=row["brand_name"] or row["name"],
-        company_name=row["name"],
-        industry=row["industry"] or payload.industry_hint or "unknown",
-        products=products if isinstance(products, list) and products else ["AI visibility diagnosis"],
-        audiences=audiences if isinstance(audiences, list) and audiences else ["B2B growth leader"],
-        status=row["status"],
-        automation_level="A1",
-        source_refs=[
-            SourceRef(
-                url=row["website_url"],
-                title=f"{row['brand_name'] or row['name']} website seed",
-                source_type="owned",
-                captured_at=coerce_datetime(row["created_at"]),
-                confidence=0.6,
-            )
-        ],
-        created_at=coerce_datetime(row["created_at"]),
-        updated_at=coerce_datetime(row["updated_at"]),
-    )
+    return mysql_project_from_row(row, industry_fallback=payload.industry_hint or "unknown")
 
 
 def list_mysql_project_competitors(tenant_id: str, project_id: str) -> list[CompetitorData]:
@@ -4204,10 +4297,11 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
         ),
     )
 
-    if os.getenv("AIRANK_DATABASE_URL"):
+    if os.getenv("AIRANK_DATABASE_URL") and scan_dispatch_mode() == "inline":
         complete_mysql_brand_scan(tenant_id, project, competitors, questions, scan_run)
     else:
-        complete_in_memory_brand_scan(tenant_id, scan_run.run_id)
+        if not os.getenv("AIRANK_DATABASE_URL"):
+            complete_in_memory_brand_scan(tenant_id, scan_run.run_id)
 
     completed_run = SCAN_REPOSITORY.get_run(tenant_id, scan_run.run_id)
     tasks = SCAN_REPOSITORY.list_tasks(tenant_id, completed_run.run_id)
