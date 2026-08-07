@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -132,6 +134,16 @@ def test_open_conflict_blocks_approval_until_human_resolution(client: TestClient
         headers={"tenant-id": "tenant_1"},
         json={"action": "approved", "reviewed_by": "reviewer_2"},
     )
+    duplicate = client.post(
+        f"/api/v1/projects/project_1/facts/{original['fact_id']}/conflicts",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "left_revision_id": revised["revision_id"],
+            "right_revision_id": original["revision_id"],
+            "conflict_type": "value_mismatch",
+            "description": "同一修订对不能重复登记",
+        },
+    )
 
     assert approved.status_code == 200
     assert approved.json()["data"]["eligible_for_generation"] is True
@@ -141,6 +153,114 @@ def test_open_conflict_blocks_approval_until_human_resolution(client: TestClient
     assert resolved.status_code == 200
     assert final_review.status_code == 200
     assert final_review.json()["data"]["eligible_for_generation"] is True
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "STATE_CONFLICT"
+    assert duplicate.json()["error"]["details"]["status"] == "resolved_right"
+
+
+def test_governance_queue_exposes_expiry_alerts_and_open_conflicts(client: TestClient) -> None:
+    now = datetime.now(timezone.utc)
+    expired_payload = source_payload() | {
+        "idempotency_key": "source-expired-0001",
+        "title": "已过期资质",
+        "content_text": "该资质已超过有效期。",
+        "valid_until": (now - timedelta(days=2)).isoformat(),
+    }
+    expiring_payload = source_payload() | {
+        "idempotency_key": "source-expiring-0001",
+        "title": "即将到期产品资料",
+        "valid_until": (now + timedelta(days=5)).isoformat(),
+    }
+    expired_source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=expired_payload,
+    ).json()["data"]
+    expiring_source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=expiring_payload,
+    ).json()["data"]
+    original_payload = fact_payload([expiring_source["source_id"]]) | {
+        "valid_until": (now + timedelta(days=3)).isoformat(),
+    }
+    original = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=original_payload,
+    ).json()["data"]
+    assert client.patch(
+        f"/api/v1/projects/project_1/fact-revisions/{original['revision_id']}/review",
+        headers={"tenant-id": "tenant_1"},
+        json={"action": "approved", "reviewed_by": "reviewer_1"},
+    ).status_code == 200
+    revised = client.post(
+        f"/api/v1/projects/project_1/facts/{original['fact_id']}/revisions",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload([expiring_source["source_id"]], "AIRank 仅支持公有云部署。"),
+    ).json()["data"]
+    conflict = client.post(
+        f"/api/v1/projects/project_1/facts/{original['fact_id']}/conflicts",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "left_revision_id": original["revision_id"],
+            "right_revision_id": revised["revision_id"],
+            "conflict_type": "value_mismatch",
+            "description": "部署模式陈述冲突",
+        },
+    ).json()["data"]
+
+    conflicts = client.get(
+        "/api/v1/projects/project_1/fact-conflicts?status=open",
+        headers={"tenant-id": "tenant_1"},
+    )
+    other_tenant = client.get(
+        "/api/v1/projects/project_1/fact-conflicts?status=open",
+        headers={"tenant-id": "tenant_2"},
+    )
+    governance = client.get(
+        "/api/v1/projects/project_1/knowledge-governance?within_days=7",
+        headers={"tenant-id": "tenant_1"},
+    )
+
+    assert conflicts.status_code == 200
+    assert [item["conflict_id"] for item in conflicts.json()["data"]] == [conflict["conflict_id"]]
+    assert other_tenant.status_code == 200
+    assert other_tenant.json()["data"] == []
+    assert governance.status_code == 200
+    data = governance.json()["data"]
+    assert data["status"] == "attention_required"
+    assert data["within_days"] == 7
+    assert data["source_count"] == 2
+    assert data["expired_source_count"] == 1
+    assert data["expiring_source_count"] == 1
+    assert data["expiring_fact_count"] == 1
+    assert data["open_conflict_count"] == 1
+    assert data["action_required_count"] == 4
+    assert {item["kind"] for item in data["alerts"]} == {
+        "source_expired",
+        "source_expiring",
+        "fact_expiring",
+        "open_conflict",
+    }
+    assert any(item["entity_id"] == expired_source["source_id"] for item in data["alerts"])
+
+    resolved = client.patch(
+        f"/api/v1/projects/project_1/fact-conflicts/{conflict['conflict_id']}/resolve",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "resolution": "resolved_right",
+            "resolved_by": "reviewer_2",
+            "resolution_note": "以最新官方资料为准",
+        },
+    )
+    after = client.get(
+        "/api/v1/projects/project_1/knowledge-governance?within_days=7",
+        headers={"tenant-id": "tenant_1"},
+    )
+    assert resolved.status_code == 200
+    assert after.json()["data"]["open_conflict_count"] == 0
+    assert after.json()["data"]["action_required_count"] == 3
 
 
 def test_content_generation_uses_only_approved_exact_source_facts(client: TestClient) -> None:

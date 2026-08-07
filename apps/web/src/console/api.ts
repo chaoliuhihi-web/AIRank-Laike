@@ -93,6 +93,47 @@ export type FactRevision = {
   eligibility_reason: string;
 };
 
+export type FactConflict = {
+  conflict_id: string;
+  fact_id: string;
+  left_revision_id: string;
+  right_revision_id: string;
+  conflict_type: string;
+  description: string;
+  status: "open" | "resolved_left" | "resolved_right" | "resolved_new_revision" | "dismissed";
+  detected_at: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  resolution_note: string | null;
+};
+
+export type KnowledgeGovernanceAlert = {
+  alert_id: string;
+  kind: "source_expired" | "source_expiring" | "fact_expired" | "fact_expiring" | "open_conflict";
+  severity: "critical" | "warning";
+  entity_type: "knowledge_source" | "fact_revision" | "fact_conflict";
+  entity_id: string;
+  title: string;
+  message: string;
+  due_at: string | null;
+  days_remaining: number | null;
+};
+
+export type KnowledgeGovernance = {
+  status: "healthy" | "attention_required";
+  as_of: string;
+  within_days: number;
+  source_count: number;
+  approved_fact_count: number;
+  expired_source_count: number;
+  expiring_source_count: number;
+  expired_fact_count: number;
+  expiring_fact_count: number;
+  open_conflict_count: number;
+  action_required_count: number;
+  alerts: KnowledgeGovernanceAlert[];
+};
+
 export type AnswerSample = {
   snapshot_id: string;
   run_id: string;
@@ -682,6 +723,14 @@ export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<Fac
   return fetchData(`/api/v1/projects/${projectId}/facts`, "trc_web_facts", signal);
 }
 
+export function fetchFactConflicts(projectId: string, signal?: AbortSignal): Promise<FactConflict[]> {
+  return fetchData(`/api/v1/projects/${projectId}/fact-conflicts?status=open`, "trc_web_fact_conflicts", signal);
+}
+
+export function fetchKnowledgeGovernance(projectId: string, signal?: AbortSignal): Promise<KnowledgeGovernance> {
+  return fetchData(`/api/v1/projects/${projectId}/knowledge-governance?within_days=30`, "trc_web_knowledge_governance", signal);
+}
+
 export async function reviewFactRevision(
   projectId: string,
   revisionId: string,
@@ -700,6 +749,28 @@ export async function reviewFactRevision(
     throw new Error(await readErrorMessage(response, `Fact review request failed with ${response.status}`));
   }
   const payload = (await response.json()) as { data: FactRevision };
+  return payload.data;
+}
+
+export async function resolveFactConflict(
+  projectId: string,
+  conflictId: string,
+  resolution: "resolved_left" | "resolved_right" | "resolved_new_revision" | "dismissed",
+  resolvedBy: string,
+  resolutionNote: string,
+): Promise<FactConflict> {
+  const response = await fetch(`/api/v1/projects/${projectId}/fact-conflicts/${conflictId}/resolve`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_fact_conflict_resolve"),
+    },
+    body: JSON.stringify({ resolution, resolved_by: resolvedBy, resolution_note: resolutionNote }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact conflict resolution failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: FactConflict };
   return payload.data;
 }
 

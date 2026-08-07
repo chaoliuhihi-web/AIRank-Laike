@@ -34,11 +34,14 @@ from apps.api.delivery_routes import (
     PublishPackageCreateRequest,
 )
 from apps.api.knowledge_routes import (
+    FactConflictCreateRequest,
+    FactConflictResolveRequest,
     FactProposalRequest,
     FactRevisionReviewRequest,
     GovernedContentCreateRequest,
     KnowledgeSourceCreateRequest,
     MySQLKnowledgeRepository,
+    derive_knowledge_governance,
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
@@ -818,6 +821,159 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
             )
         cleanup_tenant(engine, tenant_id)
         cleanup_tenant(engine, race_tenant_id)
+
+
+def test_real_mysql_knowledge_governance_derives_expiry_and_conflict_queue() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_knowledge_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    knowledge_repo = MySQLKnowledgeRepository(database_url())
+    now = datetime.now(timezone.utc)
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-knowledge.example.com",
+                brand_name_hint="AIRank Knowledge",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        expired_source = knowledge_repo.create_source(
+            tenant_id,
+            project.project_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="knowledge-expired-source-it",
+                source_type="qualification",
+                title="已过期资质",
+                content_text="该资质仅用于验证过期提醒。",
+                source_uri="https://airank-knowledge.example.com/expired",
+                authority_level="official",
+                risk_level="low",
+                valid_until=now - timedelta(days=2),
+            ),
+        )
+        expiring_source = knowledge_repo.create_source(
+            tenant_id,
+            project.project_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="knowledge-expiring-source-it",
+                source_type="official_website",
+                title="即将到期产品说明",
+                content_text="AIRank 提供可追溯的多平台 GEO 测量。",
+                source_uri="https://airank-knowledge.example.com/facts",
+                authority_level="official",
+                risk_level="low",
+                valid_until=now + timedelta(days=5),
+            ),
+        )
+        original = knowledge_repo.propose_fact(
+            tenant_id,
+            project.project_id,
+            FactProposalRequest(
+                title="测量能力",
+                fact_text="AIRank 提供可追溯的多平台 GEO 测量。",
+                source_ids=[expiring_source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration-test",
+                valid_until=now + timedelta(days=3),
+            ),
+        )
+        approved = knowledge_repo.review_revision(
+            tenant_id,
+            project.project_id,
+            original.revision_id,
+            FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        revised = knowledge_repo.revise_fact(
+            tenant_id,
+            project.project_id,
+            original.fact_id,
+            FactProposalRequest(
+                title="测量能力",
+                fact_text="AIRank 只提供单平台 GEO 测量。",
+                source_ids=[expiring_source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration-test",
+            ),
+        )
+        conflict = knowledge_repo.create_conflict(
+            tenant_id,
+            project.project_id,
+            original.fact_id,
+            FactConflictCreateRequest(
+                left_revision_id=original.revision_id,
+                right_revision_id=revised.revision_id,
+                conflict_type="value_mismatch",
+                description="平台覆盖范围冲突",
+            ),
+        )
+
+        listed_sources = knowledge_repo.list_sources(tenant_id, project.project_id)
+        open_conflicts = knowledge_repo.list_conflicts(tenant_id, project.project_id, "open")
+        facts = knowledge_repo.list_facts(tenant_id, project.project_id)
+        governance = derive_knowledge_governance(
+            listed_sources,
+            facts,
+            open_conflicts,
+            within_days=7,
+            as_of=now,
+        )
+
+        approved_after_conflict = next(item for item in facts if item.revision_id == approved.revision_id)
+        expiring_source_after_read = next(item for item in listed_sources if item.source_id == expiring_source.source_id)
+        assert expiring_source_after_read.valid_until is not None
+        assert expiring_source_after_read.valid_until.utcoffset() == timedelta(0)
+        assert approved_after_conflict.valid_until is not None
+        assert approved_after_conflict.valid_until.utcoffset() == timedelta(0)
+        assert open_conflicts[0].detected_at.utcoffset() == timedelta(0)
+        assert approved_after_conflict.eligible_for_generation is False
+        assert approved_after_conflict.eligibility_reason == "open_conflict"
+        assert [item.conflict_id for item in open_conflicts] == [conflict.conflict_id]
+        assert governance.expired_source_count == 1
+        assert governance.expiring_source_count == 1
+        assert governance.expiring_fact_count == 1
+        assert governance.open_conflict_count == 1
+        assert governance.action_required_count == 4
+        assert any(alert.entity_id == expired_source.source_id for alert in governance.alerts)
+
+        knowledge_repo.resolve_conflict(
+            tenant_id,
+            project.project_id,
+            conflict.conflict_id,
+            FactConflictResolveRequest(
+                resolution="resolved_left",
+                resolved_by="integration-reviewer",
+                resolution_note="官方原文支持左版本",
+            ),
+        )
+        assert knowledge_repo.list_conflicts(tenant_id, project.project_id, "open") == []
+        restored = next(
+            item for item in knowledge_repo.list_facts(tenant_id, project.project_id)
+            if item.revision_id == approved.revision_id
+        )
+        assert restored.eligible_for_generation is True
+        assert restored.eligibility_reason == "approved_current_fact"
+        with pytest.raises(StarletteHTTPException) as duplicate_error:
+            knowledge_repo.create_conflict(
+                tenant_id,
+                project.project_id,
+                original.fact_id,
+                FactConflictCreateRequest(
+                    left_revision_id=revised.revision_id,
+                    right_revision_id=original.revision_id,
+                    conflict_type="value_mismatch",
+                    description="同一修订对不能重复登记",
+                ),
+            )
+        assert duplicate_error.value.status_code == 409
+        assert duplicate_error.value.detail["code"] == "STATE_CONFLICT"
+        assert duplicate_error.value.detail["details"]["status"] == "resolved_left"
+    finally:
+        cleanup_tenant(engine, tenant_id)
 
 
 def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest() -> None:

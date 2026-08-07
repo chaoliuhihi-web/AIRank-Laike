@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import ceil
 import json
 import os
 from typing import Any, Literal, Mapping, Optional, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import bindparam, create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -213,6 +214,43 @@ class FactConflictResponse(BaseModel):
     meta: dict[str, str]
 
 
+class FactConflictListResponse(BaseModel):
+    data: list[FactConflictData]
+    meta: dict[str, str]
+
+
+class KnowledgeGovernanceAlertData(BaseModel):
+    alert_id: str
+    kind: Literal["source_expired", "source_expiring", "fact_expired", "fact_expiring", "open_conflict"]
+    severity: Literal["critical", "warning"]
+    entity_type: Literal["knowledge_source", "fact_revision", "fact_conflict"]
+    entity_id: str
+    title: str
+    message: str
+    due_at: Optional[datetime] = None
+    days_remaining: Optional[int] = None
+
+
+class KnowledgeGovernanceData(BaseModel):
+    status: Literal["healthy", "attention_required"]
+    as_of: datetime
+    within_days: int
+    source_count: int
+    approved_fact_count: int
+    expired_source_count: int
+    expiring_source_count: int
+    expired_fact_count: int
+    expiring_fact_count: int
+    open_conflict_count: int
+    action_required_count: int
+    alerts: list[KnowledgeGovernanceAlertData]
+
+
+class KnowledgeGovernanceResponse(BaseModel):
+    data: KnowledgeGovernanceData
+    meta: dict[str, str]
+
+
 class GovernedContentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -263,6 +301,7 @@ class KnowledgeRepository(Protocol):
     def list_facts(self, tenant_id: str, project_id: str) -> list[FactRevisionData]: ...
     def review_revision(self, tenant_id: str, project_id: str, revision_id: str, payload: FactRevisionReviewRequest) -> FactRevisionData: ...
     def create_conflict(self, tenant_id: str, project_id: str, fact_id: str, payload: FactConflictCreateRequest) -> FactConflictData: ...
+    def list_conflicts(self, tenant_id: str, project_id: str, status: Optional[str] = None) -> list[FactConflictData]: ...
     def resolve_conflict(self, tenant_id: str, project_id: str, conflict_id: str, payload: FactConflictResolveRequest) -> FactConflictData: ...
     def create_governed_content(self, tenant_id: str, project_id: str, payload: GovernedContentCreateRequest) -> GovernedContentData: ...
     def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]: ...
@@ -376,8 +415,45 @@ class InMemoryKnowledgeRepository:
         self.facts[(tenant_id, revision_id)] = data
         return data
 
+    def _effective_fact(self, revision: FactRevisionData, at: datetime) -> FactRevisionData:
+        reason = "approved_current_fact"
+        eligible = revision.status == "approved"
+        if revision.status != "approved":
+            reason = revision.status if revision.status in {"rejected", "superseded"} else ("evidence_required" if not revision.source_ids else "human_review_required")
+        elif any(
+            conflict.tenant_id == revision.tenant_id
+            and conflict.project_id == revision.project_id
+            and conflict.fact_id == revision.fact_id
+            and conflict.status == "open"
+            for conflict in self.conflicts.values()
+        ):
+            eligible, reason = False, "open_conflict"
+        elif revision.valid_from and _as_utc(revision.valid_from) > at:
+            eligible, reason = False, "not_yet_valid"
+        elif revision.valid_until and _as_utc(revision.valid_until) <= at:
+            eligible, reason = False, "expired"
+        elif not revision.source_ids:
+            eligible, reason = False, "evidence_required"
+        else:
+            current_sources = [self.sources.get((revision.tenant_id, source_id)) for source_id in revision.source_ids]
+            if any(
+                source is None
+                or source.project_id != revision.project_id
+                or source.status != "active"
+                or (source.valid_from is not None and _as_utc(source.valid_from) > at)
+                or (source.valid_until is not None and _as_utc(source.valid_until) <= at)
+                for source in current_sources
+            ):
+                eligible, reason = False, "source_stale"
+        return revision.model_copy(update={"eligible_for_generation": eligible, "eligibility_reason": reason})
+
     def list_facts(self, tenant_id: str, project_id: str) -> list[FactRevisionData]:
-        return [value for (item_tenant, _), value in self.facts.items() if item_tenant == tenant_id and value.project_id == project_id]
+        now = utc_now()
+        return [
+            self._effective_fact(value, now)
+            for (item_tenant, _), value in self.facts.items()
+            if item_tenant == tenant_id and value.project_id == project_id
+        ]
 
     def review_revision(self, tenant_id: str, project_id: str, revision_id: str, payload: FactRevisionReviewRequest) -> FactRevisionData:
         key = (tenant_id, revision_id)
@@ -391,6 +467,15 @@ class InMemoryKnowledgeRepository:
         ):
             raise StarletteHTTPException(status_code=409, detail={"code": "FACT_CONFLICT_OPEN", "details": {"fact_id": revision.fact_id}})
         now = utc_now()
+        if payload.action == "approved" and any(
+            (source := self.sources.get((tenant_id, source_id))) is None
+            or source.project_id != project_id
+            or source.status != "active"
+            or (source.valid_from is not None and _as_utc(source.valid_from) > now)
+            or (source.valid_until is not None and _as_utc(source.valid_until) <= now)
+            for source_id in revision.source_ids
+        ):
+            raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SOURCE_STALE", "details": {"source_ids": revision.source_ids}})
         if payload.action == "approved":
             for existing_key, existing in list(self.facts.items()):
                 if existing.fact_id == revision.fact_id and existing.status == "approved" and existing.revision_id != revision_id:
@@ -412,14 +497,31 @@ class InMemoryKnowledgeRepository:
             }
         )
         self.facts[key] = updated
-        return updated
+        return self._effective_fact(updated, now)
 
     def create_conflict(self, tenant_id: str, project_id: str, fact_id: str, payload: FactConflictCreateRequest) -> FactConflictData:
-        revisions = {value.revision_id: value for value in self.facts.values() if value.tenant_id == tenant_id}
+        revisions = {
+            value.revision_id: value
+            for value in self.facts.values()
+            if value.tenant_id == tenant_id and value.project_id == project_id
+        }
         if payload.left_revision_id not in revisions or payload.right_revision_id not in revisions:
             raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_ids": [payload.left_revision_id, payload.right_revision_id]})
         if any(revisions[item].fact_id != fact_id for item in (payload.left_revision_id, payload.right_revision_id)):
             raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"fact_id": fact_id}})
+        existing = next((
+            conflict
+            for conflict in self.conflicts.values()
+            if conflict.tenant_id == tenant_id
+            and conflict.project_id == project_id
+            and conflict.fact_id == fact_id
+            and {conflict.left_revision_id, conflict.right_revision_id} == {payload.left_revision_id, payload.right_revision_id}
+        ), None)
+        if existing is not None:
+            raise StarletteHTTPException(status_code=409, detail={
+                "code": "STATE_CONFLICT",
+                "details": {"conflict_id": existing.conflict_id, "status": existing.status},
+            })
         data = FactConflictData(
             conflict_id=f"conflict_{uuid4().hex[:12]}",
             tenant_id=tenant_id,
@@ -434,6 +536,19 @@ class InMemoryKnowledgeRepository:
         )
         self.conflicts[(tenant_id, data.conflict_id)] = data
         return data
+
+    def list_conflicts(self, tenant_id: str, project_id: str, status: Optional[str] = None) -> list[FactConflictData]:
+        return sorted(
+            [
+                conflict
+                for (item_tenant, _), conflict in self.conflicts.items()
+                if item_tenant == tenant_id
+                and conflict.project_id == project_id
+                and (status is None or conflict.status == status)
+            ],
+            key=lambda conflict: conflict.detected_at,
+            reverse=True,
+        )
 
     def resolve_conflict(self, tenant_id: str, project_id: str, conflict_id: str, payload: FactConflictResolveRequest) -> FactConflictData:
         key = (tenant_id, conflict_id)
@@ -451,6 +566,7 @@ class InMemoryKnowledgeRepository:
             revision = self.facts.get((tenant_id, revision_id))
             if revision is None or revision.project_id != project_id:
                 raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_id": revision_id})
+            revision = self._effective_fact(revision, utc_now())
             if not revision.eligible_for_generation or revision.status != "approved":
                 raise StarletteHTTPException(status_code=409, detail={"code": "CONTENT_EVIDENCE_MISSING", "details": {"revision_id": revision_id, "reason": revision.eligibility_reason}})
             revisions.append(revision)
@@ -496,7 +612,7 @@ class MySQLKnowledgeRepository:
     @staticmethod
     def _source_data(row: Mapping[str, Any], *, replay: bool = False) -> KnowledgeSourceData:
         return KnowledgeSourceData(
-            source_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"], source_type=row["source_type"], title=row["title"], source_uri=row["source_uri"], content_sha256=row["content_sha256"], byte_size=int(row["byte_size"]), authority_level=row["authority_level"], risk_level=row["risk_level"], status=row["status"], revision_number=int(row["revision_number"]), parent_source_id=row["parent_source_id"], segment_count=int(row["segment_count"]), captured_at=row["captured_at"], valid_from=row["valid_from"], valid_until=row["valid_until"], idempotent_replay=replay,
+            source_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"], source_type=row["source_type"], title=row["title"], source_uri=row["source_uri"], content_sha256=row["content_sha256"], byte_size=int(row["byte_size"]), authority_level=row["authority_level"], risk_level=row["risk_level"], status=row["status"], revision_number=int(row["revision_number"]), parent_source_id=row["parent_source_id"], segment_count=int(row["segment_count"]), captured_at=_as_utc(row["captured_at"]), valid_from=_optional_utc(row["valid_from"]), valid_until=_optional_utc(row["valid_until"]), idempotent_replay=replay,
         )
 
     def create_source(self, tenant_id: str, project_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData:
@@ -577,10 +693,36 @@ class MySQLKnowledgeRepository:
         valid_until = row["valid_until"]
         if valid_until is not None and valid_until.tzinfo is None:
             valid_until = valid_until.replace(tzinfo=timezone.utc)
-        eligible = row["revision_status"] == "approved" and bool(source_ids) and not open_conflict_count and (valid_until is None or valid_until > now)
-        reason = "approved_current_fact" if eligible else ("open_conflict" if open_conflict_count else ("expired" if valid_until is not None and valid_until <= now else ("evidence_required" if not source_ids else "human_review_required")))
+        valid_from = row["valid_from"]
+        if valid_from is not None and valid_from.tzinfo is None:
+            valid_from = valid_from.replace(tzinfo=timezone.utc)
+        current_source_count = int(row.get("current_source_count", len(source_ids)))
+        eligible = (
+            row["revision_status"] == "approved"
+            and bool(source_ids)
+            and current_source_count == len(source_ids)
+            and not open_conflict_count
+            and (valid_from is None or valid_from <= now)
+            and (valid_until is None or valid_until > now)
+        )
+        if eligible:
+            reason = "approved_current_fact"
+        elif row["revision_status"] in {"rejected", "superseded"}:
+            reason = row["revision_status"]
+        elif open_conflict_count:
+            reason = "open_conflict"
+        elif valid_from is not None and valid_from > now:
+            reason = "not_yet_valid"
+        elif valid_until is not None and valid_until <= now:
+            reason = "expired"
+        elif not source_ids:
+            reason = "evidence_required"
+        elif current_source_count != len(source_ids):
+            reason = "source_stale"
+        else:
+            reason = "human_review_required"
         return FactRevisionData(
-            fact_id=row["fact_id"], revision_id=row["revision_id"], tenant_id=row["tenant_id"], project_id=row["project_id"], title=row["title"], fact_type=row["fact_type"], fact_text=row["fact_text"], content_sha256=row["content_sha256"], revision_number=int(row["revision_number"]), status=row["revision_status"], source_ids=source_ids, risk_level=row["risk_level"], disclosure=row["disclosure"], created_by=row["created_by"], created_at=row["created_at"], reviewed_by=row["reviewed_by"], reviewed_at=row["reviewed_at"], review_note=row["review_note"], valid_from=row["valid_from"], valid_until=row["valid_until"], eligible_for_generation=eligible, eligibility_reason=reason,
+            fact_id=row["fact_id"], revision_id=row["revision_id"], tenant_id=row["tenant_id"], project_id=row["project_id"], title=row["title"], fact_type=row["fact_type"], fact_text=row["fact_text"], content_sha256=row["content_sha256"], revision_number=int(row["revision_number"]), status=row["revision_status"], source_ids=source_ids, risk_level=row["risk_level"], disclosure=row["disclosure"], created_by=row["created_by"], created_at=_as_utc(row["created_at"]), reviewed_by=row["reviewed_by"], reviewed_at=_optional_utc(row["reviewed_at"]), review_note=row["review_note"], valid_from=valid_from, valid_until=valid_until, eligible_for_generation=eligible, eligibility_reason=reason,
         )
 
     def propose_fact(self, tenant_id: str, project_id: str, payload: FactProposalRequest) -> FactRevisionData:
@@ -659,6 +801,12 @@ class MySQLKnowledgeRepository:
                    r.reviewed_by, r.reviewed_at, r.review_note, r.valid_from, r.valid_until,
                    (SELECT COUNT(*) FROM airank_fact_conflicts c
                     WHERE c.tenant_id=f.tenant_id AND c.fact_atom_id=f.id AND c.status='open') AS open_conflict_count
+                   ,(SELECT COUNT(*) FROM airank_knowledge_sources s
+                     WHERE s.tenant_id=f.tenant_id AND s.project_id=f.project_id
+                       AND s.status='active'
+                       AND (s.valid_from IS NULL OR s.valid_from<=UTC_TIMESTAMP(6))
+                       AND (s.valid_until IS NULL OR s.valid_until>UTC_TIMESTAMP(6))
+                       AND JSON_CONTAINS(r.source_ids_json, JSON_QUOTE(s.id), '$')) AS current_source_count
             FROM airank_fact_atoms f JOIN airank_fact_revisions r ON r.fact_atom_id=f.id
             WHERE f.tenant_id=:tenant_id AND f.project_id=:project_id AND f.deleted_at IS NULL
               {condition}
@@ -684,7 +832,7 @@ class MySQLKnowledgeRepository:
                     raise StarletteHTTPException(status_code=400, detail={"code": "FACT_SOURCE_REQUIRED", "details": {"revision_id": revision_id}})
                 if int(row["open_conflict_count"]):
                     raise StarletteHTTPException(status_code=409, detail={"code": "FACT_CONFLICT_OPEN", "details": {"fact_id": row["fact_id"]}})
-                current_source_query = text("SELECT COUNT(*) FROM airank_knowledge_sources WHERE tenant_id=:tenant_id AND project_id=:project_id AND status='active' AND (valid_until IS NULL OR valid_until>:now) AND id IN :source_ids").bindparams(bindparam("source_ids", expanding=True))
+                current_source_query = text("SELECT COUNT(*) FROM airank_knowledge_sources WHERE tenant_id=:tenant_id AND project_id=:project_id AND status='active' AND (valid_from IS NULL OR valid_from<=:now) AND (valid_until IS NULL OR valid_until>:now) AND id IN :source_ids").bindparams(bindparam("source_ids", expanding=True))
                 current_count = conn.execute(current_source_query, {"tenant_id": tenant_id, "project_id": project_id, "now": reviewed_at, "source_ids": source_ids}).scalar_one()
                 if int(current_count) != len(source_ids):
                     raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SOURCE_STALE", "details": {"source_ids": source_ids}})
@@ -699,12 +847,27 @@ class MySQLKnowledgeRepository:
     def create_conflict(self, tenant_id: str, project_id: str, fact_id: str, payload: FactConflictCreateRequest) -> FactConflictData:
         detected_at = utc_now()
         with self.engine.begin() as conn:
-            revision_query = text("SELECT id, fact_atom_id FROM airank_fact_revisions WHERE tenant_id=:tenant_id AND project_id=:project_id AND id IN :revision_ids").bindparams(bindparam("revision_ids", expanding=True))
+            revision_query = text("SELECT id, fact_atom_id FROM airank_fact_revisions WHERE tenant_id=:tenant_id AND project_id=:project_id AND id IN :revision_ids ORDER BY id FOR UPDATE").bindparams(bindparam("revision_ids", expanding=True))
             rows = conn.execute(revision_query, {"tenant_id": tenant_id, "project_id": project_id, "revision_ids": [payload.left_revision_id, payload.right_revision_id]}).mappings().all()
             if len(rows) != 2:
                 raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_ids": [payload.left_revision_id, payload.right_revision_id]})
             if any(row["fact_atom_id"] != fact_id for row in rows):
                 raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"fact_id": fact_id}})
+            existing = conn.execute(text("""
+                SELECT id, status FROM airank_fact_conflicts
+                WHERE tenant_id=:tenant_id AND project_id=:project_id AND fact_atom_id=:fact_id
+                  AND ((left_revision_id=:left_revision_id AND right_revision_id=:right_revision_id)
+                    OR (left_revision_id=:right_revision_id AND right_revision_id=:left_revision_id))
+                LIMIT 1
+            """), {
+                "tenant_id": tenant_id, "project_id": project_id, "fact_id": fact_id,
+                "left_revision_id": payload.left_revision_id, "right_revision_id": payload.right_revision_id,
+            }).mappings().first()
+            if existing is not None:
+                raise StarletteHTTPException(status_code=409, detail={
+                    "code": "STATE_CONFLICT",
+                    "details": {"conflict_id": existing["id"], "status": existing["status"]},
+                })
             conflict_id = f"conflict_{uuid4().hex[:12]}"
             conn.execute(text("""
                 INSERT INTO airank_fact_conflicts (
@@ -717,6 +880,28 @@ class MySQLKnowledgeRepository:
             """), {"id": conflict_id, "tenant_id": tenant_id, "project_id": project_id, "fact_id": fact_id, "left_revision_id": payload.left_revision_id, "right_revision_id": payload.right_revision_id, "conflict_type": payload.conflict_type, "description": payload.description, "detected_at": detected_at})
         return FactConflictData(conflict_id=conflict_id, tenant_id=tenant_id, project_id=project_id, fact_id=fact_id, left_revision_id=payload.left_revision_id, right_revision_id=payload.right_revision_id, conflict_type=payload.conflict_type, description=payload.description, status="open", detected_at=detected_at)
 
+    @staticmethod
+    def _conflict_data(row: Mapping[str, Any]) -> FactConflictData:
+        return FactConflictData(
+            conflict_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"],
+            fact_id=row["fact_atom_id"], left_revision_id=row["left_revision_id"],
+            right_revision_id=row["right_revision_id"], conflict_type=row["conflict_type"],
+            description=row["description"], status=row["status"], detected_at=_as_utc(row["detected_at"]),
+            resolved_by=row["resolved_by"], resolved_at=_optional_utc(row["resolved_at"]),
+            resolution_note=row["resolution_note"],
+        )
+
+    def list_conflicts(self, tenant_id: str, project_id: str, status: Optional[str] = None) -> list[FactConflictData]:
+        condition = "AND status=:status" if status else ""
+        with self.engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            rows = conn.execute(text(f"""
+                SELECT * FROM airank_fact_conflicts
+                WHERE tenant_id=:tenant_id AND project_id=:project_id {condition}
+                ORDER BY (status='open') DESC, detected_at DESC, id DESC
+            """), {"tenant_id": tenant_id, "project_id": project_id, "status": status}).mappings().all()
+        return [self._conflict_data(row) for row in rows]
+
     def resolve_conflict(self, tenant_id: str, project_id: str, conflict_id: str, payload: FactConflictResolveRequest) -> FactConflictData:
         resolved_at = utc_now()
         with self.engine.begin() as conn:
@@ -726,7 +911,7 @@ class MySQLKnowledgeRepository:
             if row["status"] != "open":
                 raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"conflict_id": conflict_id, "status": row["status"]}})
             conn.execute(text("UPDATE airank_fact_conflicts SET status=:status, resolved_by=:resolved_by, resolved_at=:resolved_at, resolution_note=:resolution_note WHERE tenant_id=:tenant_id AND id=:conflict_id"), {"status": payload.resolution, "resolved_by": payload.resolved_by, "resolved_at": resolved_at, "resolution_note": payload.resolution_note, "tenant_id": tenant_id, "conflict_id": conflict_id})
-        return FactConflictData(conflict_id=conflict_id, tenant_id=tenant_id, project_id=project_id, fact_id=row["fact_atom_id"], left_revision_id=row["left_revision_id"], right_revision_id=row["right_revision_id"], conflict_type=row["conflict_type"], description=row["description"], status=payload.resolution, detected_at=row["detected_at"], resolved_by=payload.resolved_by, resolved_at=resolved_at, resolution_note=payload.resolution_note)
+        return FactConflictData(conflict_id=conflict_id, tenant_id=tenant_id, project_id=project_id, fact_id=row["fact_atom_id"], left_revision_id=row["left_revision_id"], right_revision_id=row["right_revision_id"], conflict_type=row["conflict_type"], description=row["description"], status=payload.resolution, detected_at=_as_utc(row["detected_at"]), resolved_by=payload.resolved_by, resolved_at=resolved_at, resolution_note=payload.resolution_note)
 
     def create_governed_content(self, tenant_id: str, project_id: str, payload: GovernedContentCreateRequest) -> GovernedContentData:
         created_at = utc_now()
@@ -735,7 +920,7 @@ class MySQLKnowledgeRepository:
             revision_query = text("""
                 SELECT f.id AS fact_id, f.current_revision_id, f.title, f.fact_type,
                        f.disclosure, f.risk_level, r.id AS revision_id, r.fact_text,
-                       r.status, r.source_ids_json, r.valid_until, r.reviewed_by,
+                       r.status, r.source_ids_json, r.valid_from, r.valid_until, r.reviewed_by,
                        (SELECT COUNT(*) FROM airank_fact_conflicts c
                         WHERE c.tenant_id=f.tenant_id AND c.fact_atom_id=f.id AND c.status='open') AS open_conflict_count
                 FROM airank_fact_revisions r JOIN airank_fact_atoms f ON f.id=r.fact_atom_id
@@ -758,6 +943,8 @@ class MySQLKnowledgeRepository:
                     invalid_reason = "revision_not_current_approved"
                 elif int(row["open_conflict_count"]):
                     invalid_reason = "open_conflict"
+                elif row.get("valid_from") is not None and _as_utc(row["valid_from"]) > created_at:
+                    invalid_reason = "fact_not_yet_valid"
                 elif valid_until is not None and valid_until <= created_at:
                     invalid_reason = "fact_expired"
                 elif row["disclosure"] not in {"public", "redacted"}:
@@ -773,6 +960,7 @@ class MySQLKnowledgeRepository:
                         JOIN airank_knowledge_source_contents c ON c.knowledge_source_id=s.id
                         WHERE s.tenant_id=:tenant_id AND s.project_id=:project_id
                           AND s.id=:source_id AND s.status='active'
+                          AND (s.valid_from IS NULL OR s.valid_from<=:now)
                           AND (s.valid_until IS NULL OR s.valid_until>:now)
                     """), {"tenant_id": tenant_id, "project_id": project_id, "source_id": source_id, "now": created_at}).mappings().first()
                     if source is None:
@@ -864,6 +1052,100 @@ class MySQLKnowledgeRepository:
         return assets
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _optional_utc(value: Optional[datetime]) -> Optional[datetime]:
+    return _as_utc(value) if value is not None else None
+
+
+def derive_knowledge_governance(
+    sources: list[KnowledgeSourceData],
+    facts: list[FactRevisionData],
+    conflicts: list[FactConflictData],
+    *,
+    within_days: int,
+    as_of: Optional[datetime] = None,
+) -> KnowledgeGovernanceData:
+    evaluated_at = _as_utc(as_of or utc_now())
+    window_seconds = within_days * 24 * 60 * 60
+    alerts: list[KnowledgeGovernanceAlertData] = []
+
+    def add_expiry_alert(
+        *,
+        entity_type: Literal["knowledge_source", "fact_revision"],
+        entity_id: str,
+        title: str,
+        due_at: datetime,
+    ) -> None:
+        due = _as_utc(due_at)
+        remaining_seconds = (due - evaluated_at).total_seconds()
+        if remaining_seconds > window_seconds:
+            return
+        expired = remaining_seconds <= 0
+        entity_label = "知识来源" if entity_type == "knowledge_source" else "事实修订"
+        kind = f"{'source' if entity_type == 'knowledge_source' else 'fact'}_{'expired' if expired else 'expiring'}"
+        days_remaining = ceil(remaining_seconds / (24 * 60 * 60))
+        alerts.append(KnowledgeGovernanceAlertData(
+            alert_id=f"{kind}:{entity_id}",
+            kind=kind,
+            severity="critical" if expired else "warning",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            title=title,
+            message=f"{entity_label}已过期，必须更新证据后再用于内容生成。" if expired else f"{entity_label}将在 {days_remaining} 天内到期，请安排复核。",
+            due_at=due,
+            days_remaining=days_remaining,
+        ))
+
+    for source in sources:
+        if source.status != "disabled" and source.valid_until is not None:
+            add_expiry_alert(
+                entity_type="knowledge_source",
+                entity_id=source.source_id,
+                title=source.title,
+                due_at=source.valid_until,
+            )
+    for fact in facts:
+        if fact.status == "approved" and fact.valid_until is not None:
+            add_expiry_alert(
+                entity_type="fact_revision",
+                entity_id=fact.revision_id,
+                title=fact.title,
+                due_at=fact.valid_until,
+            )
+    open_conflicts = [conflict for conflict in conflicts if conflict.status == "open"]
+    for conflict in open_conflicts:
+        alerts.append(KnowledgeGovernanceAlertData(
+            alert_id=f"open_conflict:{conflict.conflict_id}",
+            kind="open_conflict",
+            severity="critical",
+            entity_type="fact_conflict",
+            entity_id=conflict.conflict_id,
+            title=conflict.description,
+            message="事实冲突尚未由人工裁决，关联事实不得用于内容生成。",
+        ))
+
+    severity_order = {"critical": 0, "warning": 1}
+    alerts.sort(key=lambda alert: (severity_order[alert.severity], alert.due_at or evaluated_at, alert.alert_id))
+    kinds = [alert.kind for alert in alerts]
+    return KnowledgeGovernanceData(
+        status="attention_required" if alerts else "healthy",
+        as_of=evaluated_at,
+        within_days=within_days,
+        source_count=len(sources),
+        approved_fact_count=sum(fact.status == "approved" for fact in facts),
+        expired_source_count=kinds.count("source_expired"),
+        expiring_source_count=kinds.count("source_expiring"),
+        expired_fact_count=kinds.count("fact_expired"),
+        expiring_fact_count=kinds.count("fact_expiring"),
+        open_conflict_count=len(open_conflicts),
+        action_required_count=len(alerts),
+        alerts=alerts,
+    )
+
+
 def _render_governed_draft(title: str, direction: str, revisions: list[Any]) -> str:
     lines = [f"# {title}", "", direction.strip(), "", "## 已核验事实"]
     for index, revision in enumerate(revisions, start=1):
@@ -924,6 +1206,40 @@ def review_fact_revision(project_id: str, revision_id: str, payload: FactRevisio
 @router.post("/projects/{project_id}/facts/{fact_id}/conflicts", response_model=FactConflictResponse, status_code=201)
 def create_fact_conflict(project_id: str, fact_id: str, payload: FactConflictCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> FactConflictResponse:
     return FactConflictResponse(data=KNOWLEDGE_REPOSITORY.create_conflict(tenant_id, project_id, fact_id, payload), meta=response_meta(trace_id))
+
+
+@router.get("/projects/{project_id}/fact-conflicts", response_model=FactConflictListResponse)
+def list_fact_conflicts(
+    project_id: str,
+    status: Optional[Literal["open", "resolved_left", "resolved_right", "resolved_new_revision", "dismissed"]] = Query(default=None),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> FactConflictListResponse:
+    return FactConflictListResponse(
+        data=KNOWLEDGE_REPOSITORY.list_conflicts(tenant_id, project_id, status),
+        meta=response_meta(trace_id),
+    )
+
+
+@router.get("/projects/{project_id}/knowledge-governance", response_model=KnowledgeGovernanceResponse)
+def get_knowledge_governance(
+    project_id: str,
+    within_days: int = Query(default=30, ge=1, le=365),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> KnowledgeGovernanceResponse:
+    sources = KNOWLEDGE_REPOSITORY.list_sources(tenant_id, project_id)
+    facts = KNOWLEDGE_REPOSITORY.list_facts(tenant_id, project_id)
+    conflicts = KNOWLEDGE_REPOSITORY.list_conflicts(tenant_id, project_id, "open")
+    return KnowledgeGovernanceResponse(
+        data=derive_knowledge_governance(
+            sources,
+            facts,
+            conflicts,
+            within_days=within_days,
+        ),
+        meta=response_meta(trace_id),
+    )
 
 
 @router.patch("/projects/{project_id}/fact-conflicts/{conflict_id}/resolve", response_model=FactConflictResponse)

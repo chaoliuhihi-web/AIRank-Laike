@@ -389,3 +389,31 @@ Blocking conditions:
 - All eight Skills remain `partial`. Local tests are not accepted as substitutes for the real queue, reviewed labeled benchmark, Provider citation benchmark, reviewed fact/content benchmark, or real T0/T+7 evidence required by each promotion policy.
 - Production Yudao must expose and grant the configured Skill admin permission before this console is production-accessible.
 - The broader commercial blockers from the durable evidence gate remain unchanged.
+
+## 2026-08-08 Knowledge Governance Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: pending knowledge-governance commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Added tenant/project-scoped open-conflict listing and a 1—365 day knowledge-governance window derived from current KnowledgeSource, approved FactRevision, and FactConflict records. The read model reports expired/expiring sources and facts plus open conflicts without mutating source, fact, or conflict history.
+- Fact eligibility is now evaluated against current source status, source validity, fact validity, and open conflicts. A conflict immediately blocks previously approved facts; a recorded human resolution restores eligibility only when every other evidence gate still passes.
+- MySQL datetimes are normalized to UTC before API serialization. Browser QA proved source-list and alert timestamps now match; the previous eight-hour divergence is removed.
+- Duplicate registration of the same unordered revision pair now returns controlled `409 STATE_CONFLICT` with the existing conflict state instead of leaking a MySQL unique-key exception.
+- The real console shows governance counts, alert details, revision IDs, required resolution notes, and manual resolution choices. Browser QA proved empty-note blocking and a real MySQL transition from four actions/open conflict to three actions/no open conflict; the approved source-backed fact returned to eligible.
+- Desktop browser QA at 1024px reported no page or resolution-form horizontal overflow and no console warning/error. Screenshot review found and fixed unreadable vertically wrapped fact-card titles; the final grid uses two readable 361px columns at that viewport.
+- Full local regression passed `214 passed, 11 skipped`; real MySQL passed `9 passed, 2 skipped`; absorption matrix stayed at 12 sources / 64 rows / 21 GEO Skills; core Skill eval stayed `24/24` with `0` promotion-eligible; Web build and npm high-severity audit passed with zero known vulnerabilities.
+
+Not claimed as passed:
+
+- The new conflict form was not revalidated at a physical 390px viewport in this slice. The in-app browser rejected a nested narrow-viewport preview under its URL security policy, so only the responsive CSS/build and earlier console-wide 390px evidence remain. A direct device-width rerun is still required before production sign-off.
+- The production readiness runner remains `BLOCKED`: branch not merged to either remote `main`, production HTTPS S3/MinIO absent, Python `3.9.6` and Node `20.18.2` below the enforced runtime floor, Yudao permission-info missing, and consumer browser Provider readiness `0/4`.
+- No customer-owned source-update worker, incremental re-embedding, hybrid retrieval, production Yudao identity, or real external publishing credential was supplied or verified.
+
+Decision:
+
+- Knowledge expiry and conflict handling is now an operable, evidence-backed slice, but AIRank remains `NO-GO` for commercial launch until the production and external gates above pass.

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
@@ -73,8 +73,10 @@ import {
   fetchConsoleOverview,
   fetchContentAssets,
   fetchEvidenceObject,
+  fetchFactConflicts,
   fetchFacts,
   fetchInternalSkills,
+  fetchKnowledgeGovernance,
   fetchKnowledgeSources,
   fetchProviderReadiness,
   fetchPublishAttempts,
@@ -91,6 +93,7 @@ import {
   recordDownloadReceipt,
   reviewContentAsset,
   reviewFactRevision,
+  resolveFactConflict,
   runBrandCheck,
   storeAuthSession,
   type AuthSession,
@@ -102,9 +105,11 @@ import {
   type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
+  type FactConflict,
   type GovernedContentAsset,
   type FactRevision,
   type InternalSkill,
+  type KnowledgeGovernance,
   type KnowledgeSource,
   type ProviderReadiness,
   type PublishPackage,
@@ -1109,27 +1114,39 @@ function FactsPage() {
   const { openPanel, notify } = useActionFeedback();
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [conflicts, setConflicts] = useState<FactConflict[]>([]);
+  const [governance, setGovernance] = useState<KnowledgeGovernance | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewingRevisionId, setReviewingRevisionId] = useState<string | null>(null);
+  const [resolvingConflictId, setResolvingConflictId] = useState<string | null>(null);
+  const [conflictNotes, setConflictNotes] = useState<Record<string, string>>({});
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, "resolved_left" | "resolved_right" | "resolved_new_revision" | "dismissed">>({});
+
+  const refreshKnowledge = useCallback(async (signal?: AbortSignal) => {
+    if (!project.id) return;
+    const [nextFacts, nextSources, nextConflicts, nextGovernance] = await Promise.all([
+      fetchFacts(project.id, signal),
+      fetchKnowledgeSources(project.id, signal),
+      fetchFactConflicts(project.id, signal),
+      fetchKnowledgeGovernance(project.id, signal),
+    ]);
+    setFacts(nextFacts);
+    setSources(nextSources);
+    setConflicts(nextConflicts);
+    setGovernance(nextGovernance);
+    setLoadError(null);
+  }, [project.id]);
 
   useEffect(() => {
     if (!project.id) return;
     const controller = new AbortController();
-    Promise.all([
-      fetchFacts(project.id, controller.signal),
-      fetchKnowledgeSources(project.id, controller.signal),
-    ])
-      .then(([nextFacts, nextSources]) => {
-        setFacts(nextFacts);
-        setSources(nextSources);
-        setLoadError(null);
-      })
+    refreshKnowledge(controller.signal)
       .catch((error) => {
         if (controller.signal.aborted) return;
         setLoadError(error instanceof Error ? error.message : "事实库接口不可用");
       });
     return () => controller.abort();
-  }, [project.id]);
+  }, [project.id, refreshKnowledge]);
 
   const approved = facts.filter((item) => item.status === "approved").length;
   const pending = facts.filter((item) => item.status === "proposed").length;
@@ -1146,10 +1163,41 @@ function FactsPage() {
       const updated = await reviewFactRevision(project.id, revision.revision_id, action, actor);
       setFacts((items) => items.map((item) => item.revision_id === updated.revision_id ? updated : item));
       notify({ title: action === "approved" ? "事实已批准" : "事实已驳回", desc: `${updated.title} 的审核结果已由服务端持久化。`, tone: "success" });
+      void refreshKnowledge().catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "事实库刷新失败");
+      });
     } catch (error) {
       notify({ title: "审核未通过", desc: error instanceof Error ? error.message : "事实审核接口不可用", tone: "danger" });
     } finally {
       setReviewingRevisionId(null);
+    }
+  };
+
+  const resolveConflict = async (conflict: FactConflict) => {
+    const actor = getStoredAuthSession()?.user.userId;
+    const note = (conflictNotes[conflict.conflict_id] ?? "").trim();
+    const resolution = conflictResolutions[conflict.conflict_id] ?? "resolved_right";
+    if (!project.id || !actor) {
+      notify({ title: "无法提交裁决", desc: "当前登录会话缺少可信审核人身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    if (!note) {
+      notify({ title: "需要裁决说明", desc: "请记录判断依据；系统不会自动消除事实冲突。", tone: "warning" });
+      return;
+    }
+    setResolvingConflictId(conflict.conflict_id);
+    try {
+      await resolveFactConflict(project.id, conflict.conflict_id, resolution, actor, note);
+      setConflicts((items) => items.filter((item) => item.conflict_id !== conflict.conflict_id));
+      setConflictNotes((items) => ({ ...items, [conflict.conflict_id]: "" }));
+      notify({ title: "冲突已人工裁决", desc: "裁决人、时间、选择和说明已由服务端保存。", tone: "success" });
+      void refreshKnowledge().catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "事实库刷新失败");
+      });
+    } catch (error) {
+      notify({ title: "冲突裁决失败", desc: error instanceof Error ? error.message : "事实冲突接口不可用", tone: "danger" });
+    } finally {
+      setResolvingConflictId(null);
     }
   };
 
@@ -1183,6 +1231,79 @@ function FactsPage() {
         </div>
       </section>
       {loadError && <DataStateCard title="事实库读取失败" desc={loadError} tone="danger" />}
+      {!loadError && governance && (
+        <DataStateCard
+          title={governance.status === "healthy" ? "事实与来源当前无到期或冲突提醒" : `${governance.action_required_count} 项事实治理工作待处理`}
+          desc={governance.status === "healthy"
+            ? `系统按 ${governance.within_days} 天观察窗检查来源、已批准事实与开放冲突。`
+            : `已过期来源 ${governance.expired_source_count}、即将到期来源 ${governance.expiring_source_count}、已过期事实 ${governance.expired_fact_count}、即将到期事实 ${governance.expiring_fact_count}、开放冲突 ${governance.open_conflict_count}。`}
+          tone={governance.status === "healthy" ? "primary" : "danger"}
+        />
+      )}
+      {!loadError && governance && governance.alerts.length > 0 && (
+        <Panel title={`治理提醒 · 未来 ${governance.within_days} 天`}>
+          <div className="knowledge-governance-list">
+            {governance.alerts.map((alert) => (
+              <article className="knowledge-governance-row" data-severity={alert.severity} key={alert.alert_id}>
+                <AlertTriangle size={20} />
+                <div>
+                  <strong>{alert.title}</strong>
+                  <span>{alert.message}</span>
+                </div>
+                <Badge tone={alert.severity === "critical" ? "danger" : "warning"}>{alert.kind}</Badge>
+                <time>{alert.due_at ? formatDateTime(alert.due_at) : "等待人工裁决"}</time>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      )}
+      {!loadError && conflicts.length > 0 && (
+        <Panel title="开放事实冲突 · 必须人工裁决">
+          <div className="fact-conflict-list">
+            {conflicts.map((conflict) => (
+              <article className="fact-conflict-card" key={conflict.conflict_id}>
+                <div className="fact-conflict-head">
+                  <div>
+                    <strong>{conflict.description}</strong>
+                    <span>{conflict.conflict_type} · {formatDateTime(conflict.detected_at)}</span>
+                  </div>
+                  <Badge tone="danger">{conflict.status}</Badge>
+                </div>
+                <div className="fact-conflict-revisions">
+                  <code>左：{conflict.left_revision_id}</code>
+                  <code>右：{conflict.right_revision_id}</code>
+                </div>
+                <div className="fact-conflict-resolution">
+                  <select
+                    aria-label={`选择 ${conflict.conflict_id} 的裁决结果`}
+                    value={conflictResolutions[conflict.conflict_id] ?? "resolved_right"}
+                    onChange={(event) => setConflictResolutions((items) => ({ ...items, [conflict.conflict_id]: event.target.value as "resolved_left" | "resolved_right" | "resolved_new_revision" | "dismissed" }))}
+                  >
+                    <option value="resolved_left">采用左版本</option>
+                    <option value="resolved_right">采用右版本</option>
+                    <option value="resolved_new_revision">已创建新修订</option>
+                    <option value="dismissed">判定无需处理</option>
+                  </select>
+                  <input
+                    aria-label={`填写 ${conflict.conflict_id} 的裁决说明`}
+                    placeholder="填写事实依据与裁决说明"
+                    value={conflictNotes[conflict.conflict_id] ?? ""}
+                    onChange={(event) => setConflictNotes((items) => ({ ...items, [conflict.conflict_id]: event.target.value }))}
+                  />
+                  <button
+                    className="airank-console-primary-button"
+                    type="button"
+                    disabled={resolvingConflictId === conflict.conflict_id}
+                    onClick={() => void resolveConflict(conflict)}
+                  >
+                    {resolvingConflictId === conflict.conflict_id ? "保存中…" : "提交人工裁决"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      )}
       {!loadError && facts.length === 0 && <DataStateCard title="尚无事实修订" desc="先导入企业官方资料，再逐条审核事实；没有事实时不会生成公开内容。" tone="warning" />}
       <section className="fact-grid">
         {facts.map((item) => (
@@ -1226,7 +1347,7 @@ function FactsPage() {
                 <div><strong>{source.title}</strong><span>{source.source_type} · {source.authority_level}</span></div>
                 <Badge tone={source.status === "active" ? "success" : "warning"}>{source.status}</Badge>
                 <strong>{source.segment_count} 段</strong>
-                <span>hash {source.content_sha256.slice(0, 12)}…</span>
+                <span>{source.valid_until ? `有效至 ${formatDateTime(source.valid_until)}` : "长期有效 · 无到期日"}</span>
                 <Badge tone="primary">v{source.revision_number}</Badge>
               </div>
             ))}

@@ -29,7 +29,7 @@
 | yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
-| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 已有 content-addressed 来源导入、原文边界切片、事实修订/冲突/审核、ClaimSupport | 增量重嵌入、混合检索、过期提醒和审核 UI 仍缺 | adapt | Knowledge Build Skill | P0 | partial | 所有确认事实能定位原文边界、版本和审核记录 |
+| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 已有 content-addressed 来源导入、原文边界切片、事实修订/冲突/审核、ClaimSupport、到期提醒和人工冲突队列 | 增量重嵌入、混合检索和来源更新任务仍缺 | adapt | Knowledge Build Skill | P0 | partial | 所有确认事实能定位原文边界、版本和审核记录；过期/冲突会即时撤销生成资格 |
 | yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 项目含品牌/竞品，未成图 | 无实体版本、关系证据和消歧 | adapt | Entity Graph Skill | P1 | planned | 每条关系带 ClaimSupport；冲突实体进入人工审核 |
 | yao-geo-skills | `yao-geo-title-optimizer` | 产生可审核的标题候选 | `skills/yao-geo-title-optimizer` | 事实/方向 → 标题与评分 | 已审核事实、风险规则 | MIT | 内容资产骨架 | 评分缺少可验证 rubric | reference_only | Intervention Title Skill | P2 | planned | 候选不含无证据声明；rubric 与人工评审一致性达门槛 |
 | yao-geo-skills | `yao-geo-explainer-builder` | 生成科普/How-to/FAQ 页面 | `skills/yao-geo-explainer-builder` | 审核事实/问题 → 文章与核验矩阵 | FactAtom、ClaimSupport | MIT | 内容资产骨架 | 生成未强绑定证据 | adapt | Explainer Skill | P1 | planned | 每个事实性 Claim 必须绑定已审核支持证据 |
@@ -58,11 +58,11 @@
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | KnowledgeSource/FactRevision/FactConflict、版本、有效期和人工审核契约已实现 | 导入 worker、冲突队列和操作 UI 仍缺 | adapt | Knowledge domain | P0 | partial | 增量同步不覆盖已审核版本；冲突进入队列 |
+| GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | KnowledgeSource/FactRevision/FactConflict、版本、有效期、到期治理摘要和人工冲突裁决 UI 已实现 | 导入 worker和增量来源更新仍缺 | adapt | Knowledge domain | P0 | partial | 增量同步不覆盖已审核版本；冲突进入队列并保存人工裁决人、时间与说明 |
 | GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | 已有 source/content hash 幂等导入和保持原文拼接一致的边界切片 | embedding worker、混合检索和变更后局部重嵌入仍缺 | adapt | Knowledge ingestion | P1 | partial | 相同 hash 幂等；变更仅更新受影响切片 |
 | GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 已有 Claim 覆盖核验、风险规则、内容 hash 绑定审核和高风险 override 审计 | 风险规则集和审核 UI 仍需扩充 | adapt | Governance Skills | P0 | partial | 未过事实/风险门禁不能生成发布任务 |
 | GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | 审核后不可变发布快照、export、受白名单保护的 WordPress/HTTP worker、attempt 哈希回执与失败恢复已实现 | 缺客户真实站点凭证和线上回执；未验证的渠道仍为 partial | adapt | Delivery Gateway | P1 | partial | WordPress/HTTP contract + 真实 MySQL attempt/retry 通过；客户站点 E2E 后晋级 |
-| GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | 发布包具备租户级幂等键、不可变快照、attempt ledger 和异步 job | worker 尚未消费发布 attempt，外部副作用恢复门禁未过 | absorb | Delivery job runtime | P1 | partial | worker 崩溃后可续跑；相同 key 只有一个外部副作用 |
+| GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | 发布包具备租户级幂等键、不可变快照、attempt ledger；worker 已消费任务并完成失败重试恢复契约 | 客户真实站点的超时/崩溃恢复和单副作用证据仍缺 | absorb | Delivery job runtime | P1 | partial | contract 与真实 MySQL worker 通过；客户站点验证相同 key 只有一个外部副作用 |
 | GEOFlow | SSRF 和出站安全 | 保护官网抓取与发布端点 | `Services/Outbound/*` | URL/request → allowed/blocked | DNS 重解析、大小限制 | Apache-2.0 | provider URL 安全零散 | 缺统一出站策略 | adapt | Outbound Security Gateway | P0 | planned | 私网、重定向、DNS rebinding、超大响应均被阻断 |
 | GEOFlow | 可见度采集模型 | 参考 run/source 分表与 provider normalizer | `AiVisibility*` | provider response → run/sources | provider client | Apache-2.0 | scan run/snapshot/citation | 缺 surface、session、raw object | reference_only | Measurement schema | P0 | partial | 只吸收结构，不复用其业务实现；新契约通过迁移测试 |
 | GEOFlow | 站点主题复制 | 快速生成站点外观 | `SiteThemeReplication*` | 参考站 → 主题包 | Laravel 主题 | Apache-2.0 | AIRank 有独立 UI | 偏离核心证据产品 | reject | 无 | P3 | rejected | 不进入 AIRank |
@@ -140,6 +140,7 @@
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
 - `20260808_0006`—`0008` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0008`；42 张 AIRank 表完成核验，知识导入、内容审核、不可变发布快照、观察窗口、复测结果和报告 hash 均落库，随后删除临时验收库。
+- 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
 - 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
 - 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。

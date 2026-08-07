@@ -19,6 +19,8 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     for api_call in (
         "fetchProviderReadiness",
         "fetchKnowledgeSources",
+        "fetchKnowledgeGovernance",
+        "fetchFactConflicts",
         "fetchFacts",
         "fetchBuyerQuestions",
         "fetchPublishPackages",
