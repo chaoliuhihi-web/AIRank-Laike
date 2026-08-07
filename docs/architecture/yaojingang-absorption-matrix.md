@@ -29,7 +29,7 @@
 | yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
-| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 有 FactAtom/FactSource | 无 Source/Revision/Conflict/有效期 | adapt | Knowledge Build Skill | P0 | planned | 所有确认事实能定位原文边界、版本和审核记录 |
+| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | KnowledgeSource/FactRevision/FactConflict/ClaimSupport、审核与有效期领域契约已落库 | 安全导入、增量切片和审核 UI 仍缺 | adapt | Knowledge Build Skill | P0 | partial | 所有确认事实能定位原文边界、版本和审核记录 |
 | yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 项目含品牌/竞品，未成图 | 无实体版本、关系证据和消歧 | adapt | Entity Graph Skill | P1 | planned | 每条关系带 ClaimSupport；冲突实体进入人工审核 |
 | yao-geo-skills | `yao-geo-title-optimizer` | 产生可审核的标题候选 | `skills/yao-geo-title-optimizer` | 事实/方向 → 标题与评分 | 已审核事实、风险规则 | MIT | 内容资产骨架 | 评分缺少可验证 rubric | reference_only | Intervention Title Skill | P2 | planned | 候选不含无证据声明；rubric 与人工评审一致性达门槛 |
 | yao-geo-skills | `yao-geo-explainer-builder` | 生成科普/How-to/FAQ 页面 | `skills/yao-geo-explainer-builder` | 审核事实/问题 → 文章与核验矩阵 | FactAtom、ClaimSupport | MIT | 内容资产骨架 | 生成未强绑定证据 | adapt | Explainer Skill | P1 | planned | 每个事实性 Claim 必须绑定已审核支持证据 |
@@ -46,7 +46,7 @@
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | 只有 citation 计数 | 无 ClaimSupport/吸收支持度 | absorb | Citation + ClaimSupport | P0 | planned | 同一引用分别计算召回与支持度，人工标注集可复算 |
+| geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | ClaimSupport 已有原文边界、支持/矛盾/不足和审核字段 | 支持度自动评测与人工标注集仍缺 | absorb | Citation + ClaimSupport | P0 | partial | 同一引用分别计算召回与支持度，人工标注集可复算 |
 | geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | buyer question 只有 type/intent | 分类维度不足 | absorb | Prompt Cohort taxonomy | P0 | planned | 620 问题基准可导入评测且保留来源版本 |
 | geo-citation-lab | Web/App 平台字典 | 强制终端分开比较 | `data/reference/ai_platforms.csv` | 平台代码 → 产品族/终端/映射证据 | 版本化字典 | CC-BY-4.0 | API/Web/App/manual_import 契约与证据等级已分开 | App 采集器仍未实现 | absorb | CollectorSurface manifest | P0 | partial | Web/App 不会聚合到同一证据等级或同一分母 |
 | geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot、raw/screenshot hash 已落库 | 对象校验巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 篡改任一原始对象后校验失败；派生表可重建 |
@@ -58,7 +58,7 @@
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | FactAtom 只有当前版本 | 缺 KnowledgeSource/FactRevision/Conflict | adapt | Knowledge domain | P0 | planned | 增量同步不覆盖已审核版本；冲突进入队列 |
+| GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | KnowledgeSource/FactRevision/FactConflict、版本、有效期和人工审核契约已实现 | 导入 worker、冲突队列和操作 UI 仍缺 | adapt | Knowledge domain | P0 | partial | 增量同步不覆盖已审核版本；冲突进入队列 |
 | GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | kb-lite 占位 | 无原文边界、同步 staging | adapt | Knowledge ingestion | P1 | planned | 相同 hash 幂等；变更仅更新受影响切片 |
 | GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 有 fact review，无内容 review | 无 Claim 级核验与 override 审计 | adapt | Governance Skills | P0 | planned | 未过事实/风险门禁不能生成发布任务 |
 | GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | publish package 仅骨架 | 无真实 publisher adapter | adapt | Delivery Gateway | P1 | planned | WordPress/HTTP contract tests；幂等重试不重复发布 |
@@ -138,6 +138,7 @@
 ## 阶段二当前证据（2026-08-08）
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
-- 全量 Python 测试：`134 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
+- `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
+- 全量 Python 测试：`145 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
 - 当前阶段仍是 `partial`：尚未把四个 API Provider Gateway 迁入本仓，尚未跑四平台真实重复采样和浏览器 E2E，因此不允许声明商业可用。
