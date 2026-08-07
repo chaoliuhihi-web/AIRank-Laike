@@ -33,6 +33,7 @@ try:
         ProviderUnavailable,
         call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
+        classify_provider_call_failure,
         probe_provider_readiness,
         provider_execution_mode,
     )
@@ -43,6 +44,7 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
         ProviderUnavailable,
         call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
+        classify_provider_call_failure,
         probe_provider_readiness,
         provider_execution_mode,
     )
@@ -77,6 +79,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "SCAN_RUN_ALREADY_RUNNING": (409, "Scan run is already running"),
     "SCAN_TASK_NOT_FOUND": (404, "Scan task not found"),
     "SCAN_PROVIDER_TIMEOUT": (502, "Scan provider timed out"),
+    "SCAN_PROVIDER_FAILED": (502, "Scan provider failed"),
     "SCAN_PROVIDER_BLOCKED": (502, "Scan provider is blocked"),
     "JOB_NOT_FOUND": (404, "Job not found"),
     "JOB_TIMEOUT": (500, "Job timed out"),
@@ -2763,6 +2766,35 @@ def persist_provider_source_panel(
     )
 
 
+def persist_provider_failure_screenshot(
+    tenant_id: str,
+    project_id: str,
+    failure: dict[str, Any],
+    *,
+    object_storage: Any | None = None,
+) -> StoredObject | None:
+    metadata = failure.get("provider_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    screenshot_path = str(metadata.get("screenshot_path") or "")
+    screenshot_sha256 = str(metadata.get("screenshot_sha256") or "")
+    if not screenshot_path and not screenshot_sha256:
+        return None
+    if not screenshot_path or not screenshot_sha256:
+        raise ObjectStorageError("failure screenshot must include both path and SHA-256")
+    storage = object_storage or build_object_storage_from_env()
+    object_partition = sha256_text(f"{tenant_id}:{project_id}")[:24]
+    return storage.put_file(
+        screenshot_path,
+        key=(
+            f"evidence/{object_partition}/provider-failure-screenshot/"
+            f"{screenshot_sha256[:2]}/{screenshot_sha256}.png"
+        ),
+        content_type="image/png",
+        expected_sha256=screenshot_sha256,
+    )
+
+
 def complete_mysql_real_brand_scan(
     tenant_id: str,
     project: ProjectData,
@@ -2873,7 +2905,7 @@ def complete_mysql_real_brand_scan(
             )
             continue
         except ProviderCallError as exc:
-            code = "SCAN_PROVIDER_TIMEOUT" if "timeout" in exc.reason.lower() else "SCAN_PROVIDER_BLOCKED"
+            code, blocked = classify_provider_call_failure(exc)
             failures.append(
                 {
                     **row,
@@ -2881,7 +2913,7 @@ def complete_mysql_real_brand_scan(
                     "finished_at": utc_now(),
                     "error_code": code,
                     "error_message": exc.reason[:1000],
-                    "blocked": code == "SCAN_PROVIDER_BLOCKED",
+                    "blocked": blocked,
                     "provider_error_code": exc.error_code,
                     "upstream_error_code": exc.provider_code,
                     "retryable": exc.retryable,
@@ -2949,9 +2981,51 @@ def complete_mysql_real_brand_scan(
                     "error_code": "EVIDENCE_STORAGE_FAILED",
                     "error_message": str(exc)[:1000],
                     "blocked": False,
+                    "provider_metadata": {
+                        key: value
+                        for key, value in result.raw_metadata.items()
+                        if key not in {
+                            "provider_raw_response",
+                            "screenshot_path",
+                            "source_panel_screenshot_path",
+                        }
+                    },
+                    "captured_provider_response": {
+                        "answer_text": result.answer_text,
+                        "external_trace_id": result.external_trace_id,
+                        "native_citations": result.native_citations,
+                        "target_entity_mentions": result.target_entity_mentions,
+                        "provider_raw_response": result.raw_metadata.get("provider_raw_response"),
+                    },
                 }
             )
     successes = persisted_successes
+
+    durable_failure_screenshots: dict[str, StoredObject] = {}
+    for failure in failures:
+        provider_metadata = failure.get("provider_metadata")
+        if not isinstance(provider_metadata, dict):
+            continue
+        try:
+            screenshot = persist_provider_failure_screenshot(
+                tenant_id,
+                project.project_id,
+                failure,
+                object_storage=object_storage,
+            )
+            if screenshot is not None:
+                durable_failure_screenshots[str(failure["id"])] = screenshot
+                provider_metadata.update(
+                    {
+                        "screenshot_object_key": screenshot.key,
+                        "screenshot_object_uri": screenshot.uri,
+                        "screenshot_storage_driver": screenshot.driver,
+                    }
+                )
+        except ObjectStorageError as exc:
+            failure["failure_evidence_storage_error"] = str(exc)[:1000]
+        finally:
+            provider_metadata.pop("screenshot_path", None)
 
     finished_at = utc_now()
     failed_count = len(failures)
@@ -3364,6 +3438,170 @@ def complete_mysql_real_brand_scan(
 
         for failure in failures:
             provider_metadata = failure.get("provider_metadata")
+            failure_status = "blocked" if failure.get("blocked") else "failed"
+            failure_snapshot_id = f"snap_{uuid4().hex[:12]}"
+            failure_evidence_id = f"evidence_{uuid4().hex[:12]}"
+            failure_screenshot_ref_id = None
+            durable_failure_screenshot = durable_failure_screenshots.get(str(failure["id"]))
+            if durable_failure_screenshot is not None:
+                failure_screenshot_ref_id = f"object_{uuid4().hex[:12]}"
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_object_refs (
+                          id, tenant_id, project_id, object_type, object_uri,
+                          content_type, byte_size, sha256, metadata_json, created_at
+                        ) VALUES (
+                          :id, :tenant_id, :project_id, 'provider_failure_screenshot', :object_uri,
+                          :content_type, :byte_size, :sha256, :metadata_json, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": failure_screenshot_ref_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "object_uri": durable_failure_screenshot.uri,
+                        "content_type": durable_failure_screenshot.content_type,
+                        "byte_size": durable_failure_screenshot.byte_size,
+                        "sha256": durable_failure_screenshot.sha256,
+                        "metadata_json": json.dumps(
+                            {
+                                "provider": failure["provider"],
+                                "session_id": failure.get("session_id"),
+                                "immutable": True,
+                                "object_key": durable_failure_screenshot.key,
+                                "storage_driver": durable_failure_screenshot.driver,
+                                "failure_code": failure["error_code"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "created_at": failure["finished_at"],
+                    },
+                )
+            public_provider_metadata = (
+                {
+                    key: value
+                    for key, value in provider_metadata.items()
+                    if key != "provider_raw_response"
+                }
+                if isinstance(provider_metadata, dict)
+                else {}
+            )
+            failure_payload = {
+                "error_code": failure["error_code"],
+                "error_message": failure["error_message"],
+                "blocked": bool(failure.get("blocked")),
+                "provider_error_code": failure.get("provider_error_code"),
+                "upstream_error_code": failure.get("upstream_error_code"),
+                "retryable": bool(failure.get("retryable")),
+                "evidence_storage_error": failure.get("failure_evidence_storage_error"),
+            }
+            failure_raw_response = {
+                "provider": failure["provider"],
+                "sample_status": failure_status,
+                "failure": failure_payload,
+                "capture_metadata": public_provider_metadata,
+                **(
+                    {"captured_provider_response": failure["captured_provider_response"]}
+                    if failure.get("captured_provider_response") is not None
+                    else {}
+                ),
+            }
+            failure_raw_json = json.dumps(
+                failure_raw_response,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            failure_raw_sha256 = sha256_text(failure_raw_json)
+            failure_request_metadata = {
+                "task_request": parse_json_value(failure.get("request_json"), {}),
+                "provider_request": public_provider_metadata,
+                "failure": failure_payload,
+            }
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_answer_snapshots (
+                      id, tenant_id, project_id, run_id, task_id, question_id,
+                      provider, cohort_type, prompt_version_id, sample_index,
+                      session_id, collector_surface, evidence_level, sample_status,
+                      answer_text, answer_sha256, raw_response_sha256,
+                      brand_mentioned, brand_rank, mention_class, target_entity_mentions_json,
+                      model_name, search_enabled, competitor_mentions_json, sentiment, confidence,
+                      raw_response_ref_id, screenshot_ref_id, request_metadata_ref_id,
+                      external_trace_id, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
+                      :provider, :cohort_type, :prompt_version_id, :sample_index,
+                      :session_id, :collector_surface, :evidence_level, :sample_status,
+                      '', NULL, :raw_response_sha256,
+                      0, NULL, 'unknown', JSON_ARRAY(),
+                      :model_name, NULL, JSON_ARRAY(), NULL, NULL,
+                      :raw_response_ref_id, :screenshot_ref_id, :request_metadata_ref_id,
+                      :external_trace_id, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": failure_snapshot_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "task_id": failure["id"],
+                    "question_id": failure["question_id"],
+                    "provider": failure["provider"],
+                    "cohort_type": failure["cohort_type"],
+                    "prompt_version_id": failure["prompt_version_id"],
+                    "sample_index": failure["sample_index"],
+                    "session_id": failure["session_id"],
+                    "collector_surface": failure["collector_surface"],
+                    "evidence_level": failure["evidence_level"],
+                    "sample_status": failure_status,
+                    "raw_response_sha256": failure_raw_sha256,
+                    "model_name": public_provider_metadata.get("model_name"),
+                    "raw_response_ref_id": failure_evidence_id,
+                    "screenshot_ref_id": failure_screenshot_ref_id,
+                    "request_metadata_ref_id": failure_evidence_id,
+                    "external_trace_id": (
+                        public_provider_metadata.get("provider_request_id")
+                        or public_provider_metadata.get("browser_trace_id")
+                    ),
+                    "created_at": failure["finished_at"],
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_evidence_snapshots (
+                      id, tenant_id, project_id, answer_snapshot_id,
+                      raw_response_json, raw_response_sha256, screenshot_ref_id,
+                      source_panel_ref_id, request_metadata_json, captured_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :answer_snapshot_id,
+                      :raw_response_json, :raw_response_sha256, :screenshot_ref_id,
+                      NULL, :request_metadata_json, :captured_at, :captured_at
+                    )
+                    """
+                ),
+                {
+                    "id": failure_evidence_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "answer_snapshot_id": failure_snapshot_id,
+                    "raw_response_json": failure_raw_json,
+                    "raw_response_sha256": failure_raw_sha256,
+                    "screenshot_ref_id": failure_screenshot_ref_id,
+                    "request_metadata_json": json.dumps(
+                        failure_request_metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    ),
+                    "captured_at": failure["finished_at"],
+                },
+            )
             if isinstance(provider_metadata, dict) and provider_metadata.get("capture_mode") == "provider_api":
                 required_audit_values = (
                     provider_metadata.get("model_name"),
@@ -3376,13 +3614,13 @@ def complete_mysql_real_brand_scan(
                         text(
                             """
                             INSERT INTO airank_provider_request_audits (
-                              id, tenant_id, project_id, run_id, task_id,
+                              id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
                               provider_key, model_name, endpoint_host, configuration_fingerprint,
                               prompt_sha256, outcome, attempt_count, error_code,
                               provider_error_code, requested_at, completed_at, metadata_json
                             )
                             VALUES (
-                              :id, :tenant_id, :project_id, :run_id, :task_id,
+                              :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
                               :provider_key, :model_name, :endpoint_host, :configuration_fingerprint,
                               :prompt_sha256, 'failed', :attempt_count, :error_code,
                               :provider_error_code, :requested_at, :completed_at, :metadata_json
@@ -3395,6 +3633,7 @@ def complete_mysql_real_brand_scan(
                             "project_id": project.project_id,
                             "run_id": run.run_id,
                             "task_id": failure["id"],
+                            "answer_snapshot_id": failure_snapshot_id,
                             "provider_key": failure["provider"],
                             "model_name": provider_metadata["model_name"],
                             "endpoint_host": provider_metadata["endpoint_host"],

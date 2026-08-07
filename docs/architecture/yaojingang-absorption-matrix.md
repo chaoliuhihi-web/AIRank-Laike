@@ -8,7 +8,7 @@
 
 ## 结论先行
 
-1. AIRank 已完成测量可信度的第一轮修复：四类 Cohort、Prompt 版本、重复采样、会话 ID、surface/evidence level、不可变 hash 和样本状态已进入领域、API 与数据库迁移。
+1. AIRank 已完成测量可信度的第一轮修复：四类 Cohort、Prompt 版本、重复采样、会话 ID、surface/evidence level、不可变 hash 和样本状态已进入领域、API 与数据库迁移；有效、失败和阻塞任务都保存独立 Answer/EvidenceSnapshot，失败不再只有可变任务日志。
 2. 盲测不再注入品牌/竞品；正常未提及不再被丢弃；固定 `0.72/0.58` 置信度和按文本顺序猜排名已删除。辅助测、对比测和事实核验使用独立 Prompt 契约。
 3. `AnswerSnapshot` 允许保存“有效但无引用”的回答，并把引用召回率与引用支持度分开；浏览器采样只登记真实可见外链，不再把“Provider 原始回答”伪装成 citation。
 4. 控制台、无数据库资产包和报告接口已删除固定业务数字与演示产物；无真实 Provider 证据时返回 `empty/unverified`，不会生成品牌指标、完成度、报告或发布包。
@@ -22,7 +22,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yao-geo-skills | `yao-geo-tracking` | 为企业建立可复查的监测口径 | `skills/yao-geo-tracking` | 企业/官网 → 追踪方案与报告 | 官网取证、区域口径 | MIT | Cohort/重复采样任务契约已落库 | 区域采集与完整性报告仍缺 | adapt | Measurement Plan Skill | P0 | partial | 同一项目方案可编译为任务契约，字段完整性测试通过 |
 | yao-geo-skills | `yao-geo-effect-monitor` | 长期监测、引用台账、谨慎归因 | `skills/yao-geo-effect-monitor` | 平台样本 → 指标、告警、月报 | 真实样本、引用、时间窗 | MIT | 纯函数指标已覆盖有效/失败/阻塞/未提及/稳定性 | T0/T+7/T+14/T+30 与归因语义仍缺 | adapt | Effect Monitor Skill | P0 | partial | 指标从样本重算一致；报告仅使用批准的归因措辞 |
-| yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
+| yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash；超时、网络失败、登录/验证码阻塞分开归类并保存失败现场截图 | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
 | yao-geo-skills | `yao-doubao-crawler` | 豆包 Web/App 分终端证据 | `skills/yao-doubao-crawler` | 问题/轮次/终端 → 回答、截图、XML、来源卡 | 登录态；Appium/AVD（App） | MIT | 只有通用 Web 采样 | 无 App 契约；Web/App 证据混用 | adapt | Web Collector + App Collector | P0 | planned | 同问题 Web/App 独立标记、证据等级不同且可对比 |
 | yao-geo-skills | `yao-chatgpt-crawler` | ChatGPT AI Search 多次采样 | `skills/yao-chatgpt-crawler` | 问题/轮次 → 回答、可见来源与概率报告 | 登录态、Browser Bridge | MIT | 浏览器 provider 名录包含 ChatGPT | 没有原生来源面板结构化与会话隔离证明 | adapt | Web Collector Adapter | P1 | planned | 真实多轮样本可追踪到可见来源和截图 |
 | yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 已有版本化 taxonomy、稳定 question version、规范化去重、人工确认、四类 Cohort，以及 M1 客户授权观察批次、内容 hash、来源内频次、PII 阻断和不可变 provenance | M2 自动连接器、M3 抽样校准、行业覆盖 benchmark 和追问链仍缺 | adapt | Research Intent Skill | P0 | partial | M1 记录按批次幂等导入，PII 原文不落库；频次不得标成搜索量；编译后仍须人工确认且 Cohort 匹配才能扫描 |
@@ -49,10 +49,10 @@
 | geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | ClaimSupport 已有原文边界、支持/矛盾/不足和审核字段 | 支持度自动评测与人工标注集仍缺 | absorb | Citation + ClaimSupport | P0 | partial | 同一引用分别计算召回与支持度，人工标注集可复算 |
 | geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | 已有 `question_type/intent_level/buyer_stage/prompt_style/temporal_scope/scenario` 与四类 Cohort，版本和来源进入不可变修订 | 620 问题基准尚未导入，行业标签一致性 benchmark 仍缺 | absorb | Prompt Cohort taxonomy | P0 | partial | 当前契约/对抗用例通过；后续基准导入必须保留数据版本与来源 |
 | geo-citation-lab | Web/App 平台字典 | 强制终端分开比较 | `data/reference/ai_platforms.csv` | 平台代码 → 产品族/终端/映射证据 | 版本化字典 | CC-BY-4.0 | API/Web/App/manual_import 契约与证据等级已分开 | App 采集器仍未实现 | absorb | CollectorSurface manifest | P0 | partial | Web/App 不会聚合到同一证据等级或同一分母 |
-| geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot 与内容寻址 screenshot 已落库；读取时复验 SHA-256/大小，真实 MinIO write/read/delete 已通过 | 批量完整性巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 单对象篡改会返回完整性错误；仍需全库巡检与派生表重建 |
+| geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | 每个有效/失败/阻塞任务均有 Answer/EvidenceSnapshot 与原始响应 hash；浏览器失败现场和回答截图使用独立内容寻址对象，读取时复验 SHA-256/大小，真实 MinIO write/read/delete 已通过 | 批量完整性巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 单对象篡改会返回完整性错误；仍需全库巡检与派生表重建 |
 | geo-citation-lab | 来源类型与权威度治理 | 支撑来源结构、缺口和人工复核 | `data/reference/source_types.csv` | 域名 → 类型/状态/置信度/证据 | 参考表和人工审核 | CC-BY-4.0 | citation 有 source_type | 无分类方法、置信度和治理状态 | absorb | Source Registry | P1 | planned | 精确映射优先；未知来源保持 unclassified，不猜测 |
 | geo-citation-lab | 214,119 条 CN-GEO 引用数据 | 提供平台差异和引用分析基准 | `03-cn-geo-citation-dataset/data` | 原始引用 → 标准表/质量报告 | 数据版本 2.0.1 | CC-BY-4.0/上游条款 | 无公开 benchmark | 缺回归数据 | reference_only | Eval datasets | P1 | planned | 只用于引用/终端/来源评测；禁止计算推荐率、趋势和情感 |
-| geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | `airank.measurement-quality.v2` 对每个样本加载独立 Evidence Manifest，执行 21 项检查；除分母、hash 和分类外，还强制 API 请求审计、Web/App 不可变截图、来源面板检查状态、App 环境元数据和人工导入来源 hash；阻断报告不可下载 | App 采集器、全库派生表重建和多格式交付物视觉门禁仍缺 | adapt | Evidence data gate | P1 | partial | 质量报告具备 data/report SHA-256、分采集面完整性汇总与 known limitations；终端证据缺失或复测口径不一致时 `publishable=false`、报告状态 `quality_blocked` |
+| geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | `airank.measurement-quality.v2` 对每个任务样本加载独立 Evidence Manifest，执行 21 项检查；失败/阻塞样本也必须有原始响应 hash，API 请求审计、Web/App 有效回答截图、来源面板、App 环境元数据和人工导入来源 hash 按采集面分别门禁；阻断报告不可下载 | App 采集器、全库派生表重建和多格式交付物视觉门禁仍缺 | adapt | Evidence data gate | P1 | partial | 质量报告具备 data/report SHA-256、分采集面完整性汇总与 known limitations；失败快照缺失、终端证据缺失或复测口径不一致时 `publishable=false`、报告状态 `quality_blocked` |
 
 ## GEOFlow：知识、审校、发布与恢复
 

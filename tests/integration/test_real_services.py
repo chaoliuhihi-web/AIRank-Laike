@@ -27,7 +27,9 @@ from apps.api.main import (
     MySQLScanRepository,
     ProjectCreateRequest,
     ScanRunCreateRequest,
+    complete_mysql_real_brand_scan,
 )
+from apps.api.provider_scan import ProviderScanResult, ProviderUnavailable
 from apps.api.delivery_routes import (
     ContentReviewRequest,
     MySQLDeliveryRepository,
@@ -832,6 +834,114 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
                 "blocker_count": 1,
             }
         ]
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_failure_evidence_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+    evidence_repo = MySQLEvidenceRepository(database_url())
+    quality_repo = MySQLRetestRepository(database_url())
+    calls = 0
+
+    def provider_call(**kwargs: Any) -> ProviderScanResult:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ProviderUnavailable("doubao", "login required for this isolated browser session")
+        answer_text = "可选方案包括其他平台，当前回答未提及目标品牌。"
+        return ProviderScanResult(
+            provider="doubao",
+            provider_label="豆包",
+            answer_text=answer_text,
+            brand_mentioned=False,
+            brand_rank=None,
+            competitor_mentions=[],
+            sentiment="neutral",
+            mention_class="not_mentioned",
+            target_entity_mentions=[],
+            confidence=None,
+            external_trace_id="browser:failure-evidence:1",
+            native_citations=[],
+            raw_metadata={
+                "capture_mode": "consumer_browser",
+                "collector_surface": "web",
+                "evidence_level": "consumer_web",
+                "cohort_type": kwargs["cohort_type"],
+                "session_id": kwargs["session_id"],
+                "prompt_version_id": kwargs["prompt_version_id"],
+                "prompt_sha256": "a" * 64,
+                "answer_sha256": hashlib.sha256(answer_text.encode("utf-8")).hexdigest(),
+                "source_panel_status": "not_present",
+                "source_panel_capture_mode": "visible_page_inspected_no_sources",
+            },
+        )
+
+    monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "browser")
+    monkeypatch.setattr("apps.api.main.call_provider_for_brand_rank", provider_call)
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-failure-evidence.example.com",
+                brand_name_hint="AIRank Failure Evidence",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="企业应该如何选择 GEO 监测服务商？",
+                status="confirmed",
+                recommended_providers=["doubao"],
+            ),
+        )
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                name="Immutable failed sample evidence",
+                repetitions=2,
+                collector_surfaces=["web"],
+                provider_scope=["doubao"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+
+        complete_mysql_real_brand_scan(tenant_id, project, [], [question], run)
+
+        samples, summary = evidence_repo.list_samples(tenant_id, project.project_id, run.run_id, 20)
+        assert summary == {
+            "total": 2,
+            "valid_count": 1,
+            "valid_unmentioned_count": 1,
+            "citation_sample_count": 0,
+        }
+        assert {sample.sample_status for sample in samples} == {"valid", "blocked"}
+        blocked_sample = next(sample for sample in samples if sample.sample_status == "blocked")
+        assert blocked_sample.answer_sha256 is None
+        detail = evidence_repo.get_sample(tenant_id, blocked_sample.snapshot_id)
+        assert detail.answer_text == ""
+        assert detail.raw_response_sha256
+        assert detail.raw_response["sample_status"] == "blocked"
+        assert detail.raw_response["failure"]["error_code"] == "SCAN_PROVIDER_BLOCKED"
+        assert detail.request_metadata["failure"]["blocked"] is True
+
+        quality = quality_repo.get_quality_report(tenant_id, project.project_id, run.run_id)
+        raw_hash_check = next(check for check in quality["checks"] if check["code"] == "raw_response_hashes_present")
+        assert raw_hash_check["status"] == "pass"
+        assert quality["metrics"]["failed_sample_count"] == 0
+        assert quality["metrics"]["blocked_sample_count"] == 1
+        assert quality["metrics"]["not_mentioned_count"] == 1
     finally:
         cleanup_tenant(engine, tenant_id)
 

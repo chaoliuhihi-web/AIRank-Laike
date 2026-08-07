@@ -361,9 +361,10 @@ def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
         evidence_level = EvidenceLevel(row["evidence_level"])
     except ValueError:
         evidence_level = SURFACE_EVIDENCE_LEVEL[surface]
-    has_answer = bool(row.get("sample_id") and (row.get("answer_text") or "").strip())
-    raw_status = row.get("sample_status") if has_answer else None
-    if raw_status == "valid":
+    has_snapshot = bool(row.get("sample_id"))
+    has_answer = bool(has_snapshot and (row.get("answer_text") or "").strip())
+    raw_status = row.get("sample_status") if has_snapshot else None
+    if raw_status == "valid" and has_answer:
         status = SampleStatus.VALID
     elif raw_status == "blocked" or row.get("task_status") == "skipped" or "BLOCK" in str(row.get("error_code") or "").upper():
         status = SampleStatus.BLOCKED

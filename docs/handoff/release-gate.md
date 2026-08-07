@@ -64,10 +64,11 @@ python3 scripts/release_readiness.py \
 | --- | --- | --- |
 | scan run 创建 | acceptance test | 可创建并查询状态 |
 | task 状态机 | worker test | queued/running/succeeded/failed/timeout 可复测 |
-| snapshot 保存 | DB/test evidence | 每个回答有 answer snapshot |
+| snapshot 保存 | DB/test evidence | 每个有效、失败和阻塞任务都有 answer/evidence snapshot 与原始响应 hash |
 | citation 保存 | DB/test evidence | 每个引用来源有 citation |
 | score 可复现 | score fixture test | 同一输入重复计算一致 |
 | 失败显式化 | worker test | 失败不能长期停在 queued |
+| 失败现场证据 | DB/browser evidence | Web/App 失败如有现场截图则持久化为不可变对象；失败不冒充未提及 |
 
 ## Gate 5：FactAtom / 可信事实卡
 
@@ -559,3 +560,30 @@ Blocking conditions:
 Decision:
 
 - AIRank can no longer publish a Consumer-surface report when the database has only answer text and hashes. Commercial launch remains `NO-GO` until real Consumer sessions and the broader production gates pass.
+
+## 2026-08-08 Immutable Scan Failure Evidence Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this immutable-failure-evidence commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Every real scan task now writes an immutable AnswerSnapshot and EvidenceSnapshot, including failed and blocked slots. Failure snapshots keep an empty answer, no answer hash, a content-addressed raw-failure hash, request metadata, status, error taxonomy and any available external trace.
+- Browser errors captured after page launch preserve a failure-scene screenshot. The temporary path is removed from persisted metadata after the bytes are copied to immutable object storage; authenticated reads continue to recheck SHA-256 and length.
+- Failure taxonomy separates user/external-action blockers (login, captcha, auth, model endpoint, quota) from timeouts and operational network/upstream/parser failures. None of these are classified as brand not-mentioned or included in the valid answer denominator.
+- A real MySQL mixed run passed with one valid, not-mentioned sample and one blocked sample. Both had raw-response hashes, `raw_response_hashes_present` passed, and the blocked sample remained outside the not-mentioned metric.
+- A second real run used an actual Qianwen API response together with an actual Qianwen Consumer Web timeout. The completed batch showed `1/2` valid, one valid not-mentioned answer, one failed Web slot, and an immutable failure-scene screenshot.
+- Browser QA drilled into the failed Web sample and displayed “失败，不计品牌分类”, no answer hash, an immutable raw-response hash, EvidenceSnapshot ID, Consumer Web evidence grade and the verified screenshot object. Mobile rendering produced no browser error/warning. Screenshot: `/tmp/airank-failure-evidence-mobile.png`.
+- Full local regression passed `240 passed, 14 skipped`; real MySQL integration passed `12 passed, 2 skipped`; focused contracts passed `35`; Web build and npm high-severity audit passed with zero known vulnerabilities. The yaojingang source lock was rechecked against all current relevant repository HEADs and remained unchanged; the absorption matrix still validates `12 sources / 64 rows / 21 GEO skills`.
+
+Blocking conditions:
+
+- The mixed run is intentionally non-publishable because its valid-sample rate is only `0.5`; preserving failed evidence does not lower the report-quality threshold.
+- Consumer App collection, four-platform logged-in Consumer Web repetition, production Yudao, HTTPS object storage, external Publisher receipts, production Python/Node versions, remote-main synchronization and end-to-end customer reporting remain open.
+
+Decision:
+
+- AIRank can now audit why a scan slot failed without corrupting visibility metrics or losing the browser failure scene. Commercial launch remains `NO-GO` until the broader production gates pass.

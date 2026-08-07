@@ -152,6 +152,50 @@ class ProviderCallError(RuntimeError):
         self.public_metadata = dict(public_metadata or {})
 
 
+class BrowserProbeError(RuntimeError):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        screenshot_path: str,
+        screenshot_sha256: str,
+        page_url: str,
+        page_title: str,
+        trace_id: str,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = re.sub(r";?\s*screenshot=.*$", "", reason).strip()
+        self.screenshot_path = screenshot_path
+        self.screenshot_sha256 = screenshot_sha256
+        self.page_url = page_url
+        self.page_title = page_title
+        self.trace_id = trace_id
+
+
+def classify_provider_call_failure(error: ProviderCallError) -> tuple[str, bool]:
+    """Keep operational failures separate from action-blocked collection slots."""
+
+    reason = error.reason.lower()
+    if "timeout" in reason:
+        return "SCAN_PROVIDER_TIMEOUT", False
+
+    provider_code = str(error.error_code or "").upper()
+    if provider_code in {
+        "PROVIDER_AUTH_FAILED",
+        "PROVIDER_MODEL_OR_ENDPOINT_NOT_FOUND",
+        "PROVIDER_RATE_OR_QUOTA_LIMITED",
+        "PROVIDER_QUOTA_EXHAUSTED",
+    }:
+        return "SCAN_PROVIDER_BLOCKED", True
+
+    if error.public_metadata.get("capture_mode") == "consumer_browser":
+        blocker = classify_blocker_reason(error.reason)
+        if blocker in {"login_required", "captcha_required", "prompt_input_missing"}:
+            return "SCAN_PROVIDER_BLOCKED", True
+
+    return "SCAN_PROVIDER_FAILED", False
+
+
 def provider_execution_mode() -> str:
     mode = os.getenv("AIRANK_PROVIDER_MODE", "browser").strip().lower()
     if mode in {"mock", "generated", "fixture", "dev"}:
@@ -435,6 +479,26 @@ def call_provider_for_brand_rank(
     try:
         with provider_lock(provider):
             browser_result = run_browser_probe(config, prompt)
+    except BrowserProbeError as exc:
+        raise ProviderCallError(
+            provider,
+            exc.reason[:1000],
+            public_metadata={
+                **config.public_metadata(),
+                "capture_mode": "consumer_browser",
+                "collector_surface": "web",
+                "evidence_level": "consumer_web",
+                "session_id": isolated_session_id,
+                "prompt_version_id": prompt_version_id,
+                "prompt_sha256": sha256_text(prompt),
+                "capture_url": exc.page_url,
+                "capture_title": exc.page_title,
+                "browser_trace_id": exc.trace_id,
+                "screenshot_path": exc.screenshot_path,
+                "screenshot_sha256": exc.screenshot_sha256,
+                "source_panel_status": "not_inspected",
+            },
+        ) from exc
     except PlaywrightTimeoutError as exc:
         raise ProviderCallError(provider, f"browser timeout: {str(exc)[:500]}") from exc
     except PlaywrightError as exc:
@@ -652,13 +716,11 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, A
 
             before_text = normalized_body_text(page)
             if looks_login_blocked(before_text) and not find_prompt_input(page):
-                screenshot_path, _ = save_page_screenshot(page, config.provider)
-                raise RuntimeError(f"{config.label} web page requires login or human verification; screenshot={screenshot_path}")
+                raise RuntimeError(f"{config.label} web page requires login or human verification")
 
             input_locator = find_prompt_input(page)
             if input_locator is None:
-                screenshot_path, _ = save_page_screenshot(page, config.provider)
-                raise RuntimeError(f"{config.label} web page prompt input was not found; screenshot={screenshot_path}")
+                raise RuntimeError(f"{config.label} web page prompt input was not found")
 
             input_locator.click()
             fill_prompt(input_locator, prompt)
@@ -684,6 +746,22 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, A
                     "whole_page_visible_source_links" if source_links else "visible_page_inspected_no_sources"
                 ),
             }
+        except (PlaywrightTimeoutError, PlaywrightError, RuntimeError) as exc:
+            screenshot_path, screenshot_sha256 = save_page_screenshot(page, config.provider)
+            try:
+                page_url = page.url
+                page_title = page.title()
+            except PlaywrightError:
+                page_url = config.url
+                page_title = ""
+            raise BrowserProbeError(
+                str(exc) or exc.__class__.__name__,
+                screenshot_path=screenshot_path,
+                screenshot_sha256=screenshot_sha256,
+                page_url=page_url,
+                page_title=page_title,
+                trace_id=trace_id,
+            ) from exc
         finally:
             context.close()
 

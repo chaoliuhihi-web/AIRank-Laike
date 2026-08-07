@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 import pytest
 
 from apps.api.provider_scan import (
+    BrowserProbeError,
     BrowserProviderConfig,
+    ProviderCallError,
     browser_provider_config,
     build_brand_rank_prompt,
     call_api_provider_for_brand_rank,
     call_provider_for_brand_rank,
+    classify_provider_call_failure,
     is_login_input,
     parse_provider_answer,
     provider_execution_mode,
@@ -226,6 +229,76 @@ def test_valid_no_mention_answer_is_not_rejected(monkeypatch: pytest.MonkeyPatch
     assert result.mention_class == "not_mentioned"
     assert result.brand_rank is None
     assert result.raw_metadata["source_panel_status"] == "not_inspected"
+
+
+def test_browser_failure_preserves_screenshot_and_prompt_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = BrowserProviderConfig(
+        provider="doubao",
+        label="豆包",
+        url="https://www.doubao.com/chat/",
+        profile_dir=tmp_path,
+        headless=True,
+        timeout_seconds=30,
+        channel=None,
+        executable_path=None,
+    )
+    monkeypatch.setattr("apps.api.provider_scan.browser_provider_config", lambda provider: config)
+    monkeypatch.setattr(
+        "apps.api.provider_scan.run_browser_probe",
+        lambda _config, _prompt: (_ for _ in ()).throw(
+            BrowserProbeError(
+                "豆包 web page requires login or human verification; screenshot=/tmp/private.png",
+                screenshot_path="/tmp/private.png",
+                screenshot_sha256="b" * 64,
+                page_url="https://www.doubao.com/chat/",
+                page_title="豆包",
+                trace_id="browser:doubao:failure-1",
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderCallError) as caught:
+        call_provider_for_brand_rank(
+            provider="doubao",
+            brand_name="AIRank",
+            website_url="https://airank.example",
+            industry="GEO",
+            competitor_names=[],
+            question_text="企业 GEO 工具有哪些？",
+            cohort_type="blind",
+            session_id="session_failure_1",
+            prompt_version_id="prompt_v_1",
+        )
+
+    error = caught.value
+    assert "screenshot=" not in error.reason
+    assert error.public_metadata["screenshot_path"] == "/tmp/private.png"
+    assert error.public_metadata["screenshot_sha256"] == "b" * 64
+    assert error.public_metadata["session_id"] == "session_failure_1"
+    assert error.public_metadata["prompt_version_id"] == "prompt_v_1"
+    assert error.public_metadata["prompt_sha256"]
+    assert error.public_metadata["browser_trace_id"] == "browser:doubao:failure-1"
+    assert error.public_metadata["source_panel_status"] == "not_inspected"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ProviderCallError("qianwen", "provider network request failed", error_code="PROVIDER_NETWORK_FAILED"), ("SCAN_PROVIDER_FAILED", False)),
+        (ProviderCallError("qianwen", "provider request failed", error_code="PROVIDER_AUTH_FAILED"), ("SCAN_PROVIDER_BLOCKED", True)),
+        (ProviderCallError("qianwen", "provider request failed", error_code="PROVIDER_RATE_OR_QUOTA_LIMITED"), ("SCAN_PROVIDER_BLOCKED", True)),
+        (ProviderCallError("doubao", "web answer did not appear before timeout", public_metadata={"capture_mode": "consumer_browser"}), ("SCAN_PROVIDER_TIMEOUT", False)),
+        (ProviderCallError("doubao", "web page requires login", public_metadata={"capture_mode": "consumer_browser"}), ("SCAN_PROVIDER_BLOCKED", True)),
+    ],
+)
+def test_provider_failure_classification_keeps_failed_and_blocked_separate(
+    error: ProviderCallError,
+    expected: tuple[str, bool],
+) -> None:
+    assert classify_provider_call_failure(error) == expected
 
 
 def test_strip_prompt_echo_removes_user_prompt_before_parsing_answer() -> None:

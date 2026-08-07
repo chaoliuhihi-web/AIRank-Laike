@@ -1716,7 +1716,7 @@ function EvidencePage() {
           />
           <div className="airank-console-card table-card evidence-table-wrap">
             <table className="question-table evidence-table">
-              <thead><tr><th>采集面 / 等级</th><th>样本</th><th>有效</th><th>证据完整</th><th>截图</th><th>来源面板</th><th>阻断</th></tr></thead>
+              <thead><tr><th>采集面 / 等级</th><th>样本</th><th>有效</th><th>有效证据完整</th><th>有效截图</th><th>有效来源面板</th><th>有效证据缺口</th></tr></thead>
               <tbody>
                 {quality.surface_evidence.map((surface) => (
                   <tr key={surface.surface}>
@@ -1754,7 +1754,7 @@ function EvidencePage() {
                   <td><strong>{sample.provider}</strong><small>{sample.collector_surface} · {sample.model_name || "模型未记录"}</small></td>
                   <td><Badge tone="primary">{sample.cohort_type}</Badge><small>#{sample.sample_index} · {sample.prompt_version_id}</small></td>
                   <td><Badge tone={sample.sample_status === "valid" ? "success" : sample.sample_status === "failed" ? "danger" : "warning"}>{sample.sample_status}</Badge></td>
-                  <td><strong>{sample.brand_mentioned ? sample.mention_class : "未提及"}</strong><small>{sample.brand_rank ? `排名 ${sample.brand_rank}` : "无条件排名"}</small></td>
+                  <td>{sample.sample_status === "valid" ? <><strong>{sample.brand_mentioned ? sample.mention_class : "未提及"}</strong><small>{sample.brand_rank ? `排名 ${sample.brand_rank}` : "无条件排名"}</small></> : <><strong>{sample.sample_status === "blocked" ? "阻塞，不计品牌分类" : "失败，不计品牌分类"}</strong><small>保留失败证据，不进入可见度分母</small></>}</td>
                   <td>{sample.citation_count}</td>
                   <td>{formatDateTime(sample.created_at)}</td>
                   <td><button className="table-action" type="button" disabled={loadingDetail === sample.snapshot_id} onClick={() => void openSample(sample.snapshot_id)}>{loadingDetail === sample.snapshot_id ? "读取中" : "下钻"}</button></td>
@@ -1767,10 +1767,12 @@ function EvidencePage() {
       {detailError && <DataStateCard title="样本详情读取失败" desc={detailError} tone="danger" />}
       {selected && (
         <section className="evidence-detail-grid">
-          <Panel title="不可变原始回答">
-            <div className="evidence-answer">{selected.answer_text}</div>
+          <Panel title={selected.sample_status === "valid" ? "不可变原始回答" : "不可变失败证据"}>
+            {selected.sample_status === "valid"
+              ? <div className="evidence-answer">{selected.answer_text}</div>
+              : <DataStateCard title="该任务没有有效回答" desc="系统保留了不可变失败快照、请求元数据和可用的阻塞截图；该样本不会被误算为品牌未提及。" tone={selected.sample_status === "blocked" ? "warning" : "danger"} />}
             <dl className="evidence-metadata">
-              <div><dt>回答 SHA-256</dt><dd>{selected.answer_sha256}</dd></div>
+              <div><dt>回答 SHA-256</dt><dd>{selected.answer_sha256 || "不适用（失败/阻塞样本）"}</dd></div>
               <div><dt>原始响应 SHA-256</dt><dd>{selected.raw_response_sha256}</dd></div>
               <div><dt>Evidence Snapshot</dt><dd>{selected.evidence_snapshot_id}</dd></div>
               <div><dt>采集时间</dt><dd>{formatDateTime(selected.evidence_captured_at)}</dd></div>
@@ -1778,8 +1780,8 @@ function EvidencePage() {
               <div><dt>证据等级</dt><dd>{selected.evidence_level}</dd></div>
             </dl>
           </Panel>
-          <Panel title={`真实引用（${selected.citations.length}）`}>
-            {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc="无引用是有效证据状态，不补造来源。" tone="warning" /> : (
+          <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>
+            {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc={selected.sample_status === "valid" ? "无引用是有效证据状态，不补造来源。" : "任务未产生有效回答，不把空引用误写成有效证据结论。"} tone="warning" /> : (
               <ol className="evidence-citations">
                 {selected.citations.map((citation) => (
                   <li key={citation.citation_id}><a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a><span>{citation.cited_text || "Provider 未返回引用原文"}</span></li>
@@ -1796,7 +1798,7 @@ function EvidencePage() {
               <div><dt>来源面板对象</dt><dd>{selected.source_panel.object_ref_id || "未采集"}</dd></div>
             </dl>
             {objectPreviewError && <DataStateCard title="证据对象读取失败" desc={objectPreviewError} tone="danger" />}
-            {objectPreviews.screenshot && <figure className="evidence-object-preview"><img src={objectPreviews.screenshot} alt="Provider 回答截图证据" /><figcaption>回答截图 · 服务端读取时已复验 SHA-256</figcaption></figure>}
+            {objectPreviews.screenshot && <figure className="evidence-object-preview"><img src={objectPreviews.screenshot} alt={selected.sample_status === "valid" ? "Provider 回答截图证据" : "Provider 失败现场截图证据"} /><figcaption>{selected.sample_status === "valid" ? "回答截图" : "失败现场截图"} · 服务端读取时已复验 SHA-256</figcaption></figure>}
             {objectPreviews.sourcePanel && <figure className="evidence-object-preview"><img src={objectPreviews.sourcePanel} alt="Provider 来源面板截图证据" /><figcaption>来源面板截图 · 服务端读取时已复验 SHA-256</figcaption></figure>}
             <details className="evidence-json"><summary>查看请求元数据</summary><pre>{JSON.stringify(selected.request_metadata, null, 2)}</pre></details>
             <details className="evidence-json"><summary>查看原始响应</summary><pre>{JSON.stringify(selected.raw_response, null, 2)}</pre></details>

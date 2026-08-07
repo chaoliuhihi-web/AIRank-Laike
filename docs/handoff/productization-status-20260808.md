@@ -70,11 +70,12 @@
 60. 报表中心真实展示质量阻断说明并禁用下载。真实 MySQL 验证 12 个任务仅 1 个有效时质量报告阻断有效率和缺失原始失败快照；浏览器 390px 有效视口显示禁用按钮、无页面级横向溢出，console `0 error / 0 warning`。
 61. 质量契约升级为 `airank.measurement-quality.v2`：每个任务样本独立绑定 Evidence Manifest，总计 21 项检查。API 必须关联 Provider 请求审计；Web/App 必须有不可变截图并明确来源面板为 `captured/not_present`；有引用时必须保存来源面板对象；App 额外要求设备/App 环境 hash；manual_import 要求导入源 hash。各采集面独立输出样本数、有效数、证据完整数、截图数、来源面板状态和阻断数。历史 v1/无版本报告在列表中降级为 `quality_blocked`，下载回执接口拒绝放行，必须按 v2 重算。
 62. 浏览器真实 MySQL 验收使用一条有效且未提及的豆包 Web 样本：有效率为 100%、未提及正确计入分母、来源面板明确记录为“界面未呈现（已检查）”，但因截图对象缺失，质量报告仍为 `blocked`。证据中心展示具体阻断和 `web/consumer_web` 汇总；390px 有效视口无页面级溢出，console `0 error / 0 warning`。
+63. 扫描失败和阻塞不再只写任务错误：每个失败槽位创建空回答 AnswerSnapshot、不可变原始失败 EvidenceSnapshot、请求元数据和原始响应 SHA-256；Web 采集如已进入页面则把失败现场截图复制到内容寻址对象存储。登录/验证码/配额/鉴权等外部动作阻塞与超时、网络、上游、解析失败严格分开；两者都不计入品牌未提及分母。真实同批次验收完成“千问 API 有效未提及 + 千问 Web 超时失败”，失败样本可下钻到原始 hash 和截图对象，质量门禁的原始响应 hash 检查通过。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`232 passed, 13 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
+- `python3 -m pytest -q`：`240 passed, 14 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -85,7 +86,7 @@
 - 终端证据浏览器复验：真实 MySQL `airank.measurement-quality.v2` 返回唯一阻断 `consumer_screenshots_complete`，同时证明 `consumer_source_panels_inspected` 和无来源状态一致性通过。证据中心展示 Web 样本 1、有效 1、证据完整 0、截图 0、来源面板明确无 1、阻断 1；样本下钻可见原始回答、双 hash、外部会话 ID 与“界面未呈现（已检查）”。390px 有效视口无页面级横向溢出，console `0 error / 0 warning`；截图为 `/tmp/airank-surface-evidence-mobile.png`。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
 - MySQL：Alembic `20260808_0010`；47 张 AIRank 表校验通过；新增观察批次/记录及来源 provenance 真实落库，PII 原文不落库。迁移同时通过在线中断重跑；离线发布 SQL 纳入最终门禁。
-- 本地真实 MySQL integration：`11 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增观察批次幂等导入、PII 阻断、provenance 编译及持久化断言；既有问题治理、对象引用、Provider store、Publisher 与复测链仍通过。
+- 本地真实 MySQL integration：`12 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增观察批次幂等导入、PII 阻断、provenance 编译、失败快照及持久化断言；既有问题治理、对象引用、Provider store、Publisher 与复测链仍通过。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
 - 完整上线门禁：分包测试、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；总状态仍为 `BLOCKED`，真实阻塞为 GitHub/Gitee `main` 未同步、生产 Yudao 未配置、生产 HTTPS S3/MinIO 未验收、消费端浏览器 Provider `0/4`，以及当前本机 Python 3.9 / Node 20.18.2 低于生产运行时门禁。

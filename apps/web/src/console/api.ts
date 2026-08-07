@@ -186,7 +186,7 @@ export type AnswerSample = {
   evidence_level: string;
   sample_status: string;
   answer_excerpt: string;
-  answer_sha256: string;
+  answer_sha256: string | null;
   brand_mentioned: boolean;
   brand_rank: number | null;
   mention_class: string;

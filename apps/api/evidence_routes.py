@@ -40,7 +40,7 @@ class AnswerSampleData(BaseModel):
     evidence_level: str
     sample_status: str
     answer_excerpt: str
-    answer_sha256: str
+    answer_sha256: Optional[str]
     brand_mentioned: bool
     brand_rank: Optional[int]
     mention_class: str

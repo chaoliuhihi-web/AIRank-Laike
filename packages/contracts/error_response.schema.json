@@ -36,6 +36,7 @@
             "SCAN_RUN_ALREADY_RUNNING",
             "SCAN_TASK_NOT_FOUND",
             "SCAN_PROVIDER_TIMEOUT",
+            "SCAN_PROVIDER_FAILED",
             "SCAN_PROVIDER_BLOCKED",
             "JOB_NOT_FOUND",
             "JOB_TIMEOUT",
