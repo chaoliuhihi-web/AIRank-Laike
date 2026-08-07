@@ -4,6 +4,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 
+from .measurement import sha256_text
+
 
 class SourceStatus(str, Enum):
     ACTIVE = "active"
@@ -37,6 +39,27 @@ class ClaimSupportType(str, Enum):
     SUPPORTS = "supports"
     CONTRADICTS = "contradicts"
     INSUFFICIENT = "insufficient"
+
+
+@dataclass(frozen=True)
+class KnowledgeSegment:
+    id: str
+    knowledge_source_id: str
+    segment_index: int
+    text: str
+    source_start: int
+    source_end: int
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        if self.segment_index < 0:
+            raise ValueError("KnowledgeSegment segment_index cannot be negative")
+        if self.source_start < 0 or self.source_end <= self.source_start:
+            raise ValueError("KnowledgeSegment requires a valid source boundary")
+        if not self.text:
+            raise ValueError("KnowledgeSegment text is required")
+        if len(self.content_sha256) != 64:
+            raise ValueError("KnowledgeSegment content_sha256 must be SHA-256")
 
 
 @dataclass(frozen=True)
@@ -248,4 +271,55 @@ def verify_claim_assertion(
         supports=usable,
         verified_by=verified_by,
         verified_at=verified_at,
+    )
+
+
+def segment_source_text(
+    knowledge_source_id: str,
+    content_text: str,
+    *,
+    max_characters: int = 1200,
+) -> tuple[KnowledgeSegment, ...]:
+    """Create deterministic, boundary-preserving source segments.
+
+    The splitter prefers paragraph and line boundaries, never normalizes the
+    source text, and records exact character offsets so later ClaimSupport can
+    quote the immutable original.
+    """
+
+    if not content_text:
+        raise ValueError("content_text is required")
+    if max_characters < 100:
+        raise ValueError("max_characters must be at least 100")
+
+    boundaries: list[tuple[int, int]] = []
+    cursor = 0
+    text_length = len(content_text)
+    while cursor < text_length:
+        proposed_end = min(text_length, cursor + max_characters)
+        if proposed_end < text_length:
+            paragraph_end = content_text.rfind("\n\n", cursor + 1, proposed_end + 1)
+            line_end = content_text.rfind("\n", cursor + 1, proposed_end + 1)
+            sentence_end = max(
+                content_text.rfind("。", cursor + 1, proposed_end + 1),
+                content_text.rfind("！", cursor + 1, proposed_end + 1),
+                content_text.rfind("？", cursor + 1, proposed_end + 1),
+            )
+            split_at = max(paragraph_end + 2 if paragraph_end >= cursor else -1, line_end + 1, sentence_end + 1)
+            if split_at > cursor:
+                proposed_end = split_at
+        boundaries.append((cursor, proposed_end))
+        cursor = proposed_end
+
+    return tuple(
+        KnowledgeSegment(
+            id=f"segment_{sha256_text(f'{knowledge_source_id}:{start}:{end}:{content_text[start:end]}')[:24]}",
+            knowledge_source_id=knowledge_source_id,
+            segment_index=index,
+            text=content_text[start:end],
+            source_start=start,
+            source_end=end,
+            content_sha256=sha256_text(content_text[start:end]),
+        )
+        for index, (start, end) in enumerate(boundaries)
     )

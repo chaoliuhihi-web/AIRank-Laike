@@ -29,7 +29,7 @@
 | yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
-| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | KnowledgeSource/FactRevision/FactConflict/ClaimSupport、审核与有效期领域契约已落库 | 安全导入、增量切片和审核 UI 仍缺 | adapt | Knowledge Build Skill | P0 | partial | 所有确认事实能定位原文边界、版本和审核记录 |
+| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 已有 content-addressed 来源导入、原文边界切片、事实修订/冲突/审核、ClaimSupport | 增量重嵌入、混合检索、过期提醒和审核 UI 仍缺 | adapt | Knowledge Build Skill | P0 | partial | 所有确认事实能定位原文边界、版本和审核记录 |
 | yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 项目含品牌/竞品，未成图 | 无实体版本、关系证据和消歧 | adapt | Entity Graph Skill | P1 | planned | 每条关系带 ClaimSupport；冲突实体进入人工审核 |
 | yao-geo-skills | `yao-geo-title-optimizer` | 产生可审核的标题候选 | `skills/yao-geo-title-optimizer` | 事实/方向 → 标题与评分 | 已审核事实、风险规则 | MIT | 内容资产骨架 | 评分缺少可验证 rubric | reference_only | Intervention Title Skill | P2 | planned | 候选不含无证据声明；rubric 与人工评审一致性达门槛 |
 | yao-geo-skills | `yao-geo-explainer-builder` | 生成科普/How-to/FAQ 页面 | `skills/yao-geo-explainer-builder` | 审核事实/问题 → 文章与核验矩阵 | FactAtom、ClaimSupport | MIT | 内容资产骨架 | 生成未强绑定证据 | adapt | Explainer Skill | P1 | planned | 每个事实性 Claim 必须绑定已审核支持证据 |
@@ -59,10 +59,10 @@
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | KnowledgeSource/FactRevision/FactConflict、版本、有效期和人工审核契约已实现 | 导入 worker、冲突队列和操作 UI 仍缺 | adapt | Knowledge domain | P0 | partial | 增量同步不覆盖已审核版本；冲突进入队列 |
-| GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | kb-lite 占位 | 无原文边界、同步 staging | adapt | Knowledge ingestion | P1 | planned | 相同 hash 幂等；变更仅更新受影响切片 |
-| GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 有 fact review，无内容 review | 无 Claim 级核验与 override 审计 | adapt | Governance Skills | P0 | planned | 未过事实/风险门禁不能生成发布任务 |
-| GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | publish package 仅骨架 | 无真实 publisher adapter | adapt | Delivery Gateway | P1 | planned | WordPress/HTTP contract tests；幂等重试不重复发布 |
-| GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | async job 有 lease | 发布域未接入 | absorb | Delivery job runtime | P1 | planned | worker 崩溃后可续跑；相同 key 只有一个外部副作用 |
+| GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | 已有 source/content hash 幂等导入和保持原文拼接一致的边界切片 | embedding worker、混合检索和变更后局部重嵌入仍缺 | adapt | Knowledge ingestion | P1 | partial | 相同 hash 幂等；变更仅更新受影响切片 |
+| GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 已有 Claim 覆盖核验、风险规则、内容 hash 绑定审核和高风险 override 审计 | 风险规则集和审核 UI 仍需扩充 | adapt | Governance Skills | P0 | partial | 未过事实/风险门禁不能生成发布任务 |
+| GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | 审核后不可变发布快照和 export 发布包已可用；WordPress/HTTP 只入可靠队列并标记 partial | 缺真实外部 publisher adapter、凭证和线上回执 | adapt | Delivery Gateway | P1 | partial | WordPress/HTTP contract tests；幂等重试不重复发布 |
+| GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | 发布包具备租户级幂等键、不可变快照、attempt ledger 和异步 job | worker 尚未消费发布 attempt，外部副作用恢复门禁未过 | absorb | Delivery job runtime | P1 | partial | worker 崩溃后可续跑；相同 key 只有一个外部副作用 |
 | GEOFlow | SSRF 和出站安全 | 保护官网抓取与发布端点 | `Services/Outbound/*` | URL/request → allowed/blocked | DNS 重解析、大小限制 | Apache-2.0 | provider URL 安全零散 | 缺统一出站策略 | adapt | Outbound Security Gateway | P0 | planned | 私网、重定向、DNS rebinding、超大响应均被阻断 |
 | GEOFlow | 可见度采集模型 | 参考 run/source 分表与 provider normalizer | `AiVisibility*` | provider response → run/sources | provider client | Apache-2.0 | scan run/snapshot/citation | 缺 surface、session、raw object | reference_only | Measurement schema | P0 | partial | 只吸收结构，不复用其业务实现；新契约通过迁移测试 |
 | GEOFlow | 站点主题复制 | 快速生成站点外观 | `SiteThemeReplication*` | 参考站 → 主题包 | Laravel 主题 | Apache-2.0 | AIRank 有独立 UI | 偏离核心证据产品 | reject | 无 | P3 | rejected | 不进入 AIRank |
@@ -105,7 +105,7 @@
 | yao-open-tools | TokDoc 报告与版本快照 | 客户报告归档与公开交付 | `tools/TokDoc` | HTML/PDF/Word → 版本/链接 | 本地存储 | MIT | reports 表 | 无不可变交付包 | reference_only | Report Artifact Store | P2 | planned | 导出包 hash、版本、下载回执可追溯 |
 | yao-open-skills | 证据分级、版权、安全和决策 Skill | 补充治理 rubric | `skills/yao-*` | 任务 → 多格式报告 | 各 Skill 依赖 | MIT | 无统一 rubric | 与 GEO 主线部分重叠 | reference_only | Governance rubrics | P2 | planned | 只抽取 rubric/失败案例，不注册无关客户 Skill |
 | yao-open-prompts | GEO/企业研究 Prompt 库 | 提供候选问题和写作方法 | `prompts/08-ai-marketing` | 输入 → 文本建议 | LLM | CC-BY-4.0 | 有零散生成逻辑 | Prompt 本身无真实证据 | reference_only | Eval/Prompt candidates | P2 | planned | 进入产品前必须转成 schema、事实政策和 eval case |
-| TokEMS | 不可变版本、Outbox、RBAC、审计 | 提升发布与交付可靠性 | templates/publishing/common modules | 写操作 → snapshot/event/audit | DB/worker | AGPL-3.0 | AIRank 有 outbox/audit 表 | 未形成发布域闭环 | reference_only | Delivery architecture | P1 | planned | 只参考模式；AIRank 自有实现通过幂等和恢复测试 |
+| TokEMS | 不可变版本、Outbox、RBAC、审计 | 提升发布与交付可靠性 | templates/publishing/common modules | 写操作 → snapshot/event/audit | DB/worker | AGPL-3.0 | AIRank 自有实现已有内容审核、不可变发布快照、幂等包和复测证据索引 | RBAC、outbox 消费和故障恢复仍缺 | reference_only | Delivery architecture | P1 | partial | 只参考模式；AIRank 自有实现通过幂等和恢复测试 |
 | TokEMS | 大会报名/支付/签到业务 | 与 GEO 无关 | event/order/payment/check-in modules | 活动数据 → 交易/核销 | 支付、短信、设备 | AGPL-3.0 | 无 | 不属于 GEO 付费闭环 | reject | 无 | P3 | rejected | 不进入领域模型和导航 |
 | yaojingang.github.io | 个人博客内容 | 无核心产品能力 | repository content | 内容 → 静态站 | 无 | NOASSERTION | 无 | 许可和业务价值不足 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
 | yaojingang | 个人 Profile README | 无产品能力 | profile README | 文本 → 主页 | 无 | NOASSERTION | 无 | 与产品无关 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
@@ -139,8 +139,8 @@
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
-- `20260808_0005_provider_gateway_operations.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0005`；36 张 AIRank 表和 7 张 Provider 运维表完成核验，随后删除临时验收库。
+- `20260808_0006`—`0008` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0008`；42 张 AIRank 表完成核验，知识导入、内容审核、不可变发布快照、观察窗口、复测结果和报告 hash 均落库，随后删除临时验收库。
 - 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
-- 全量 Python 测试：`159 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
+- 全量 Python 测试：`172 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
-- 当前阶段仍是 `partial`：尚未把四个 API Provider Gateway 迁入本仓，尚未跑四平台真实重复采样和浏览器 E2E，因此不允许声明商业可用。
+- 当前阶段仍是 `partial`：Kimi 安全运行时注入、四平台真实重复采样、外部 Publisher、前端真实 API 与浏览器 E2E 尚未通过，因此不允许声明商业可用。

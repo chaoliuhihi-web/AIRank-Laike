@@ -17,6 +17,7 @@ from airank_domain import (
     SourceStatus,
     approve_fact_revision,
     verify_claim_assertion,
+    segment_source_text,
 )
 from airank_domain.measurement import sha256_text
 
@@ -140,3 +141,14 @@ def test_claim_verification_requires_approved_revision_and_blocks_open_conflict(
         verified_at=NOW,
     )
     assert blocked.status == ClaimStatus.BLOCKED_CONFLICT
+
+
+def test_source_segmentation_preserves_exact_original_boundaries() -> None:
+    original = "第一段事实。\n\n第二段事实很长，需要保持原文。\n第三行。"
+    segments = segment_source_text("source_1", original, max_characters=100)
+
+    assert "".join(segment.text for segment in segments) == original
+    assert segments[0].source_start == 0
+    assert segments[-1].source_end == len(original)
+    assert all(original[item.source_start : item.source_end] == item.text for item in segments)
+    assert all(len(item.content_sha256) == 64 for item in segments)

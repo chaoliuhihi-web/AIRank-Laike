@@ -127,3 +127,90 @@ def test_fact_governance_migration_contains_required_domain_objects() -> None:
     )
     for name in required:
         assert name in migration
+
+
+def test_knowledge_ingestion_migration_preserves_raw_content_and_exact_boundaries() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0006_knowledge_ingestion.py"
+    ).read_text(encoding="utf-8")
+
+    required = (
+        "airank_knowledge_source_contents",
+        "airank_knowledge_segments",
+        "content_sha256",
+        "source_start",
+        "source_end",
+        "idempotency_key",
+        "embedding_status",
+        "fk_airank_fact_current_revision",
+    )
+    for name in required:
+        assert name in migration
+
+
+def test_knowledge_governance_openapi_exposes_review_and_conflict_workflow() -> None:
+    source = (ROOT / "apps" / "api" / "knowledge_routes.py").read_text(encoding="utf-8")
+
+    required_routes = (
+        '/projects/{project_id}/knowledge-sources',
+        '/projects/{project_id}/facts',
+        '/projects/{project_id}/facts/{fact_id}/revisions',
+        '/projects/{project_id}/fact-revisions/{revision_id}/review',
+        '/projects/{project_id}/facts/{fact_id}/conflicts',
+        '/projects/{project_id}/fact-conflicts/{conflict_id}/resolve',
+        '/projects/{project_id}/content-assets',
+    )
+    for route in required_routes:
+        assert route in source
+
+
+def test_delivery_governance_has_review_snapshot_idempotency_and_retest_windows() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0007_delivery_governance.py"
+    ).read_text(encoding="utf-8")
+
+    required = (
+        "airank_content_reviews",
+        "airank_publish_snapshots",
+        "airank_publish_attempts",
+        "airank_retest_observation_windows",
+        "idempotency_key",
+        "content_sha256",
+        "T+30",
+    )
+    for name in required:
+        assert name in migration or name in (ROOT / "apps" / "api" / "delivery_routes.py").read_text(encoding="utf-8")
+
+
+def test_retest_attribution_requires_same_contract_and_cautious_language() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0008_retest_attribution.py"
+    ).read_text(encoding="utf-8")
+    route = (ROOT / "apps" / "api" / "retest_routes.py").read_text(encoding="utf-8")
+    scorer = (ROOT / "packages" / "score" / "src" / "airank_score" / "retest.py").read_text(encoding="utf-8")
+
+    for name in (
+        "observation_window_id",
+        "comparison_contract_version",
+        "report_sha256",
+        "evidence_index_json",
+    ):
+        assert name in migration
+    assert '/retest-windows/{window_id}/complete' in route
+    assert "sample_contract_mismatch" in scorer
+    assert "不能据此证明因果" in scorer

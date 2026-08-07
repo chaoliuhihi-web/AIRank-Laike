@@ -46,9 +46,11 @@ from .knowledge import (
     FactRevision,
     FactRevisionStatus,
     KnowledgeSource,
+    KnowledgeSegment,
     SourceStatus,
     approve_fact_revision,
     verify_claim_assertion,
+    segment_source_text,
 )
 
 __all__ = [
@@ -75,6 +77,7 @@ __all__ = [
     "JobOwnershipError",
     "JobStateError",
     "KnowledgeSource",
+    "KnowledgeSegment",
     "MeasurementSample",
     "MentionClass",
     "PromptCohortType",
@@ -96,4 +99,5 @@ __all__ = [
     "stable_prompt_version_id",
     "timeout_job",
     "verify_claim_assertion",
+    "segment_source_text",
 ]

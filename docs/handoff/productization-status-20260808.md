@@ -4,7 +4,7 @@
 
 状态：`partial / no-go for commercial launch`。
 
-已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”和“事实证据链领域切片”，但四平台真实重复采样、知识导入与审核 UI、发布复测与客户报告尚未全部通过，不得宣称商业可用。
+已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”和“同口径复测归因”后端切片，但四平台真实重复采样、审核 UI、真实外部发布和浏览器客户报告尚未全部通过，不得宣称商业可用。
 
 ## 本轮已落地
 
@@ -25,20 +25,25 @@
 15. 建立 AIRank Python Provider Gateway：四平台 manifest、官方 host allowlist、模型生命周期、L1/L2/L3、重试/退避、熔断、QPS/并发、配额预留、request ID、原生引用和 usage precision。
 16. API surface 已接 ScanRun；Provider 原始 JSON、请求元数据、模型、联网状态、request ID、usage 和配置指纹进入不可变证据与独立审计表，不与 Web/App 证据混用。
 17. 千问、豆包、DeepSeek 已从本机私密环境通过本仓 Gateway 完成真实生成；均返回非空回答、真实 request ID 和 exact usage。Kimi 仍需安全进程环境注入后重验。
+18. 知识导入按 source/content hash 幂等，保存不可变原文和精确字符边界切片；事实版本、冲突、有效期和人工审核均进入正式 API。
+19. 内容资产只能引用已审核、未过期、无开放冲突且允许公开的 FactRevision；每条 ClaimAssertion 都绑定 ClaimSupport 和原文边界。
+20. 内容审核绑定内容 hash，执行事实覆盖和风险扫描；高风险 GEO 保证、绝对排名或竞品贬损必须记录人工 override，未经审核不能生成发布包。
+21. export 发布包已有不可变快照、租户级幂等键和发布 URL 证据；WordPress/HTTP 仍只标记 `partial` 并入队，不冒充已发布。
+22. 发布必须绑定已完成的 T0 基线，并自动建立 T0/T+7/T+14/T+30 窗口；复测从原始任务和回答样本重算，严格校验问题、Provider、Cohort、surface、Prompt、模型与联网上下文，只输出观察性、非因果的低/中置信度报告。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`159 passed, 6 skipped`。
+- `python3 -m pytest -q`：`172 passed, 6 skipped`。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
-- MySQL 临时库：Alembic `20260808_0005`；36 张 AIRank 表、7 张 Provider 运维表校验通过。
+- MySQL 临时库：Alembic `20260808_0008`；42 张 AIRank 表校验通过；真实 MySQL 复测链路生成 1 个 RetestRun 和 1 个带 SHA-256/evidence index 的报告，临时库已删除。
 
 ## 下一实施顺序
 
 1. 为 Kimi 完成不落盘、不入日志的运行时凭证注入，并用本仓 Gateway 重跑 L1/L2/L3；四平台 probe 结果写入持久化 ledger。
 2. 把进程内 circuit/quota 接到 MySQL/Redis repository，补多 worker 并发和故障恢复门禁。
 3. 为首批 8 个内部 Skill 补 holdout/对抗/真实 Provider eval 和 promotion evidence ledger。
-4. 实现知识安全导入、原文边界切片、增量同步、冲突审核 API/UI 与过期提醒。
-5. 事实审核通过后再恢复内容生成；随后实现发布快照、WordPress/HTTP/导出包和 T0/T+7/T+14/T+30 复测。
-6. 清理剩余前端静态业务页面，全部接真实 API 或明确 `empty/partial/blocked/disabled` 状态。
+4. 补知识增量重嵌入、混合检索、过期提醒与冲突审核 UI。
+5. 实现安全的 WordPress/HTTP Publisher adapter、attempt 消费、重试/恢复和真实外部回执门禁。
+6. 清理剩余前端静态业务页面，接入知识、证据、审核、发布、复测和报告真实 API，未实现能力明确显示 `partial/blocked/disabled`。
 7. 用四平台真实重复样本从新建品牌跑到客户报告，完成浏览器 E2E 和上线门禁后再同步 GitHub/Gitee。

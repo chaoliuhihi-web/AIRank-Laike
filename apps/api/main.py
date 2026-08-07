@@ -75,6 +75,18 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "JOB_TIMEOUT": (500, "Job timed out"),
     "JOB_MAX_ATTEMPTS_EXCEEDED": (500, "Job exceeded max attempts"),
     "FACT_NOT_FOUND": (404, "FactAtom not found"),
+    "FACT_REVISION_NOT_FOUND": (404, "FactRevision not found"),
+    "FACT_CONFLICT_NOT_FOUND": (404, "FactConflict not found"),
+    "FACT_CONFLICT_OPEN": (409, "Fact has an open conflict"),
+    "FACT_SOURCE_STALE": (409, "Fact source is stale or expired"),
+    "KNOWLEDGE_SOURCE_NOT_FOUND": (404, "KnowledgeSource not found"),
+    "CONTENT_EVIDENCE_MISSING": (409, "Content evidence is missing or ineligible"),
+    "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
+    "CONTENT_RISK_OVERRIDE_REQUIRED": (409, "High-risk content requires an audited override"),
+    "PUBLISH_PACKAGE_NOT_FOUND": (404, "Publish package not found"),
+    "RETEST_WINDOW_NOT_FOUND": (404, "Retest observation window not found"),
+    "RETEST_BASELINE_REQUIRED": (409, "A completed baseline run is required"),
+    "RETEST_COMPARE_RUN_REQUIRED": (409, "A completed comparable scan run is required"),
     "FACT_SOURCE_REQUIRED": (400, "Fact source is required"),
     "FACT_DISCLOSURE_FORBIDDEN": (403, "Fact disclosure is forbidden"),
     "ASSET_NOT_FOUND": (404, "Asset not found"),
@@ -4123,3 +4135,25 @@ def get_console_overview(
         ),
         meta=build_meta(trace_id),
     )
+
+
+try:
+    from .knowledge_routes import router as knowledge_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from knowledge_routes import router as knowledge_router  # type: ignore[no-redef]
+
+app.include_router(knowledge_router)
+
+try:
+    from .delivery_routes import router as delivery_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from delivery_routes import router as delivery_router  # type: ignore[no-redef]
+
+app.include_router(delivery_router)
+
+try:
+    from .retest_routes import router as retest_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from retest_routes import router as retest_router  # type: ignore[no-redef]
+
+app.include_router(retest_router)

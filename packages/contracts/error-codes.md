@@ -66,6 +66,18 @@ FACT_DISCLOSURE_FORBIDDEN
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `FACT_NOT_FOUND` | 404 | FactAtom 不存在 |
+| `FACT_REVISION_NOT_FOUND` | 404 | FactRevision 不存在 |
+| `FACT_CONFLICT_NOT_FOUND` | 404 | FactConflict 不存在 |
+| `FACT_CONFLICT_OPEN` | 409 | 事实存在未解决冲突 |
+| `FACT_SOURCE_STALE` | 409 | 事实来源已失效或过期 |
+| `KNOWLEDGE_SOURCE_NOT_FOUND` | 404 | KnowledgeSource 不存在 |
+| `CONTENT_EVIDENCE_MISSING` | 409 | 内容引用的事实证据缺失、冲突或失效 |
+| `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |
+| `CONTENT_RISK_OVERRIDE_REQUIRED` | 409 | 高风险内容需要记录人工 override 原因 |
+| `PUBLISH_PACKAGE_NOT_FOUND` | 404 | 发布包不存在 |
+| `RETEST_WINDOW_NOT_FOUND` | 404 | 复测观察窗口不存在 |
+| `RETEST_BASELINE_REQUIRED` | 409 | 缺少同项目且已完成的 T0 基线扫描 |
+| `RETEST_COMPARE_RUN_REQUIRED` | 409 | 缺少同项目且已完成的复测扫描 |
 | `FACT_SOURCE_REQUIRED` | 400 | 缺少来源证据 |
 | `FACT_DISCLOSURE_FORBIDDEN` | 403 | 不允许用于公开内容 |
 | `ASSET_NOT_FOUND` | 404 | 内容资产不存在 |
