@@ -44,6 +44,15 @@ def response_meta(trace_id: Optional[str]) -> dict[str, str]:
     return {"trace_id": trace_id or f"trc_{uuid4().hex[:16]}", "request_id": f"req_{uuid4().hex[:16]}"}
 
 
+def trusted_completion_actor(requested_actor: str, authenticated_actor: Optional[str]) -> str:
+    enforcement = os.getenv("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
+    if enforcement in {"0", "false", "disabled", "off"}:
+        return requested_actor
+    if not authenticated_actor:
+        raise StarletteHTTPException(status_code=401, detail={"code": "AUTH_TOKEN_INVALID"})
+    return authenticated_actor
+
+
 class RetestWindowData(BaseModel):
     window_id: str
     tenant_id: str
@@ -399,5 +408,6 @@ def list_retest_windows(project_id: str, tenant_id: str = Header(default="tenant
 
 
 @router.post("/retest-windows/{window_id}/complete", response_model=RetestComparisonResponse)
-def complete_retest_window(window_id: str, payload: CompleteRetestRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> RetestComparisonResponse:
-    return RetestComparisonResponse(data=RETEST_REPOSITORY.complete_window(tenant_id, window_id, payload), meta=response_meta(trace_id))
+def complete_retest_window(window_id: str, payload: CompleteRetestRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> RetestComparisonResponse:
+    trusted_payload = payload.model_copy(update={"completed_by": trusted_completion_actor(payload.completed_by, authenticated_actor)})
+    return RetestComparisonResponse(data=RETEST_REPOSITORY.complete_window(tenant_id, window_id, trusted_payload), meta=response_meta(trace_id))

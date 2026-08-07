@@ -93,6 +93,102 @@ export type FactRevision = {
   eligibility_reason: string;
 };
 
+export type AnswerSample = {
+  snapshot_id: string;
+  run_id: string;
+  task_id: string | null;
+  question_id: string;
+  provider: string;
+  cohort_type: string;
+  prompt_version_id: string;
+  sample_index: number;
+  session_id: string;
+  collector_surface: string;
+  evidence_level: string;
+  sample_status: string;
+  answer_excerpt: string;
+  answer_sha256: string;
+  brand_mentioned: boolean;
+  brand_rank: number | null;
+  mention_class: string;
+  model_name: string | null;
+  search_enabled: boolean | null;
+  external_trace_id: string | null;
+  citation_count: number;
+  created_at: string;
+};
+
+export type EvidenceObject = {
+  object_ref_id: string | null;
+  object_uri: string | null;
+  content_type: string | null;
+  byte_size: number | null;
+  sha256: string | null;
+};
+
+export type AnswerSampleDetail = AnswerSample & {
+  project_id: string;
+  answer_text: string;
+  raw_response_sha256: string;
+  raw_response: Record<string, unknown>;
+  request_metadata: Record<string, unknown>;
+  evidence_snapshot_id: string;
+  evidence_captured_at: string;
+  screenshot: EvidenceObject;
+  source_panel: EvidenceObject;
+  citations: Array<{
+    citation_id: string;
+    citation_order: number;
+    title: string | null;
+    url: string;
+    host: string | null;
+    source_type: string | null;
+    cited_text: string | null;
+    relevance_score: number | null;
+    metadata: Record<string, unknown>;
+  }>;
+};
+
+export type AnswerSampleCollection = {
+  samples: AnswerSample[];
+  runId: string | null;
+  limit: number;
+  total: number;
+  validCount: number;
+  validUnmentionedCount: number;
+  citationSampleCount: number;
+};
+
+export type GovernedContentAsset = {
+  asset_id: string;
+  tenant_id: string;
+  project_id: string;
+  asset_type: string;
+  title: string;
+  body_md: string;
+  status: "draft" | "approved" | "rejected" | "changes_requested";
+  generation_mode: "approved_fact_template";
+  fact_revision_ids: string[];
+  claim_assertion_ids: string[];
+  claim_support_ids: string[];
+  created_at: string;
+};
+
+export type ContentReview = {
+  review_id: string;
+  tenant_id: string;
+  project_id: string;
+  asset_id: string;
+  content_sha256: string;
+  action: "approved" | "rejected" | "changes_requested";
+  fact_check_status: "passed" | "failed";
+  risk_level: "low" | "medium" | "high";
+  risk_findings: Array<{ code: string; severity: string; matched_text: string; message: string }>;
+  override_reason: string | null;
+  reviewed_by: string;
+  reviewed_at: string;
+};
+
 export type BuyerQuestion = {
   question_id: string;
   question_text: string;
@@ -161,6 +257,49 @@ export type ScanRunSummary = {
   run_id: string;
   status: "queued" | "running" | "completed" | "failed" | "canceled";
   metrics: Record<string, unknown>;
+};
+
+export type ScanRun = {
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  name: string | null;
+  run_type: "baseline" | "retest" | "manual";
+  cohort_type: "blind" | "assisted" | "comparison" | "fact_verification";
+  repetitions: number;
+  collector_surfaces: Array<"api" | "web" | "app" | "manual_import">;
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
+  provider_scope: string[];
+  question_scope: { mode: "all_active" | "selected"; question_ids: string[] };
+  metrics: Record<string, unknown>;
+  error?: { code: string; message: string };
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScanTask = {
+  task_id: string;
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  question_id: string;
+  provider: string;
+  cohort_type: string;
+  prompt_version_id: string;
+  sample_index: number;
+  session_id: string;
+  collector_surface: string;
+  evidence_level: string;
+  status: "queued" | "running" | "completed" | "failed" | "skipped";
+  attempt_count: number;
+  scheduled_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error?: { code: string; message: string };
+  created_at: string;
+  updated_at: string;
 };
 
 export type BrandCheckInput = {
@@ -411,6 +550,9 @@ function buildApiHeaders(tracePrefix: string): Record<string, string> {
   if (session?.user.userId) {
     headers["X-AIRank-User-Id"] = session.user.userId;
   }
+  if (session?.yudaoTenantId) {
+    headers["X-Yudao-Tenant-Id"] = session.yudaoTenantId;
+  }
   return headers;
 }
 
@@ -497,6 +639,95 @@ export function fetchKnowledgeSources(projectId: string, signal?: AbortSignal): 
 
 export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<FactRevision[]> {
   return fetchData(`/api/v1/projects/${projectId}/facts`, "trc_web_facts", signal);
+}
+
+export async function reviewFactRevision(
+  projectId: string,
+  revisionId: string,
+  action: "approved" | "rejected",
+  reviewedBy: string,
+): Promise<FactRevision> {
+  const response = await fetch(`/api/v1/projects/${projectId}/fact-revisions/${revisionId}/review`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_fact_review"),
+    },
+    body: JSON.stringify({ action, reviewed_by: reviewedBy }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact review request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: FactRevision };
+  return payload.data;
+}
+
+export async function fetchAnswerSamples(
+  projectId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AnswerSampleCollection> {
+  const url = `/api/v1/projects/${projectId}/samples?run_id=${encodeURIComponent(runId)}&limit=200`;
+  const response = await fetch(url, { headers: buildApiHeaders("trc_web_samples"), signal });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Answer samples request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as {
+    data: AnswerSample[];
+    meta: {
+      run_id: string | null;
+      limit: number;
+      total: number;
+      valid_count: number;
+      valid_unmentioned_count: number;
+      citation_sample_count: number;
+    };
+  };
+  return {
+    samples: payload.data,
+    runId: payload.meta.run_id,
+    limit: payload.meta.limit,
+    total: payload.meta.total,
+    validCount: payload.meta.valid_count,
+    validUnmentionedCount: payload.meta.valid_unmentioned_count,
+    citationSampleCount: payload.meta.citation_sample_count,
+  };
+}
+
+export function fetchAnswerSample(snapshotId: string, signal?: AbortSignal): Promise<AnswerSampleDetail> {
+  return fetchData(`/api/v1/samples/${snapshotId}`, "trc_web_sample", signal);
+}
+
+export function fetchContentAssets(projectId: string, signal?: AbortSignal): Promise<GovernedContentAsset[]> {
+  return fetchData(`/api/v1/projects/${projectId}/content-assets`, "trc_web_content_assets", signal);
+}
+
+export function fetchScanRuns(projectId: string, signal?: AbortSignal): Promise<ScanRun[]> {
+  return fetchData(`/api/v1/projects/${projectId}/scan-runs`, "trc_web_scan_runs", signal);
+}
+
+export function fetchScanTasks(runId: string, signal?: AbortSignal): Promise<ScanTask[]> {
+  return fetchData(`/api/v1/scan-runs/${runId}/tasks`, "trc_web_scan_tasks", signal);
+}
+
+export async function reviewContentAsset(
+  assetId: string,
+  action: "approved" | "rejected" | "changes_requested",
+  reviewedBy: string,
+): Promise<ContentReview> {
+  const response = await fetch(`/api/v1/content-assets/${assetId}/reviews`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_content_review"),
+    },
+    body: JSON.stringify({ action, reviewed_by: reviewedBy }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Content review request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: ContentReview };
+  return payload.data;
 }
 
 export function fetchBuyerQuestions(projectId: string, signal?: AbortSignal): Promise<BuyerQuestion[]> {

@@ -31,6 +31,15 @@ def response_meta(trace_id: Optional[str]) -> dict[str, str]:
     }
 
 
+def trusted_review_actor(requested_actor: str, authenticated_actor: Optional[str]) -> str:
+    enforcement = os.getenv("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
+    if enforcement in {"0", "false", "disabled", "off"}:
+        return requested_actor
+    if not authenticated_actor:
+        raise StarletteHTTPException(status_code=401, detail={"code": "AUTH_TOKEN_INVALID"})
+    return authenticated_actor
+
+
 class KnowledgeSourceCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -228,7 +237,7 @@ class GovernedContentData(BaseModel):
     asset_type: str
     title: str
     body_md: str
-    status: Literal["draft"]
+    status: Literal["draft", "approved", "rejected", "changes_requested"]
     generation_mode: Literal["approved_fact_template"]
     fact_revision_ids: list[str]
     claim_assertion_ids: list[str]
@@ -238,6 +247,11 @@ class GovernedContentData(BaseModel):
 
 class GovernedContentResponse(BaseModel):
     data: GovernedContentData
+    meta: dict[str, str]
+
+
+class GovernedContentListResponse(BaseModel):
+    data: list[GovernedContentData]
     meta: dict[str, str]
 
 
@@ -251,6 +265,7 @@ class KnowledgeRepository(Protocol):
     def create_conflict(self, tenant_id: str, project_id: str, fact_id: str, payload: FactConflictCreateRequest) -> FactConflictData: ...
     def resolve_conflict(self, tenant_id: str, project_id: str, conflict_id: str, payload: FactConflictResolveRequest) -> FactConflictData: ...
     def create_governed_content(self, tenant_id: str, project_id: str, payload: GovernedContentCreateRequest) -> GovernedContentData: ...
+    def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]: ...
 
 
 class InMemoryKnowledgeRepository:
@@ -455,6 +470,17 @@ class InMemoryKnowledgeRepository:
         data = GovernedContentData(asset_id=asset_id, tenant_id=tenant_id, project_id=project_id, asset_type=payload.asset_type, title=payload.title, body_md=body, status="draft", generation_mode="approved_fact_template", fact_revision_ids=payload.fact_revision_ids, claim_assertion_ids=assertion_ids, claim_support_ids=support_ids, created_at=created_at)
         self.content_assets[(tenant_id, asset_id)] = data
         return data
+
+    def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]:
+        return sorted(
+            [
+                asset
+                for (item_tenant, _), asset in self.content_assets.items()
+                if item_tenant == tenant_id and asset.project_id == project_id
+            ],
+            key=lambda asset: asset.created_at,
+            reverse=True,
+        )
 
 
 class MySQLKnowledgeRepository:
@@ -799,6 +825,44 @@ class MySQLKnowledgeRepository:
                 """), {"id": support_id, "tenant_id": tenant_id, "project_id": project_id, "assertion_id": assertion_id, "fact_revision_id": row["revision_id"], "knowledge_source_id": item["source_id"], "quoted_text": row["fact_text"], "source_start": item["start"], "source_end": item["end"], "reviewed_by": row["reviewed_by"] or payload.created_by, "reviewed_at": created_at, "created_at": created_at})
         return GovernedContentData(asset_id=asset_id, tenant_id=tenant_id, project_id=project_id, asset_type=payload.asset_type, title=payload.title, body_md=body_md, status="draft", generation_mode="approved_fact_template", fact_revision_ids=payload.fact_revision_ids, claim_assertion_ids=assertion_ids, claim_support_ids=support_ids, created_at=created_at)
 
+    def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]:
+        with self.engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            rows = conn.execute(text("""
+                SELECT id, tenant_id, project_id, asset_type, title, body_md, status,
+                       metadata_json, created_at
+                FROM airank_content_assets
+                WHERE tenant_id=:tenant_id AND project_id=:project_id AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+            """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
+            assets: list[GovernedContentData] = []
+            for row in rows:
+                metadata = row["metadata_json"] if isinstance(row["metadata_json"], Mapping) else json.loads(row["metadata_json"] or "{}")
+                assertions = conn.execute(text("""
+                    SELECT id FROM airank_claim_assertions
+                    WHERE tenant_id=:tenant_id AND asset_id=:asset_id
+                    ORDER BY created_at ASC, id ASC
+                """), {"tenant_id": tenant_id, "asset_id": row["id"]}).scalars().all()
+                supports = []
+                if assertions:
+                    supports = conn.execute(
+                        text("""
+                            SELECT id FROM airank_claim_supports
+                            WHERE tenant_id=:tenant_id AND assertion_id IN :assertion_ids
+                            ORDER BY created_at ASC, id ASC
+                        """).bindparams(bindparam("assertion_ids", expanding=True)),
+                        {"tenant_id": tenant_id, "assertion_ids": list(assertions)},
+                    ).scalars().all()
+                assets.append(GovernedContentData(
+                    asset_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"],
+                    asset_type=row["asset_type"], title=row["title"], body_md=row["body_md"] or "",
+                    status=row["status"], generation_mode="approved_fact_template",
+                    fact_revision_ids=list(metadata.get("fact_revision_ids") or []),
+                    claim_assertion_ids=list(assertions), claim_support_ids=list(supports),
+                    created_at=row["created_at"],
+                ))
+        return assets
+
 
 def _render_governed_draft(title: str, direction: str, revisions: list[Any]) -> str:
     lines = [f"# {title}", "", direction.strip(), "", "## 已核验事实"]
@@ -833,8 +897,9 @@ def list_knowledge_sources(project_id: str, tenant_id: str = Header(default="ten
 
 
 @router.post("/projects/{project_id}/facts", response_model=FactRevisionResponse, status_code=201)
-def propose_fact(project_id: str, payload: FactProposalRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> FactRevisionResponse:
-    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.propose_fact(tenant_id, project_id, payload), meta=response_meta(trace_id))
+def propose_fact(project_id: str, payload: FactProposalRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> FactRevisionResponse:
+    trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
+    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.propose_fact(tenant_id, project_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.get("/projects/{project_id}/facts", response_model=FactRevisionListResponse)
@@ -843,13 +908,17 @@ def list_facts(project_id: str, tenant_id: str = Header(default="tenant_demo", a
 
 
 @router.post("/projects/{project_id}/facts/{fact_id}/revisions", response_model=FactRevisionResponse, status_code=201)
-def revise_fact(project_id: str, fact_id: str, payload: FactProposalRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> FactRevisionResponse:
-    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.revise_fact(tenant_id, project_id, fact_id, payload), meta=response_meta(trace_id))
+def revise_fact(project_id: str, fact_id: str, payload: FactProposalRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> FactRevisionResponse:
+    trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
+    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.revise_fact(tenant_id, project_id, fact_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.patch("/projects/{project_id}/fact-revisions/{revision_id}/review", response_model=FactRevisionResponse)
-def review_fact_revision(project_id: str, revision_id: str, payload: FactRevisionReviewRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> FactRevisionResponse:
-    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.review_revision(tenant_id, project_id, revision_id, payload), meta=response_meta(trace_id))
+def review_fact_revision(project_id: str, revision_id: str, payload: FactRevisionReviewRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> FactRevisionResponse:
+    trusted_payload = payload.model_copy(
+        update={"reviewed_by": trusted_review_actor(payload.reviewed_by, authenticated_actor)}
+    )
+    return FactRevisionResponse(data=KNOWLEDGE_REPOSITORY.review_revision(tenant_id, project_id, revision_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.post("/projects/{project_id}/facts/{fact_id}/conflicts", response_model=FactConflictResponse, status_code=201)
@@ -858,10 +927,17 @@ def create_fact_conflict(project_id: str, fact_id: str, payload: FactConflictCre
 
 
 @router.patch("/projects/{project_id}/fact-conflicts/{conflict_id}/resolve", response_model=FactConflictResponse)
-def resolve_fact_conflict(project_id: str, conflict_id: str, payload: FactConflictResolveRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> FactConflictResponse:
-    return FactConflictResponse(data=KNOWLEDGE_REPOSITORY.resolve_conflict(tenant_id, project_id, conflict_id, payload), meta=response_meta(trace_id))
+def resolve_fact_conflict(project_id: str, conflict_id: str, payload: FactConflictResolveRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> FactConflictResponse:
+    trusted_payload = payload.model_copy(update={"resolved_by": trusted_review_actor(payload.resolved_by, authenticated_actor)})
+    return FactConflictResponse(data=KNOWLEDGE_REPOSITORY.resolve_conflict(tenant_id, project_id, conflict_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.post("/projects/{project_id}/content-assets", response_model=GovernedContentResponse, status_code=201)
-def create_governed_content(project_id: str, payload: GovernedContentCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> GovernedContentResponse:
-    return GovernedContentResponse(data=KNOWLEDGE_REPOSITORY.create_governed_content(tenant_id, project_id, payload), meta=response_meta(trace_id))
+def create_governed_content(project_id: str, payload: GovernedContentCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> GovernedContentResponse:
+    trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
+    return GovernedContentResponse(data=KNOWLEDGE_REPOSITORY.create_governed_content(tenant_id, project_id, trusted_payload), meta=response_meta(trace_id))
+
+
+@router.get("/projects/{project_id}/content-assets", response_model=GovernedContentListResponse)
+def list_governed_content(project_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> GovernedContentListResponse:
+    return GovernedContentListResponse(data=KNOWLEDGE_REPOSITORY.list_governed_content(tenant_id, project_id), meta=response_meta(trace_id))

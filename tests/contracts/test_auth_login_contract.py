@@ -6,8 +6,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
+import pytest
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from apps.api import main as api_main
+from apps.api import delivery_routes, knowledge_routes, main as api_main, retest_routes
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -116,3 +118,108 @@ def test_auth_login_returns_registered_error_for_bad_yudao_credentials(monkeypat
     assert body["error"]["code"] == "AUTH_LOGIN_FAILED"
     assert body["error"]["trace_id"] == "trc_auth_failed"
     validate_schema("error_response.schema.json", body)
+
+
+def test_required_dev_auth_accepts_only_issued_token_and_matching_tenant(monkeypatch: Any) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_auth_test")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"username": "auth_user", "password": "local", "yudao_tenant_id": "1"},
+    )
+    token = login_response.json()["data"]["access_token"]
+
+    missing = client.get("/api/v1/console/overview", headers={"tenant-id": "tenant_auth_test"})
+    forged = client.get(
+        "/api/v1/console/overview",
+        headers={"tenant-id": "tenant_auth_test", "Authorization": "Bearer dev_only_forged"},
+    )
+    wrong_tenant = client.get(
+        "/api/v1/console/overview",
+        headers={"tenant-id": "another_tenant", "Authorization": f"Bearer {token}"},
+    )
+    valid = client.get(
+        "/api/v1/console/overview",
+        headers={"tenant-id": "tenant_auth_test", "Authorization": f"Bearer {token}"},
+    )
+
+    assert missing.status_code == 401
+    assert missing.json()["error"]["code"] == "AUTH_TOKEN_MISSING"
+    assert forged.status_code == 401
+    assert forged.json()["error"]["code"] == "AUTH_TOKEN_INVALID"
+    assert wrong_tenant.status_code == 403
+    assert wrong_tenant.json()["error"]["code"] == "TENANT_MISMATCH"
+    assert valid.status_code == 200
+
+
+def test_required_yudao_auth_revalidates_permission_info(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_request_external_json(url: str, *, method="GET", headers=None, body=None, timeout=None):
+        calls.append({"url": url, "method": method, "headers": headers or {}})
+        return {"code": 0, "data": {"user": {"id": 99, "username": "api-user"}}}
+
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "yudao")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_yudao_auth")
+    monkeypatch.setenv("YUDAO_BASE_URL", "http://yudao.local")
+    monkeypatch.setattr(api_main, "request_external_json", fake_request_external_json)
+    client = TestClient(api_main.app)
+
+    response = client.get(
+        "/api/v1/console/overview",
+        headers={
+            "tenant-id": "tenant_yudao_auth",
+            "X-Yudao-Tenant-Id": "8",
+            "Authorization": "Bearer yudao-token",
+            "X-AIRank-User-Id": "spoofed-user",
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["headers"]["Authorization"] == "Bearer yudao-token"
+    assert calls[0]["headers"]["tenant-id"] == "8"
+
+
+def test_audited_actor_comes_from_authenticated_session(monkeypatch: Any) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_actor_test")
+    monkeypatch.setattr(
+        knowledge_routes,
+        "KNOWLEDGE_REPOSITORY",
+        knowledge_routes.InMemoryKnowledgeRepository(),
+    )
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "trusted-user", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    response = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={
+            "tenant-id": "tenant_actor_test",
+            "Authorization": f"Bearer {token}",
+            "X-AIRank-User-Id": "spoofed-user",
+        },
+        json={
+            "title": "可信审计身份",
+            "fact_text": "审计身份必须来自认证上下文。",
+            "created_by": "spoofed-body-user",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"]["created_by"] == "trusted-user"
+    assert api_main.trusted_authenticated_actor("spoofed", "trusted-user") == "trusted-user"
+    assert knowledge_routes.trusted_review_actor("spoofed", "trusted-user") == "trusted-user"
+    assert delivery_routes.trusted_actor("spoofed", "trusted-user") == "trusted-user"
+    assert retest_routes.trusted_completion_actor("spoofed", "trusted-user") == "trusted-user"
+    with pytest.raises(StarletteHTTPException):
+        delivery_routes.trusted_actor("spoofed", None)

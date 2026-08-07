@@ -22,7 +22,7 @@ from .models import (
     ProviderManifest,
     ProviderResult,
 )
-from .runtime import ProviderSettings, ProviderTransport, UrllibProviderTransport, auth_probe_url
+from .runtime import HttpResponse, ProviderSettings, ProviderTransport, UrllibProviderTransport, auth_probe_url
 
 
 @dataclass
@@ -268,17 +268,17 @@ class ProviderGateway:
             with limiter.acquire():
                 for attempt in range(1, self.max_attempts + 1):
                     try:
-                        response = self.transport.request(
-                            "POST",
-                            settings.endpoint,
-                            headers=headers,
-                            payload=request_payload,
-                            timeout_seconds=self.timeout_seconds,
+                        response, search_requested_for_call = self._request_with_supported_tools(
+                            manifest,
+                            settings,
+                            prompt,
+                            headers,
+                            request_payload,
                         )
                         answer, request_id, citations, search_used, usage = parse_response(
                             response.data,
                             response.headers,
-                            search_requested=manifest.capabilities.web_search,
+                            search_requested=search_requested_for_call,
                         )
                         if not answer:
                             raise ProviderGatewayError(
@@ -333,6 +333,50 @@ class ProviderGateway:
             self.quota.release(reservation)
         assert last_error is not None
         raise last_error
+
+    def _request_with_supported_tools(
+        self,
+        manifest: ProviderManifest,
+        settings: ProviderSettings,
+        prompt: str,
+        headers: Mapping[str, str],
+        request_payload: Mapping[str, Any],
+    ) -> tuple[HttpResponse, bool]:
+        try:
+            return (
+                self.transport.request(
+                    "POST",
+                    settings.endpoint,
+                    headers=headers,
+                    payload=request_payload,
+                    timeout_seconds=self.timeout_seconds,
+                ),
+                manifest.capabilities.web_search,
+            )
+        except ProviderGatewayError as exc:
+            tool_unavailable = (
+                manifest.request_kind == "responses_web_search"
+                and exc.provider_code == "ToolNotOpen"
+            )
+            if not tool_unavailable:
+                raise
+            fallback_payload = build_request(
+                manifest,
+                settings.model,
+                prompt,
+                settings.max_tokens,
+                include_web_search=False,
+            )
+            return (
+                self.transport.request(
+                    "POST",
+                    settings.endpoint,
+                    headers=headers,
+                    payload=fallback_payload,
+                    timeout_seconds=self.timeout_seconds,
+                ),
+                False,
+            )
 
     def probe(self, provider: str, level: ProbeLevel) -> ProbeResult:
         result = self._run_probe(provider, level)

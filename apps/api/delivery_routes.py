@@ -33,6 +33,15 @@ def response_meta(trace_id: Optional[str]) -> dict[str, str]:
     return {"trace_id": trace_id or f"trc_{uuid4().hex[:16]}", "request_id": f"req_{uuid4().hex[:16]}"}
 
 
+def trusted_actor(requested_actor: str, authenticated_actor: Optional[str]) -> str:
+    enforcement = os.getenv("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
+    if enforcement in {"0", "false", "disabled", "off"}:
+        return requested_actor
+    if not authenticated_actor:
+        raise StarletteHTTPException(status_code=401, detail={"code": "AUTH_TOKEN_INVALID"})
+    return authenticated_actor
+
+
 class RiskFinding(BaseModel):
     code: str
     severity: Literal["low", "medium", "high"]
@@ -215,6 +224,7 @@ class InMemoryDeliveryRepository:
         _assert_review_allowed(payload, fact_check_status, risk_level)
         data = ContentReviewData(review_id=f"review_{uuid4().hex[:12]}", tenant_id=tenant_id, project_id=asset.project_id, asset_id=asset_id, content_sha256=sha256_text(asset.body_md), action=payload.action, fact_check_status=fact_check_status, risk_level=risk_level, risk_findings=findings, override_reason=payload.override_reason, reviewed_by=payload.reviewed_by, reviewed_at=utc_now())
         self.reviews[(tenant_id, data.review_id)] = data
+        knowledge_routes.KNOWLEDGE_REPOSITORY.content_assets[(tenant_id, asset_id)] = asset.model_copy(update={"status": "approved" if payload.action == "approved" else payload.action})
         return data
 
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData:
@@ -535,13 +545,15 @@ DELIVERY_REPOSITORY: DeliveryRepository = build_repository()
 
 
 @router.post("/content-assets/{asset_id}/reviews", response_model=ContentReviewResponse, status_code=201)
-def review_content(asset_id: str, payload: ContentReviewRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> ContentReviewResponse:
-    return ContentReviewResponse(data=DELIVERY_REPOSITORY.review_content(tenant_id, asset_id, payload), meta=response_meta(trace_id))
+def review_content(asset_id: str, payload: ContentReviewRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> ContentReviewResponse:
+    trusted_payload = payload.model_copy(update={"reviewed_by": trusted_actor(payload.reviewed_by, authenticated_actor)})
+    return ContentReviewResponse(data=DELIVERY_REPOSITORY.review_content(tenant_id, asset_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.post("/content-assets/{asset_id}/publish-packages", response_model=PublishPackageResponse, status_code=201)
-def create_publish_package(asset_id: str, payload: PublishPackageCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishPackageResponse:
-    return PublishPackageResponse(data=DELIVERY_REPOSITORY.create_package(tenant_id, asset_id, payload), meta=response_meta(trace_id))
+def create_publish_package(asset_id: str, payload: PublishPackageCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> PublishPackageResponse:
+    trusted_payload = payload.model_copy(update={"requested_by": trusted_actor(payload.requested_by, authenticated_actor)})
+    return PublishPackageResponse(data=DELIVERY_REPOSITORY.create_package(tenant_id, asset_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.get("/projects/{project_id}/publish-packages", response_model=PublishPackageListResponse)
@@ -560,5 +572,6 @@ def list_publish_attempts(package_id: str, tenant_id: str = Header(default="tena
 
 
 @router.post("/publish-packages/{package_id}/publication-evidence", response_model=PublishPackageResponse)
-def record_publication_evidence(package_id: str, payload: PublishEvidenceRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishPackageResponse:
-    return PublishPackageResponse(data=DELIVERY_REPOSITORY.mark_published(tenant_id, package_id, payload), meta=response_meta(trace_id))
+def record_publication_evidence(package_id: str, payload: PublishEvidenceRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> PublishPackageResponse:
+    trusted_payload = payload.model_copy(update={"recorded_by": trusted_actor(payload.recorded_by, authenticated_actor)})
+    return PublishPackageResponse(data=DELIVERY_REPOSITORY.mark_published(tenant_id, package_id, trusted_payload), meta=response_meta(trace_id))

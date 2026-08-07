@@ -7,15 +7,24 @@ from urllib.parse import urlparse
 from .models import ProviderCitation, ProviderManifest, ProviderUsage, UsagePrecision
 
 
-def build_request(manifest: ProviderManifest, model: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+def build_request(
+    manifest: ProviderManifest,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    *,
+    include_web_search: bool = True,
+) -> dict[str, Any]:
     if manifest.request_kind == "responses_web_search":
-        return {
+        request: dict[str, Any] = {
             "model": model,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            "tools": [{"type": "web_search"}],
             "temperature": 0.2,
             "max_output_tokens": max_tokens,
         }
+        if include_web_search:
+            request["tools"] = [{"type": "web_search"}]
+        return request
     request: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],

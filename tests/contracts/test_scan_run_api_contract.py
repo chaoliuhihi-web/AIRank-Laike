@@ -57,6 +57,13 @@ def test_scan_run_api_creates_and_reads_dev_statuses() -> None:
     assert get_response.status_code == 200
     validate_response("scan_run_response.schema.json", get_response.json())
 
+    runs_response = client.get(
+        "/api/v1/projects/project_demo/scan-runs",
+        headers={"tenant-id": "tenant_scan", "X-AIRank-Trace-Id": "trc_scan_runs"},
+    )
+    assert runs_response.status_code == 200
+    assert any(item["run_id"] == run_id for item in runs_response.json()["data"])
+
     tasks_response = client.get(
         f"/api/v1/scan-runs/{run_id}/tasks",
         headers={"tenant-id": "tenant_scan", "X-AIRank-Trace-Id": "trc_scan_tasks"},

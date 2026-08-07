@@ -166,6 +166,47 @@ def test_doubao_responses_payload_and_output_parser() -> None:
     assert transport.calls[0]["payload"]["tools"] == [{"type": "web_search"}]
 
 
+def test_doubao_falls_back_without_search_when_account_has_not_opened_tool() -> None:
+    transport = FakeTransport(
+        [
+            ProviderGatewayError(
+                "doubao",
+                "PROVIDER_MODEL_OR_ENDPOINT_NOT_FOUND",
+                "tool unavailable",
+                status_code=404,
+                provider_code="ToolNotOpen",
+            ),
+            HttpResponse(
+                status=200,
+                headers={"x-request-id": "req_doubao_fallback"},
+                data={
+                    "id": "resp_doubao_fallback",
+                    "output": [{"type": "message", "content": [{"type": "output_text", "text": "无联网回答"}]}],
+                },
+            ),
+        ]
+    )
+    gateway = ProviderGateway(
+        env={
+            "DOUBAO_API_KEY": "secret",
+            "DOUBAO_API_URL": "https://ark.example.test/api/v3/responses",
+            "DOUBAO_MODEL": "doubao-test",
+            "AIRANK_PROVIDER_QPS": "100",
+            "AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS": "true",
+        },
+        transport=transport,
+    )
+
+    result = gateway.generate("doubao", "测试")
+
+    assert transport.calls[0]["payload"]["tools"] == [{"type": "web_search"}]
+    assert "tools" not in transport.calls[1]["payload"]
+    assert result.answer_text == "无联网回答"
+    assert result.web_search_requested is True
+    assert result.web_search_used is False
+    assert result.evidence_grade == "provider_api_search_not_used"
+
+
 def test_retryable_failure_retries_and_circuit_opens() -> None:
     failures = [
         ProviderGatewayError("qianwen", "PROVIDER_UPSTREAM_FAILED", "upstream", retryable=True),

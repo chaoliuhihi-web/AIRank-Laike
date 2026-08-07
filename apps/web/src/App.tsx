@@ -25,6 +25,7 @@ import {
   Eye,
   ExternalLink,
   FileChartColumn,
+  FileSearch,
   FileText,
   Globe2,
   HelpCircle,
@@ -32,6 +33,7 @@ import {
   Info,
   Link2,
   ListChecks,
+  LogOut,
   Lightbulb,
   LucideIcon,
   Map,
@@ -63,30 +65,41 @@ import { consoleRoutes } from "./console/routes/console-routes";
 import {
   fallbackConsoleOverview,
   fallbackAssetBundle,
+  clearAuthSession,
+  fetchAnswerSample,
+  fetchAnswerSamples,
   fetchBuyerQuestions,
   fetchAssetBundle,
   fetchConsoleOverview,
+  fetchContentAssets,
   fetchFacts,
   fetchKnowledgeSources,
   fetchProviderReadiness,
   fetchPublishAttempts,
   fetchPublishPackages,
   fetchRetestWindows,
+  fetchScanRuns,
+  fetchScanTasks,
   fallbackReportList,
   fetchReports,
   getStoredAuthSession,
   loginToAirank,
   recordConsoleAction,
   recordDownloadReceipt,
+  reviewContentAsset,
+  reviewFactRevision,
   runBrandCheck,
   storeAuthSession,
   type AuthSession,
+  type AnswerSample,
+  type AnswerSampleDetail,
   type AssetBundle,
   type BuyerQuestion,
   type BrandCheckResult,
   type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
+  type GovernedContentAsset,
   type FactRevision,
   type KnowledgeSource,
   type ProviderReadiness,
@@ -94,6 +107,8 @@ import {
   type ReportItem,
   type ReportList,
   type RetestWindow,
+  type ScanRun,
+  type ScanTask,
 } from "./console/api";
 import type { Tone } from "./console/data";
 
@@ -123,6 +138,7 @@ const iconMap: Record<string, LucideIcon> = {
   CircleUserRound,
   ClipboardList,
   FileChartColumn,
+  FileSearch,
   Globe2,
   Home,
   Link2,
@@ -236,7 +252,12 @@ function App() {
         setOverview(nextOverview);
         setOverviewStatus("api");
       })
-      .catch(() => {
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof Error && error.message.includes("401")) {
+          clearAuthSession();
+          setAuthSession(null);
+        }
         setOverview(fallbackConsoleOverview);
         setOverviewStatus("fallback");
       });
@@ -258,6 +279,14 @@ function App() {
     setOverviewStatus("loading");
     setAuthSession(nextSession);
     navigate("/console");
+  };
+
+  const handleLogout = () => {
+    clearAuthSession();
+    setAuthSession(null);
+    setOverview(fallbackConsoleOverview);
+    setOverviewStatus("fallback");
+    navigate("/login");
   };
 
   const applyBrandCheckResult = (result: BrandCheckResult) => {
@@ -345,7 +374,7 @@ function App() {
         >
           <main className="airank-console">
             <div className="airank-console-shell">
-              <Sidebar activePath={path} onNavigate={navigateWithAudit} />
+              <Sidebar activePath={path} onNavigate={navigateWithAudit} onLogout={handleLogout} />
               <section className="airank-console-main">
                 <ConsolePage path={path} onNavigate={navigateWithAudit} onBrandCheckComplete={applyBrandCheckResult} />
               </section>
@@ -504,9 +533,11 @@ function normalizePath(path: string) {
 function Sidebar({
   activePath,
   onNavigate,
+  onLogout,
 }: {
   activePath: string;
   onNavigate: (path: string) => void;
+  onLogout: () => void;
 }) {
   const { project } = useConsoleOverview();
   const { openPanel } = useActionFeedback();
@@ -557,6 +588,10 @@ function Sidebar({
           <HelpCircle size={22} />
           <span>帮助中心</span>
         </button>
+        <button className="help-link" type="button" onClick={onLogout}>
+          <LogOut size={22} />
+          <span>退出登录</span>
+        </button>
         <div className="tenant-switcher">
           <div className="tenant-avatar">
             <CircleUserRound size={23} />
@@ -583,6 +618,8 @@ function ConsolePage({
 }) {
   if (path === "/console/checkup") return <CheckupPage onNavigate={onNavigate} />;
   if (path === "/console/facts") return <FactsPage />;
+  if (path === "/console/evidence") return <EvidencePage />;
+  if (path === "/console/tasks") return <TaskCenterPage />;
   if (path === "/console/questions") return <QuestionsPage onNavigate={onNavigate} />;
   if (path === "/console/gaps/questions") return <GapQuestionsPage onNavigate={onNavigate} />;
   if (path === "/console/gaps") return <GapsPage onNavigate={onNavigate} />;
@@ -1009,7 +1046,10 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setReadiness(data);
         setLoadError(null);
       })
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "Provider 健康接口不可用"));
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "Provider 健康接口不可用");
+      });
     return () => controller.abort();
   }, []);
 
@@ -1059,10 +1099,11 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function FactsPage() {
   const { project } = useConsoleOverview();
-  const { openPanel } = useActionFeedback();
+  const { openPanel, notify } = useActionFeedback();
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reviewingRevisionId, setReviewingRevisionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) return;
@@ -1076,13 +1117,34 @@ function FactsPage() {
         setSources(nextSources);
         setLoadError(null);
       })
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "事实库接口不可用"));
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "事实库接口不可用");
+      });
     return () => controller.abort();
   }, [project.id]);
 
   const approved = facts.filter((item) => item.status === "approved").length;
   const pending = facts.filter((item) => item.status === "proposed").length;
   const eligible = facts.filter((item) => item.eligible_for_generation).length;
+
+  const reviewRevision = async (revision: FactRevision, action: "approved" | "rejected") => {
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor) {
+      notify({ title: "无法提交审核", desc: "当前登录会话缺少可信审核人身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    setReviewingRevisionId(revision.revision_id);
+    try {
+      const updated = await reviewFactRevision(project.id, revision.revision_id, action, actor);
+      setFacts((items) => items.map((item) => item.revision_id === updated.revision_id ? updated : item));
+      notify({ title: action === "approved" ? "事实已批准" : "事实已驳回", desc: `${updated.title} 的审核结果已由服务端持久化。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "审核未通过", desc: error instanceof Error ? error.message : "事实审核接口不可用", tone: "danger" });
+    } finally {
+      setReviewingRevisionId(null);
+    }
+  };
 
   return (
     <>
@@ -1137,6 +1199,12 @@ function FactsPage() {
               <Badge tone={item.eligible_for_generation ? "success" : "muted"}>{item.eligible_for_generation ? "可用于内容" : item.eligibility_reason}</Badge>
               <Badge tone={item.risk_level === "high" || item.risk_level === "restricted" ? "danger" : "primary"}>风险 {item.risk_level}</Badge>
             </div>
+            {item.status === "proposed" && (
+              <div className="fact-review-actions">
+                <button className="outline-button" type="button" disabled={reviewingRevisionId === item.revision_id} onClick={() => void reviewRevision(item, "rejected")}>驳回</button>
+                <button className="airank-console-primary-button" type="button" disabled={reviewingRevisionId === item.revision_id} onClick={() => void reviewRevision(item, "approved")}>{reviewingRevisionId === item.revision_id ? "提交中…" : "批准事实"}</button>
+              </div>
+            )}
           </article>
         ))}
       </section>
@@ -1178,6 +1246,227 @@ function FactsPage() {
           查看使用指南
         </button>
       </div>
+    </>
+  );
+}
+
+function EvidencePage() {
+  const { project } = useConsoleOverview();
+  const [runs, setRuns] = useState<ScanRun[]>([]);
+  const [samples, setSamples] = useState<AnswerSample[]>([]);
+  const [sampleSummary, setSampleSummary] = useState({
+    total: 0,
+    validCount: 0,
+    validUnmentionedCount: 0,
+    citationSampleCount: 0,
+    limit: 200,
+  });
+  const [selected, setSelected] = useState<AnswerSampleDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState("");
+
+  useEffect(() => {
+    if (!project.id) return;
+    const controller = new AbortController();
+    fetchScanRuns(project.id, controller.signal)
+      .then((data) => {
+        setRuns(data);
+        setSelectedRunId((current) => data.some((run) => run.run_id === current) ? current : data[0]?.run_id || "");
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setRuns([]);
+        setSelectedRunId("");
+        setLoadError(error instanceof Error ? error.message : "测量批次接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id || !selectedRunId) {
+      setSamples([]);
+      setSampleSummary({ total: 0, validCount: 0, validUnmentionedCount: 0, citationSampleCount: 0, limit: 200 });
+      return;
+    }
+    const controller = new AbortController();
+    fetchAnswerSamples(project.id, selectedRunId, controller.signal)
+      .then((collection) => {
+        setSamples(collection.samples);
+        setSampleSummary({
+          total: collection.total,
+          validCount: collection.validCount,
+          validUnmentionedCount: collection.validUnmentionedCount,
+          citationSampleCount: collection.citationSampleCount,
+          limit: collection.limit,
+        });
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setSamples([]);
+        setSampleSummary({ total: 0, validCount: 0, validUnmentionedCount: 0, citationSampleCount: 0, limit: 200 });
+        setLoadError(error instanceof Error ? error.message : "证据样本接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id, selectedRunId]);
+
+  const openSample = async (snapshotId: string) => {
+    setLoadingDetail(snapshotId);
+    setDetailError(null);
+    try {
+      setSelected(await fetchAnswerSample(snapshotId));
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : "样本详情接口不可用");
+    } finally {
+      setLoadingDetail(null);
+    }
+  };
+
+  return (
+    <>
+      <PageHeader title="证据中心" subtitle="从指标下钻到不可变回答、真实引用、请求元数据与证据对象；未提及样本同样保留并计入分母。" />
+      <div className="evidence-toolbar">
+        <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
+        <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
+      </div>
+      <section className="summary-band evidence-summary">
+        <SummaryMetric label="样本总数" value={String(sampleSummary.total)} tone="primary" />
+        <SummaryMetric label="有效样本" value={String(sampleSummary.validCount)} tone="success" />
+        <SummaryMetric label="有效未提及" value={String(sampleSummary.validUnmentionedCount)} tone="warning" />
+        <SummaryMetric label="含原生引用" value={String(sampleSummary.citationSampleCount)} tone="primary" />
+      </section>
+      {loadError && <DataStateCard title="证据中心读取失败" desc={loadError} tone="danger" />}
+      {!loadError && sampleSummary.total === 0 && <DataStateCard title="尚无回答证据" desc="完成真实 Provider 采样后，这里会保存原始回答、引用、截图对象、采集面和哈希；系统不会用演示样本补位。" tone="warning" />}
+      {samples.length > 0 && (
+        <div className="airank-console-card table-card evidence-table-wrap">
+          <table className="question-table evidence-table">
+            <thead><tr><th>平台 / 采集面</th><th>测试类型</th><th>样本状态</th><th>品牌结果</th><th>引用</th><th>采集时间</th><th>证据</th></tr></thead>
+            <tbody>
+              {samples.map((sample) => (
+                <tr key={sample.snapshot_id}>
+                  <td><strong>{sample.provider}</strong><small>{sample.collector_surface} · {sample.model_name || "模型未记录"}</small></td>
+                  <td><Badge tone="primary">{sample.cohort_type}</Badge><small>#{sample.sample_index} · {sample.prompt_version_id}</small></td>
+                  <td><Badge tone={sample.sample_status === "valid" ? "success" : sample.sample_status === "failed" ? "danger" : "warning"}>{sample.sample_status}</Badge></td>
+                  <td><strong>{sample.brand_mentioned ? sample.mention_class : "未提及"}</strong><small>{sample.brand_rank ? `排名 ${sample.brand_rank}` : "无条件排名"}</small></td>
+                  <td>{sample.citation_count}</td>
+                  <td>{formatDateTime(sample.created_at)}</td>
+                  <td><button className="table-action" type="button" disabled={loadingDetail === sample.snapshot_id} onClick={() => void openSample(sample.snapshot_id)}>{loadingDetail === sample.snapshot_id ? "读取中" : "下钻"}</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {detailError && <DataStateCard title="样本详情读取失败" desc={detailError} tone="danger" />}
+      {selected && (
+        <section className="evidence-detail-grid">
+          <Panel title="不可变原始回答">
+            <div className="evidence-answer">{selected.answer_text}</div>
+            <dl className="evidence-metadata">
+              <div><dt>回答 SHA-256</dt><dd>{selected.answer_sha256}</dd></div>
+              <div><dt>原始响应 SHA-256</dt><dd>{selected.raw_response_sha256}</dd></div>
+              <div><dt>Evidence Snapshot</dt><dd>{selected.evidence_snapshot_id}</dd></div>
+              <div><dt>采集时间</dt><dd>{formatDateTime(selected.evidence_captured_at)}</dd></div>
+              <div><dt>会话</dt><dd>{selected.session_id}</dd></div>
+              <div><dt>证据等级</dt><dd>{selected.evidence_level}</dd></div>
+            </dl>
+          </Panel>
+          <Panel title={`真实引用（${selected.citations.length}）`}>
+            {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc="无引用是有效证据状态，不补造来源。" tone="warning" /> : (
+              <ol className="evidence-citations">
+                {selected.citations.map((citation) => (
+                  <li key={citation.citation_id}><a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a><span>{citation.cited_text || "Provider 未返回引用原文"}</span></li>
+                ))}
+              </ol>
+            )}
+          </Panel>
+          <Panel title="采集与对象证据">
+            <dl className="evidence-metadata">
+              <div><dt>联网状态</dt><dd>{selected.search_enabled === null ? "未记录" : selected.search_enabled ? "已联网" : "未联网"}</dd></div>
+              <div><dt>外部请求 ID</dt><dd>{selected.external_trace_id || "未返回"}</dd></div>
+              <div><dt>截图对象</dt><dd>{selected.screenshot.object_ref_id || "未采集"}</dd></div>
+              <div><dt>来源面板对象</dt><dd>{selected.source_panel.object_ref_id || "未采集"}</dd></div>
+            </dl>
+            <details className="evidence-json"><summary>查看请求元数据</summary><pre>{JSON.stringify(selected.request_metadata, null, 2)}</pre></details>
+            <details className="evidence-json"><summary>查看原始响应</summary><pre>{JSON.stringify(selected.raw_response, null, 2)}</pre></details>
+          </Panel>
+        </section>
+      )}
+    </>
+  );
+}
+
+function TaskCenterPage() {
+  const { project } = useConsoleOverview();
+  const [runs, setRuns] = useState<ScanRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [tasks, setTasks] = useState<ScanTask[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!project.id) return;
+    const controller = new AbortController();
+    fetchScanRuns(project.id, controller.signal)
+      .then((data) => {
+        setRuns(data);
+        setSelectedRunId((current) => current || data[0]?.run_id || "");
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "测量任务接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setTasks([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetchScanTasks(selectedRunId, controller.signal)
+      .then((data) => {
+        setTasks(data);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "任务明细接口不可用");
+      });
+    return () => controller.abort();
+  }, [selectedRunId]);
+
+  const selectedRun = runs.find((run) => run.run_id === selectedRunId);
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.filter((task) => task.status === "failed").length;
+  const active = tasks.filter((task) => task.status === "queued" || task.status === "running").length;
+
+  return (
+    <>
+      <PageHeader title="任务中心" subtitle="按测量批次查看每个平台、采集面、会话和重复样本的真实执行状态；失败、阻塞和未提及不会相互替代。" />
+      <div className="evidence-toolbar">
+        <label>测量批次<select value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.name || run.run_id} · {run.status}</option>)}</select></label>
+        <span>{selectedRun ? `${selectedRun.cohort_type} · ${selectedRun.collector_surfaces.join("/")} · 重复 ${selectedRun.repetitions} 次` : "暂无批次"}</span>
+      </div>
+      <section className="summary-band evidence-summary">
+        <SummaryMetric label="任务总数" value={String(tasks.length)} tone="primary" />
+        <SummaryMetric label="已完成" value={String(completed)} tone="success" />
+        <SummaryMetric label="失败/阻塞" value={String(failed)} tone="warning" />
+        <SummaryMetric label="排队/运行" value={String(active)} tone="primary" />
+      </section>
+      {loadError && <DataStateCard title="任务中心读取失败" desc={loadError} tone="danger" />}
+      {!loadError && runs.length === 0 && <DataStateCard title="尚无测量任务" desc="提交品牌检测后，系统会在这里保留每个独立会话任务及其结构化失败原因。" tone="warning" />}
+      {tasks.length > 0 && (
+        <div className="airank-console-card table-card">
+          <table className="question-table task-table"><thead><tr><th>Provider</th><th>采集契约</th><th>样本</th><th>状态</th><th>错误/阻塞原因</th><th>完成时间</th></tr></thead><tbody>
+            {tasks.map((task) => <tr key={task.task_id}><td><strong>{task.provider}</strong><small>{task.task_id}</small></td><td><strong>{task.collector_surface}</strong><small>{task.evidence_level} · {task.cohort_type}</small></td><td>#{task.sample_index}<small>{task.session_id}</small></td><td><Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>{task.status}</Badge></td><td>{task.error ? <><strong>{task.error.code}</strong><small>{task.error.message}</small></> : "—"}</td><td>{task.finished_at ? formatDateTime(task.finished_at) : "未完成"}</td></tr>)}
+          </tbody></table>
+        </div>
+      )}
     </>
   );
 }
@@ -1231,7 +1520,10 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
         setQuestions(data);
         setLoadError(null);
       })
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "买家问题接口不可用"));
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "买家问题接口不可用");
+      });
     return () => controller.abort();
   }, [project.id]);
 
@@ -1373,8 +1665,11 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
-  const { openPanel } = useActionFeedback();
+  const { openPanel, notify } = useActionFeedback();
   const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
+  const [contentAssets, setContentAssets] = useState<GovernedContentAsset[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reviewingAssetId, setReviewingAssetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) {
@@ -1382,11 +1677,41 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       return;
     }
     const controller = new AbortController();
-    fetchAssetBundle(project.id, controller.signal)
-      .then(setBundle)
-      .catch(() => setBundle(fallbackAssetBundle));
+    Promise.all([
+      fetchAssetBundle(project.id, controller.signal),
+      fetchContentAssets(project.id, controller.signal),
+    ])
+      .then(([nextBundle, nextAssets]) => {
+        setBundle(nextBundle);
+        setContentAssets(nextAssets);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setBundle(fallbackAssetBundle);
+        setContentAssets([]);
+        setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
+      });
     return () => controller.abort();
   }, [project.id]);
+
+  const reviewAsset = async (asset: GovernedContentAsset, action: "approved" | "rejected" | "changes_requested") => {
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!actor) {
+      notify({ title: "无法提交审校", desc: "当前登录会话缺少可信审核人身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    setReviewingAssetId(asset.asset_id);
+    try {
+      const review = await reviewContentAsset(asset.asset_id, action, actor);
+      setContentAssets((items) => items.map((item) => item.asset_id === asset.asset_id ? { ...item, status: action === "approved" ? "approved" : action } : item));
+      notify({ title: action === "approved" ? "内容审校通过" : "内容审校已记录", desc: `事实核验 ${review.fact_check_status}，风险等级 ${review.risk_level}。`, tone: review.fact_check_status === "passed" ? "success" : "warning" });
+    } catch (error) {
+      notify({ title: "内容审校未通过", desc: error instanceof Error ? error.message : "内容审核接口不可用", tone: "danger" });
+    } finally {
+      setReviewingAssetId(null);
+    }
+  };
 
   return (
     <>
@@ -1395,6 +1720,29 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         subtitle="这些不是普通文章，而是 AI 能抓取、理解、引用的企业证据链。"
         action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
+      {loadError && <DataStateCard title="内容资产读取失败" desc={loadError} tone="danger" />}
+      <Panel title="证据绑定内容审校">
+        {contentAssets.length === 0 ? (
+          <DataStateCard title="尚无可审校内容" desc="只有审核通过且存在精确原文支持的事实，才能生成这里的内容资产。" tone="warning" />
+        ) : (
+          <div className="content-review-list">
+            {contentAssets.map((asset) => (
+              <article className="content-review-item" key={asset.asset_id}>
+                <div className="content-review-head"><div><strong>{asset.title}</strong><span>{asset.asset_type} · {formatDateTime(asset.created_at)}</span></div><Badge tone={asset.status === "approved" ? "success" : asset.status === "rejected" ? "danger" : "warning"}>{asset.status}</Badge></div>
+                <div className="content-review-body">{asset.body_md}</div>
+                <div className="content-review-proof"><span>{asset.fact_revision_ids.length} 个事实修订</span><span>{asset.claim_assertion_ids.length} 条主张</span><span>{asset.claim_support_ids.length} 条证据支持</span></div>
+                {asset.status === "draft" || asset.status === "changes_requested" ? (
+                  <div className="fact-review-actions">
+                    <button className="outline-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "changes_requested")}>要求修改</button>
+                    <button className="outline-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "rejected")}>驳回</button>
+                    <button className="airank-console-primary-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "approved")}>{reviewingAssetId === asset.asset_id ? "审校中…" : "通过审校"}</button>
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
       <section className="asset-grid reference-asset-grid">
         {bundle.assets.map((item, index) => (
           <article className="airank-console-card asset-card reference-asset-card" data-testid="asset-card" key={item.title}>
@@ -1472,7 +1820,10 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
         setWindows(nextWindows);
         setLoadError(null);
       })
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "发布中心接口不可用"));
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "发布中心接口不可用");
+      });
     return () => controller.abort();
   }, [project.id]);
 
@@ -1574,7 +1925,7 @@ function AssistantPage() {
   return (
     <>
       <PageHeader
-        title="AI 销售助手"
+        title="AI 来客助手"
         subtitle="该能力尚未接入事实检索、对话审计和真实线索系统，当前明确标记为 disabled。"
         action={<Badge tone="muted">disabled</Badge>}
       />
@@ -1754,10 +2105,10 @@ function SettingsPage() {
             openPanel({
               title: "能力状态枚举",
               desc: "所有未覆盖能力必须显示 ready、partial、blocked、disabled 或 dev_only，不能包装成完成。",
-              items: ["外部 Publisher 仍为 partial", "AI 销售助手为 disabled", "商业上线仍为 no-go"],
+              items: ["外部 Publisher 仍为 partial", "AI 来客助手为 disabled", "商业上线仍为 no-go"],
             })
           }
-          rows={[["事实与证据", "partial"], ["导出发布包", "ready"], ["WordPress / HTTP", "partial"], ["AI 销售助手", "disabled"], ["商业上线", "blocked"]]}
+          rows={[["事实与证据", "partial"], ["导出发布包", "ready"], ["WordPress / HTTP", "partial"], ["AI 来客助手", "disabled"], ["商业上线", "blocked"]]}
         />
       </section>
     </>

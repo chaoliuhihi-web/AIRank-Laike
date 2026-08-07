@@ -35,6 +35,22 @@ export const consoleRoutes: ConsoleRoute[] = [
     priority: "M1",
   },
   {
+    id: "evidence",
+    path: "/console/evidence",
+    label: "证据中心",
+    icon: "FileSearch",
+    sourceImage: "",
+    priority: "M1",
+  },
+  {
+    id: "tasks",
+    path: "/console/tasks",
+    label: "任务中心",
+    icon: "ClipboardList",
+    sourceImage: "",
+    priority: "M1",
+  },
+  {
     id: "questions",
     path: "/console/questions",
     label: "买家问题地图",

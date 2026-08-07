@@ -11,7 +11,7 @@ python3 scripts/release_readiness.py \
   --require-browser-providers
 ```
 
-该命令把本文件的核心自动检查脚本化：远端一致性、工作区、运行产物、contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 迁移、capability probe 和消费端网页 Provider readiness。普通自动测试会隔离数据库环境变量，真实 migration 使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。真实 MySQL、必需 capability 或 ChatGPT / DeepSeek / Kimi / 通义 / 豆包 / 百度 AI 搜索 / 腾讯元宝任一消费端网页 profile 未 READY 时返回非零，不允许用 `dev_only` 结果替代上线通过。
+该命令把本文件的核心自动检查脚本化：远端一致性、工作区、运行产物、生产鉴权配置、contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、Alembic 迁移、capability probe 和消费端网页 Provider readiness。普通自动测试会隔离数据库环境变量，真实 migration 使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。生产必须同时满足 `AIRANK_API_AUTH_ENFORCEMENT=required` 与 `AIRANK_AUTH_MODE=yudao`；真实 MySQL、必需 capability 或 ChatGPT / DeepSeek / Kimi / 通义 / 豆包 / 百度 AI 搜索 / 腾讯元宝任一消费端网页 profile 未 READY 时返回非零，不允许用 `dev_only` 结果替代上线通过。
 
 ## Gate 0：仓库和远端
 
@@ -41,6 +41,7 @@ python3 scripts/release_readiness.py \
 
 | Check | Command / Evidence | Required |
 | --- | --- | --- |
+| API 鉴权强制执行 | release gate environment check | `AIRANK_API_AUTH_ENFORCEMENT=required` 且 `AIRANK_AUTH_MODE=yudao` |
 | API health | `curl /api/v1/health` | 返回 ok 和 trace_id |
 | API version | `curl /api/v1/version` | 返回 commit/version |
 | response envelope | contract test | 所有 API 统一 envelope |

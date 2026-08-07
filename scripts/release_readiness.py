@@ -115,6 +115,36 @@ def tracked_runtime_artifact_check() -> Check:
     )
 
 
+def api_auth_configuration_check(env: Mapping[str, str] | None = None) -> Check:
+    source = os.environ if env is None else env
+    enforcement = source.get("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
+    auth_mode = source.get("AIRANK_AUTH_MODE", "yudao").strip().lower()
+    blockers: list[str] = []
+    if enforcement != "required":
+        blockers.append(f"AIRANK_API_AUTH_ENFORCEMENT={enforcement or '<empty>'}")
+    if auth_mode != "yudao":
+        blockers.append(f"AIRANK_AUTH_MODE={auth_mode or '<empty>'}")
+    detail = json.dumps(
+        {
+            "AIRANK_API_AUTH_ENFORCEMENT": enforcement,
+            "AIRANK_AUTH_MODE": auth_mode,
+            "required": {
+                "AIRANK_API_AUTH_ENFORCEMENT": "required",
+                "AIRANK_AUTH_MODE": "yudao",
+            },
+            "blockers": blockers,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return Check(
+        "API authentication configuration",
+        "BLOCKED" if blockers else "PASS",
+        "validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE",
+        detail,
+    )
+
+
 def remote_ref_check(remote: str) -> Check:
     head_code, head = run_command("git rev-parse HEAD")
     remote_code, remote_head = run_command(f"git ls-remote {remote} refs/heads/main")
@@ -281,6 +311,7 @@ def release_checks(
         remote_ref_check("gitee"),
         command_check("diff check", "git diff --check"),
         tracked_runtime_artifact_check(),
+        api_auth_configuration_check(),
         command_check("contract tests", "python3 -m pytest tests/contracts -q", remove_database_urls=True),
         command_check("acceptance tests", "python3 -m pytest tests/acceptance -q", remove_database_urls=True),
         command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,7 @@ from apps.api.knowledge_routes import (
     MySQLKnowledgeRepository,
 )
 from apps.api.provider_operations import MySQLProviderOperations
+from apps.api.evidence_routes import MySQLEvidenceRepository
 from airank_provider_gateway import (
     HealthState,
     ProbeLevel,
@@ -246,6 +248,9 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
     project_repo = MySQLProjectRepository(database_url())
     scan_repo = MySQLScanRepository(database_url())
     asset_repo = MySQLAssetBundleRepository(database_url())
+    evidence_repo = MySQLEvidenceRepository(database_url())
+    snapshot_id = f"snapshot_it_{uuid4().hex[:10]}"
+    evidence_snapshot_id = f"evidence_it_{uuid4().hex[:10]}"
 
     try:
         project = project_repo.create_project(
@@ -315,6 +320,102 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
             assert first_payload["scan_task_id"].startswith("scan_task_")
             assert first_payload["question_id"] in {question_one.question_id, question_two.question_id}
 
+            sample_task = tasks[0]
+            answer_text = "AIRank 是候选方案之一。"
+            answer_sha256 = hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
+            raw_response = {"id": "provider_request_it", "answer": answer_text}
+            raw_json = json.dumps(raw_response, ensure_ascii=False, sort_keys=True)
+            raw_sha256 = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_answer_snapshots (
+                      id, tenant_id, project_id, run_id, task_id, question_id,
+                      provider, cohort_type, prompt_version_id, sample_index,
+                      session_id, collector_surface, evidence_level, sample_status,
+                      answer_text, answer_sha256, raw_response_sha256,
+                      brand_mentioned, brand_rank, mention_class,
+                      target_entity_mentions_json, competitor_mentions_json,
+                      sentiment, confidence, model_name, search_enabled,
+                      external_trace_id, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
+                      :provider, :cohort_type, :prompt_version_id, :sample_index,
+                      :session_id, :collector_surface, :evidence_level, 'valid',
+                      :answer_text, :answer_sha256, :raw_response_sha256,
+                      1, 2, 'candidate', JSON_ARRAY(), JSON_ARRAY(),
+                      'neutral', NULL, 'model-it', 1,
+                      'provider_request_it', :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": snapshot_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "task_id": sample_task.task_id,
+                    "question_id": sample_task.question_id,
+                    "provider": sample_task.provider,
+                    "cohort_type": sample_task.cohort_type,
+                    "prompt_version_id": sample_task.prompt_version_id,
+                    "sample_index": sample_task.sample_index,
+                    "session_id": sample_task.session_id,
+                    "collector_surface": sample_task.collector_surface,
+                    "evidence_level": sample_task.evidence_level,
+                    "answer_text": answer_text,
+                    "answer_sha256": answer_sha256,
+                    "raw_response_sha256": raw_sha256,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_evidence_snapshots (
+                      id, tenant_id, project_id, answer_snapshot_id,
+                      raw_response_json, raw_response_sha256,
+                      request_metadata_json, captured_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :answer_snapshot_id,
+                      :raw_response_json, :raw_response_sha256,
+                      :request_metadata_json, :captured_at, :captured_at
+                    )
+                    """
+                ),
+                {
+                    "id": evidence_snapshot_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "answer_snapshot_id": snapshot_id,
+                    "raw_response_json": raw_json,
+                    "raw_response_sha256": raw_sha256,
+                    "request_metadata_json": json.dumps({"collector_surface": sample_task.collector_surface}),
+                    "captured_at": datetime.now(timezone.utc),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_source_citations (
+                      id, tenant_id, project_id, snapshot_id, citation_order,
+                      title, url, host, source_type, cited_text, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :snapshot_id, 1,
+                      '真实引用', 'https://evidence.example.com/source',
+                      'evidence.example.com', 'provider_native', '支持回答的引用片段', :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"citation_it_{uuid4().hex[:10]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "snapshot_id": snapshot_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+
             conn.execute(
                 text(
                     """
@@ -359,9 +460,28 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
             )
 
         bundle = asset_repo.get_bundle(tenant_id, project.project_id)
+        samples, sample_aggregates = evidence_repo.list_samples(
+            tenant_id,
+            project.project_id,
+            run.run_id,
+            100,
+        )
+        detail = evidence_repo.get_sample(tenant_id, snapshot_id)
         assert bundle.assets[0].asset_id == "asset_real_fact_page"
         assert bundle.assets[0].progress == 100
         assert "1 个内容缺口" in bundle.recommendation
+        assert [sample.snapshot_id for sample in samples] == [snapshot_id]
+        assert sample_aggregates == {
+            "total": 1,
+            "valid_count": 1,
+            "valid_unmentioned_count": 0,
+            "citation_sample_count": 1,
+        }
+        assert detail.answer_text == "AIRank 是候选方案之一。"
+        assert detail.citation_count == 1
+        assert detail.citations[0].url == "https://evidence.example.com/source"
+        assert detail.raw_response["id"] == "provider_request_it"
+        assert detail.screenshot.object_ref_id is None
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -700,6 +820,13 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
             asset.asset_id,
             ContentReviewRequest(action="approved", reviewed_by="integration-reviewer"),
         )
+        listed_assets = knowledge_repo.list_governed_content(tenant_id, project.project_id)
+        assert len(listed_assets) == 1
+        assert listed_assets[0].asset_id == asset.asset_id
+        assert listed_assets[0].status == "approved"
+        assert listed_assets[0].fact_revision_ids == [fact.revision_id]
+        assert len(listed_assets[0].claim_assertion_ids) == 1
+        assert len(listed_assets[0].claim_support_ids) == 1
         package = delivery_repo.create_package(
             tenant_id,
             asset.asset_id,

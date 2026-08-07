@@ -190,6 +190,12 @@ def test_content_generation_uses_only_approved_exact_source_facts(client: TestCl
     assert fact["revision_id"] in data["body_md"]
     assert len(data["claim_assertion_ids"]) == 1
     assert len(data["claim_support_ids"]) == 1
+    listed = client.get(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"] == [data]
 
 
 def test_review_snapshot_export_publication_and_retest_contract(client: TestClient) -> None:
@@ -229,6 +235,10 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
         headers={"tenant-id": "tenant_1"},
         json={"action": "approved", "reviewed_by": "reviewer_2"},
     )
+    reviewed_assets = client.get(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+    )
     package = client.post(
         f"/api/v1/content-assets/{asset['asset_id']}/publish-packages",
         headers={"tenant-id": "tenant_1"},
@@ -261,6 +271,7 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
     assert before_review.json()["error"]["code"] == "CONTENT_REVIEW_REQUIRED"
     assert review.status_code == 201
     assert review.json()["data"]["fact_check_status"] == "passed"
+    assert reviewed_assets.json()["data"][0]["status"] == "approved"
     assert package.status_code == 201
     assert package.json()["data"]["status"] == "packaged"
     assert replay.json()["data"]["idempotent_replay"] is True

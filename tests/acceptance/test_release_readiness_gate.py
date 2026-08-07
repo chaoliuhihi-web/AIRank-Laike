@@ -123,6 +123,30 @@ def test_command_env_can_isolate_database_urls(monkeypatch: pytest.MonkeyPatch) 
     assert "DATABASE_URL" not in env
 
 
+def test_api_auth_configuration_blocks_disabled_enforcement_and_dev_mode() -> None:
+    check = release_readiness.api_auth_configuration_check(
+        {
+            "AIRANK_API_AUTH_ENFORCEMENT": "disabled",
+            "AIRANK_AUTH_MODE": "dev_only",
+        }
+    )
+
+    assert check.status == "BLOCKED"
+    assert "AIRANK_API_AUTH_ENFORCEMENT=disabled" in check.detail
+    assert "AIRANK_AUTH_MODE=dev_only" in check.detail
+
+
+def test_api_auth_configuration_requires_yudao_with_enforcement() -> None:
+    check = release_readiness.api_auth_configuration_check(
+        {
+            "AIRANK_API_AUTH_ENFORCEMENT": "required",
+            "AIRANK_AUTH_MODE": "yudao",
+        }
+    )
+
+    assert check.status == "PASS"
+
+
 def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_check() -> release_readiness.Check:
         return release_readiness.Check("browser provider readiness", "PASS", "fake", "ready")
@@ -131,6 +155,7 @@ def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.Mon
     monkeypatch.setattr(release_readiness, "remote_ref_check", lambda remote: release_readiness.Check(f"{remote} main ref", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "command_check", lambda name, command, **kwargs: release_readiness.Check(name, "PASS", command, "ok"))
     monkeypatch.setattr(release_readiness, "tracked_runtime_artifact_check", lambda: release_readiness.Check("tracked runtime artifacts", "PASS", "fake", "ok"))
+    monkeypatch.setattr(release_readiness, "api_auth_configuration_check", lambda: release_readiness.Check("API authentication configuration", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "capability_check", lambda **kwargs: release_readiness.Check("capability probe", "PASS", "fake", "ok"))
     monkeypatch.setattr(release_readiness, "browser_provider_readiness_check", fake_check)
 

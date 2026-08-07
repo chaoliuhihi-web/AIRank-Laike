@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path as FileSystemPath
+import threading
 from typing import Annotated, Any, Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -18,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from jsonschema import Draft202012Validator, ValidationError as JsonSchemaValidationError
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.concurrency import run_in_threadpool
 
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 from airank_skills import load_default_registry, run_skill
@@ -47,6 +49,8 @@ API_PREFIX = "/api/v1"
 API_VERSION = "v1"
 SERVICE_NAME = "airank-api"
 TRACE_HEADER = "X-AIRank-Trace-Id"
+_DEV_AUTH_SESSIONS: dict[str, dict[str, Any]] = {}
+_DEV_AUTH_SESSIONS_LOCK = threading.Lock()
 
 ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "BAD_REQUEST": (400, "Bad request"),
@@ -404,6 +408,11 @@ class ScanTaskData(BaseModel):
 
 class ScanRunResponse(BaseModel):
     data: ScanRunData
+    meta: ResponseMeta
+
+
+class ScanRunListResponse(BaseModel):
+    data: list[ScanRunData]
     meta: ResponseMeta
 
 
@@ -776,6 +785,9 @@ class ScanRepository(Protocol):
         ...
 
     def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
+        ...
+
+    def list_runs(self, tenant_id: str, project_id: str) -> list[ScanRunData]:
         ...
 
     def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
@@ -1236,6 +1248,17 @@ class InMemoryScanRepository:
             )
         return run
 
+    def list_runs(self, tenant_id: str, project_id: str) -> list[ScanRunData]:
+        return sorted(
+            [
+                run
+                for (item_tenant, _), run in self._runs.items()
+                if item_tenant == tenant_id and run.project_id == project_id
+            ],
+            key=lambda run: run.created_at,
+            reverse=True,
+        )
+
     def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
         task = self._tasks.get((tenant_id, task_id))
         if task is None:
@@ -1567,6 +1590,23 @@ class MySQLScanRepository:
         if row is None:
             raise StarletteHTTPException(status_code=404, detail={"code": "SCAN_RUN_NOT_FOUND", "details": {"run_id": run_id}})
         return self._row_to_run(row)
+
+    def list_runs(self, tenant_id: str, project_id: str) -> list[ScanRunData]:
+        with self._engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT * FROM airank_scan_runs
+                    WHERE tenant_id = :tenant_id
+                      AND project_id = :project_id
+                      AND deleted_at IS NULL
+                    ORDER BY created_at DESC, id DESC
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().all()
+        return [self._row_to_run(row) for row in rows]
 
     def get_task(self, tenant_id: str, task_id: str) -> ScanTaskData:
         with self._engine.begin() as conn:
@@ -2266,6 +2306,12 @@ def build_real_scan_metrics(
     ranked_count = sum(1 for result in results if result.brand_rank is not None)
     not_mentioned_count = sum(1 for result in results if not result.brand_mentioned)
     citation_sample_count = sum(1 for result in results if result.native_citations)
+    collector_surface_counts = dict(
+        Counter(str(result.raw_metadata.get("capture_mode") or "unknown") for result in results)
+    )
+    evidence_level_counts = dict(
+        Counter(str(result.raw_metadata.get("evidence_level") or "unknown") for result in results)
+    )
     competitor_pressure_count = 0
     for result in results:
         for competitor in result.competitor_mentions:
@@ -2321,10 +2367,13 @@ def build_real_scan_metrics(
         "citation_recall_rate": percentage(citation_sample_count, success_count),
         "citation_support": None,
         "fact_accuracy": None,
+        "collector_surface_counts": collector_surface_counts,
+        "evidence_level_counts": evidence_level_counts,
         "metric_formula_version": "measurement.v1",
         "data_status": "provider_evidence",
         "summary": (
-            f"通过消费端网页完成 {success_count}/{total_count} 个真实检测任务；"
+            f"通过已标记采集面完成 {success_count}/{total_count} 个真实检测任务"
+            f"（{', '.join(f'{surface}={count}' for surface, count in sorted(collector_surface_counts.items()))}）；"
             f"有效样本中的品牌提及率 {mention_rate}%，明确推荐率 {recommend_rate}%，"
             f"Top3 比例 {top3_rate}%；正常未提及样本 {not_mentioned_count} 条已计入分母。"
         ),
@@ -3503,6 +3552,7 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
             project_id=project.project_id,
             name=f"{payload.brand_name} 多 AI 平台基线检测",
             run_type="baseline",
+            collector_surfaces=["api"] if provider_execution_mode() == "api" else ["web"],
             provider_scope=DEFAULT_PROVIDER_SCOPE,
             question_scope=QuestionScope(mode="selected", question_ids=[question.question_id for question in questions]),
         ),
@@ -3626,11 +3676,20 @@ def extract_yudao_user(payload: dict[str, Any], username: str) -> AuthUser:
 
 
 def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
+    token = f"dev_only_{uuid4().hex}"
+    expires_in = 3600
+    with _DEV_AUTH_SESSIONS_LOCK:
+        _DEV_AUTH_SESSIONS[token] = {
+            "tenant_id": get_airank_default_tenant_id(),
+            "yudao_tenant_id": payload.yudao_tenant_id,
+            "user_id": payload.username,
+            "expires_at": datetime.now(timezone.utc).timestamp() + expires_in,
+        }
     return AuthLoginResponse(
         data=AuthLoginData(
-            access_token=f"dev_only_{uuid4().hex}",
+            access_token=token,
             token_type="Bearer",
-            expires_in=3600,
+            expires_in=expires_in,
             tenant_id=get_airank_default_tenant_id(),
             yudao_tenant_id=payload.yudao_tenant_id,
             user=AuthUser(user_id=payload.username, username=payload.username, nickname=payload.username),
@@ -3819,6 +3878,112 @@ async def handle_unexpected_error(request: Request, _exc: Exception) -> JSONResp
     return build_error_response(request, "INTERNAL_ERROR")
 
 
+def auth_enforcement_required() -> bool:
+    return os.getenv("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower() not in {
+        "0",
+        "false",
+        "disabled",
+        "off",
+    }
+
+
+def bearer_token(request: Request) -> Optional[str]:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def inject_trusted_header(request: Request, name: str, value: str) -> None:
+    encoded_name = name.lower().encode("latin-1")
+    headers = [item for item in request.scope.get("headers", []) if item[0].lower() != encoded_name]
+    headers.append((encoded_name, value.encode("latin-1")))
+    request.scope["headers"] = headers
+
+
+def validate_dev_session(token: str) -> Optional[dict[str, Any]]:
+    now = datetime.now(timezone.utc).timestamp()
+    with _DEV_AUTH_SESSIONS_LOCK:
+        session = _DEV_AUTH_SESSIONS.get(token)
+        if session is None:
+            return None
+        if float(session["expires_at"]) <= now:
+            _DEV_AUTH_SESSIONS.pop(token, None)
+            return None
+        return dict(session)
+
+
+def trusted_authenticated_actor(requested_actor: str, authenticated_actor: Optional[str]) -> str:
+    if not auth_enforcement_required():
+        return requested_actor
+    if not authenticated_actor:
+        raise StarletteHTTPException(status_code=401, detail={"code": "AUTH_TOKEN_INVALID"})
+    return authenticated_actor
+
+
+def validate_yudao_request_token(token: str, yudao_tenant_id: str) -> Optional[AuthUser]:
+    try:
+        permission_payload = request_external_json(
+            build_yudao_url("YUDAO_PERMISSION_INFO_URL", "/admin-api/system/auth/get-permission-info"),
+            method="GET",
+            headers={"Authorization": f"Bearer {token}", "tenant-id": yudao_tenant_id},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not yudao_business_success(permission_payload):
+        return None
+    return extract_yudao_user(permission_payload, "authenticated-user")
+
+
+@app.middleware("http")
+async def enforce_api_authentication(request: Request, call_next):
+    public_paths = {
+        f"{API_PREFIX}/auth/login",
+        f"{API_PREFIX}/health",
+        f"{API_PREFIX}/version",
+        "/openapi.json",
+        "/docs",
+        "/docs/oauth2-redirect",
+    }
+    if (
+        not auth_enforcement_required()
+        or request.method == "OPTIONS"
+        or request.url.path in public_paths
+        or not request.url.path.startswith(API_PREFIX)
+    ):
+        return await call_next(request)
+
+    token = bearer_token(request)
+    if token is None:
+        return build_error_response(request, "AUTH_TOKEN_MISSING")
+    tenant_id = request.headers.get("tenant-id", "").strip()
+    if not tenant_id:
+        return build_error_response(request, "TENANT_MISMATCH", details={"reason": "tenant-id header is required"})
+
+    mode = get_auth_mode()
+    if mode in {"dev", "dev_only", "development"}:
+        session = validate_dev_session(token)
+        if session is None:
+            return build_error_response(request, "AUTH_TOKEN_INVALID")
+        if tenant_id != session["tenant_id"]:
+            return build_error_response(request, "TENANT_MISMATCH")
+        inject_trusted_header(request, "X-AIRank-User-Id", str(session["user_id"]))
+        inject_trusted_header(request, "X-Yudao-Tenant-Id", str(session["yudao_tenant_id"]))
+        return await call_next(request)
+
+    if tenant_id != get_airank_default_tenant_id():
+        return build_error_response(request, "TENANT_MISMATCH")
+    yudao_tenant_id = request.headers.get("x-yudao-tenant-id", "").strip()
+    if not yudao_tenant_id:
+        return build_error_response(request, "AUTH_TOKEN_INVALID", details={"reason": "X-Yudao-Tenant-Id header is required"})
+    user = await run_in_threadpool(validate_yudao_request_token, token, yudao_tenant_id)
+    if user is None:
+        return build_error_response(request, "AUTH_TOKEN_INVALID")
+    inject_trusted_header(request, "X-AIRank-User-Id", user.user_id)
+    return await call_next(request)
+
+
 @app.get(f"{API_PREFIX}/health", response_model=HealthResponse)
 def get_health(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> HealthResponse:
     return HealthResponse(
@@ -3975,6 +4140,19 @@ def get_scan_run(
 
 
 @app.get(
+    f"{API_PREFIX}/projects/{{project_id}}/scan-runs",
+    response_model=ScanRunListResponse,
+    response_model_exclude_none=True,
+)
+def list_scan_runs(
+    project_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ScanRunListResponse:
+    return ScanRunListResponse(data=SCAN_REPOSITORY.list_runs(tenant_id, project_id), meta=build_meta(trace_id))
+
+
+@app.get(
     f"{API_PREFIX}/scan-runs/{{run_id}}/tasks",
     response_model=ScanTaskListResponse,
     response_model_exclude_none=True,
@@ -4011,9 +4189,13 @@ def review_fact(
     payload: FactReviewRequest,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
 ) -> FactReviewResponse:
+    trusted_payload = payload.model_copy(
+        update={"reviewed_by": trusted_authenticated_actor(payload.reviewed_by, authenticated_actor)}
+    )
     return FactReviewResponse(
-        data=FACT_REVIEW_REPOSITORY.review_fact(tenant_id, project_id, fact_id, payload),
+        data=FACT_REVIEW_REPOSITORY.review_fact(tenant_id, project_id, fact_id, trusted_payload),
         meta=build_meta(trace_id),
     )
 
@@ -4195,3 +4377,10 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from retest_routes import router as retest_router  # type: ignore[no-redef]
 
 app.include_router(retest_router)
+
+try:
+    from .evidence_routes import router as evidence_router
+except ImportError:  # pragma: no cover
+    from evidence_routes import router as evidence_router  # type: ignore[no-redef]
+
+app.include_router(evidence_router)
