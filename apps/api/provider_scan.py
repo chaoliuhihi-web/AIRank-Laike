@@ -23,6 +23,7 @@ from airank_provider_gateway import (
     ProbeLevel,
     ProviderGateway,
     ProviderGatewayError,
+    ProviderRequestContext,
 )
 
 
@@ -65,6 +66,7 @@ DEFAULT_BROWSER_TIMEOUT_SECONDS = 90.0
 PROVIDER_LOCKS: dict[str, threading.Lock] = {}
 PROVIDER_LOCKS_LOCK = threading.Lock()
 _API_GATEWAY: ProviderGateway | None = None
+_API_PROVIDER_OPERATIONS: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -160,7 +162,7 @@ def provider_execution_mode() -> str:
 
 
 def get_api_gateway() -> ProviderGateway:
-    global _API_GATEWAY
+    global _API_GATEWAY, _API_PROVIDER_OPERATIONS
     if _API_GATEWAY is None:
         try:
             max_attempts = int(os.getenv("AIRANK_PROVIDER_MAX_ATTEMPTS", "3"))
@@ -170,7 +172,24 @@ def get_api_gateway() -> ProviderGateway:
             timeout_seconds = float(os.getenv("AIRANK_PROVIDER_TIMEOUT_SECONDS", "90"))
         except ValueError:
             timeout_seconds = 90.0
-        _API_GATEWAY = ProviderGateway(max_attempts=max_attempts, timeout_seconds=timeout_seconds)
+        database_url = os.getenv("AIRANK_DATABASE_URL")
+        if database_url:
+            try:
+                from .provider_operations import MySQLProviderOperations
+            except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+                from provider_operations import MySQLProviderOperations  # type: ignore[no-redef]
+
+            _API_PROVIDER_OPERATIONS = MySQLProviderOperations(database_url)
+            _API_GATEWAY = ProviderGateway(
+                max_attempts=max_attempts,
+                timeout_seconds=timeout_seconds,
+                circuit_breaker=_API_PROVIDER_OPERATIONS,
+                quota_ledger=_API_PROVIDER_OPERATIONS,
+                probe_sink=_API_PROVIDER_OPERATIONS.record_probe,
+            )
+            _API_PROVIDER_OPERATIONS.sync_manifests(_API_GATEWAY.manifests())
+        else:
+            _API_GATEWAY = ProviderGateway(max_attempts=max_attempts, timeout_seconds=timeout_seconds)
     return _API_GATEWAY
 
 
@@ -187,6 +206,9 @@ def call_api_provider_for_brand_rank(
     brand_aliases: list[str] | None = None,
     company_names: list[str] | None = None,
     product_names: list[str] | None = None,
+    tenant_id: str | None = None,
+    project_id: str | None = None,
+    task_id: str | None = None,
 ) -> ProviderScanResult:
     normalized_cohort = PromptCohortType(cohort_type)
     isolated_session_id = session_id or f"session_{uuid4().hex}"
@@ -203,7 +225,19 @@ def call_api_provider_for_brand_rank(
     )
     gateway = get_api_gateway()
     try:
-        api_result = gateway.generate(provider, prompt)
+        api_result = gateway.generate(
+            provider,
+            prompt,
+            request_context=ProviderRequestContext(
+                tenant_id=tenant_id or "__system__",
+                project_id=project_id or "",
+                idempotency_key=(
+                    f"scan:{tenant_id}:{project_id}:{task_id}"
+                    if tenant_id and project_id and task_id
+                    else f"direct:{isolated_session_id}:{sha256_text(prompt)}"
+                ),
+            ),
+        )
     except ProviderGatewayError as exc:
         if exc.code in {
             "PROVIDER_NOT_CONFIGURED",
@@ -379,7 +413,11 @@ def call_provider_for_brand_rank(
     brand_aliases: list[str] | None = None,
     company_names: list[str] | None = None,
     product_names: list[str] | None = None,
+    tenant_id: str | None = None,
+    project_id: str | None = None,
+    task_id: str | None = None,
 ) -> ProviderScanResult:
+    del tenant_id, project_id, task_id  # shared task contract; browser evidence has its own session scope.
     config = browser_provider_config(provider)
     normalized_cohort = PromptCohortType(cohort_type)
     isolated_session_id = session_id or f"session_{uuid4().hex}"

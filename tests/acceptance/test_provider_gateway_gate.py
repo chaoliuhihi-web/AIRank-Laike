@@ -42,3 +42,18 @@ def test_provider_operations_migration_has_no_plaintext_credential_column() -> N
     assert "configuration_fingerprint" in migration
     assert "api_key VARCHAR" not in migration
     assert "secret VARCHAR" not in migration
+
+
+def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() -> None:
+    provider_scan = (ROOT / "apps" / "api" / "provider_scan.py").read_text(encoding="utf-8")
+    operations = (ROOT / "apps" / "api" / "provider_operations.py").read_text(encoding="utf-8")
+
+    assert "MySQLProviderOperations(database_url)" in provider_scan
+    assert "circuit_breaker=_API_PROVIDER_OPERATIONS" in provider_scan
+    assert "quota_ledger=_API_PROVIDER_OPERATIONS" in provider_scan
+    assert "probe_sink=_API_PROVIDER_OPERATIONS.record_probe" in provider_scan
+    assert 'f"scan:{tenant_id}:{project_id}:{task_id}"' in provider_scan
+    assert "FOR UPDATE" in operations
+    assert "PROVIDER_REQUEST_IN_PROGRESS" in operations
+    assert "airank_provider_probe_runs" in operations
+    assert "api_key" not in operations

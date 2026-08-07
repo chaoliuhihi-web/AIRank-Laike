@@ -2522,6 +2522,9 @@ def complete_mysql_real_brand_scan(
                 prompt_version_id=str(row["prompt_version_id"]),
                 company_names=[project.company_name] if project.company_name else [],
                 product_names=project.products,
+                tenant_id=tenant_id,
+                project_id=project.project_id,
+                task_id=str(row["id"]),
             )
             result.raw_metadata.update(
                 {

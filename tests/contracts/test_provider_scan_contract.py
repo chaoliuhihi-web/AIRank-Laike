@@ -62,9 +62,11 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     now = datetime(2026, 8, 8, tzinfo=timezone.utc)
 
     class FakeGateway:
-        def generate(self, provider: str, prompt: str) -> ProviderResult:
+        def generate(self, provider: str, prompt: str, *, request_context=None) -> ProviderResult:
             assert provider == "qianwen"
             assert prompt == "企业 GEO 工具有哪些？"
+            assert request_context.tenant_id == "__system__"
+            assert request_context.idempotency_key.startswith("direct:session_1:")
             return ProviderResult(
                 provider="qianwen",
                 model="qwen-test",

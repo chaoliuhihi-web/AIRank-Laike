@@ -1,6 +1,15 @@
 """AIRank provider gateway contracts and runtime."""
 
-from .gateway import CircuitBreaker, InMemoryQuotaLedger, ProviderGateway, ProviderLimiter
+from .gateway import (
+    CircuitBreaker,
+    CircuitBreakerContract,
+    InMemoryQuotaLedger,
+    ProviderGateway,
+    ProviderLimiter,
+    ProviderRequestContext,
+    QuotaLedgerContract,
+    QuotaReservation,
+)
 from .manifests import PROVIDER_ALIASES, PROVIDER_MANIFESTS, canonical_provider, get_manifest
 from .models import (
     HealthState,
@@ -19,6 +28,7 @@ from .runtime import HttpResponse, ProviderSettings, ProviderTransport, UrllibPr
 
 __all__ = [
     "CircuitBreaker",
+    "CircuitBreakerContract",
     "HealthState",
     "HttpResponse",
     "ImplementationStatus",
@@ -32,11 +42,14 @@ __all__ = [
     "ProviderGateway",
     "ProviderGatewayError",
     "ProviderLimiter",
+    "ProviderRequestContext",
     "ProviderManifest",
     "ProviderResult",
     "ProviderSettings",
     "ProviderTransport",
     "ProviderUsage",
+    "QuotaLedgerContract",
+    "QuotaReservation",
     "UsagePrecision",
     "UrllibProviderTransport",
     "canonical_provider",

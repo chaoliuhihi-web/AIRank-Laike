@@ -12,6 +12,7 @@ from airank_provider_gateway import (
     ProbeLevel,
     ProviderGateway,
     ProviderGatewayError,
+    ProviderRequestContext,
     UsagePrecision,
     canonical_provider,
 )
@@ -186,6 +187,35 @@ def test_retryable_failure_retries_and_circuit_opens() -> None:
     assert caught.value.code == "PROVIDER_CIRCUIT_OPEN"
 
 
+def test_circuit_state_isolated_by_configuration_fingerprint() -> None:
+    circuit = CircuitBreaker(failure_threshold=1, cooldown_seconds=60)
+
+    circuit.failure("qianwen", "a" * 64, retryable=True)
+
+    assert circuit.allow("qianwen", "a" * 64) is False
+    assert circuit.allow("qianwen", "b" * 64) is True
+
+
+def test_gateway_passes_tenant_idempotency_context_to_quota_ledger() -> None:
+    class CapturingLedger(InMemoryQuotaLedger):
+        context: ProviderRequestContext | None = None
+
+        def reserve(self, provider: str, units: int = 1, *, context=None):
+            self.context = context
+            return super().reserve(provider, units, context=context)
+
+    ledger = CapturingLedger()
+    transport = FakeTransport(
+        [HttpResponse(status=200, headers={}, data={"id": "req_context", "choices": [{"message": {"content": "OK"}}]})]
+    )
+    gateway = ProviderGateway(env=qianwen_env(), transport=transport, quota_ledger=ledger)
+    context = ProviderRequestContext(tenant_id="tenant_1", project_id="project_1", idempotency_key="task_1")
+
+    gateway.generate("qianwen", "测试", request_context=context)
+
+    assert ledger.context == context
+
+
 def test_quota_reservation_is_released_after_failed_request() -> None:
     ledger = InMemoryQuotaLedger({"qianwen": 1})
     failing_transport = FakeTransport(
@@ -236,10 +266,14 @@ def test_l1_l2_and_l3_probe_are_distinct() -> None:
 
 def test_unconfigured_provider_probe_does_not_make_network_call() -> None:
     transport = FakeTransport([])
-    result = ProviderGateway(env={}, transport=transport).probe("kimi", ProbeLevel.GENERATION)
+    probes = []
+    result = ProviderGateway(env={}, transport=transport, probe_sink=probes.append).probe(
+        "kimi", ProbeLevel.GENERATION
+    )
 
     assert result.state == HealthState.UNCONFIGURED
     assert transport.network_probe_count == 0
+    assert probes == [result]
 
 
 def test_l2_probe_distinguishes_missing_model_from_auth_success() -> None:

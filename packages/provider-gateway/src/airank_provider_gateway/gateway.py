@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import random
 import os
 import threading
 import time
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, Protocol
+from uuid import uuid4
 
 from .adapters import build_request, parse_response
 from .manifests import PROVIDER_MANIFESTS, canonical_provider, get_manifest
@@ -34,13 +35,18 @@ class CircuitBreaker:
     def __init__(self, failure_threshold: int = 3, cooldown_seconds: float = 30.0) -> None:
         self.failure_threshold = max(1, failure_threshold)
         self.cooldown_seconds = max(1.0, cooldown_seconds)
-        self._states: dict[str, CircuitState] = {}
+        self._states: dict[tuple[str, str], CircuitState] = {}
         self._lock = threading.Lock()
 
-    def allow(self, provider: str, now_monotonic: float | None = None) -> bool:
+    def allow(
+        self,
+        provider: str,
+        configuration_fingerprint: str = "",
+        now_monotonic: float | None = None,
+    ) -> bool:
         now = time.monotonic() if now_monotonic is None else now_monotonic
         with self._lock:
-            state = self._states.setdefault(provider, CircuitState())
+            state = self._states.setdefault((provider, configuration_fingerprint), CircuitState())
             if state.opened_at_monotonic is None:
                 return True
             if now - state.opened_at_monotonic >= self.cooldown_seconds:
@@ -49,23 +55,46 @@ class CircuitBreaker:
                 return True
             return False
 
-    def success(self, provider: str) -> None:
+    def success(self, provider: str, configuration_fingerprint: str = "") -> None:
         with self._lock:
-            self._states[provider] = CircuitState()
+            self._states[(provider, configuration_fingerprint)] = CircuitState()
 
-    def failure(self, provider: str, *, retryable: bool) -> None:
+    def failure(
+        self,
+        provider: str,
+        configuration_fingerprint: str = "",
+        *,
+        retryable: bool,
+    ) -> None:
         if not retryable:
             return
         with self._lock:
-            state = self._states.setdefault(provider, CircuitState())
+            state = self._states.setdefault((provider, configuration_fingerprint), CircuitState())
             state.consecutive_failures += 1
             if state.consecutive_failures >= self.failure_threshold:
                 state.opened_at_monotonic = time.monotonic()
 
-    def snapshot(self, provider: str) -> CircuitState:
+    def snapshot(self, provider: str, configuration_fingerprint: str = "") -> CircuitState:
         with self._lock:
-            state = self._states.setdefault(provider, CircuitState())
+            state = self._states.setdefault((provider, configuration_fingerprint), CircuitState())
             return CircuitState(state.consecutive_failures, state.opened_at_monotonic)
+
+
+class CircuitBreakerContract(Protocol):
+    def allow(self, provider: str, configuration_fingerprint: str = "") -> bool:
+        ...
+
+    def success(self, provider: str, configuration_fingerprint: str = "") -> None:
+        ...
+
+    def failure(
+        self,
+        provider: str,
+        configuration_fingerprint: str = "",
+        *,
+        retryable: bool,
+    ) -> None:
+        ...
 
 
 class ProviderLimiter:
@@ -100,6 +129,33 @@ class QuotaReservation:
     provider: str
     units: int
     committed: bool = False
+    reservation_id: str = field(default_factory=lambda: f"quota_{uuid4().hex}")
+    tenant_id: str = "__system__"
+    bucket_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderRequestContext:
+    tenant_id: str = "__system__"
+    project_id: str = ""
+    idempotency_key: str = field(default_factory=lambda: f"provider_request_{uuid4().hex}")
+
+
+class QuotaLedgerContract(Protocol):
+    def reserve(
+        self,
+        provider: str,
+        units: int = 1,
+        *,
+        context: ProviderRequestContext | None = None,
+    ) -> QuotaReservation:
+        ...
+
+    def commit(self, reservation: QuotaReservation) -> None:
+        ...
+
+    def release(self, reservation: QuotaReservation) -> None:
+        ...
 
 
 class InMemoryQuotaLedger:
@@ -109,7 +165,14 @@ class InMemoryQuotaLedger:
         self._reserved: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def reserve(self, provider: str, units: int = 1) -> QuotaReservation:
+    def reserve(
+        self,
+        provider: str,
+        units: int = 1,
+        *,
+        context: ProviderRequestContext | None = None,
+    ) -> QuotaReservation:
+        request_context = context or ProviderRequestContext()
         with self._lock:
             limit = self._limits.get(provider)
             used = self._used.get(provider, 0)
@@ -119,7 +182,11 @@ class InMemoryQuotaLedger:
                     provider, "PROVIDER_QUOTA_EXHAUSTED", "provider quota reservation failed"
                 )
             self._reserved[provider] = reserved + units
-        return QuotaReservation(provider=provider, units=units)
+        return QuotaReservation(
+            provider=provider,
+            units=units,
+            tenant_id=request_context.tenant_id,
+        )
 
     def commit(self, reservation: QuotaReservation) -> None:
         with self._lock:
@@ -146,9 +213,10 @@ class ProviderGateway:
         transport: ProviderTransport | None = None,
         max_attempts: int = 3,
         timeout_seconds: float = 90.0,
-        circuit_breaker: CircuitBreaker | None = None,
-        quota_ledger: InMemoryQuotaLedger | None = None,
+        circuit_breaker: CircuitBreakerContract | None = None,
+        quota_ledger: QuotaLedgerContract | None = None,
         audit_sink: Callable[[Mapping[str, Any]], None] | None = None,
+        probe_sink: Callable[[ProbeResult], None] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.env = env
@@ -158,6 +226,7 @@ class ProviderGateway:
         self.circuit = circuit_breaker or CircuitBreaker()
         self.quota = quota_ledger or InMemoryQuotaLedger()
         self.audit_sink = audit_sink
+        self.probe_sink = probe_sink
         self.sleep = sleep
         self._limiters: dict[str, ProviderLimiter] = {}
 
@@ -168,16 +237,23 @@ class ProviderGateway:
         manifest = self._manifest(provider)
         return ProviderSettings.from_env(manifest, self.env)
 
-    def generate(self, provider: str, prompt: str) -> ProviderResult:
+    def generate(
+        self,
+        provider: str,
+        prompt: str,
+        *,
+        request_context: ProviderRequestContext | None = None,
+    ) -> ProviderResult:
         manifest = self._manifest(provider)
         settings = ProviderSettings.from_env(manifest, self.env)
         self._assert_operational(manifest, settings)
         canonical = manifest.provider
-        if not self.circuit.allow(canonical):
+        configuration_fingerprint = settings.configuration_fingerprint(canonical)
+        if not self.circuit.allow(canonical, configuration_fingerprint):
             raise ProviderGatewayError(
                 canonical, "PROVIDER_CIRCUIT_OPEN", "provider circuit is open", retryable=True
             )
-        reservation = self.quota.reserve(canonical)
+        reservation = self.quota.reserve(canonical, context=request_context)
         requested_at = datetime.now(timezone.utc)
         started = time.monotonic()
         headers = {
@@ -211,7 +287,7 @@ class ProviderGateway:
                                 "provider returned an empty answer",
                             )
                         completed_at = datetime.now(timezone.utc)
-                        self.circuit.success(canonical)
+                        self.circuit.success(canonical, configuration_fingerprint)
                         self.quota.commit(reservation)
                         result = ProviderResult(
                             provider=canonical,
@@ -229,7 +305,7 @@ class ProviderGateway:
                             usage=usage,
                             raw_response=response.data,
                             endpoint_host=settings.endpoint_host,
-                            configuration_fingerprint=settings.configuration_fingerprint(canonical),
+                            configuration_fingerprint=configuration_fingerprint,
                         )
                         self._audit(result, "success")
                         return result
@@ -242,7 +318,11 @@ class ProviderGateway:
                             status_code=exc.status_code,
                             provider_code=exc.provider_code,
                         )
-                        self.circuit.failure(canonical, retryable=last_error.retryable)
+                        self.circuit.failure(
+                            canonical,
+                            configuration_fingerprint,
+                            retryable=last_error.retryable,
+                        )
                         if not last_error.retryable or attempt >= self.max_attempts:
                             raise last_error
                         self.sleep(min(5.0, 0.25 * (2 ** (attempt - 1))) + random.random() * 0.05)
@@ -255,6 +335,12 @@ class ProviderGateway:
         raise last_error
 
     def probe(self, provider: str, level: ProbeLevel) -> ProbeResult:
+        result = self._run_probe(provider, level)
+        if self.probe_sink:
+            self.probe_sink(result)
+        return result
+
+    def _run_probe(self, provider: str, level: ProbeLevel) -> ProbeResult:
         manifest = self._manifest(provider)
         settings = ProviderSettings.from_env(manifest, self.env)
         checked_at = datetime.now(timezone.utc)
@@ -293,7 +379,15 @@ class ProviderGateway:
                 )
             if level == ProbeLevel.AUTH_MODEL:
                 return self._probe_result(manifest, settings, level, HealthState.HEALTHY, checked_at, started)
-            result = self.generate(manifest.provider, "健康探测：只回复 OK。")
+            result = self.generate(
+                manifest.provider,
+                "健康探测：只回复 OK。",
+                request_context=ProviderRequestContext(
+                    tenant_id="__system__",
+                    project_id="provider_readiness",
+                    idempotency_key=f"probe:{manifest.provider}:{checked_at.isoformat()}",
+                ),
+            )
             return ProbeResult(
                 provider=manifest.provider,
                 level=level,

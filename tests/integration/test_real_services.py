@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,14 @@ from apps.api.main import (
     MySQLScanRepository,
     ProjectCreateRequest,
     ScanRunCreateRequest,
+)
+from apps.api.provider_operations import MySQLProviderOperations
+from airank_provider_gateway import (
+    HealthState,
+    ProbeLevel,
+    ProbeResult,
+    ProviderGatewayError,
+    ProviderRequestContext,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,22 +59,27 @@ def database_url() -> str:
 
 
 def cleanup_tenant(engine: Any, tenant_id: str) -> None:
-    tables = (
-        "airank_audit_events",
-        "airank_async_jobs",
-        "airank_reports",
-        "airank_scan_tasks",
-        "airank_scan_runs",
-        "airank_publish_packages",
-        "airank_content_assets",
-        "airank_content_gaps",
-        "airank_buyer_questions",
-        "airank_competitors",
-        "airank_projects",
-    )
     with engine.begin() as conn:
-        for table_name in tables:
-            conn.execute(text(f"DELETE FROM {table_name} WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+        tables = conn.execute(
+            text(
+                """
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND column_name = 'tenant_id'
+                  AND table_name LIKE 'airank\\_%'
+                """
+            )
+        ).scalars().all()
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        try:
+            for table_name in tables:
+                conn.execute(
+                    text(f"DELETE FROM `{table_name}` WHERE tenant_id = :tenant_id"),
+                    {"tenant_id": tenant_id},
+                )
+        finally:
+            conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
 
 def test_real_mysql_alembic_head_and_schema_contract() -> None:
@@ -259,8 +273,8 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         tasks = scan_repo.list_tasks(tenant_id, run.run_id)
 
         assert run.status == "queued"
-        assert run.metrics["task_count"] == 4
-        assert len(tasks) == 4
+        assert run.metrics["task_count"] == 12
+        assert len(tasks) == 12
         assert {task.provider for task in tasks} == {"chatgpt", "deepseek"}
 
         with engine.begin() as conn:
@@ -277,7 +291,7 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
                 ),
                 {"tenant_id": tenant_id, "project_id": project.project_id},
             ).scalars().all()
-            assert len(jobs) == 4
+            assert len(jobs) == 12
             first_payload = json.loads(jobs[0])
             assert first_payload["run_id"] == run.run_id
             assert first_payload["scan_task_id"].startswith("scan_task_")
@@ -448,6 +462,144 @@ def test_real_mysql_worker_lease_store_claims_and_completes_job() -> None:
         assert json.loads(row["result_json"]) == {"snapshots": 1}
     finally:
         cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_provider_{uuid4().hex[:10]}"
+    provider = f"provider_{uuid4().hex[:8]}"
+    fingerprint = "a" * 64
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    env = {
+        "AIRANK_PROVIDER_CIRCUIT_FAILURE_THRESHOLD": "1",
+        "AIRANK_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "1",
+        "AIRANK_PROVIDER_DEFAULT_QUOTA_UNITS": "1",
+        "AIRANK_PROVIDER_QUOTA_RESERVATION_TTL_SECONDS": "30",
+    }
+    first_worker = MySQLProviderOperations(database_url(), env=env)
+    second_worker = MySQLProviderOperations(database_url(), env=env)
+    context = ProviderRequestContext(
+        tenant_id=tenant_id,
+        project_id="project_provider_it",
+        idempotency_key="scan_task_provider_it",
+    )
+
+    try:
+        reservation = first_worker.reserve(provider, context=context)
+        with pytest.raises(ProviderGatewayError) as duplicate_error:
+            second_worker.reserve(provider, context=context)
+        assert duplicate_error.value.code == "PROVIDER_REQUEST_IN_PROGRESS"
+        assert duplicate_error.value.retryable is True
+
+        second_worker.commit(reservation)
+        with engine.connect() as conn:
+            bucket = conn.execute(
+                text(
+                    """
+                    SELECT used_units, reserved_units
+                    FROM airank_provider_quota_buckets
+                    WHERE tenant_id = :tenant_id AND provider_key = :provider_key
+                    """
+                ),
+                {"tenant_id": tenant_id, "provider_key": provider},
+            ).mappings().one()
+        assert int(bucket["used_units"]) == 1
+        assert int(bucket["reserved_units"]) == 0
+
+        with pytest.raises(ProviderGatewayError) as quota_error:
+            first_worker.reserve(
+                provider,
+                context=ProviderRequestContext(
+                    tenant_id=tenant_id,
+                    project_id="project_provider_it",
+                    idempotency_key="scan_task_provider_it_2",
+                ),
+            )
+        assert quota_error.value.code == "PROVIDER_QUOTA_EXHAUSTED"
+
+        race_tenant_id = f"{tenant_id}_race"
+
+        def reserve_from_worker(index: int) -> str:
+            worker = first_worker if index == 1 else second_worker
+            try:
+                return worker.reserve(
+                    provider,
+                    context=ProviderRequestContext(
+                        tenant_id=race_tenant_id,
+                        project_id="project_provider_race",
+                        idempotency_key=f"scan_task_race_{index}",
+                    ),
+                ).reservation_id
+            except ProviderGatewayError as exc:
+                return exc.code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            race_results = list(executor.map(reserve_from_worker, (1, 2)))
+        assert sum(result.startswith("quota_") for result in race_results) == 1
+        assert race_results.count("PROVIDER_QUOTA_EXHAUSTED") == 1
+
+        first_worker.failure(provider, fingerprint, retryable=True)
+        assert second_worker.allow(provider, fingerprint) is False
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_provider_circuit_states
+                    SET opened_at = :opened_at
+                    WHERE provider_key = :provider_key
+                      AND configuration_fingerprint = :configuration_fingerprint
+                    """
+                ),
+                {
+                    "opened_at": datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=2),
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            )
+        assert first_worker.allow(provider, fingerprint) is True
+        assert second_worker.allow(provider, fingerprint) is False
+        second_worker.success(provider, fingerprint)
+        assert first_worker.allow(provider, fingerprint) is True
+
+        checked_at = datetime.now(timezone.utc)
+        first_worker.record_probe(
+            ProbeResult(
+                provider=provider,
+                level=ProbeLevel.GENERATION,
+                state=HealthState.HEALTHY,
+                checked_at=checked_at,
+                duration_ms=12,
+                model="model-it",
+                endpoint_host="provider.example.test",
+                request_id_present=True,
+            )
+        )
+        with engine.connect() as conn:
+            probe = conn.execute(
+                text(
+                    """
+                    SELECT health_state, request_id_present
+                    FROM airank_provider_probe_runs
+                    WHERE provider_key = :provider_key
+                    ORDER BY checked_at DESC LIMIT 1
+                    """
+                ),
+                {"provider_key": provider},
+            ).mappings().one()
+        assert probe["health_state"] == "healthy"
+        assert bool(probe["request_id_present"]) is True
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM airank_provider_probe_runs WHERE provider_key = :provider_key"),
+                {"provider_key": provider},
+            )
+            conn.execute(
+                text("DELETE FROM airank_provider_circuit_states WHERE provider_key = :provider_key"),
+                {"provider_key": provider},
+            )
+        cleanup_tenant(engine, tenant_id)
+        cleanup_tenant(engine, race_tenant_id)
 
 
 def test_real_yudao_login_permission_and_capability_probe() -> None:
