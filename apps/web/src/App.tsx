@@ -66,6 +66,7 @@ import {
   fallbackConsoleOverview,
   fallbackAssetBundle,
   clearAuthSession,
+  compileQuestionMap,
   fetchAnswerSample,
   fetchAnswerSamples,
   fetchBuyerQuestions,
@@ -91,6 +92,7 @@ import {
   loginToAirank,
   recordConsoleAction,
   recordDownloadReceipt,
+  reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
   resolveFactConflict,
@@ -115,6 +117,7 @@ import {
   type KnowledgeSearch,
   type KnowledgeSource,
   type ProviderReadiness,
+  type QuestionMapResult,
   type PublishPackage,
   type ReportItem,
   type ReportList,
@@ -1835,42 +1838,156 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
   const { openPanel, recordAction } = useActionFeedback();
   const [questions, setQuestions] = useState<BuyerQuestion[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [seedQuestions, setSeedQuestions] = useState("");
+  const [productTerms, setProductTerms] = useState("");
+  const [competitorNames, setCompetitorNames] = useState("");
+  const [regions, setRegions] = useState("");
+  const [includeTemplates, setIncludeTemplates] = useState(true);
+  const [compiling, setCompiling] = useState(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
+  const [compileResult, setCompileResult] = useState<QuestionMapResult | null>(null);
+  const [reviewingQuestionId, setReviewingQuestionId] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const tabs = ["全部问题", "购买", "对比", "选型", "信任", "价格", "风险", "场景", "本地", "替代"];
   const tabTypes = ["", "purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"];
   const [selectedTab, setSelectedTab] = useState(0);
 
+  const loadQuestions = useCallback(async (signal?: AbortSignal) => {
+    if (!project.id) return;
+    try {
+      const data = await fetchBuyerQuestions(project.id, signal);
+      setQuestions(data);
+      setLoadError(null);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setLoadError(error instanceof Error ? error.message : "买家问题接口不可用");
+    }
+  }, [project.id]);
+
   useEffect(() => {
     if (!project.id) return;
     const controller = new AbortController();
-    fetchBuyerQuestions(project.id, controller.signal)
-      .then((data) => {
-        setQuestions(data);
-        setLoadError(null);
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-        setLoadError(error instanceof Error ? error.message : "买家问题接口不可用");
-      });
+    void loadQuestions(controller.signal);
     return () => controller.abort();
-  }, [project.id]);
+  }, [loadQuestions, project.id]);
+
+  const splitQuestionInput = (value: string) => value
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const handleCompile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id) return;
+    const seeds = splitLines(seedQuestions);
+    const products = splitQuestionInput(productTerms);
+    if (seeds.length === 0 && products.length === 0) {
+      setCompileError("至少填写一个种子问题或产品/服务词。系统不会凭空生成问题。");
+      return;
+    }
+    setCompiling(true);
+    setCompileError(null);
+    try {
+      const result = await compileQuestionMap(project.id, {
+        productTerms: products,
+        competitorNames: splitQuestionInput(competitorNames),
+        regions: splitQuestionInput(regions),
+        seedQuestions: seeds,
+        includeTemplateCandidates: includeTemplates,
+      });
+      setCompileResult(result);
+      await loadQuestions();
+      void recordAction({
+        actionType: "question.map_compile",
+        label: "编译买家问题地图",
+        entityType: "question_map",
+        entityId: result.map_id,
+        payload: {
+          map_version_id: result.map_version_id,
+          persisted_count: result.persisted_count,
+          duplicate_count: result.duplicate_count,
+        },
+      });
+    } catch (error) {
+      setCompileError(error instanceof Error ? error.message : "问题地图编译失败");
+    } finally {
+      setCompiling(false);
+    }
+  };
+
+  const confirmQuestion = async (row: BuyerQuestion) => {
+    if (!project.id) return;
+    setReviewingQuestionId(row.question_id);
+    setReviewError(null);
+    try {
+      await reviewBuyerQuestion(
+        project.id,
+        row.question_id,
+        "confirmed",
+        "控制台人工确认：问题意图、Cohort 与目标客户匹配。",
+      );
+      await loadQuestions();
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : "问题确认失败");
+    } finally {
+      setReviewingQuestionId(null);
+    }
+  };
 
   const visibleRows = showTabs && selectedTab > 0
     ? questions.filter((row) => row.question_type === tabTypes[selectedTab])
     : questions;
   const gapRows = questions.filter((row) => row.coverage_status === "gap" || row.coverage_status === "needs_scan");
+  const confirmedCount = questions.filter((row) => row.status === "confirmed").length;
+  const suggestedCount = questions.filter((row) => row.status === "suggested").length;
+  const observedCount = questions.filter((row) => row.observed_query).length;
 
   return (
-    <section className="content-with-rail">
-      <div>
-        {showTabs && (
-          <div className="tab-row">
-            {tabs.map((item, index) => (
-              <button
-                className="tab-button"
-                data-active={index === selectedTab}
-                type="button"
-                key={item}
-                onClick={() => {
+    <>
+      {showTabs && (
+        <section className="airank-console-card question-compiler-card">
+          <div className="question-compiler-heading">
+            <div>
+              <span className="section-kicker">Research Intent Skill · v1.1</span>
+              <h2>编译买家问题地图</h2>
+              <p>种子问题保留为 provided_seed；规则扩展只标记为 template_candidate，不冒充真实用户搜索或搜索量。</p>
+            </div>
+            <Badge tone="primary">{compileResult?.taxonomy_version ?? "等待输入"}</Badge>
+          </div>
+          <form className="question-compiler-form" onSubmit={handleCompile}>
+            <label className="question-compiler-wide">
+              种子问题（每行一个）
+              <textarea value={seedQuestions} onChange={(event) => setSeedQuestions(event.target.value)} placeholder="企业应该如何选择 GEO 监测服务商？&#10;AIRank 是否支持样本级证据追溯？" />
+            </label>
+            <label>产品 / 服务词<input value={productTerms} onChange={(event) => setProductTerms(event.target.value)} placeholder="GEO 监测平台，AI 可见度诊断" /></label>
+            <label>竞品实体<input value={competitorNames} onChange={(event) => setCompetitorNames(event.target.value)} placeholder="竞品甲，竞品乙" /></label>
+            <label>服务区域<input value={regions} onChange={(event) => setRegions(event.target.value)} placeholder="北京，上海" /></label>
+            <div className="question-compiler-actions">
+              <label className="question-template-toggle">
+                <input type="checkbox" checked={includeTemplates} onChange={(event) => setIncludeTemplates(event.target.checked)} />
+                生成可审核的模板候选
+              </label>
+              <button className="airank-console-primary-button" type="submit" disabled={compiling}>{compiling ? "编译并去重中…" : "编译并保存候选"}</button>
+            </div>
+          </form>
+          {compileError && <p className="question-governance-error">{compileError}</p>}
+          {compileResult && (
+            <div className="question-compile-result">
+              <span><strong>{compileResult.question_count}</strong> 个唯一问题</span>
+              <span><strong>{compileResult.persisted_count}</strong> 个已保存候选</span>
+              <span><strong>{compileResult.duplicate_count}</strong> 个重复被拦截</span>
+              <span title={compileResult.map_version_id}>版本 {compileResult.map_version_id.slice(-8)}</span>
+              {compileResult.idempotent_replay && <Badge tone="muted">幂等回放</Badge>}
+            </div>
+          )}
+        </section>
+      )}
+      <section className="content-with-rail">
+        <div>
+          {showTabs && (
+            <div className="tab-row">
+              {tabs.map((item, index) => (
+                <button className="tab-button" data-active={index === selectedTab} type="button" key={item} onClick={() => {
                   void recordAction({
                     actionType: "question.tab_select",
                     label: item,
@@ -1879,80 +1996,59 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                     payload: { previous_tab: tabs[selectedTab], next_tab: item },
                   });
                   setSelectedTab(index);
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        )}
-        {loadError && <DataStateCard title="问题地图读取失败" desc={loadError} tone="danger" />}
-        {!loadError && questions.length === 0 && <DataStateCard title="尚无买家问题" desc="创建品牌项目后生成或录入真实买家问题；系统不会用样例问题补位。" tone="warning" />}
-        <div className="airank-console-card table-card">
-          <table className="question-table">
-            <thead>
-              <tr>
-                <th>问题</th>
-                <th>商业意图</th>
-                <th>买家阶段</th>
-                <th>覆盖状态</th>
-                <th>目标平台</th>
-                <th>来源</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row) => (
-                <tr key={row.question_id}>
-                  <td>
-                    <strong>{row.question_text}</strong>
-                    <Badge tone={row.intent_level === "high" ? "primary" : row.intent_level === "medium" ? "warning" : "muted"}>{row.question_type}</Badge>
-                  </td>
-                  <td><span className={`intent ${row.intent_level === "high" ? "high" : "mid"}`}>{row.intent_level}</span></td>
-                  <td><strong>{row.buyer_stage}</strong></td>
-                  <td><Badge tone={row.coverage_status === "covered" ? "success" : row.coverage_status === "gap" ? "danger" : "warning"}>{row.coverage_status}</Badge></td>
-                  <td>{row.recommended_providers.join("、") || "待配置"}</td>
-                  <td>{row.source}</td>
-                </tr>
+                }}>{item}</button>
               ))}
-            </tbody>
-          </table>
-          <div className="table-footer">
-            <span>{showTabs ? `${tabs[selectedTab]}：${visibleRows.length} 条 / 共 ${questions.length} 条问题` : `共 ${questions.length} 条问题`}</span>
+            </div>
+          )}
+          {loadError && <DataStateCard title="问题地图读取失败" desc={loadError} tone="danger" />}
+          {!loadError && questions.length === 0 && <DataStateCard title="尚无买家问题" desc="录入种子问题或产品词；模板候选必须人工确认后才能进入监测。" tone="warning" />}
+          {reviewError && <DataStateCard title="问题审核失败" desc={reviewError} tone="danger" />}
+          <div className="airank-console-card table-card question-governance-card">
+            <table className="question-table question-governance-table">
+              <thead><tr><th>问题</th><th>Cohort / 版本</th><th>意图 / 阶段</th><th>来源证据</th><th>测量状态</th><th>人工门禁</th></tr></thead>
+              <tbody>
+                {visibleRows.map((row) => (
+                  <tr key={row.question_id}>
+                    <td><strong>{row.question_text}</strong><Badge tone={row.intent_level === "high" ? "primary" : row.intent_level === "medium" ? "warning" : "muted"}>{row.question_type}</Badge></td>
+                    <td><Badge tone={row.cohort_type === "blind" ? "success" : row.cohort_type === "comparison" ? "warning" : "primary"}>{row.cohort_type}</Badge><small title={row.question_version_id ?? undefined}>{row.question_version_id ? `v · ${row.question_version_id.slice(-8)}` : row.taxonomy_version}</small></td>
+                    <td><span className={`intent ${row.intent_level === "high" ? "high" : "mid"}`}>{row.intent_level}</span><small>{row.buyer_stage} · {row.prompt_style}</small></td>
+                    <td><strong>{row.source_kind}</strong><small title={row.source_ref}>{row.observed_query ? "已取证用户查询" : "非真实搜索量"} · {row.source_ref}</small></td>
+                    <td><Badge tone={row.coverage_status === "covered" ? "success" : row.coverage_status === "gap" ? "danger" : "warning"}>{row.coverage_status}</Badge><small>{row.recommended_providers.join("、") || "扫描时选择 Provider"}</small></td>
+                    <td>
+                      <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{row.status}</Badge>
+                      {row.status === "suggested" ? (
+                        <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void confirmQuestion(row)}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
+                      ) : <small>{row.reviewed_by ? `由 ${row.reviewed_by} 确认` : "已可进入同 Cohort 测量"}</small>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="table-footer"><span>{showTabs ? `${tabs[selectedTab]}：${visibleRows.length} 条 / 共 ${questions.length} 条问题` : `共 ${questions.length} 条问题`}</span></div>
           </div>
         </div>
-      </div>
-      <aside className="rail-stack">
-        <Panel title="问题证据状态">
-          <div className="check-list">
-            <CheckLine text="问题总数" value={String(questions.length)} checked={questions.length > 0} />
-            <CheckLine text="待采样/缺口" value={String(gapRows.length)} checked={gapRows.length === 0 && questions.length > 0} />
-            <CheckLine text="已覆盖" value={String(questions.filter((row) => row.coverage_status === "covered").length)} checked />
-          </div>
-        </Panel>
-        <Panel title="待处理问题">
-          <ol className="top-list">
-            {gapRows.slice(0, 5).map((row, index) => (
-              <li key={row.question_id}><span>{index + 1}</span>{row.question_text}<strong>{row.coverage_status}</strong></li>
-            ))}
-          </ol>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() =>
-              showTabs
-                ? onNavigate("/console/gaps/questions")
-                : openPanel({
-                    title: "推荐缺口处理说明",
-                    desc: "当前只展示数据库中真实存在且标记为 gap/needs_scan 的问题，不补造 Top50 或推荐差距。",
-                    items: ["优先处理高意图问题", "补齐可审核事实与内容证据", "发布后按同口径复测"],
-                  })
-            }
-          >
-            {showTabs ? "查看缺口问题" : "查看处理说明"}
-          </button>
-        </Panel>
-      </aside>
-    </section>
+        <aside className="rail-stack">
+          <Panel title="问题证据状态">
+            <div className="check-list">
+              <CheckLine text="问题总数" value={String(questions.length)} checked={questions.length > 0} />
+              <CheckLine text="已确认可测量" value={String(confirmedCount)} checked={confirmedCount > 0} />
+              <CheckLine text="待人工确认" value={String(suggestedCount)} checked={suggestedCount === 0 && questions.length > 0} />
+              <CheckLine text="真实观察查询" value={String(observedCount)} checked={observedCount > 0} />
+            </div>
+          </Panel>
+          <Panel title="待处理问题">
+            <ol className="top-list">
+              {gapRows.slice(0, 5).map((row, index) => <li key={row.question_id}><span>{index + 1}</span>{row.question_text}<strong>{row.status === "suggested" ? "待确认" : row.coverage_status}</strong></li>)}
+            </ol>
+            <button className="ghost-button" type="button" onClick={() => showTabs ? onNavigate("/console/gaps/questions") : openPanel({
+              title: "推荐缺口处理说明",
+              desc: "当前只展示数据库中真实存在且标记为 gap/needs_scan 的问题，不补造 Top50 或推荐差距。",
+              items: ["先确认问题 Cohort", "补齐可审核事实与内容证据", "发布后按同口径复测"],
+            })}>{showTabs ? "查看缺口问题" : "查看处理说明"}</button>
+          </Panel>
+        </aside>
+      </section>
+    </>
   );
 }
 

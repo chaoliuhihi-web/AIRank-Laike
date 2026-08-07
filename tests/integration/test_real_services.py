@@ -45,6 +45,11 @@ from apps.api.knowledge_routes import (
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
+from apps.api.question_routes import (
+    MySQLQuestionGovernanceRepository,
+    QuestionMapCompileRequest,
+    QuestionReviewRequest,
+)
 from airank_evidence import FilesystemObjectStorage
 from airank_provider_gateway import (
     HealthState,
@@ -71,7 +76,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0008"
+EXPECTED_ALEMBIC_HEAD = "20260808_0009"
 
 
 def require_real_flag(flag: str) -> None:
@@ -137,7 +142,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 42
+        assert table_count == 45
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -324,6 +329,104 @@ def test_real_mysql_evidence_object_can_be_read_and_integrity_checked(
         cleanup_tenant(engine, tenant_id)
 
 
+def test_real_mysql_question_map_review_and_cohort_gate() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_qgov_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    question_repo = MySQLQuestionGovernanceRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-question-governance.example.com",
+                brand_name_hint="AIRank Question Governance",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        payload = QuestionMapCompileRequest(
+            seed_questions=["企业应该如何选择 GEO 监测服务商？", "企业应该如何选择GEO监测服务商!"],
+            include_template_candidates=False,
+            persist=True,
+            created_by="integration_reviewer",
+        )
+        compiled = question_repo.compile_map(tenant_id, project.project_id, payload, "integration_reviewer")
+
+        assert compiled.question_count == 1
+        assert compiled.duplicate_count == 1
+        assert compiled.persisted_count == 1
+        question = compiled.questions[0]
+        assert question.status == "suggested"
+        assert question.cohort_type == "blind"
+        assert question.observed_query is False
+        assert question.question_id
+
+        with pytest.raises(StarletteHTTPException) as unreviewed_error:
+            scan_repo.create_run(
+                tenant_id,
+                ScanRunCreateRequest(
+                    project_id=project.project_id,
+                    cohort_type="blind",
+                    repetitions=1,
+                    provider_scope=["deepseek"],
+                    question_scope={"mode": "selected", "question_ids": [question.question_id]},
+                ),
+            )
+        assert unreviewed_error.value.status_code == 404
+
+        review = question_repo.review_question(
+            tenant_id,
+            project.project_id,
+            question.question_id,
+            QuestionReviewRequest(
+                action="confirmed",
+                reviewed_by="integration_reviewer",
+                review_note="问题与采购阶段及目标用户匹配。",
+            ),
+            "integration_reviewer",
+        )
+        assert review.eligible_for_measurement is True
+
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                cohort_type="blind",
+                repetitions=1,
+                provider_scope=["deepseek"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+        tasks = scan_repo.list_tasks(tenant_id, run.run_id)
+        assert len(tasks) == 1
+        assert tasks[0].cohort_type == "blind"
+
+        replay = question_repo.compile_map(tenant_id, project.project_id, payload, "integration_reviewer")
+        assert replay.idempotent_replay is True
+        assert replay.map_id == compiled.map_id
+
+        with engine.connect() as conn:
+            counts = conn.execute(text("""
+                SELECT
+                  (SELECT COUNT(*) FROM airank_question_maps WHERE tenant_id=:tenant_id) AS map_count,
+                  (SELECT COUNT(*) FROM airank_buyer_question_revisions WHERE tenant_id=:tenant_id) AS revision_count,
+                  (SELECT COUNT(*) FROM airank_buyer_question_reviews WHERE tenant_id=:tenant_id) AS review_count
+            """), {"tenant_id": tenant_id}).mappings().one()
+            revision_status = conn.execute(text("""
+                SELECT status, reviewed_by, reviewed_at
+                FROM airank_buyer_question_revisions
+                WHERE tenant_id=:tenant_id AND question_id=:question_id
+            """), {"tenant_id": tenant_id, "question_id": question.question_id}).mappings().one()
+        assert dict(counts) == {"map_count": 1, "revision_count": 1, "review_count": 1}
+        assert revision_status["status"] == "suggested"
+        assert revision_status["reviewed_by"] is None
+        assert revision_status["reviewed_at"] is None
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
 def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
     require_real_flag("AIRANK_RUN_REAL_MYSQL")
     tenant_id = f"tenant_it_{uuid4().hex[:10]}"
@@ -357,7 +460,7 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
             tenant_id,
             project.project_id,
             BuyerQuestionCreateRequest(
-                question_text="How does AIRank compare with direct competitors?",
+                question_text="How should a company compare AI visibility platforms?",
                 question_type="compare",
                 status="confirmed",
                 recommended_providers=["deepseek"],

@@ -279,7 +279,70 @@ export type BuyerQuestion = {
   coverage_status: "unknown" | "covered" | "gap" | "needs_scan";
   status: "suggested" | "confirmed" | "archived";
   source: string;
+  question_version_id: string | null;
+  taxonomy_version: string;
+  dedupe_sha256: string | null;
+  prompt_style: "exploratory" | "comparative" | "factual" | "procedural" | "evaluative";
+  temporal_scope: "evergreen" | "current" | "historical";
+  scenario: "generic" | "b2b_procurement" | "local_selection" | "replacement" | "risk_validation";
+  region: string | null;
+  cohort_type: "blind" | "assisted" | "comparison" | "fact_verification" | "unclassified";
+  source_kind: "provided_seed" | "template_candidate" | "observed_query" | "imported";
+  source_ref: string;
+  evidence_level: "provided_seed" | "template_candidate" | "observed_query" | "imported";
+  observed_query: boolean;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
   created_at: string;
+};
+
+export type QuestionMapCompileInput = {
+  companyNames?: string[];
+  productTerms: string[];
+  competitorNames: string[];
+  regions: string[];
+  seedQuestions: string[];
+  includeTemplateCandidates: boolean;
+  persist?: boolean;
+};
+
+export type QuestionMapCandidate = {
+  question_id: string | null;
+  duplicate_of_question_id: string | null;
+  question_text: string;
+  question_version_id: string;
+  cohort_type: "blind" | "assisted" | "comparison" | "fact_verification";
+  source_kind: "provided_seed" | "template_candidate" | "observed_query" | "imported";
+  observed_query: boolean;
+  status: "preview" | "suggested" | "confirmed" | "archived" | "duplicate";
+};
+
+export type QuestionMapResult = {
+  map_id: string;
+  map_version_id: string;
+  taxonomy_version: string;
+  input_sha256: string;
+  status: "preview" | "compiled";
+  question_count: number;
+  duplicate_count: number;
+  persisted_count: number;
+  idempotent_replay: boolean;
+  created_by: string;
+  created_at: string;
+  questions: QuestionMapCandidate[];
+};
+
+export type QuestionReview = {
+  review_id: string;
+  question_id: string;
+  previous_status: "suggested" | "confirmed" | "archived";
+  status: "confirmed" | "archived";
+  reviewed_by: string;
+  reviewed_at: string;
+  review_note: string;
+  eligible_for_measurement: boolean;
+  idempotent_replay: boolean;
 };
 
 export type PublishPackage = {
@@ -919,6 +982,52 @@ export async function reviewContentAsset(
 
 export function fetchBuyerQuestions(projectId: string, signal?: AbortSignal): Promise<BuyerQuestion[]> {
   return fetchData(`/api/v1/projects/${projectId}/buyer-questions`, "trc_web_questions", signal);
+}
+
+export async function compileQuestionMap(projectId: string, input: QuestionMapCompileInput): Promise<QuestionMapResult> {
+  const session = getStoredAuthSession();
+  const response = await fetch(`/api/v1/projects/${projectId}/question-maps/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_question_compile") },
+    body: JSON.stringify({
+      company_names: input.companyNames ?? [],
+      product_terms: input.productTerms,
+      competitor_names: input.competitorNames,
+      regions: input.regions,
+      seed_questions: input.seedQuestions,
+      include_template_candidates: input.includeTemplateCandidates,
+      persist: input.persist ?? true,
+      created_by: session?.user.userId ?? "console_operator",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Question map compile request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: QuestionMapResult };
+  return payload.data;
+}
+
+export async function reviewBuyerQuestion(
+  projectId: string,
+  questionId: string,
+  action: "confirmed" | "archived",
+  reviewNote: string,
+): Promise<QuestionReview> {
+  const session = getStoredAuthSession();
+  const response = await fetch(`/api/v1/projects/${projectId}/buyer-questions/${questionId}/review`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_question_review") },
+    body: JSON.stringify({
+      action,
+      reviewed_by: session?.user.userId ?? "console_operator",
+      review_note: reviewNote,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Question review request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: QuestionReview };
+  return payload.data;
 }
 
 export function fetchPublishPackages(projectId: string, signal?: AbortSignal): Promise<PublishPackage[]> {

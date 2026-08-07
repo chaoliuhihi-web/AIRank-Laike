@@ -42,7 +42,7 @@ def test_registry_contains_versioned_core_skills_with_complete_contracts() -> No
     assert set(SKILL_RUNNERS) == CORE_SKILL_IDS
     assert {manifest.status for manifest in manifests} == {"partial"}
     for manifest in manifests:
-        assert manifest.version == "1.0.0"
+        assert manifest.version == ("1.1.0" if manifest.skill_id == "research.intent-miner" else "1.0.0")
         assert manifest.fact_policy
         assert manifest.failure_policy
         assert manifest.quality_rubric
@@ -81,6 +81,25 @@ def test_sample_runner_creates_independent_sessions_for_each_repeat() -> None:
     assert output["task_count"] == 6
     assert len({task["session_id"] for task in output["tasks"]}) == 6
     assert {task["sample_index"] for task in output["tasks"]} == {1, 2, 3}
+
+
+def test_intent_miner_normalizes_duplicates_and_keeps_competitors_out_of_blind() -> None:
+    output = run_skill(
+        "research.intent-miner",
+        {
+            "seed_questions": [
+                "企业怎么选 GEO？",
+                "企业怎么选GEO!",
+                "竞品甲是否适合制造企业？",
+            ],
+            "target_names": ["AIRank"],
+            "competitor_names": ["竞品甲"],
+        },
+    )
+
+    assert output["question_count"] == 2
+    assert output["questions"][0]["cohort_type"] == "blind"
+    assert output["questions"][1]["cohort_type"] == "comparison"
 
 
 def test_retest_report_blocks_non_comparable_cohorts() -> None:

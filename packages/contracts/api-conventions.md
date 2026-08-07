@@ -85,15 +85,18 @@ GET /api/v1/projects?limit=50&cursor=...
 
 ## M1 项目 / 竞品 / 买家问题
 
-当前 M1 dev-only repository 暴露以下路由，先用于前后端和 contract test 串联，不代表生产 MySQL 持久化：
+M1 问题治理通过同一套 repository 契约支持测试内存实现与生产 MySQL 持久化：
 
 | Route | 说明 |
 | --- | --- |
 | `POST /api/v1/projects` | 根据网站和可选 hint 创建待确认项目，返回 `project_response.schema.json` |
 | `POST /api/v1/projects/{project_id}/competitors` | 给项目追加候选竞品，返回 `competitor_response.schema.json` |
 | `POST /api/v1/projects/{project_id}/buyer-questions` | 给项目追加候选买家问题，返回 `buyer_question_response.schema.json` |
+| `POST /api/v1/projects/{project_id}/question-maps/compile` | 预览或持久化版本化问题地图；持久化候选初始状态为 `suggested` |
+| `GET /api/v1/projects/{project_id}/question-maps` | 查询不可变编译清单、输入/输出 hash 与编译统计 |
+| `PATCH /api/v1/projects/{project_id}/buyer-questions/{question_id}/review` | 追加人工审核事件，并更新当前生命周期状态；不覆盖问题修订 |
 
-`tenant_id` 必须来自认证上下文或 `tenant-id` header，不能从 request body 接收。当前 in-memory adapter 仅用于开发串联，进程重启后数据会丢失。
+`tenant_id` 和审核人必须来自认证上下文，不能信任 request body。问题地图按输入内容和 taxonomy 版本幂等；问题按规范化 hash 去重。只有 `confirmed` 且其不可变修订 Cohort 与 ScanRun 完全一致的问题才能进入任务编译。in-memory adapter 只用于 contract test 和本地开发，MySQL 路径由 Alembic `20260808_0009` 支持。
 
 ## M2 扫描契约
 

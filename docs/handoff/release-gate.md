@@ -445,3 +445,31 @@ Not claimed as passed:
 Decision:
 
 - Immutable source revision and truthful current-source retrieval are now operable, but the overall product remains `NO-GO` for commercial launch.
+
+## 2026-08-08 Buyer Question Governance Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: pending buyer-question-governance commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- `research.intent-miner` `1.1.0` now compiles provided seeds and deterministic template candidates into a versioned taxonomy with provenance, stable question versions, Unicode/punctuation-aware deduplication and separate blind/assisted/comparison/fact-verification Cohorts.
+- Persisted QuestionMap manifests and BuyerQuestionRevision records are immutable; human decisions append BuyerQuestionReview events. Suggested candidates do not enter scans, and a confirmed question can only enter a ScanRun with the exact Cohort stored in its current immutable revision.
+- Alembic `20260808_0009` passed real MySQL migration and 45-table verification. Its online path safely resumes partially applied MySQL DDL, while its offline path now generates complete deployment SQL without attempting live schema inspection.
+- Local regression passed `220 passed, 12 skipped`; focused governance/Skill tests passed `39`; core Skill evaluation stayed `24/24`, with all 8 Skills honestly retained as `partial`.
+- Real MySQL integration passed `10 passed, 2 skipped`; Web production build and npm high-severity audit passed with zero known vulnerabilities.
+- Real browser QA compiled and reviewed a MySQL-backed question map, queued the matching blind question, rejected a mismatched comparison run, and replayed the same logical input under taxonomy `airank-question-taxonomy-v1.1.0` without duplicating questions. Desktop and 390×844 checks showed no page-level overflow; the final page had `0 error / 0 warning`.
+
+Blocking conditions:
+
+- Production Python 3.11+ and Node 20.19+ or 22.12+ are not active on this workstation.
+- Production Yudao identity/permission-info and HTTPS S3/MinIO are not configured in the release environment.
+- Consumer browser Provider readiness remains `0/4` because login or human verification is required; API L3 success does not satisfy Web/App evidence.
+- The branch is synchronized as a feature branch only; GitHub/Gitee `main` remain outside this task's merge authority.
+
+Decision:
+
+- Buyer-question governance is an operable, evidence-backed product slice. AIRank remains `NO-GO` for commercial launch until the production and external gates above pass.

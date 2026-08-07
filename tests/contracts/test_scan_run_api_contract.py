@@ -176,11 +176,24 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   id VARCHAR(64) PRIMARY KEY,
                   tenant_id VARCHAR(64) NOT NULL,
                   project_id VARCHAR(64) NOT NULL,
+                  current_revision_id VARCHAR(64) NULL,
                   question_text TEXT NOT NULL,
                   status VARCHAR(32) NOT NULL,
                   priority INT NOT NULL DEFAULT 100,
                   created_at DATETIME NOT NULL,
                   deleted_at DATETIME NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_buyer_question_revisions (
+                  id VARCHAR(64) PRIMARY KEY,
+                  cohort_type VARCHAR(32) NOT NULL,
+                  question_version_id VARCHAR(64) NOT NULL,
+                  taxonomy_version VARCHAR(64) NOT NULL
                 )
                 """
             )
@@ -282,27 +295,35 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
             text(
                 """
                 INSERT INTO airank_buyer_questions (
-                  id, tenant_id, project_id, question_text, status, priority, created_at
+                  id, tenant_id, project_id, current_revision_id, question_text, status, priority, created_at
                 )
                 VALUES
                   (
-                    'question_real_1', 'tenant_real', 'project_real',
+                    'question_real_1', 'tenant_real', 'project_real', 'qrev_real_1',
                     'Which AI visibility platform should we choose?',
                     'confirmed', 10, '2026-05-17 10:00:00'
                   ),
                   (
-                    'question_real_2', 'tenant_real', 'project_real',
+                    'question_real_2', 'tenant_real', 'project_real', 'qrev_real_2',
                     'How does AIRank compare with competitors?',
                     'suggested', 20, '2026-05-17 10:01:00'
                   ),
                   (
-                    'question_archived', 'tenant_real', 'project_real',
+                    'question_archived', 'tenant_real', 'project_real', 'qrev_archived',
                     'Archived question should not be scanned',
                     'archived', 30, '2026-05-17 10:02:00'
                   )
                 """
             )
         )
+        conn.execute(text("""
+            INSERT INTO airank_buyer_question_revisions (
+              id, cohort_type, question_version_id, taxonomy_version
+            ) VALUES
+              ('qrev_real_1', 'blind', 'question_v_real_1', 'taxonomy_test_v1'),
+              ('qrev_real_2', 'comparison', 'question_v_real_2', 'taxonomy_test_v1'),
+              ('qrev_archived', 'blind', 'question_v_archived', 'taxonomy_test_v1')
+        """))
 
 
 def test_scan_repository_factory_selects_persistence_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -327,30 +348,32 @@ def test_mysql_scan_repository_persists_run_and_tasks() -> None:
             name="Production persistence scan",
             provider_scope=["chatgpt", "deepseek"],
             repetitions=1,
-            question_scope={"mode": "selected", "question_ids": ["question_real_1", "question_real_2"]},
+            question_scope={"mode": "selected", "question_ids": ["question_real_1"]},
         ),
     )
 
     assert run.status == "queued"
-    assert run.metrics["task_count"] == 4
-    assert run.question_scope.question_ids == ["question_real_1", "question_real_2"]
+    assert run.metrics["task_count"] == 2
+    assert run.question_scope.question_ids == ["question_real_1"]
 
     fetched_run = repository.get_run("tenant_real", run.run_id)
     tasks = repository.list_tasks("tenant_real", run.run_id)
     assert fetched_run.run_id == run.run_id
-    assert len(tasks) == 4
+    assert len(tasks) == 2
     assert {task.provider for task in tasks} == {"chatgpt", "deepseek"}
-    assert {task.question_id for task in tasks} == {"question_real_1", "question_real_2"}
+    assert {task.question_id for task in tasks} == {"question_real_1"}
     assert repository.get_task("tenant_real", tasks[0].task_id).run_id == run.run_id
 
     with repository._engine.begin() as conn:
         jobs = conn.execute(text("SELECT * FROM airank_async_jobs ORDER BY job_type, payload_json")).mappings().all()
-    assert len(jobs) == 4
+    assert len(jobs) == 2
     assert {job["job_type"] for job in jobs} == {"scan.provider"}
     first_payload = json.loads(jobs[0]["payload_json"])
     assert first_payload["run_id"] == run.run_id
     assert first_payload["scan_task_id"].startswith("scan_task_")
-    assert first_payload["question_id"] in {"question_real_1", "question_real_2"}
+    assert first_payload["question_id"] == "question_real_1"
+    assert first_payload["question_version_id"] == "question_v_real_1"
+    assert first_payload["taxonomy_version"] == "taxonomy_test_v1"
     assert first_payload["provider"] in {"chatgpt", "deepseek"}
     assert first_payload["question_text"]
 
@@ -370,7 +393,28 @@ def test_mysql_scan_repository_all_active_excludes_archived_questions() -> None:
     )
 
     tasks = repository.list_tasks("tenant_real", run.run_id)
-    assert [task.question_id for task in tasks] == ["question_real_1", "question_real_2"]
+    assert [task.question_id for task in tasks] == ["question_real_1"]
+
+
+def test_mysql_scan_repository_rejects_unconfirmed_or_wrong_cohort_question() -> None:
+    repository = MySQLScanRepository("sqlite+pysqlite:///:memory:")
+    create_scan_repository_tables(repository)
+
+    with pytest.raises(Exception) as exc_info:
+        repository.create_run(
+            "tenant_real",
+            ScanRunCreateRequest(
+                project_id="project_real",
+                cohort_type="blind",
+                provider_scope=["chatgpt"],
+                repetitions=1,
+                question_scope={"mode": "selected", "question_ids": ["question_real_2"]},
+            ),
+        )
+
+    assert getattr(exc_info.value, "status_code") == 404
+    assert exc_info.value.detail["details"]["required_status"] == "confirmed"
+    assert exc_info.value.detail["details"]["required_cohort_type"] == "blind"
 
 
 def test_mysql_scan_repository_rejects_missing_selected_question() -> None:

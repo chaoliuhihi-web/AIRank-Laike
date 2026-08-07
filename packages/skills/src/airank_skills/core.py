@@ -6,6 +6,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
+from airank_domain import govern_question, normalize_question, question_dedupe_sha256
 from airank_domain.measurement import BrandEntity, PromptCohortType, find_entity_mentions, sha256_text
 
 
@@ -110,23 +111,30 @@ def intent_miner(payload: dict[str, Any]) -> dict[str, Any]:
     unique: list[str] = []
     seen: set[str] = set()
     for raw in payload.get("seed_questions", []):
-        question = re.sub(r"\s+", " ", str(raw)).strip()
-        key = question.casefold()
+        question = normalize_question(str(raw))
+        key = question_dedupe_sha256(question) if question else ""
         if not question or key in seen:
             continue
         seen.add(key)
         unique.append(question)
     questions = []
-    for question in unique:
-        if any(marker in question for marker in ("对比", "比较", "区别", "还是")):
-            intent = "comparison"
-        elif any(marker in question for marker in ("价格", "报价", "多少钱")):
-            intent = "price"
-        elif any(marker in question for marker in ("风险", "缺点", "问题")):
-            intent = "risk"
-        else:
-            intent = "selection"
-        questions.append({"question_text": question, "intent": intent, "source": "provided_seed", "version": "v1"})
+    target_names = tuple(str(value).strip() for value in payload.get("target_names", []) if str(value).strip())
+    competitor_names = tuple(str(value).strip() for value in payload.get("competitor_names", []) if str(value).strip())
+    regions = tuple(str(value).strip() for value in payload.get("regions", []) if str(value).strip())
+    for index, question in enumerate(unique, start=1):
+        governed = govern_question(
+            question,
+            target_names=target_names,
+            competitor_names=competitor_names,
+            regions=regions,
+            source_kind="provided_seed",
+            source_ref=f"seed:{index}",
+        )
+        questions.append({
+            **governed.as_dict(),
+            "source": "provided_seed",
+            "version": governed.question_version_id,
+        })
     return {"status": "valid" if questions else "blocked", "question_count": len(questions), "questions": questions}
 
 

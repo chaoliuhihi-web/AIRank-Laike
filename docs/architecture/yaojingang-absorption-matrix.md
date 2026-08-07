@@ -25,7 +25,7 @@
 | yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
 | yao-geo-skills | `yao-doubao-crawler` | 豆包 Web/App 分终端证据 | `skills/yao-doubao-crawler` | 问题/轮次/终端 → 回答、截图、XML、来源卡 | 登录态；Appium/AVD（App） | MIT | 只有通用 Web 采样 | 无 App 契约；Web/App 证据混用 | adapt | Web Collector + App Collector | P0 | planned | 同问题 Web/App 独立标记、证据等级不同且可对比 |
 | yao-geo-skills | `yao-chatgpt-crawler` | ChatGPT AI Search 多次采样 | `skills/yao-chatgpt-crawler` | 问题/轮次 → 回答、可见来源与概率报告 | 登录态、Browser Bridge | MIT | 浏览器 provider 名录包含 ChatGPT | 没有原生来源面板结构化与会话隔离证明 | adapt | Web Collector Adapter | P1 | planned | 真实多轮样本可追踪到可见来源和截图 |
-| yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 有 buyer questions | 无版本、来源和 Cohort；可能生成重复问题 | adapt | Research Intent Skill | P0 | planned | 输出通过去重、意图覆盖、人工抽检和版本回放 |
+| yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 已有版本化 taxonomy、稳定 question version、来源字段、规范化去重、人工确认和四类 Cohort 编译 | 真实查询观察源、行业覆盖 benchmark 和追问链仍缺 | adapt | Research Intent Skill | P0 | partial | 种子与模板候选可幂等编译；重复项不可入库；只有 confirmed 且 Cohort 匹配的问题可进入扫描 |
 | yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
@@ -47,7 +47,7 @@
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | ClaimSupport 已有原文边界、支持/矛盾/不足和审核字段 | 支持度自动评测与人工标注集仍缺 | absorb | Citation + ClaimSupport | P0 | partial | 同一引用分别计算召回与支持度，人工标注集可复算 |
-| geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | buyer question 只有 type/intent | 分类维度不足 | absorb | Prompt Cohort taxonomy | P0 | planned | 620 问题基准可导入评测且保留来源版本 |
+| geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | 已有 `question_type/intent_level/buyer_stage/prompt_style/temporal_scope/scenario` 与四类 Cohort，版本和来源进入不可变修订 | 620 问题基准尚未导入，行业标签一致性 benchmark 仍缺 | absorb | Prompt Cohort taxonomy | P0 | partial | 当前契约/对抗用例通过；后续基准导入必须保留数据版本与来源 |
 | geo-citation-lab | Web/App 平台字典 | 强制终端分开比较 | `data/reference/ai_platforms.csv` | 平台代码 → 产品族/终端/映射证据 | 版本化字典 | CC-BY-4.0 | API/Web/App/manual_import 契约与证据等级已分开 | App 采集器仍未实现 | absorb | CollectorSurface manifest | P0 | partial | Web/App 不会聚合到同一证据等级或同一分母 |
 | geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot 与内容寻址 screenshot 已落库；读取时复验 SHA-256/大小，真实 MinIO write/read/delete 已通过 | 批量完整性巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 单对象篡改会返回完整性错误；仍需全库巡检与派生表重建 |
 | geo-citation-lab | 来源类型与权威度治理 | 支撑来源结构、缺口和人工复核 | `data/reference/source_types.csv` | 域名 → 类型/状态/置信度/证据 | 参考表和人工审核 | CC-BY-4.0 | citation 有 source_type | 无分类方法、置信度和治理状态 | absorb | Source Registry | P1 | planned | 精确映射优先；未知来源保持 unclassified，不猜测 |
@@ -73,7 +73,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | GEORank | 页面抓取与企业资料提取 | 建档和页面诊断输入 | `company_ingest.py`、`company_profile.py` | URL/HTML → 页面/企业字段 | 安全 fetch、HTML parser | Apache-2.0 | crawler-lite 占位 | 无真实提取流水线 | adapt | KnowledgeSource importer | P1 | planned | 字段带 DOM/文本边界和 hash；AI 只能派生候选 |
 | GEORank | 页面技术诊断 | 评估 Schema、Meta、结构和可读性 | `tasks/crawl`、diagnostics routes/models | URL → 规则结果 | Celery、抓取 | Apache-2.0 | 无 | 不能与品牌推荐指标混用 | adapt | Page Audit Skill | P1 | planned | 报告将 technical_score 与 visibility 指标完全分栏 |
-| GEORank | 关键词/问题扩展结构 | 扩充买家问题覆盖 | `keyword_expansion.py` | seed → 8 维词包 | LLM 或规则 fallback | Apache-2.0 | buyer question 手工创建 | 无质量/来源字段 | adapt | Intent Miner Skill | P1 | planned | 保留生成来源与版本；固定 hash 分数永不进入商业结果 |
+| GEORank | 关键词/问题扩展结构 | 扩充买家问题覆盖 | `keyword_expansion.py` | seed → 8 维词包 | LLM 或规则 fallback | Apache-2.0 | 已有种子、产品、竞品、区域输入编译和确定性模板候选，保留来源、版本与 dedupe hash | 未接真实关键词数据源、查询量与行业覆盖质量门禁 | adapt | Intent Miner Skill | P1 | partial | 只把输入种子标为 `provided_seed`、规则扩展标为 `template_candidate`；不虚构搜索量或观察状态 |
 | GEORank | 确定性 fallback 分数 | 无模型时生成漂亮结果 | `keyword_expansion.py::_stable_score` | seed → 35-99 分 | 无 | Apache-2.0 | 当前 API 也有固定数字 | 属于伪业务结果 | reject | 无 | P0 | rejected | 生产扫描禁止 fallback；静态扫描门禁无此模式 |
 | GEORank | BYOK 请求策略 | 降低平台模型成本并支持客户密钥 | `ai_usage.py`、SDK `byok.ts` | 客户 key/header → provider call | 安全前端/短生命周期 | Apache-2.0 | provider 凭证来自服务端 env | 无租户级安全 BYOK | adapt | Credential Vault / Provider Gateway | P2 | planned | key 不落日志/DB 明文；撤销、轮换和租户隔离测试通过 |
 | GEORank | Provider URL 安全 | 避免 BYOK 自定义地址 SSRF | `provider_url_security.py` | base URL → allow/block | DNS/协议策略 | Apache-2.0 | Provider Gateway 已强制 HTTPS、无 URL 凭证和官方 host allowlist | 通用 HTTP 发布/抓取与 DNS rebinding corpus 仍缺 | absorb | Outbound Security Gateway | P0 | partial | 与 GEOFlow 策略合并并通过恶意 URL corpus |
@@ -139,10 +139,11 @@
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
-- `20260808_0006`—`0008` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0008`；42 张 AIRank 表完成核验，知识导入、内容审核、不可变发布快照、观察窗口、复测结果和报告 hash 均落库，随后删除临时验收库。
+- `20260808_0006`—`0009` 已在真实 MySQL 执行，Alembic head 为 `20260808_0009`；45 张 AIRank 表完成核验。`0009` 新增问题地图、不可变问题修订与追加式人工审核，并在 MySQL 非事务 DDL 中验证了中断后安全重跑。
+- 买家问题现在使用 `airank-question-taxonomy-v1.1.0`，分别记录问题类型、意图、买家阶段、风格、时效、场景、来源、输入 hash、去重 hash 和稳定问题版本；未确认问题以及与 ScanRun Cohort 不一致的问题不会被编译成采样任务。
 - 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
-- 千问、豆包、DeepSeek 已通过本仓 Provider Gateway 真实 L3 调用，均有非空回答、真实 request ID 和 exact usage；豆包联网工具使用已被原生响应识别。Kimi 尚缺不落盘、不入日志的运行时凭证注入，因此仍为 blocked gate。
+- 千问、豆包、Kimi、DeepSeek（当前可用型号为 `deepseek-v3.2`）均已通过本仓 Provider Gateway 真实 L3 调用并返回真实 request ID；凭证只从本机私密环境映射到进程。Kimi 已暴露过的验收密钥必须在生产前轮换，DeepSeek 新型号额度和旧型号下架迁移仍是上线门禁。
 - 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。
 - 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
 - 控制台静态业务结果已删除，11 个路由改用真实 API 或显式 `partial/blocked/disabled` 状态；桌面与 390px 空项目浏览器验收通过。该证据不替代带真实项目数据的全链路 E2E。
-- 当前阶段仍是 `partial`：Kimi 安全运行时注入、四平台真实重复采样、外部 Publisher、审核操作 UI 与带数据浏览器 E2E 尚未通过，因此不允许声明商业可用。
+- 当前阶段仍是 `partial`：四平台同一版本问题的真实重复采样、消费端 Web/App 证据、生产凭证轮换、外部 Publisher 和从建档到客户报告的带数据 E2E 尚未全部通过，因此不允许声明商业可用。

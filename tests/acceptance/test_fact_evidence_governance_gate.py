@@ -216,3 +216,32 @@ def test_retest_attribution_requires_same_contract_and_cautious_language() -> No
     assert '/retest-windows/{window_id}/complete' in route
     assert "sample_contract_mismatch" in scorer
     assert "不能据此证明因果" in scorer
+
+
+def test_question_governance_has_version_provenance_review_and_cohort_gates() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0009_question_governance.py"
+    ).read_text(encoding="utf-8")
+    routes = (ROOT / "apps" / "api" / "question_routes.py").read_text(encoding="utf-8")
+    main = (ROOT / "apps" / "api" / "main.py").read_text(encoding="utf-8")
+
+    for name in (
+        "airank_question_maps",
+        "airank_buyer_question_revisions",
+        "airank_buyer_question_reviews",
+        "question_version_id",
+        "taxonomy_version",
+        "dedupe_sha256",
+        "source_kind",
+        "observed_query",
+    ):
+        assert name in migration
+    assert "context.is_offline_mode()" in migration
+    assert "/question-maps/compile" in routes
+    assert "/buyer-questions/{question_id}/review" in routes
+    assert 'row["status"] == "confirmed" and row["cohort_type"] == cohort_type' in main

@@ -20,6 +20,7 @@ from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
+from airank_domain import govern_question
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
 from airank_skills import build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
@@ -295,6 +296,21 @@ class BuyerQuestionData(BaseModel):
     coverage_status: Literal["unknown", "covered", "gap", "needs_scan"]
     status: Literal["suggested", "confirmed", "archived"]
     source: Literal["hermes_generated", "manual", "imported"]
+    question_version_id: Optional[str] = None
+    taxonomy_version: str = "legacy_unclassified"
+    dedupe_sha256: Optional[str] = None
+    prompt_style: Literal["exploratory", "comparative", "factual", "procedural", "evaluative"] = "exploratory"
+    temporal_scope: Literal["evergreen", "current", "historical"] = "evergreen"
+    scenario: Literal["generic", "b2b_procurement", "local_selection", "replacement", "risk_validation"] = "generic"
+    region: Optional[str] = None
+    cohort_type: Literal["blind", "assisted", "comparison", "fact_verification", "unclassified"] = "unclassified"
+    source_kind: Literal["provided_seed", "template_candidate", "observed_query", "imported"] = "imported"
+    source_ref: str = "legacy-row"
+    evidence_level: Literal["provided_seed", "template_candidate", "observed_query", "imported"] = "imported"
+    observed_query: bool = False
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_note: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -952,21 +968,52 @@ class InMemoryProjectRepository:
         project_id: str,
         payload: BuyerQuestionCreateRequest,
     ) -> BuyerQuestionData:
-        self._ensure_project(tenant_id, project_id)
+        project = self._ensure_project(tenant_id, project_id)
         now = utc_now()
+        source_kind = "imported" if payload.source == "imported" else "template_candidate" if payload.source == "hermes_generated" else "provided_seed"
+        competitor_names = tuple(
+            value.name
+            for (item_tenant, _), value in self._competitors.items()
+            if item_tenant == tenant_id and value.project_id == project_id and value.status != "rejected"
+        )
+        governed = govern_question(
+            payload.question_text,
+            target_names=tuple(value for value in (project.brand_name, project.company_name) if value),
+            competitor_names=competitor_names,
+            source_kind=source_kind,
+            source_ref=payload.source_reason or payload.source,
+        )
+        duplicate = next((
+            value for (item_tenant, _), value in self._questions.items()
+            if item_tenant == tenant_id and value.project_id == project_id and value.dedupe_sha256 == governed.dedupe_sha256 and value.status != "archived"
+        ), None)
+        if duplicate is not None:
+            raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"duplicate_question_id": duplicate.question_id}})
         data = BuyerQuestionData(
             question_id=f"question_{uuid4().hex[:12]}",
             project_id=project_id,
             tenant_id=tenant_id,
-            question_text=payload.question_text,
-            question_type=payload.question_type,
-            intent_level=payload.intent_level,
-            buyer_stage=payload.buyer_stage,
+            question_text=governed.question_text,
+            question_type=governed.question_type,
+            intent_level=governed.intent_level,
+            buyer_stage=governed.buyer_stage,
             source_reason=payload.source_reason,
             recommended_providers=payload.recommended_providers,
             coverage_status="needs_scan",
             status=payload.status,
             source=payload.source,
+            question_version_id=governed.question_version_id,
+            taxonomy_version=governed.taxonomy_version,
+            dedupe_sha256=governed.dedupe_sha256,
+            prompt_style=governed.prompt_style,
+            temporal_scope=governed.temporal_scope,
+            scenario=governed.scenario,
+            region=governed.region,
+            cohort_type=governed.cohort_type,
+            source_kind=governed.source_kind,
+            source_ref=governed.source_ref,
+            evidence_level=governed.evidence_level,
+            observed_query=governed.observed_query,
             created_at=now,
             updated_at=now,
         )
@@ -1130,39 +1177,87 @@ class MySQLProjectRepository:
         payload: BuyerQuestionCreateRequest,
     ) -> BuyerQuestionData:
         now = utc_now()
-        data = BuyerQuestionData(
-            question_id=f"question_{uuid4().hex[:12]}",
-            project_id=project_id,
-            tenant_id=tenant_id,
-            question_text=payload.question_text,
-            question_type=payload.question_type,
-            intent_level=payload.intent_level,
-            buyer_stage=payload.buyer_stage,
-            source_reason=payload.source_reason,
-            recommended_providers=payload.recommended_providers,
-            coverage_status="needs_scan",
-            status=payload.status,
-            source=payload.source,
-            created_at=now,
-            updated_at=now,
-        )
-        metadata = {
-            "source_reason": data.source_reason,
-            "recommended_providers": data.recommended_providers,
-            "coverage_status": data.coverage_status,
-        }
+        source_kind = "imported" if payload.source == "imported" else "template_candidate" if payload.source == "hermes_generated" else "provided_seed"
         with self._engine.begin() as conn:
-            self._ensure_project(conn, tenant_id, project_id)
+            project_row = conn.execute(text("""
+                SELECT brand_name, name FROM airank_projects
+                WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL
+                FOR UPDATE
+            """), {"tenant_id": tenant_id, "project_id": project_id}).mappings().first()
+            if project_row is None:
+                raise StarletteHTTPException(status_code=404, detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}})
+            competitor_names = tuple(conn.execute(text("""
+                SELECT name FROM airank_competitors
+                WHERE tenant_id=:tenant_id AND project_id=:project_id AND deleted_at IS NULL
+                ORDER BY created_at ASC, id ASC
+            """), {"tenant_id": tenant_id, "project_id": project_id}).scalars().all())
+            governed = govern_question(
+                payload.question_text,
+                target_names=tuple(value for value in (project_row["brand_name"], project_row["name"]) if value),
+                competitor_names=competitor_names,
+                source_kind=source_kind,
+                source_ref=payload.source_reason or payload.source,
+            )
+            duplicate = conn.execute(text("""
+                SELECT id FROM airank_buyer_questions
+                WHERE tenant_id=:tenant_id AND project_id=:project_id
+                  AND dedupe_sha256=:dedupe_sha256 AND status<>'archived' AND deleted_at IS NULL
+                LIMIT 1
+            """), {"tenant_id": tenant_id, "project_id": project_id, "dedupe_sha256": governed.dedupe_sha256}).scalar()
+            if duplicate:
+                raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"duplicate_question_id": duplicate}})
+            data = BuyerQuestionData(
+                question_id=f"question_{uuid4().hex[:12]}",
+                project_id=project_id,
+                tenant_id=tenant_id,
+                question_text=governed.question_text,
+                question_type=governed.question_type,
+                intent_level=governed.intent_level,
+                buyer_stage=governed.buyer_stage,
+                source_reason=payload.source_reason,
+                recommended_providers=payload.recommended_providers,
+                coverage_status="needs_scan",
+                status=payload.status,
+                source=payload.source,
+                question_version_id=governed.question_version_id,
+                taxonomy_version=governed.taxonomy_version,
+                dedupe_sha256=governed.dedupe_sha256,
+                prompt_style=governed.prompt_style,
+                temporal_scope=governed.temporal_scope,
+                scenario=governed.scenario,
+                region=governed.region,
+                cohort_type=governed.cohort_type,
+                source_kind=governed.source_kind,
+                source_ref=governed.source_ref,
+                evidence_level=governed.evidence_level,
+                observed_query=governed.observed_query,
+                created_at=now,
+                updated_at=now,
+            )
+            metadata = {
+                "source_reason": data.source_reason,
+                "recommended_providers": data.recommended_providers,
+                "coverage_status": data.coverage_status,
+                "question_version_id": data.question_version_id,
+                "taxonomy_version": data.taxonomy_version,
+                "cohort_type": data.cohort_type,
+                "source_kind": data.source_kind,
+                "source_ref": data.source_ref,
+                "observed_query": data.observed_query,
+            }
+            revision_id = f"qrev_{uuid4().hex[:20]}"
             conn.execute(
                 text(
                     """
                     INSERT INTO airank_buyer_questions (
-                      id, tenant_id, project_id, question_text, question_type,
-                      intent, funnel_stage, source, status, metadata_json,
+                      id, tenant_id, project_id, current_revision_id, taxonomy_version,
+                      dedupe_sha256, question_text, question_type, intent, funnel_stage,
+                      source, status, metadata_json,
                       created_at, updated_at
                     )
                     VALUES (
-                      :id, :tenant_id, :project_id, :question_text, :question_type,
+                      :id, :tenant_id, :project_id, NULL, :taxonomy_version,
+                      :dedupe_sha256, :question_text, :question_type,
                       :intent, :funnel_stage, :source, :status, :metadata_json,
                       :created_at, :updated_at
                     )
@@ -1172,6 +1267,8 @@ class MySQLProjectRepository:
                     "id": data.question_id,
                     "tenant_id": data.tenant_id,
                     "project_id": data.project_id,
+                    "taxonomy_version": data.taxonomy_version,
+                    "dedupe_sha256": data.dedupe_sha256,
                     "question_text": data.question_text,
                     "question_type": data.question_type,
                     "intent": data.intent_level,
@@ -1183,6 +1280,34 @@ class MySQLProjectRepository:
                     "updated_at": now,
                 },
             )
+            conn.execute(text("""
+                INSERT INTO airank_buyer_question_revisions (
+                  id, tenant_id, project_id, question_id, question_map_id, revision_number,
+                  question_version_id, taxonomy_version, question_text, dedupe_sha256,
+                  question_type, intent, funnel_stage, prompt_style, temporal_scope,
+                  scenario, region, cohort_type, source_kind, source_ref, evidence_level,
+                  observed_query, provenance_json, status, created_by, created_at
+                ) VALUES (
+                  :revision_id, :tenant_id, :project_id, :question_id, NULL, 1,
+                  :question_version_id, :taxonomy_version, :question_text, :dedupe_sha256,
+                  :question_type, :intent, :funnel_stage, :prompt_style, :temporal_scope,
+                  :scenario, :region, :cohort_type, :source_kind, :source_ref, :evidence_level,
+                  :observed_query, :provenance_json, :status, 'api', :created_at
+                )
+            """), {
+                "revision_id": revision_id, "tenant_id": tenant_id, "project_id": project_id,
+                "question_id": data.question_id, "question_version_id": data.question_version_id,
+                "taxonomy_version": data.taxonomy_version, "question_text": data.question_text,
+                "dedupe_sha256": data.dedupe_sha256, "question_type": data.question_type,
+                "intent": data.intent_level, "funnel_stage": data.buyer_stage,
+                "prompt_style": data.prompt_style, "temporal_scope": data.temporal_scope,
+                "scenario": data.scenario, "region": data.region, "cohort_type": data.cohort_type,
+                "source_kind": data.source_kind, "source_ref": data.source_ref,
+                "evidence_level": data.evidence_level, "observed_query": data.observed_query,
+                "provenance_json": json.dumps({"source_reason": data.source_reason, "source": data.source}, ensure_ascii=False),
+                "status": data.status, "created_at": now,
+            })
+            conn.execute(text("UPDATE airank_buyer_questions SET current_revision_id=:revision_id WHERE tenant_id=:tenant_id AND id=:question_id"), {"revision_id": revision_id, "tenant_id": tenant_id, "question_id": data.question_id})
         return data
 
     def list_buyer_questions(self, tenant_id: str, project_id: str) -> list[BuyerQuestionData]:
@@ -1351,31 +1476,49 @@ class MySQLScanRepository:
                 detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id, "repository": "mysql"}},
             )
 
-    def _resolve_questions(self, conn: Any, tenant_id: str, project_id: str, scope: QuestionScope) -> list[dict[str, str]]:
+    def _resolve_questions(
+        self,
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        scope: QuestionScope,
+        cohort_type: str,
+    ) -> list[dict[str, str]]:
         rows = conn.execute(
             text(
                 """
-                SELECT id, question_text, status
-                FROM airank_buyer_questions
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND deleted_at IS NULL
-                ORDER BY priority ASC, created_at ASC
+                SELECT q.id, q.question_text, q.status,
+                       r.cohort_type, r.question_version_id, r.taxonomy_version
+                FROM airank_buyer_questions q
+                LEFT JOIN airank_buyer_question_revisions r
+                  ON r.id = q.current_revision_id
+                WHERE q.tenant_id = :tenant_id
+                  AND q.project_id = :project_id
+                  AND q.deleted_at IS NULL
+                ORDER BY q.priority ASC, q.created_at ASC
                 """
             ),
             {"tenant_id": tenant_id, "project_id": project_id},
         ).mappings().all()
         active_questions = [
-            {"id": row["id"], "question_text": row["question_text"]}
+            {
+                "id": row["id"],
+                "question_text": row["question_text"],
+                "question_version_id": row["question_version_id"],
+                "taxonomy_version": row["taxonomy_version"],
+            }
             for row in rows
-            if row["status"] != "archived"
+            if row["status"] == "confirmed" and row["cohort_type"] == cohort_type
         ]
 
         if scope.mode == "all_active":
             if not active_questions:
                 raise StarletteHTTPException(
                     status_code=404,
-                    detail={"code": "QUESTION_NOT_FOUND", "details": {"project_id": project_id, "scope": "all_active"}},
+                    detail={
+                        "code": "QUESTION_NOT_FOUND",
+                        "details": {"project_id": project_id, "scope": "all_active", "required_cohort_type": cohort_type},
+                    },
                 )
             return active_questions
 
@@ -1385,7 +1528,15 @@ class MySQLScanRepository:
         if missing:
             raise StarletteHTTPException(
                 status_code=404,
-                detail={"code": "QUESTION_NOT_FOUND", "details": {"project_id": project_id, "question_ids": missing}},
+                detail={
+                    "code": "QUESTION_NOT_FOUND",
+                    "details": {
+                        "project_id": project_id,
+                        "question_ids": missing,
+                        "required_status": "confirmed",
+                        "required_cohort_type": cohort_type,
+                    },
+                },
             )
         return [questions_by_id[question_id] for question_id in scope.question_ids]
 
@@ -1446,7 +1597,13 @@ class MySQLScanRepository:
         run_id = f"scan_run_{uuid4().hex[:12]}"
         with self._engine.begin() as conn:
             self._ensure_project(conn, tenant_id, payload.project_id)
-            questions = self._resolve_questions(conn, tenant_id, payload.project_id, payload.question_scope)
+            questions = self._resolve_questions(
+                conn,
+                tenant_id,
+                payload.project_id,
+                payload.question_scope,
+                payload.cohort_type,
+            )
             question_ids = [question["id"] for question in questions]
             question_scope = QuestionScope(mode=payload.question_scope.mode, question_ids=question_ids)
             task_count = len(payload.provider_scope) * len(question_ids) * len(payload.collector_surfaces) * payload.repetitions
@@ -1513,7 +1670,7 @@ class MySQLScanRepository:
                             "project_id": payload.project_id,
                             "question_id": question["id"],
                             "cohort_type": payload.cohort_type,
-                            "template_version": "v1",
+                            "template_version": question["question_version_id"] or "legacy_unclassified",
                             "prompt_text": question["question_text"],
                             "prompt_sha256": sha256_text(question["question_text"].strip()),
                             "created_at": now,
@@ -1529,6 +1686,8 @@ class MySQLScanRepository:
                                 "scan_task_id": task_id,
                                 "question_id": question["id"],
                                 "question_text": question["question_text"],
+                                "question_version_id": question["question_version_id"],
+                                "taxonomy_version": question["taxonomy_version"],
                                 "provider": provider,
                                 "cohort_type": payload.cohort_type,
                                 "prompt_version_id": prompt_version_id,
@@ -3517,14 +3676,32 @@ def list_mysql_project_questions(tenant_id: str, project_id: str) -> list[BuyerQ
         rows = conn.execute(
             text(
                 """
-                SELECT id, tenant_id, project_id, question_text, question_type,
-                       intent, funnel_stage, source, status, metadata_json,
-                       created_at, updated_at
-                FROM airank_buyer_questions
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND deleted_at IS NULL
-                ORDER BY created_at ASC, id ASC
+                SELECT q.id, q.tenant_id, q.project_id, q.question_text, q.question_type,
+                       q.intent, q.funnel_stage, q.source, q.status, q.metadata_json,
+                       q.taxonomy_version AS current_taxonomy_version,
+                       q.dedupe_sha256 AS current_dedupe_sha256,
+                       r.question_version_id, r.taxonomy_version, r.dedupe_sha256,
+                       r.prompt_style, r.temporal_scope, r.scenario, r.region,
+                       r.cohort_type, r.source_kind, r.source_ref, r.evidence_level,
+                       r.observed_query,
+                       rv.reviewed_by, rv.reviewed_at, rv.review_note,
+                       q.created_at, q.updated_at
+                FROM airank_buyer_questions q
+                LEFT JOIN airank_buyer_question_revisions r
+                  ON r.id = q.current_revision_id
+                LEFT JOIN airank_buyer_question_reviews rv
+                  ON rv.id = (
+                    SELECT latest_review.id
+                    FROM airank_buyer_question_reviews latest_review
+                    WHERE latest_review.tenant_id = q.tenant_id
+                      AND latest_review.question_id = q.id
+                    ORDER BY latest_review.reviewed_at DESC, latest_review.id DESC
+                    LIMIT 1
+                  )
+                WHERE q.tenant_id = :tenant_id
+                  AND q.project_id = :project_id
+                  AND q.deleted_at IS NULL
+                ORDER BY q.created_at ASC, q.id ASC
                 """
             ),
             {"tenant_id": tenant_id, "project_id": project_id},
@@ -3550,6 +3727,21 @@ def list_mysql_project_questions(tenant_id: str, project_id: str) -> list[BuyerQ
                 coverage_status=metadata.get("coverage_status") or "needs_scan",
                 status=row["status"],
                 source=row["source"],
+                question_version_id=row["question_version_id"],
+                taxonomy_version=row["taxonomy_version"] or row["current_taxonomy_version"] or "legacy_unclassified",
+                dedupe_sha256=row["dedupe_sha256"] or row["current_dedupe_sha256"],
+                prompt_style=row["prompt_style"] or "exploratory",
+                temporal_scope=row["temporal_scope"] or "evergreen",
+                scenario=row["scenario"] or "generic",
+                region=row["region"],
+                cohort_type=row["cohort_type"] if row["cohort_type"] in {"blind", "assisted", "comparison", "fact_verification"} else "unclassified",
+                source_kind=row["source_kind"] if row["source_kind"] in {"provided_seed", "template_candidate", "observed_query", "imported"} else "imported",
+                source_ref=row["source_ref"] or "legacy-row",
+                evidence_level=row["evidence_level"] if row["evidence_level"] in {"provided_seed", "template_candidate", "observed_query", "imported"} else "imported",
+                observed_query=bool(row["observed_query"]),
+                reviewed_by=row["reviewed_by"],
+                reviewed_at=coerce_datetime(row["reviewed_at"]) if row["reviewed_at"] else None,
+                review_note=row["review_note"],
                 created_at=coerce_datetime(row["created_at"]),
                 updated_at=coerce_datetime(row["updated_at"]),
             )
@@ -4540,3 +4732,10 @@ except ImportError:  # pragma: no cover
     from evidence_routes import router as evidence_router  # type: ignore[no-redef]
 
 app.include_router(evidence_router)
+
+try:
+    from .question_routes import router as question_router
+except ImportError:  # pragma: no cover
+    from question_routes import router as question_router  # type: ignore[no-redef]
+
+app.include_router(question_router)

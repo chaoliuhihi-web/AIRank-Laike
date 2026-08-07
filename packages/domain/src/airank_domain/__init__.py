@@ -52,6 +52,14 @@ from .knowledge import (
     verify_claim_assertion,
     segment_source_text,
 )
+from .question_taxonomy import (
+    GovernedQuestion,
+    TAXONOMY_VERSION,
+    compile_question_candidates,
+    govern_question,
+    normalize_question,
+    question_dedupe_sha256,
+)
 
 __all__ = [
     "AsyncJob",
@@ -85,19 +93,25 @@ __all__ = [
     "SampleContext",
     "SampleStatus",
     "SourceStatus",
+    "GovernedQuestion",
+    "TAXONOMY_VERSION",
     "TrustLevel",
     "claim_job",
     "complete_job",
     "approve_fact_revision",
     "canonical_json_sha256",
     "confirm_fact_atom",
+    "compile_question_candidates",
     "fail_job",
     "find_entity_mentions",
     "generate_content_gap",
+    "govern_question",
     "heartbeat_job",
     "sha256_text",
     "stable_prompt_version_id",
     "timeout_job",
     "verify_claim_assertion",
     "segment_source_text",
+    "normalize_question",
+    "question_dedupe_sha256",
 ]

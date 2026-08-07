@@ -24,7 +24,7 @@
 14. 新增事实治理 Alembic 迁移并在临时 MySQL 空库真实执行；验证 29 张 AIRank 表、5 张新治理表与 3 个 FactAtom 版本字段后删除临时库。
 15. 建立 AIRank Python Provider Gateway：四平台 manifest、官方 host allowlist、模型生命周期、L1/L2/L3、重试/退避、熔断、QPS/并发、配额预留、request ID、原生引用和 usage precision。
 16. API surface 已接 ScanRun；Provider 原始 JSON、请求元数据、模型、联网状态、request ID、usage 和配置指纹进入不可变证据与独立审计表，不与 Web/App 证据混用。
-17. 千问、豆包、DeepSeek 已从本机私密环境通过本仓 Gateway 完成真实生成；均返回非空回答、真实 request ID 和 exact usage。Kimi 仍需安全进程环境注入后重验。
+17. 千问、豆包、Kimi、DeepSeek（当前验收型号 `deepseek-v3.2`）已从本机私密环境通过本仓 Gateway 完成真实生成，均有真实 request ID；凭证未进入源码、Git 或文档。已在会话暴露过的 Kimi 密钥生产前必须轮换，DeepSeek 型号迁移仍需额度与下架门禁。
 18. 知识导入按 source/content hash 幂等，保存不可变原文和精确字符边界切片；事实版本、冲突、有效期和人工审核均进入正式 API。
 19. 内容资产只能引用已审核、未过期、无开放冲突且允许公开的 FactRevision；每条 ClaimAssertion 都绑定 ClaimSupport 和原文边界。
 20. 内容审核绑定内容 hash，执行事实覆盖和风险扫描；高风险 GEO 保证、绝对排名或竞品贬损必须记录人工 override，未经审核不能生成发布包。
@@ -55,25 +55,31 @@
 45. FactRevision 生成资格改为读取时动态计算：来源未生效、已过期、非 active 或冲突开放时即时撤销资格，人工裁决后可恢复；MySQL 时间统一按 UTC 序列化，避免来源列表与治理提醒出现 8 小时偏差。同一无序修订对重复登记冲突会返回带原冲突状态的 `409`，不再泄漏数据库唯一键异常。
 46. 企业事实库接入真实治理摘要与冲突列表，展示到期时间、开放冲突、左右修订、裁决选项和必填依据；服务端仍覆盖客户端裁决人。真实 MySQL + 浏览器完成“4 项待治理 → 空说明阻断 → 人工保留左版本 → 开放冲突归零 → 原批准事实恢复可用于内容”的闭环。桌面 1024px 无页面/裁决区横向溢出和 console warning/error；浏览器截图发现并修正了事实卡三列导致中文逐字竖排的问题，改为最小 280px 自适应列。
 47. 知识来源支持不可变新版本：更新操作创建独立快照和切片、原来源置为 `stale`，依赖旧来源的已批准事实即时变为 `source_stale`。新增当前有效原文检索 API/UI，只返回 active 且在有效期内的切片，展示精确边界、segment hash、命中词和来源版本；能力明确标为 `lexical_only / vector not_configured`，不冒充混合检索。
+48. `research.intent-miner` 升级至 `1.1.0`：买家问题统一进入版本化 taxonomy，记录问题类型、意图、买家阶段、Prompt 风格、时效、业务场景、Cohort、来源和稳定版本；中文/英文、Unicode、空白及标点归一后去重。
+49. 新增不可变 `QuestionMap`、`BuyerQuestionRevision` 和追加式 `BuyerQuestionReview`。编译预览不落库；持久化按输入与 taxonomy 内容寻址并支持幂等回放；所有模板只能标记为 `template_candidate`，不会伪造真实查询量或 `observed_query`。
+50. 人工确认成为采样硬门禁：新编译问题统一为 `suggested`，审核说明必填且审核主体来自认证上下文；ScanRun 只接收 `confirmed` 且问题修订 Cohort 与运行 Cohort 完全一致的条目，竞品命名问题不会泄漏进 blind 测试。
+51. 问题治理迁移 `20260808_0009` 在真实 MySQL 完成，AIRank 表数增至 45；迁移针对 MySQL 非事务 DDL 增加列、索引、外键存在性检查，已验证第一次中断后的安全重跑，不用人工删除半成品结构。
+52. 买家问题地图控制台接入真实编译、列表和审核 API，展示版本、来源、Cohort、意图、阶段、观察状态和审核门禁。真实 MySQL 浏览器验收完成 12 个候选编译、1 个规范化重复拦截、人工确认、正确 blind 任务入队及错误 comparison Cohort 返回 404；1543px 与 390px 均无页面级横向溢出，fresh console 为 `0 error / 0 warning`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`215 passed, 11 skipped`；新增 skip 是未开启外部服务开关的 integration，不计为通过。
+- `python3 -m pytest -q`：`220 passed, 12 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
 - 浏览器：`/login -> /console` 登录通过；13 个控制台路由在 1491×1055 桌面和 390×844 移动端共 26 项检查全部通过，无横向溢出、认证丢失或显式接口失败。证据中心已下钻到一条真实豆包样本，原始回答、双 SHA-256、EvidenceSnapshot、session、证据等级和真实 request ID 均可见；任务中心显示最终 ScanRun 的 12 个任务及 Kimi 明确失败原因。
+- 问题地图浏览器复验：升级 taxonomy 后使用同一输入重新编译，页面显示 `airank-question-taxonomy-v1.1.0`、12 个唯一问题、0 个新增候选、13 个重复拦截，证明新版本清单可回放且不会重复写问题。390×844 下页面宽度保持 390px，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
-- MySQL 临时库：Alembic `20260808_0008`；42 张 AIRank 表校验通过；真实 MySQL 复测链路生成 1 个 RetestRun 和 1 个带 SHA-256/evidence index 的报告，临时库已删除。
-- 本地真实 MySQL integration：`9 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增来源到期/冲突队列→资格阻断→人工裁决→资格恢复→UTC 输出→重复修订对 409 链；对象引用、Provider store 与 Publisher 链仍全部通过。
+- MySQL：Alembic `20260808_0009`；45 张 AIRank 表校验通过；新增问题地图、不可变问题修订和审核事件真实落库。迁移同时通过在线中断重跑和 `alembic upgrade head --sql` 离线发布包生成。
+- 本地真实 MySQL integration：`10 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增问题地图幂等编译、人工确认、租户隔离、suggested 排除及错误 Cohort 拒绝；既有对象引用、Provider store、Publisher 与复测链仍通过。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
 - 完整上线门禁：分包测试、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；总状态仍为 `BLOCKED`，真实阻塞为 GitHub/Gitee `main` 未同步、生产 Yudao 未配置、生产 HTTPS S3/MinIO 未验收、消费端浏览器 Provider `0/4`，以及当前本机 Python 3.9 / Node 20.18.2 低于生产运行时门禁。
 
 ## 下一实施顺序
 
-1. 轮换已在会话中暴露过的 Kimi 密钥，再以不落盘、不入日志的运行时方式注入，用本仓 Gateway 重跑 L1/L2/L3 和同一 ScanRun 的 3 次独立采样；完成前四平台门禁保持 `blocked`。
+1. 轮换已在会话中暴露过的 Kimi 密钥，并使用同一版已确认问题在千问、豆包、Kimi、DeepSeek 上各执行至少 3 次独立采样；单次 L3 通路已验证，但完成同批次重复采样前四平台测量门禁保持 `partial`。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 为 Web/App 采集器补真实截图、来源面板、联网状态与区域证据，并与 API 样本并行展示和分口径报告；当前 API 证据等级不足以证明消费端真实呈现。
 4. 将当前单机 QPS/并发限制扩展为 Redis/数据库分布式令牌桶，并补长时崩溃恢复和负载压测；MySQL circuit/quota/probe 状态已接入。
