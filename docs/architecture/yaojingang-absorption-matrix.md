@@ -1,0 +1,143 @@
+# AIRank 外部能力吸收矩阵
+
+- 基线日期：2026-08-08
+- 证据锁定：`docs/architecture/absorption-source-lock.json`
+- 产品目标：用真实证据证明品牌在多平台 AI 回答中的可见度、事实准确性与干预变化。
+- 取舍枚举：`absorb`（吸收稳定契约或数据字典）、`adapt`（重建为 AIRank 领域能力）、`reference_only`（只作为方法、评测或数据参考）、`reject`（不进入产品）。
+- 状态枚举：`ready`、`partial`、`planned`、`blocked`、`disabled`、`rejected`。
+
+## 结论先行
+
+1. AIRank 已完成测量可信度的第一轮修复：四类 Cohort、Prompt 版本、重复采样、会话 ID、surface/evidence level、不可变 hash 和样本状态已进入领域、API 与数据库迁移。
+2. 盲测不再注入品牌/竞品；正常未提及不再被丢弃；固定 `0.72/0.58` 置信度和按文本顺序猜排名已删除。辅助测、对比测和事实核验使用独立 Prompt 契约。
+3. `AnswerSnapshot` 允许保存“有效但无引用”的回答，并把引用召回率与引用支持度分开；浏览器采样只登记真实可见外链，不再把“Provider 原始回答”伪装成 citation。
+4. 控制台、无数据库资产包和报告接口已删除固定业务数字与演示产物；无真实 Provider 证据时返回 `empty/unverified`，不会生成品牌指标、完成度、报告或发布包。
+5. `geo-citation-lab` 的 CN-GEO 数据适合做引用来源、终端差异、问题分类和数据质量评测；其原始层缺少完整回答、批次、模型版本和采集时间，不能拿来计算品牌推荐率或趋势。
+6. `GEORank` 的页面诊断、URL 安全和 BYOK 值得改造；其确定性 fallback 分数不允许进入 AIRank 商业指标。
+7. `GEOFlow`、`TokHub` 和 `TokEMS` 提供了成熟的任务、幂等、审核、发布、凭证、探测和审计模式，但 AIRank 必须以自己的领域对象和契约实现，不能复制业务代码。
+
+## yao-geo-skills：21 个 Skill 全覆盖
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| yao-geo-skills | `yao-geo-tracking` | 为企业建立可复查的监测口径 | `skills/yao-geo-tracking` | 企业/官网 → 追踪方案与报告 | 官网取证、区域口径 | MIT | Cohort/重复采样任务契约已落库 | 区域采集与完整性报告仍缺 | adapt | Measurement Plan Skill | P0 | partial | 同一项目方案可编译为任务契约，字段完整性测试通过 |
+| yao-geo-skills | `yao-geo-effect-monitor` | 长期监测、引用台账、谨慎归因 | `skills/yao-geo-effect-monitor` | 平台样本 → 指标、告警、月报 | 真实样本、引用、时间窗 | MIT | 纯函数指标已覆盖有效/失败/阻塞/未提及/稳定性 | T0/T+7/T+14/T+30 与归因语义仍缺 | adapt | Effect Monitor Skill | P0 | partial | 指标从样本重算一致；报告仅使用批准的归因措辞 |
+| yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
+| yao-geo-skills | `yao-doubao-crawler` | 豆包 Web/App 分终端证据 | `skills/yao-doubao-crawler` | 问题/轮次/终端 → 回答、截图、XML、来源卡 | 登录态；Appium/AVD（App） | MIT | 只有通用 Web 采样 | 无 App 契约；Web/App 证据混用 | adapt | Web Collector + App Collector | P0 | planned | 同问题 Web/App 独立标记、证据等级不同且可对比 |
+| yao-geo-skills | `yao-chatgpt-crawler` | ChatGPT AI Search 多次采样 | `skills/yao-chatgpt-crawler` | 问题/轮次 → 回答、可见来源与概率报告 | 登录态、Browser Bridge | MIT | 浏览器 provider 名录包含 ChatGPT | 没有原生来源面板结构化与会话隔离证明 | adapt | Web Collector Adapter | P1 | planned | 真实多轮样本可追踪到可见来源和截图 |
+| yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 有 buyer questions | 无版本、来源和 Cohort；可能生成重复问题 | adapt | Research Intent Skill | P0 | planned | 输出通过去重、意图覆盖、人工抽检和版本回放 |
+| yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
+| yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
+| yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
+| yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 有 FactAtom/FactSource | 无 Source/Revision/Conflict/有效期 | adapt | Knowledge Build Skill | P0 | planned | 所有确认事实能定位原文边界、版本和审核记录 |
+| yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 项目含品牌/竞品，未成图 | 无实体版本、关系证据和消歧 | adapt | Entity Graph Skill | P1 | planned | 每条关系带 ClaimSupport；冲突实体进入人工审核 |
+| yao-geo-skills | `yao-geo-title-optimizer` | 产生可审核的标题候选 | `skills/yao-geo-title-optimizer` | 事实/方向 → 标题与评分 | 已审核事实、风险规则 | MIT | 内容资产骨架 | 评分缺少可验证 rubric | reference_only | Intervention Title Skill | P2 | planned | 候选不含无证据声明；rubric 与人工评审一致性达门槛 |
+| yao-geo-skills | `yao-geo-explainer-builder` | 生成科普/How-to/FAQ 页面 | `skills/yao-geo-explainer-builder` | 审核事实/问题 → 文章与核验矩阵 | FactAtom、ClaimSupport | MIT | 内容资产骨架 | 生成未强绑定证据 | adapt | Explainer Skill | P1 | planned | 每个事实性 Claim 必须绑定已审核支持证据 |
+| yao-geo-skills | `yao-geo-comparison-builder` | 高意图竞品比较页 | `skills/yao-geo-comparison-builder` | 同口径证据 → 比较页、FAQ | 双方公开证据、风险审校 | MIT | 有竞品对象 | 无同口径证据门禁 | adapt | Comparison Skill | P1 | planned | 缺对方证据不做断言；比较维度与来源可下钻 |
+| yao-geo-skills | `yao-geo-content-refiner` | 把旧文改成可引用、可抽取内容 | `skills/yao-geo-content-refiner` | 旧文/事实 → 新稿、diff、证据缺口 | 原文快照、FactAtom | MIT | 无完整旧文改造 | 无不可变原文和逐 Claim diff | adapt | Content Refiner Skill | P2 | planned | 原文 hash 不变；新增事实全部有证据；diff 可审计 |
+| yao-geo-skills | `yao-geo-article-friendly` | 轻量文章结构修复 | `skills/yao-geo-article-friendly` | 原文 → 草稿、改动说明 | 原文、事实政策 | MIT | 无独立 Skill | 与 refiner 重叠且成熟度仅 scaffold | reject | 合并进 Content Refiner | P3 | rejected | 不注册重复 Skill；能力由 refiner 覆盖 |
+| yao-geo-skills | `yao-geo-ranking-article-builder` | 生成榜单/评测页 | `skills/yao-geo-ranking-article-builder` | 竞品证据 → 评选方法、榜单、来源表 | 真实可比数据、风险审核 | MIT | 无 | 榜单极易产生虚假排名 | adapt | Ranking Review Skill | P2 | disabled | 默认禁用；真实同口径数据和人工审核齐备后才可发布 |
+| yao-geo-skills | `yao-geo-execution-roadmap` | 把诊断转成 30/60/90 天执行包 | `skills/yao-geo-execution-roadmap` | 缺口/预算 → 路线图 | 已完成诊断、资源输入 | MIT | 有 gap，未形成项目组合 | 容易把计划包装成效果 | reference_only | Delivery Playbook | P2 | planned | 明确区分计划、执行和观察证据，不进入效果指标 |
+| yao-geo-skills | `yao-geoflow-cli` | GEOFlow 运维契约与高风险确认 | `skills/yao-geoflow-cli` | 系统操作 → 操作结果/预检 | GEOFlow 实例 | MIT | AIRank 不依赖 GEOFlow | 产品边界不同 | reference_only | Delivery operation contracts | P2 | planned | 仅吸收幂等、reason、预检模式，不暴露 GEOFlow 操作 |
+| yao-geo-skills | `yao-geoflow-template` | 旧 PHP 模板兼容 | `skills/yao-geoflow-template` | 旧模板 → 迁移说明 | GEOFlow legacy | MIT | 无 | 与 AIRank 无关 | reject | 无 | P3 | rejected | 不进入 registry |
+| yao-geo-skills | `yao-geoflow-design` | GEOFlow 主题复制与渠道前端 | `skills/yao-geoflow-design` | 参考站 → 主题 JSON/预览 | GEOFlow Blade 主题 | MIT | AIRank 有独立视觉体系 | 直接吸收会破坏产品边界 | reject | 无 | P3 | rejected | 保留 AIRank UI；不注册此 Skill |
+
+## geo-citation-lab：研究、数据与质量契约
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| geo-citation-lab | 引用选择 vs 引用吸收 | 避免把“被列为来源”误当“支持了回答” | `01-geo-experiment-data-report/03-pipeline` | 回答/页面 → selection/absorption 特征 | 完整回答和页面正文 | 分范围许可 | 只有 citation 计数 | 无 ClaimSupport/吸收支持度 | absorb | Citation + ClaimSupport | P0 | planned | 同一引用分别计算召回与支持度，人工标注集可复算 |
+| geo-citation-lab | 问题多维分类 | 提供意图、风格、时效和场景基准 | `data/reference/question_taxonomy.csv` | Prompt → 多维标签 | 版本化 taxonomy | CC-BY-4.0 | buyer question 只有 type/intent | 分类维度不足 | absorb | Prompt Cohort taxonomy | P0 | planned | 620 问题基准可导入评测且保留来源版本 |
+| geo-citation-lab | Web/App 平台字典 | 强制终端分开比较 | `data/reference/ai_platforms.csv` | 平台代码 → 产品族/终端/映射证据 | 版本化字典 | CC-BY-4.0 | API/Web/App/manual_import 契约与证据等级已分开 | App 采集器仍未实现 | absorb | CollectorSurface manifest | P0 | partial | Web/App 不会聚合到同一证据等级或同一分母 |
+| geo-citation-lab | 不可变原始层与内容 hash | 支撑数据追溯和重建 | `warehouse_contract.json`、构建脚本 | JSONL → Parquet/DuckDB/marts | manifest、SHA-256 | MIT code | Answer/EvidenceSnapshot、raw/screenshot hash 已落库 | 对象校验巡检与派生表重建仍缺 | adapt | EvidenceSnapshot store | P0 | partial | 篡改任一原始对象后校验失败；派生表可重建 |
+| geo-citation-lab | 来源类型与权威度治理 | 支撑来源结构、缺口和人工复核 | `data/reference/source_types.csv` | 域名 → 类型/状态/置信度/证据 | 参考表和人工审核 | CC-BY-4.0 | citation 有 source_type | 无分类方法、置信度和治理状态 | absorb | Source Registry | P1 | planned | 精确映射优先；未知来源保持 unclassified，不猜测 |
+| geo-citation-lab | 214,119 条 CN-GEO 引用数据 | 提供平台差异和引用分析基准 | `03-cn-geo-citation-dataset/data` | 原始引用 → 标准表/质量报告 | 数据版本 2.0.1 | CC-BY-4.0/上游条款 | 无公开 benchmark | 缺回归数据 | reference_only | Eval datasets | P1 | planned | 只用于引用/终端/来源评测；禁止计算推荐率、趋势和情感 |
+| geo-citation-lab | 数据质量门禁 | 防止猜测缺失字段或误删样本 | `quality_report.json`、tests | 数据仓库 → checks/known limitations | 固定依赖与清单 | MIT code | 只有普通单测 | 无数据发布质量报告 | adapt | Evidence data gate | P1 | planned | 行数、hash、映射、重复、空表意图均自动验证 |
+
+## GEOFlow：知识、审校、发布与恢复
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GEOFlow | 企业知识 Source/Revision | 知识导入、草稿与版本治理 | `EnterpriseKnowledge*` models/services | 来源 → revision/draft | DB、队列、审核 | Apache-2.0 | FactAtom 只有当前版本 | 缺 KnowledgeSource/FactRevision/Conflict | adapt | Knowledge domain | P0 | planned | 增量同步不覆盖已审核版本；冲突进入队列 |
+| GEOFlow | 语义切片与增量同步 | 可重建的知识检索基础 | `KnowledgeChunkSync*`、`KnowledgeSourceParser` | source → chunks/embedding | pgvector/embedding | Apache-2.0 | kb-lite 占位 | 无原文边界、同步 staging | adapt | Knowledge ingestion | P1 | planned | 相同 hash 幂等；变更仅更新受影响切片 |
+| GEOFlow | 内容风险扫描和审核门禁 | 阻止无证据或高风险内容发布 | `ArticleRisk*`、`ArticleReview` | 草稿 → 风险、审核、override | 规则、审核角色 | Apache-2.0 | 有 fact review，无内容 review | 无 Claim 级核验与 override 审计 | adapt | Governance Skills | P0 | planned | 未过事实/风险门禁不能生成发布任务 |
+| GEOFlow | Publisher Manager | 支持 WordPress、HTTP 与可扩展渠道 | `DistributionPublisherManager`、publishers | 发布快照 → URL/响应/日志 | 渠道凭证、网络 | Apache-2.0 | publish package 仅骨架 | 无真实 publisher adapter | adapt | Delivery Gateway | P1 | planned | WordPress/HTTP contract tests；幂等重试不重复发布 |
+| GEOFlow | 发布幂等、租约与失败恢复 | 避免重复发布并支持人工恢复 | `DistributionChannelOperationLeaseService`、retry policy | task → attempts/result | durable queue | Apache-2.0 | async job 有 lease | 发布域未接入 | absorb | Delivery job runtime | P1 | planned | worker 崩溃后可续跑；相同 key 只有一个外部副作用 |
+| GEOFlow | SSRF 和出站安全 | 保护官网抓取与发布端点 | `Services/Outbound/*` | URL/request → allowed/blocked | DNS 重解析、大小限制 | Apache-2.0 | provider URL 安全零散 | 缺统一出站策略 | adapt | Outbound Security Gateway | P0 | planned | 私网、重定向、DNS rebinding、超大响应均被阻断 |
+| GEOFlow | 可见度采集模型 | 参考 run/source 分表与 provider normalizer | `AiVisibility*` | provider response → run/sources | provider client | Apache-2.0 | scan run/snapshot/citation | 缺 surface、session、raw object | reference_only | Measurement schema | P0 | partial | 只吸收结构，不复用其业务实现；新契约通过迁移测试 |
+| GEOFlow | 站点主题复制 | 快速生成站点外观 | `SiteThemeReplication*` | 参考站 → 主题包 | Laravel 主题 | Apache-2.0 | AIRank 有独立 UI | 偏离核心证据产品 | reject | 无 | P3 | rejected | 不进入 AIRank |
+
+## GEORank：页面诊断、拓词和 BYOK
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GEORank | 页面抓取与企业资料提取 | 建档和页面诊断输入 | `company_ingest.py`、`company_profile.py` | URL/HTML → 页面/企业字段 | 安全 fetch、HTML parser | Apache-2.0 | crawler-lite 占位 | 无真实提取流水线 | adapt | KnowledgeSource importer | P1 | planned | 字段带 DOM/文本边界和 hash；AI 只能派生候选 |
+| GEORank | 页面技术诊断 | 评估 Schema、Meta、结构和可读性 | `tasks/crawl`、diagnostics routes/models | URL → 规则结果 | Celery、抓取 | Apache-2.0 | 无 | 不能与品牌推荐指标混用 | adapt | Page Audit Skill | P1 | planned | 报告将 technical_score 与 visibility 指标完全分栏 |
+| GEORank | 关键词/问题扩展结构 | 扩充买家问题覆盖 | `keyword_expansion.py` | seed → 8 维词包 | LLM 或规则 fallback | Apache-2.0 | buyer question 手工创建 | 无质量/来源字段 | adapt | Intent Miner Skill | P1 | planned | 保留生成来源与版本；固定 hash 分数永不进入商业结果 |
+| GEORank | 确定性 fallback 分数 | 无模型时生成漂亮结果 | `keyword_expansion.py::_stable_score` | seed → 35-99 分 | 无 | Apache-2.0 | 当前 API 也有固定数字 | 属于伪业务结果 | reject | 无 | P0 | rejected | 生产扫描禁止 fallback；静态扫描门禁无此模式 |
+| GEORank | BYOK 请求策略 | 降低平台模型成本并支持客户密钥 | `ai_usage.py`、SDK `byok.ts` | 客户 key/header → provider call | 安全前端/短生命周期 | Apache-2.0 | provider 凭证来自服务端 env | 无租户级安全 BYOK | adapt | Credential Vault / Provider Gateway | P2 | planned | key 不落日志/DB 明文；撤销、轮换和租户隔离测试通过 |
+| GEORank | Provider URL 安全 | 避免 BYOK 自定义地址 SSRF | `provider_url_security.py` | base URL → allow/block | DNS/协议策略 | Apache-2.0 | 部分 endpoint 校验 | 未统一 | absorb | Outbound Security Gateway | P0 | planned | 与 GEOFlow 策略合并并通过恶意 URL corpus |
+| GEORank | 公共公司/专家/教程目录 | 内容门户和公开排名 | `apps/web`、companies/experts/tutorials | 内容 → 公开目录 | 内容运营 | Apache-2.0/数据另行许可 | 无 | 不能证明付费闭环 | reject | 无 | P3 | rejected | 不进入产品主线 |
+
+## TokHub：Provider Gateway
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| TokHub | Provider manifest | 统一模型、端点、能力和生命周期 | channel/store models | manifest → eligible upstreams | provider catalog | Apache-2.0 | provider 名录写死在 API | 无能力/终端/下架模型 | adapt | Provider Manifest | P0 | planned | manifest schema、版本与迁移测试通过 |
+| TokHub | L1/L2/L3 探测 | 区分网络、鉴权、模型和生成故障 | probe services/`probe_runs` | channel → layer results | 凭证、网络 | Apache-2.0 | 只有浏览器 readiness | 无 API 分层探测 | absorb | Provider Health | P0 | planned | 四平台各产生真实 L1/L2/L3 记录和 request id |
+| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 无统一 gateway | 无熔断/退避/eligibility | adapt | Provider Gateway | P1 | planned | 故障注入下不调用熔断通道，恢复后半开探测 |
+| TokHub | QPS、并发与配额预留 | 避免超额和预算并发穿透 | quota/reservation/store | request → reserve/commit/release | Redis/事务 | Apache-2.0 | 只有 job lease | 无 provider 配额预留 | adapt | Quota Service | P1 | planned | 并发测试不超额度，失败归还预留 |
+| TokHub | 用量 exact/estimated 标记 | 不把估算成本冒充精确成本 | usage events/rollups | response → tokens/cost/provenance | 价格版本 | Apache-2.0 | 尚无正式成本领域 | 缺精度状态 | absorb | Usage Ledger | P1 | planned | 缺上游 usage 时标 estimated，报告可过滤 |
+| TokHub | 凭证加密、指纹、轮换 | 支撑安全私有 Provider | credential store/migrations | secret → ciphertext/fingerprint | 主密钥/KMS | Apache-2.0 | env 注入 | 无租户级 vault 与轮换审计 | adapt | Credential Vault | P1 | planned | 明文扫描为零；轮换不暴露旧值；删除执行 scrub |
+| TokHub | reason + idempotency + audit | 让高风险操作可审计 | admin agent contracts/store | write → idempotent result/audit | RBAC | Apache-2.0 | 有 audit/outbox 表 | API 写操作未统一执行 | absorb | Operation Guard | P1 | planned | 重放同 key 不重复副作用，冲突 payload 被拒绝 |
+| TokHub | 公开示例通道与固定健康分 | 让首页可演示 | seed/store example rows | seed → 静态通道分数 | 无 | Apache-2.0 | AIRank 有相似固定 overview | 会伪装真实健康 | reject | 无 | P0 | rejected | 生产构建与 seed 扫描不得出现静态健康/业务分数 |
+
+## Skill OS 与外围仓库
+
+| 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 无 Skill 平台 | 缺正式契约 | adapt | `packages/skills` | P0 | planned | 核心 8 Skill 均能序列化、校验和升级 |
+| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 普通单测 | 无 Skill 质量门禁 | absorb | Skill Eval Lab | P0 | planned | train/dev/holdout/对抗样本和真实执行均通过 |
+| yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | release readiness 初版 | 无 Skill 生命周期门禁 | adapt | Skill Registry | P0 | planned | 缺真实 provider/human 证据时 promotion 必须阻断 |
+| yao-meta-skill | trust/permission/package gate | 控制网络、凭证和可移植性 | trust/package/install scripts | Skill 包 → trust/report/package | sandbox/manifest | MIT | 无 | 无依赖与权限声明验证 | adapt | Skill Trust Gate | P1 | planned | 依赖、网络、secret、权限、安装模拟全部可审计 |
+| yao-open-tools | `tokscr` 本地网页截图 | 保存消费者页面与来源面板证据 | `tools/tokscr` | 页面 → PNG/PDF | 浏览器扩展 | MIT | Playwright 截图写临时目录 | 无不可变对象存储和裁剪元数据 | reference_only | Evidence Capture | P1 | planned | 截图 hash、viewport、URL、时间、裁剪参数一并保存 |
+| yao-open-tools | TokKit exact/partial/estimated | 明确成本数据精度 | `tools/tokkit` | 日志/响应 → 用量台账 | 本地日志 | MIT | 无精度枚举 | 容易把估算当真实 | absorb | Usage provenance enum | P1 | planned | 任一成本字段都有 precision 和 source |
+| yao-open-tools | TokDoc 报告与版本快照 | 客户报告归档与公开交付 | `tools/TokDoc` | HTML/PDF/Word → 版本/链接 | 本地存储 | MIT | reports 表 | 无不可变交付包 | reference_only | Report Artifact Store | P2 | planned | 导出包 hash、版本、下载回执可追溯 |
+| yao-open-skills | 证据分级、版权、安全和决策 Skill | 补充治理 rubric | `skills/yao-*` | 任务 → 多格式报告 | 各 Skill 依赖 | MIT | 无统一 rubric | 与 GEO 主线部分重叠 | reference_only | Governance rubrics | P2 | planned | 只抽取 rubric/失败案例，不注册无关客户 Skill |
+| yao-open-prompts | GEO/企业研究 Prompt 库 | 提供候选问题和写作方法 | `prompts/08-ai-marketing` | 输入 → 文本建议 | LLM | CC-BY-4.0 | 有零散生成逻辑 | Prompt 本身无真实证据 | reference_only | Eval/Prompt candidates | P2 | planned | 进入产品前必须转成 schema、事实政策和 eval case |
+| TokEMS | 不可变版本、Outbox、RBAC、审计 | 提升发布与交付可靠性 | templates/publishing/common modules | 写操作 → snapshot/event/audit | DB/worker | AGPL-3.0 | AIRank 有 outbox/audit 表 | 未形成发布域闭环 | reference_only | Delivery architecture | P1 | planned | 只参考模式；AIRank 自有实现通过幂等和恢复测试 |
+| TokEMS | 大会报名/支付/签到业务 | 与 GEO 无关 | event/order/payment/check-in modules | 活动数据 → 交易/核销 | 支付、短信、设备 | AGPL-3.0 | 无 | 不属于 GEO 付费闭环 | reject | 无 | P3 | rejected | 不进入领域模型和导航 |
+| yaojingang.github.io | 个人博客内容 | 无核心产品能力 | repository content | 内容 → 静态站 | 无 | NOASSERTION | 无 | 许可和业务价值不足 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
+| yaojingang | 个人 Profile README | 无产品能力 | profile README | 文本 → 主页 | 无 | NOASSERTION | 无 | 与产品无关 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
+
+## AIRank 内部现有原型的处理
+
+`/Users/bruce/Developer/work/ai-geo-monitoring` 中已经完成 Provider 成本、验证、任务进度、失败重试、知识导入、通知和付费试点门禁。它属于 AIRank 的本地实验实现，不作为外部开源项目直接复制；只把通过测试的契约和行为迁移到本仓的 Python/FastAPI 领域模型，并重新跑本仓单元、迁移、Provider 和浏览器门禁。
+
+## 第一批核心 8 Skill
+
+1. `measurement.sample-runner`
+2. `measurement.answer-parser`
+3. `measurement.citation-extractor`
+4. `research.intent-miner`
+5. `knowledge.fact-builder`
+6. `governance.claim-verifier`
+7. `intervention.page-blueprint`
+8. `delivery.retest-report`
+
+核心 8 Skill 在实现前必须先完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric 和 eval cases；未通过真实执行证据时只能是 `partial`。
+
+## 阶段一完成判定
+
+- 12 个公开仓库都有明确取舍，10 个相关仓库锁定 commit 并完成代码级入口定位。
+- `yao-geo-skills` 的 21 个 Skill 全部逐项覆盖。
+- 所有 `absorb/adapt/reference_only/reject` 都有目标模块和验收方法。
+- 许可证边界已记录；CN-GEO 数据、原创内容和第三方论文不混用许可。
+- 下一阶段的 P0 已明确：先修测量可信度，暂停继续堆内容生成页面。
+
+## 阶段二当前证据（2026-08-08）
+
+- `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
+- 全量 Python 测试：`134 passed, 6 skipped`；跳过项仍需依赖真实外部服务的集成环境，不能视为已通过。
+- 前端 TypeScript/Vite 构建通过；本机 Node `20.18.2` 低于 Vite 建议的 `20.19+`，当前是环境告警而非构建失败，生产构建镜像需升级。
+- 当前阶段仍是 `partial`：尚未把四个 API Provider Gateway 迁入本仓，尚未跑四平台真实重复采样和浏览器 E2E，因此不允许声明商业可用。

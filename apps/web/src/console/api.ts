@@ -1,9 +1,15 @@
-import { assetCards, metricCards, project, reportCards, type Tone } from "./data";
+import type { Tone } from "./data";
 
 const AUTH_SESSION_STORAGE_KEY = "airank.auth.session.v1";
 
-export type ConsoleProject = typeof project & {
-  id?: string;
+export type ConsoleProject = {
+  id: string;
+  name: string;
+  website: string;
+  industry: string;
+  competitors: string;
+  audience: string;
+  date: string;
 };
 
 export type ConsoleMetricCard = {
@@ -18,6 +24,8 @@ export type ConsoleMetricCard = {
 export type ConsoleOverview = {
   project: ConsoleProject;
   metricCards: ConsoleMetricCard[];
+  dataStatus: "empty" | "collecting" | "provider_evidence" | "unverified";
+  message: string;
 };
 
 export type AssetBundleItem = {
@@ -123,6 +131,8 @@ type ConsoleOverviewPayload = {
   data: {
     project: ConsoleProject;
     metric_cards: ConsoleMetricCard[];
+    data_status: "empty" | "collecting" | "provider_evidence" | "unverified";
+    message: string;
   };
   meta: {
     trace_id: string;
@@ -161,6 +171,8 @@ type BrandCheckPayload = {
     overview: {
       project: ConsoleProject;
       metric_cards: ConsoleMetricCard[];
+      data_status: "empty" | "collecting" | "provider_evidence" | "unverified";
+      message: string;
     };
   };
   meta: {
@@ -198,22 +210,32 @@ type ConsoleActionPayload = {
 };
 
 export const fallbackConsoleOverview: ConsoleOverview = {
-  project,
-  metricCards,
+  project: {
+    id: "",
+    name: "尚未加载项目",
+    website: "",
+    industry: "",
+    competitors: "",
+    audience: "",
+    date: "",
+  },
+  metricCards: [],
+  dataStatus: "empty",
+  message: "控制台 API 尚未返回真实项目数据。",
 };
 
 export const fallbackAssetBundle: AssetBundle = {
-  project_id: "project_demo",
-  tenant_id: "tenant_demo",
-  completeness: 86,
-  recommendation: "基于全面性、结构化、可验证性、AI 友好度等维度综合评估",
-  assets: assetCards,
+  project_id: "",
+  tenant_id: "",
+  completeness: 0,
+  recommendation: "尚未读取真实内容资产。",
+  assets: [],
 };
 
 export const fallbackReportList: ReportList = {
-  project_id: "project_demo",
-  tenant_id: "tenant_demo",
-  reports: reportCards,
+  project_id: "",
+  tenant_id: "",
+  reports: [],
 };
 
 function canUseStorage() {
@@ -328,6 +350,8 @@ export async function fetchConsoleOverview(signal?: AbortSignal): Promise<Consol
   return {
     project: payload.data.project,
     metricCards: payload.data.metric_cards,
+    dataStatus: payload.data.data_status,
+    message: payload.data.message,
   };
 }
 
@@ -389,6 +413,8 @@ export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckR
     overview: {
       project: payload.data.overview.project,
       metricCards: payload.data.overview.metric_cards,
+      dataStatus: payload.data.overview.data_status,
+      message: payload.data.overview.message,
     },
   };
 }

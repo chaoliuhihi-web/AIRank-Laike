@@ -44,7 +44,9 @@ def test_scan_run_api_creates_and_reads_dev_statuses() -> None:
     run_body = create_response.json()
     assert run_body["meta"]["trace_id"] == "trc_scan_create"
     assert run_body["data"]["status"] == "queued"
-    assert run_body["data"]["metrics"]["task_count"] == 2
+    assert run_body["data"]["metrics"]["task_count"] == 6
+    assert run_body["data"]["cohort_type"] == "blind"
+    assert run_body["data"]["repetitions"] == 3
     validate_response("scan_run_response.schema.json", run_body)
 
     run_id = run_body["data"]["run_id"]
@@ -61,8 +63,10 @@ def test_scan_run_api_creates_and_reads_dev_statuses() -> None:
     )
     assert tasks_response.status_code == 200
     tasks_body = tasks_response.json()
-    assert len(tasks_body["data"]) == 2
+    assert len(tasks_body["data"]) == 6
     assert {task["provider"] for task in tasks_body["data"]} == {"chatgpt", "deepseek"}
+    assert {task["sample_index"] for task in tasks_body["data"]} == {1, 2, 3}
+    assert len({task["session_id"] for task in tasks_body["data"]}) == 6
     validate_response("scan_task_list_response.schema.json", tasks_body)
 
     task_id = tasks_body["data"][0]["task_id"]
@@ -183,6 +187,9 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   project_id VARCHAR(64) NOT NULL,
                   name VARCHAR(255) NULL,
                   run_type VARCHAR(64) NOT NULL,
+                  cohort_type VARCHAR(32) NOT NULL,
+                  repetitions INT NOT NULL,
+                  collector_surfaces_json TEXT NULL,
                   status VARCHAR(32) NOT NULL,
                   provider_scope_json TEXT NULL,
                   question_scope_json TEXT NULL,
@@ -207,6 +214,12 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   run_id VARCHAR(64) NOT NULL,
                   question_id VARCHAR(64) NOT NULL,
                   provider VARCHAR(64) NOT NULL,
+                  cohort_type VARCHAR(32) NOT NULL,
+                  prompt_version_id VARCHAR(64) NOT NULL,
+                  sample_index INT NOT NULL,
+                  session_id VARCHAR(96) NOT NULL,
+                  collector_surface VARCHAR(32) NOT NULL,
+                  evidence_level VARCHAR(64) NOT NULL,
                   status VARCHAR(32) NOT NULL,
                   attempt_count INT NOT NULL,
                   scheduled_at DATETIME NULL,
@@ -214,8 +227,27 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   finished_at DATETIME NULL,
                   error_code VARCHAR(128) NULL,
                   error_message TEXT NULL,
+                  request_json TEXT NULL,
                   created_at DATETIME NOT NULL,
                   updated_at DATETIME NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_prompt_versions (
+                  id VARCHAR(64) NOT NULL,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  project_id VARCHAR(64) NOT NULL,
+                  question_id VARCHAR(64) NOT NULL,
+                  cohort_type VARCHAR(32) NOT NULL,
+                  template_version VARCHAR(32) NOT NULL,
+                  prompt_text TEXT NOT NULL,
+                  prompt_sha256 VARCHAR(64) NOT NULL,
+                  created_at DATETIME NOT NULL,
+                  PRIMARY KEY (tenant_id, id)
                 )
                 """
             )
@@ -287,6 +319,7 @@ def test_mysql_scan_repository_persists_run_and_tasks() -> None:
             project_id="project_real",
             name="Production persistence scan",
             provider_scope=["chatgpt", "deepseek"],
+            repetitions=1,
             question_scope={"mode": "selected", "question_ids": ["question_real_1", "question_real_2"]},
         ),
     )
@@ -324,6 +357,7 @@ def test_mysql_scan_repository_all_active_excludes_archived_questions() -> None:
         ScanRunCreateRequest(
             project_id="project_real",
             provider_scope=["chatgpt"],
+            repetitions=1,
             question_scope={"mode": "all_active"},
         ),
     )
@@ -342,6 +376,7 @@ def test_mysql_scan_repository_rejects_missing_selected_question() -> None:
             ScanRunCreateRequest(
                 project_id="project_real",
                 provider_scope=["chatgpt"],
+                repetitions=1,
                 question_scope={"mode": "selected", "question_ids": ["question_missing"]},
             ),
         )

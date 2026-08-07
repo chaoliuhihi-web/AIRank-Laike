@@ -21,7 +21,7 @@ def validate_response(schema_name: str, payload: dict) -> None:
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
 
 
-def test_report_api_lists_reports_and_records_download_receipt() -> None:
+def test_report_api_returns_empty_state_without_evidence_backed_reports() -> None:
     client = TestClient(app)
 
     reports = client.get(
@@ -30,18 +30,17 @@ def test_report_api_lists_reports_and_records_download_receipt() -> None:
     )
     assert reports.status_code == 200
     reports_body = reports.json()
-    assert reports_body["data"]["reports"]
+    assert reports_body["data"]["reports"] == []
     validate_response("report_list_response.schema.json", reports_body)
 
-    report_id = reports_body["data"]["reports"][0]["report_id"]
     receipt = client.post(
-        f"/api/v1/reports/{report_id}/download-receipts",
+        "/api/v1/reports/report_missing/download-receipts",
         headers={"tenant-id": "tenant_reports", "X-AIRank-Trace-Id": "trc_receipt"},
     )
-    assert receipt.status_code == 201
+    assert receipt.status_code == 404
     receipt_body = receipt.json()
-    assert receipt_body["data"]["report_id"] == report_id
-    validate_response("download_receipt_response.schema.json", receipt_body)
+    assert receipt_body["error"]["code"] == "REPORT_NOT_FOUND"
+    validate_response("error_response.schema.json", receipt_body)
 
 
 def test_report_api_rejects_invalid_project_id() -> None:

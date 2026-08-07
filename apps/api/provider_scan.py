@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,10 +10,14 @@ import tempfile
 import threading
 import time
 from typing import Any
+from urllib.parse import urlparse
+from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+
+from airank_domain.measurement import BrandEntity, MentionClass, PromptCohortType, find_entity_mentions, sha256_text
 
 
 DEFAULT_PROVIDER_LABELS: dict[str, str] = {
@@ -62,8 +67,11 @@ class ProviderScanResult:
     brand_rank: int | None
     competitor_mentions: list[dict[str, Any]]
     sentiment: str
-    confidence: float
+    mention_class: str
+    target_entity_mentions: list[dict[str, Any]]
+    confidence: float | None
     external_trace_id: str | None
+    native_citations: list[dict[str, str]]
     raw_metadata: dict[str, Any]
 
 
@@ -181,9 +189,27 @@ def call_provider_for_brand_rank(
     industry: str,
     competitor_names: list[str],
     question_text: str,
+    cohort_type: PromptCohortType | str = PromptCohortType.BLIND,
+    session_id: str | None = None,
+    prompt_version_id: str | None = None,
+    brand_aliases: list[str] | None = None,
+    company_names: list[str] | None = None,
+    product_names: list[str] | None = None,
 ) -> ProviderScanResult:
     config = browser_provider_config(provider)
-    prompt = build_brand_rank_prompt(brand_name, website_url, industry, competitor_names, question_text)
+    normalized_cohort = PromptCohortType(cohort_type)
+    isolated_session_id = session_id or f"session_{uuid4().hex}"
+    prompt = build_brand_rank_prompt(
+        brand_name,
+        website_url,
+        industry,
+        competitor_names,
+        question_text,
+        cohort_type=normalized_cohort,
+        brand_aliases=brand_aliases,
+        company_names=company_names,
+        product_names=product_names,
+    )
     try:
         with provider_lock(provider):
             browser_result = run_browser_probe(config, prompt)
@@ -194,11 +220,16 @@ def call_provider_for_brand_rank(
     except RuntimeError as exc:
         raise ProviderCallError(provider, str(exc)[:1000]) from exc
 
-    parsed = parse_provider_answer(browser_result["answer_text"], brand_name, competitor_names)
+    parsed = parse_provider_answer(
+        browser_result["answer_text"],
+        brand_name,
+        competitor_names,
+        brand_aliases=brand_aliases,
+        company_names=company_names,
+        product_names=product_names,
+    )
     if looks_login_blocked(browser_result["answer_text"]):
         raise ProviderCallError(provider, "web page returned login or human verification text instead of an answer")
-    if not answer_mentions_any_brand(browser_result["answer_text"], [brand_name, *competitor_names]):
-        raise ProviderCallError(provider, "web page did not return an answer mentioning the requested brand or competitors")
     return ProviderScanResult(
         provider=provider,
         provider_label=config.label,
@@ -207,15 +238,27 @@ def call_provider_for_brand_rank(
         brand_rank=parsed["brand_rank"],
         competitor_mentions=parsed["competitor_mentions"],
         sentiment=parsed["sentiment"],
+        mention_class=parsed["mention_class"],
+        target_entity_mentions=parsed["target_entity_mentions"],
         confidence=parsed["confidence"],
         external_trace_id=browser_result["trace_id"],
+        native_citations=browser_result.get("source_links", []),
         raw_metadata={
             **config.public_metadata(),
             "capture_url": browser_result["page_url"],
             "capture_title": browser_result["title"],
             "screenshot_path": browser_result["screenshot_path"],
+            "screenshot_sha256": browser_result.get("screenshot_sha256", ""),
             "answer_parse_mode": parsed["parse_mode"],
             "capture_mode": "consumer_browser",
+            "collector_surface": "web",
+            "evidence_level": "consumer_web",
+            "cohort_type": normalized_cohort.value,
+            "session_id": isolated_session_id,
+            "prompt_version_id": prompt_version_id,
+            "prompt_sha256": sha256_text(prompt),
+            "answer_sha256": sha256_text(parsed["answer_text"]),
+            "source_extraction": "visible_anchor_text_match",
         },
     )
 
@@ -285,7 +328,7 @@ def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadin
 
             body_text = normalized_body_text(page)
             prompt_input_found = find_prompt_input(page) is not None
-            screenshot_path = save_page_screenshot(page, config.provider)
+            screenshot_path, _ = save_page_screenshot(page, config.provider)
             page_url = page.url
         finally:
             context.close()
@@ -332,10 +375,33 @@ def build_brand_rank_prompt(
     industry: str,
     competitor_names: list[str],
     question_text: str,
+    *,
+    cohort_type: PromptCohortType | str = PromptCohortType.BLIND,
+    brand_aliases: list[str] | None = None,
+    company_names: list[str] | None = None,
+    product_names: list[str] | None = None,
 ) -> str:
+    cohort = PromptCohortType(cohort_type)
+    question = question_text.strip()
+    if cohort == PromptCohortType.BLIND:
+        protected_names = [brand_name, *(brand_aliases or ()), *(company_names or ()), *(product_names or ())]
+        leaked = [name for name in protected_names if name and name.casefold() in question.casefold()]
+        if leaked:
+            raise ValueError("blind cohort question must not include target brand, company, alias, or product names")
+        return question
+    if cohort == PromptCohortType.FACT_VERIFICATION:
+        return (
+            f"请核验以下关于 {brand_name}（官网：{website_url}）的问题，只陈述可由来源支持的事实，"
+            f"逐条给出来源链接；无法确认时明确回答无法确认：\n{question}"
+        )
+    if cohort == PromptCohortType.ASSISTED:
+        return (
+            f"{question}\n\n待评估品牌是 {brand_name}（官网：{website_url}），行业：{industry}。"
+            "请说明它是否适合作为候选，并区分事实、判断与无法确认的信息。"
+        )
     competitors = "、".join(competitor_names) if competitor_names else "无指定竞品"
     return (
-        f"{question_text}\n\n"
+        f"{question}\n\n"
         f"请以企业买家的角度回答。待评估品牌是：{brand_name}（官网：{website_url}），"
         f"行业：{industry}，对标/竞品：{competitors}。"
         "请在回答里给出你认为这些品牌的推荐排序，并说明原因。"
@@ -358,25 +424,27 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, s
 
             before_text = normalized_body_text(page)
             if looks_login_blocked(before_text) and not find_prompt_input(page):
-                screenshot_path = save_page_screenshot(page, config.provider)
+                screenshot_path, _ = save_page_screenshot(page, config.provider)
                 raise RuntimeError(f"{config.label} web page requires login or human verification; screenshot={screenshot_path}")
 
             input_locator = find_prompt_input(page)
             if input_locator is None:
-                screenshot_path = save_page_screenshot(page, config.provider)
+                screenshot_path, _ = save_page_screenshot(page, config.provider)
                 raise RuntimeError(f"{config.label} web page prompt input was not found; screenshot={screenshot_path}")
 
             input_locator.click()
             fill_prompt(input_locator, prompt)
             submit_prompt(page, input_locator)
             answer_text = wait_for_answer_text(page, before_text, prompt, deadline)
-            screenshot_path = save_page_screenshot(page, config.provider)
+            screenshot_path, screenshot_sha256 = save_page_screenshot(page, config.provider)
             return {
                 "trace_id": trace_id,
                 "page_url": page.url,
                 "title": page.title(),
                 "answer_text": answer_text,
                 "screenshot_path": screenshot_path,
+                "screenshot_sha256": screenshot_sha256,
+                "source_links": extract_visible_source_links(page, answer_text),
             }
         finally:
             context.close()
@@ -597,38 +665,101 @@ def classify_blocker_reason(reason: str) -> str:
     return "unknown_blocked"
 
 
-def answer_mentions_any_brand(answer_text: str, names: list[str]) -> bool:
-    return any(name and name in answer_text for name in names)
-
-
-def save_page_screenshot(page: Any, provider: str) -> str:
+def save_page_screenshot(page: Any, provider: str) -> tuple[str, str]:
     root = Path(os.getenv("AIRANK_BROWSER_CAPTURE_DIR") or Path(tempfile.gettempdir()) / "airank-browser-captures")
     root.mkdir(parents=True, exist_ok=True)
-    path = root / f"{provider}-{int(time.time())}.png"
     try:
-        page.screenshot(path=str(path), full_page=True)
+        payload = page.screenshot(full_page=True)
     except PlaywrightError:
-        return ""
-    return str(path)
+        return "", ""
+    digest = hashlib.sha256(payload).hexdigest()
+    path = root / provider / digest[:2] / f"{digest}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_bytes(payload)
+    return str(path), digest
 
 
-def parse_provider_answer(content: str, brand_name: str, competitor_names: list[str]) -> dict[str, Any]:
+def extract_visible_source_links(page: Any, answer_text: str) -> list[dict[str, str]]:
+    """Extract only visible external anchors whose label occurs in the captured answer.
+
+    This deliberately returns an empty list when provenance cannot be tied to the
+    answer. Navigation links and the provider's own host are not citations.
+    """
+
+    provider_host = urlparse(page.url).netloc.lower()
+    citations: list[dict[str, str]] = []
+    seen: set[str] = set()
+    try:
+        anchors = page.locator("a[href^='http']")
+        count = min(anchors.count(), 200)
+    except PlaywrightError:
+        return []
+    for index in range(count):
+        anchor = anchors.nth(index)
+        try:
+            if not anchor.is_visible():
+                continue
+            url = (anchor.get_attribute("href", timeout=500) or "").strip()
+            title = (anchor.inner_text(timeout=500) or "").strip()
+        except PlaywrightError:
+            continue
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if not host or host == provider_host or url in seen:
+            continue
+        if len(title) < 2 or title not in answer_text:
+            continue
+        seen.add(url)
+        citations.append({"url": url, "title": title[:512], "host": host})
+    return citations
+
+
+def parse_provider_answer(
+    content: str,
+    brand_name: str,
+    competitor_names: list[str],
+    *,
+    brand_aliases: list[str] | None = None,
+    company_names: list[str] | None = None,
+    product_names: list[str] | None = None,
+) -> dict[str, Any]:
     answer_text = content.strip()
-    ranking_payload = extract_rank_lines(answer_text, [brand_name, *competitor_names])
-    brand_mentioned = brand_name in answer_text
-    brand_rank = rank_for_brand(ranking_payload, brand_name)
-    if brand_rank is None:
-        brand_rank = infer_rank_from_text(answer_text, brand_name, competitor_names)
+    target_entity = BrandEntity(
+        canonical_name=brand_name,
+        aliases=tuple(brand_aliases or ()),
+        company_names=tuple(company_names or ()),
+        product_names=tuple(product_names or ()),
+    )
+    target_mentions = find_entity_mentions(answer_text, target_entity)
+    target_names = [name for name, _entity_type in target_entity.names_by_type()]
+    ranking_payload = extract_rank_lines(answer_text, [*target_names, *competitor_names])
+    brand_mentioned = bool(target_mentions)
+    brand_ranks = [rank_for_brand(ranking_payload, name) for name in target_names]
+    brand_rank = min((rank for rank in brand_ranks if rank is not None), default=None)
     competitor_mentions = build_competitor_mentions(answer_text, ranking_payload, competitor_names)
-    sentiment = infer_sentiment(answer_text, brand_name)
+    matched_target_name = target_mentions[0].matched_name if target_mentions else brand_name
+    sentiment = infer_sentiment(answer_text, matched_target_name)
+    mention_class = classify_mention(answer_text, matched_target_name, brand_mentioned, brand_rank, sentiment)
     return {
         "answer_text": answer_text,
         "brand_mentioned": brand_mentioned,
         "brand_rank": brand_rank,
         "competitor_mentions": competitor_mentions,
         "sentiment": sentiment,
-        "confidence": 0.72 if brand_mentioned else 0.58,
-        "parse_mode": "browser_text",
+        "mention_class": mention_class.value,
+        "target_entity_mentions": [
+            {
+                "canonical_name": mention.canonical_name,
+                "matched_name": mention.matched_name,
+                "entity_type": mention.entity_type,
+                "start": mention.start,
+                "end": mention.end,
+            }
+            for mention in target_mentions
+        ],
+        "confidence": None,
+        "parse_mode": "explicit_rank_and_lexical_classification",
     }
 
 
@@ -664,19 +795,26 @@ def rank_for_brand(ranking_payload: list[Any], brand_name: str) -> int | None:
     return None
 
 
-def infer_rank_from_text(answer_text: str, brand_name: str, competitor_names: list[str]) -> int | None:
-    positions = []
-    for name in [brand_name, *competitor_names]:
-        position = answer_text.find(name)
-        if position >= 0:
-            positions.append((position, name))
-    if not positions:
-        return None
-    positions.sort(key=lambda item: item[0])
-    for index, (_, name) in enumerate(positions, start=1):
-        if name == brand_name:
-            return index
-    return None
+def classify_mention(
+    answer_text: str,
+    brand_name: str,
+    brand_mentioned: bool,
+    brand_rank: int | None,
+    sentiment: str,
+) -> MentionClass:
+    if not brand_mentioned:
+        return MentionClass.NOT_MENTIONED
+    if sentiment == "negative":
+        return MentionClass.NEGATIVE
+    first_position = answer_text.find(brand_name)
+    window = answer_text[max(0, first_position - 100) : first_position + len(brand_name) + 180]
+    recommendation_markers = ("推荐", "首选", "优先考虑", "值得选择", "建议选择")
+    candidate_markers = ("候选", "可以考虑", "可选", "备选", "适合")
+    if brand_rank is not None or any(marker in window for marker in recommendation_markers):
+        return MentionClass.RECOMMENDED
+    if any(marker in window for marker in candidate_markers):
+        return MentionClass.CANDIDATE
+    return MentionClass.MENTIONED
 
 
 def build_competitor_mentions(answer_text: str, ranking_payload: list[Any], competitor_names: list[str]) -> list[dict[str, Any]]:

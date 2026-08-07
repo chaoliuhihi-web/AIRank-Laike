@@ -1,0 +1,91 @@
+{
+  "snapshot_date": "2026-08-08",
+  "owner": "yaojingang",
+  "policy": "Reference repositories are evidence inputs only. AIRank absorbs contracts and verified patterns through its own modules; it does not vendor business code.",
+  "repositories": [
+    {
+      "name": "GEOFlow",
+      "url": "https://github.com/yaojingang/GEOFlow",
+      "commit": "1c1a36158136e6d7e139b2853c515514c07e49f5",
+      "license": "Apache-2.0",
+      "decision": "adapt"
+    },
+    {
+      "name": "geo-citation-lab",
+      "url": "https://github.com/yaojingang/geo-citation-lab",
+      "commit": "81ba1566f70f114e9202b798f8d4525a9329ebd3",
+      "license": "MIT code; CC-BY-4.0 original content; third-party assets retain original terms",
+      "decision": "reference_only"
+    },
+    {
+      "name": "yao-open-prompts",
+      "url": "https://github.com/yaojingang/yao-open-prompts",
+      "commit": "fca61da68ef0adc51d4d2ec1e50e479578e0d3f8",
+      "license": "CC-BY-4.0",
+      "decision": "reference_only"
+    },
+    {
+      "name": "yao-geo-skills",
+      "url": "https://github.com/yaojingang/yao-geo-skills",
+      "commit": "201c0c45dcf09bb37bc46a467b4baf4d721db205",
+      "license": "MIT",
+      "decision": "adapt"
+    },
+    {
+      "name": "yao-meta-skill",
+      "url": "https://github.com/yaojingang/yao-meta-skill",
+      "commit": "e15472e1f5dc96f79ea0259bf9fdf67598cea356",
+      "license": "MIT",
+      "decision": "adapt"
+    },
+    {
+      "name": "GEORank",
+      "url": "https://github.com/yaojingang/GEORank",
+      "commit": "1df59ad37f0153599dbc37c03b57d26d8eed5102",
+      "license": "Apache-2.0 code; data/content rights documented separately",
+      "decision": "adapt"
+    },
+    {
+      "name": "TokEMS",
+      "url": "https://github.com/yaojingang/TokEMS",
+      "commit": "7880750f5837c4de5b48637f39af5758eaeb3a8d",
+      "license": "AGPL-3.0",
+      "decision": "reference_only"
+    },
+    {
+      "name": "yao-open-skills",
+      "url": "https://github.com/yaojingang/yao-open-skills",
+      "commit": "ab04ef5caa57edb5493b2764c636cdb6ceb0a1fa",
+      "license": "MIT",
+      "decision": "reference_only"
+    },
+    {
+      "name": "TokHub",
+      "url": "https://github.com/yaojingang/TokHub",
+      "commit": "f95be483f1285c0cdb3c73def253b3d2dc763762",
+      "license": "Apache-2.0",
+      "decision": "adapt"
+    },
+    {
+      "name": "yao-open-tools",
+      "url": "https://github.com/yaojingang/yao-open-tools",
+      "commit": "94a7fc266839afcf52172e3e70a5b3c9df114a91",
+      "license": "MIT",
+      "decision": "reference_only"
+    },
+    {
+      "name": "yaojingang.github.io",
+      "url": "https://github.com/yaojingang/yaojingang.github.io",
+      "commit": null,
+      "license": "NOASSERTION",
+      "decision": "reject"
+    },
+    {
+      "name": "yaojingang",
+      "url": "https://github.com/yaojingang/yaojingang",
+      "commit": null,
+      "license": "NOASSERTION",
+      "decision": "reject"
+    }
+  ]
+}

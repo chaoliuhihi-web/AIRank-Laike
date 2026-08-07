@@ -3,7 +3,7 @@
   "$id": "https://airank.local/contracts/console_overview.schema.json",
   "title": "AIRank Console Overview",
   "type": "object",
-  "required": ["project", "metric_cards"],
+  "required": ["project", "metric_cards", "data_status", "message"],
   "additionalProperties": false,
   "properties": {
     "project": {
@@ -11,18 +11,17 @@
       "required": ["id", "name", "website", "industry", "competitors", "audience", "date"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
+        "id": { "type": "string" },
         "name": { "type": "string", "minLength": 1 },
-        "website": { "type": "string", "minLength": 1 },
-        "industry": { "type": "string", "minLength": 1 },
-        "competitors": { "type": "string", "minLength": 1 },
-        "audience": { "type": "string", "minLength": 1 },
+        "website": { "type": "string" },
+        "industry": { "type": "string" },
+        "competitors": { "type": "string" },
+        "audience": { "type": "string" },
         "date": { "type": "string", "format": "date" }
       }
     },
     "metric_cards": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "required": ["label", "value", "suffix", "delta", "tone", "icon"],
@@ -36,6 +35,11 @@
           "icon": { "type": "string", "minLength": 1 }
         }
       }
-    }
+    },
+    "data_status": {
+      "type": "string",
+      "enum": ["empty", "collecting", "provider_evidence", "unverified"]
+    },
+    "message": { "type": "string" }
   }
 }

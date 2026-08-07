@@ -24,6 +24,9 @@ def test_console_overview_api_matches_contract() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["meta"]["trace_id"] == "trc_test_console"
+    assert body["data"]["data_status"] == "empty"
+    assert body["data"]["metric_cards"] == []
+    assert body["data"]["project"]["id"] == ""
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)

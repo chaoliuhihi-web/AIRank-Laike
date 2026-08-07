@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 import json
 import os
+from pathlib import Path as FileSystemPath
 from typing import Annotated, Any, Literal, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -15,6 +17,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 
 try:
     from .provider_scan import (
@@ -119,7 +123,9 @@ class MetricCard(BaseModel):
 
 class ConsoleOverview(BaseModel):
     project: ProjectOverview
-    metric_cards: list[MetricCard] = Field(alias="metric_cards", min_length=1)
+    metric_cards: list[MetricCard] = Field(default_factory=list, alias="metric_cards")
+    data_status: Literal["empty", "collecting", "provider_evidence", "unverified"] = "empty"
+    message: str = ""
 
 
 class ResponseMeta(BaseModel):
@@ -307,6 +313,11 @@ class ScanRunCreateRequest(BaseModel):
     project_id: ProjectId
     name: Optional[str] = Field(default=None, min_length=1, max_length=160)
     run_type: Literal["baseline", "retest", "manual"] = "baseline"
+    cohort_type: Literal["blind", "assisted", "comparison", "fact_verification"] = "blind"
+    repetitions: int = Field(default=3, ge=1, le=20)
+    collector_surfaces: list[Literal["api", "web", "app", "manual_import"]] = Field(
+        default_factory=lambda: ["web"], min_length=1, max_length=4
+    )
     provider_scope: list[Provider] = Field(min_length=1, max_length=8)
     question_scope: QuestionScope
 
@@ -314,6 +325,11 @@ class ScanRunCreateRequest(BaseModel):
     @classmethod
     def provider_scope_must_be_unique(cls, value: list[str]) -> list[str]:
         return require_unique_values("provider_scope", value)
+
+    @field_validator("collector_surfaces")
+    @classmethod
+    def collector_surfaces_must_be_unique(cls, value: list[str]) -> list[str]:
+        return require_unique_values("collector_surfaces", value)
 
 
 class ScanError(BaseModel):
@@ -327,6 +343,9 @@ class ScanRunData(BaseModel):
     project_id: str
     name: Optional[str] = None
     run_type: Literal["baseline", "retest", "manual"]
+    cohort_type: Literal["blind", "assisted", "comparison", "fact_verification"] = "blind"
+    repetitions: int = Field(default=3, ge=1, le=20)
+    collector_surfaces: list[Literal["api", "web", "app", "manual_import"]] = Field(default_factory=lambda: ["web"])
     status: Literal["queued", "running", "completed", "failed", "canceled"]
     provider_scope: list[Provider]
     question_scope: QuestionScope
@@ -345,6 +364,12 @@ class ScanTaskData(BaseModel):
     project_id: str
     question_id: str
     provider: Provider
+    cohort_type: Literal["blind", "assisted", "comparison", "fact_verification"] = "blind"
+    prompt_version_id: str = "prompt_v_legacy"
+    sample_index: int = Field(default=1, ge=1)
+    session_id: str = "session_legacy"
+    collector_surface: Literal["api", "web", "app", "manual_import"] = "web"
+    evidence_level: Literal["provider_api", "consumer_web", "consumer_app", "manual_import"] = "consumer_web"
     status: Literal["queued", "running", "completed", "failed", "skipped"]
     attempt_count: int = Field(ge=0)
     scheduled_at: Optional[datetime] = None
@@ -450,7 +475,7 @@ class AssetBundleData(BaseModel):
     tenant_id: str
     completeness: int = Field(ge=0, le=100)
     recommendation: str
-    assets: list[AssetBundleItem] = Field(min_length=1)
+    assets: list[AssetBundleItem] = Field(default_factory=list)
 
 
 class AssetBundleResponse(BaseModel):
@@ -1066,13 +1091,16 @@ class InMemoryScanRepository:
         if payload.question_scope.mode == "all_active" and not question_ids:
             question_ids = ["question_auto_seed"]
         question_scope = QuestionScope(mode=payload.question_scope.mode, question_ids=question_ids)
-        task_count = len(payload.provider_scope) * len(question_ids)
+        task_count = len(payload.provider_scope) * len(question_ids) * len(payload.collector_surfaces) * payload.repetitions
         data = ScanRunData(
             run_id=run_id,
             tenant_id=tenant_id,
             project_id=payload.project_id,
             name=payload.name,
             run_type=payload.run_type,
+            cohort_type=payload.cohort_type,
+            repetitions=payload.repetitions,
+            collector_surfaces=payload.collector_surfaces,
             status="queued",
             provider_scope=payload.provider_scope,
             question_scope=question_scope,
@@ -1082,22 +1110,35 @@ class InMemoryScanRepository:
         )
         self._runs[(tenant_id, run_id)] = data
 
+        evidence_levels = {"api": "provider_api", "web": "consumer_web", "app": "consumer_app", "manual_import": "manual_import"}
         for provider in payload.provider_scope:
             for question_id in question_ids:
-                task = ScanTaskData(
-                    task_id=f"scan_task_{uuid4().hex[:12]}",
-                    run_id=run_id,
-                    tenant_id=tenant_id,
-                    project_id=payload.project_id,
-                    question_id=question_id,
-                    provider=provider,
-                    status="queued",
-                    attempt_count=0,
-                    scheduled_at=now,
-                    created_at=now,
-                    updated_at=now,
+                prompt_version_id = stable_prompt_version_id(
+                    cohort_type=PromptCohortType(payload.cohort_type),
+                    prompt_text=question_id,
                 )
-                self._tasks[(tenant_id, task.task_id)] = task
+                for collector_surface in payload.collector_surfaces:
+                    for sample_index in range(1, payload.repetitions + 1):
+                        task = ScanTaskData(
+                            task_id=f"scan_task_{uuid4().hex[:12]}",
+                            run_id=run_id,
+                            tenant_id=tenant_id,
+                            project_id=payload.project_id,
+                            question_id=question_id,
+                            provider=provider,
+                            cohort_type=payload.cohort_type,
+                            prompt_version_id=prompt_version_id,
+                            sample_index=sample_index,
+                            session_id=f"session_{uuid4().hex}",
+                            collector_surface=collector_surface,
+                            evidence_level=evidence_levels[collector_surface],  # type: ignore[arg-type]
+                            status="queued",
+                            attempt_count=0,
+                            scheduled_at=now,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        self._tasks[(tenant_id, task.task_id)] = task
         return data
 
     def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
@@ -1228,6 +1269,9 @@ class MySQLScanRepository:
             project_id=row["project_id"],
             name=row["name"],
             run_type=row["run_type"],
+            cohort_type=row["cohort_type"],
+            repetitions=row["repetitions"],
+            collector_surfaces=parse_json_value(row["collector_surfaces_json"], ["web"]),
             status=api_scan_status(row["status"]),
             provider_scope=provider_scope,
             question_scope=QuestionScope(**question_scope_payload),
@@ -1250,6 +1294,12 @@ class MySQLScanRepository:
             project_id=row["project_id"],
             question_id=row["question_id"],
             provider=row["provider"],
+            cohort_type=row["cohort_type"],
+            prompt_version_id=row["prompt_version_id"],
+            sample_index=row["sample_index"],
+            session_id=row["session_id"],
+            collector_surface=row["collector_surface"],
+            evidence_level=row["evidence_level"],
             status=api_scan_task_status(row["status"]),
             attempt_count=row["attempt_count"],
             scheduled_at=coerce_datetime(row["scheduled_at"]) if row["scheduled_at"] else None,
@@ -1268,18 +1318,20 @@ class MySQLScanRepository:
             questions = self._resolve_questions(conn, tenant_id, payload.project_id, payload.question_scope)
             question_ids = [question["id"] for question in questions]
             question_scope = QuestionScope(mode=payload.question_scope.mode, question_ids=question_ids)
-            task_count = len(payload.provider_scope) * len(question_ids)
+            task_count = len(payload.provider_scope) * len(question_ids) * len(payload.collector_surfaces) * payload.repetitions
             metrics = {"task_count": task_count}
             conn.execute(
                 text(
                     """
                     INSERT INTO airank_scan_runs (
                       id, tenant_id, project_id, name, run_type, status,
+                      cohort_type, repetitions, collector_surfaces_json,
                       provider_scope_json, question_scope_json, metrics_json,
                       created_at, updated_at
                     )
                     VALUES (
                       :id, :tenant_id, :project_id, :name, :run_type, :status,
+                      :cohort_type, :repetitions, :collector_surfaces_json,
                       :provider_scope_json, :question_scope_json, :metrics_json,
                       :created_at, :updated_at
                     )
@@ -1292,6 +1344,9 @@ class MySQLScanRepository:
                     "name": payload.name,
                     "run_type": payload.run_type,
                     "status": "queued",
+                    "cohort_type": payload.cohort_type,
+                    "repetitions": payload.repetitions,
+                    "collector_surfaces_json": json.dumps(payload.collector_surfaces, ensure_ascii=False),
                     "provider_scope_json": json.dumps(payload.provider_scope, ensure_ascii=False),
                     "question_scope_json": json.dumps(question_scope.model_dump(mode="json"), ensure_ascii=False),
                     "metrics_json": json.dumps(metrics, ensure_ascii=False),
@@ -1299,72 +1354,114 @@ class MySQLScanRepository:
                     "updated_at": now,
                 },
             )
+            evidence_levels = {"api": "provider_api", "web": "consumer_web", "app": "consumer_app", "manual_import": "manual_import"}
             for provider in payload.provider_scope:
                 for question in questions:
-                    task_id = f"scan_task_{uuid4().hex[:12]}"
-                    job_id = f"job_{uuid4().hex[:12]}"
+                    prompt_version_id = stable_prompt_version_id(
+                        cohort_type=PromptCohortType(payload.cohort_type),
+                        prompt_text=question["question_text"],
+                    )
                     conn.execute(
                         text(
                             """
-                            INSERT INTO airank_scan_tasks (
-                              id, tenant_id, project_id, run_id, question_id, provider,
-                              status, attempt_count, scheduled_at, created_at, updated_at
+                            INSERT INTO airank_prompt_versions (
+                              id, tenant_id, project_id, question_id, cohort_type,
+                              template_version, prompt_text, prompt_sha256, created_at
                             )
-                            VALUES (
-                              :id, :tenant_id, :project_id, :run_id, :question_id, :provider,
-                              :status, :attempt_count, :scheduled_at, :created_at, :updated_at
+                            SELECT :id, :tenant_id, :project_id, :question_id, :cohort_type,
+                                   :template_version, :prompt_text, :prompt_sha256, :created_at
+                            WHERE NOT EXISTS (
+                              SELECT 1 FROM airank_prompt_versions
+                              WHERE tenant_id = :tenant_id AND id = :id
                             )
                             """
                         ),
                         {
-                            "id": task_id,
+                            "id": prompt_version_id,
                             "tenant_id": tenant_id,
                             "project_id": payload.project_id,
-                            "run_id": run_id,
                             "question_id": question["id"],
-                            "provider": provider,
-                            "status": "queued",
-                            "attempt_count": 0,
-                            "scheduled_at": now,
+                            "cohort_type": payload.cohort_type,
+                            "template_version": "v1",
+                            "prompt_text": question["question_text"],
+                            "prompt_sha256": sha256_text(question["question_text"].strip()),
                             "created_at": now,
-                            "updated_at": now,
                         },
                     )
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO airank_async_jobs (
-                              id, tenant_id, project_id, job_type, status, priority,
-                              scheduled_at, payload_json, created_at, updated_at
-                            )
-                            VALUES (
-                              :id, :tenant_id, :project_id, :job_type, :status, :priority,
-                              :scheduled_at, :payload_json, :created_at, :updated_at
-                            )
-                            """
-                        ),
-                        {
-                            "id": job_id,
-                            "tenant_id": tenant_id,
-                            "project_id": payload.project_id,
-                            "job_type": "scan.provider",
-                            "status": "queued",
-                            "priority": 100,
-                            "scheduled_at": now,
-                            "payload_json": json.dumps(
+                    for collector_surface in payload.collector_surfaces:
+                        for sample_index in range(1, payload.repetitions + 1):
+                            task_id = f"scan_task_{uuid4().hex[:12]}"
+                            job_id = f"job_{uuid4().hex[:12]}"
+                            session_id = f"session_{uuid4().hex}"
+                            request_payload = {
+                                "run_id": run_id,
+                                "scan_task_id": task_id,
+                                "question_id": question["id"],
+                                "question_text": question["question_text"],
+                                "provider": provider,
+                                "cohort_type": payload.cohort_type,
+                                "prompt_version_id": prompt_version_id,
+                                "sample_index": sample_index,
+                                "session_id": session_id,
+                                "collector_surface": collector_surface,
+                                "evidence_level": evidence_levels[collector_surface],
+                            }
+                            conn.execute(
+                                text(
+                                    """
+                                    INSERT INTO airank_scan_tasks (
+                                      id, tenant_id, project_id, run_id, question_id, provider,
+                                      cohort_type, prompt_version_id, sample_index, session_id,
+                                      collector_surface, evidence_level, status, attempt_count,
+                                      scheduled_at, request_json, created_at, updated_at
+                                    )
+                                    VALUES (
+                                      :id, :tenant_id, :project_id, :run_id, :question_id, :provider,
+                                      :cohort_type, :prompt_version_id, :sample_index, :session_id,
+                                      :collector_surface, :evidence_level, :status, :attempt_count,
+                                      :scheduled_at, :request_json, :created_at, :updated_at
+                                    )
+                                    """
+                                ),
                                 {
-                                    "run_id": run_id,
-                                    "scan_task_id": task_id,
-                                    "question_id": question["id"],
-                                    "question_text": question["question_text"],
-                                    "provider": provider,
+                                    **request_payload,
+                                    "id": task_id,
+                                    "tenant_id": tenant_id,
+                                    "project_id": payload.project_id,
+                                    "status": "queued",
+                                    "attempt_count": 0,
+                                    "scheduled_at": now,
+                                    "request_json": json.dumps(request_payload, ensure_ascii=False),
+                                    "created_at": now,
+                                    "updated_at": now,
                                 },
-                                ensure_ascii=False,
-                            ),
-                            "created_at": now,
-                            "updated_at": now,
-                        },
-                    )
+                            )
+                            conn.execute(
+                                text(
+                                    """
+                                    INSERT INTO airank_async_jobs (
+                                      id, tenant_id, project_id, job_type, status, priority,
+                                      scheduled_at, payload_json, created_at, updated_at
+                                    )
+                                    VALUES (
+                                      :id, :tenant_id, :project_id, :job_type, :status, :priority,
+                                      :scheduled_at, :payload_json, :created_at, :updated_at
+                                    )
+                                    """
+                                ),
+                                {
+                                    "id": job_id,
+                                    "tenant_id": tenant_id,
+                                    "project_id": payload.project_id,
+                                    "job_type": "scan.provider",
+                                    "status": "queued",
+                                    "priority": 100,
+                                    "scheduled_at": now,
+                                    "payload_json": json.dumps(request_payload, ensure_ascii=False),
+                                    "created_at": now,
+                                    "updated_at": now,
+                                },
+                            )
         return self.get_run(tenant_id, run_id)
 
     def get_run(self, tenant_id: str, run_id: str) -> ScanRunData:
@@ -1486,25 +1583,15 @@ FACT_REVIEW_REPOSITORY: FactReviewRepository = InMemoryFactReviewRepository()
 
 
 class InMemoryAssetBundleRepository:
-    """Development fallback for local web work when no database URL is configured."""
+    """Explicit empty state when persistent content evidence is unavailable."""
 
     def get_bundle(self, tenant_id: str, project_id: str) -> AssetBundleData:
-        assets = [
-            AssetBundleItem(asset_id="asset_fact_page", title="企业事实页", desc="把已确认事实卡发布为 AI 易读页面", progress=86, status="可发布"),
-            AssetBundleItem(asset_id="asset_service_page", title="服务介绍页", desc="结构化呈现核心服务、流程与优势", progress=72, status="待补证据"),
-            AssetBundleItem(asset_id="asset_case_page", title="客户案例页", desc="承接案例、成效、行业场景与客户评价", progress=58, status="待确认"),
-            AssetBundleItem(asset_id="asset_faq", title="FAQ 页", desc="覆盖高频买家问题和官方回答", progress=64, status="可生成"),
-            AssetBundleItem(asset_id="asset_compare", title="竞品对比页", desc="形成差异化选型依据和对比证据", progress=45, status="缺证据"),
-            AssetBundleItem(asset_id="asset_solution", title="行业解决方案页", desc="沉淀本地行业和高价值场景方案", progress=52, status="可生成"),
-            AssetBundleItem(asset_id="asset_jsonld", title="JSON-LD", desc="让 AI 和搜索引擎识别品牌事实", progress=80, status="可发布"),
-            AssetBundleItem(asset_id="asset_sitemap", title="sitemap.xml", desc="发布后提交抓取和复测", progress=92, status="可发布"),
-        ]
         return AssetBundleData(
             project_id=project_id,
             tenant_id=tenant_id,
-            completeness=68,
-            recommendation="建议先补齐竞品对比页和客户案例页，再发布复测。",
-            assets=assets,
+            completeness=0,
+            recommendation="尚无经过事实审核的内容资产，不生成完成度或发布建议。",
+            assets=[],
         )
 
 
@@ -1619,21 +1706,12 @@ class MySQLAssetBundleRepository:
                 )
                 for row in gap_rows[:8]
             ]
-        if not assets:
-            assets = [
-                AssetBundleItem(
-                    asset_id="asset_empty_state",
-                    title="待生成资产",
-                    desc="当前项目还没有可发布资产或内容缺口记录",
-                    progress=0,
-                    status="待生成",
-                )
-            ]
-
-        completeness = round(sum(asset.progress for asset in assets) / len(assets))
+        completeness = round(sum(asset.progress for asset in assets) / len(assets)) if assets else 0
         open_gap_count = len(gap_rows)
         if open_gap_count:
             recommendation = f"优先补齐 {open_gap_count} 个内容缺口，再发布 AI 收录包。"
+        elif not assets:
+            recommendation = "尚无经过事实审核的内容资产，不生成完成度或发布建议。"
         elif completeness < 100:
             recommendation = "继续审核并发布未完成资产，然后触发复测。"
         else:
@@ -1659,26 +1737,19 @@ ASSET_BUNDLE_REPOSITORY: AssetBundleRepository = build_asset_bundle_repository()
 
 
 class InMemoryReportRepository:
-    """Development fallback for local web work when no database URL is configured."""
+    """Explicit empty state when no evidence-backed report has been generated."""
 
     def list_reports(self, tenant_id: str, project_id: str) -> ReportListData:
         return ReportListData(
             project_id=project_id,
             tenant_id=tenant_id,
-            reports=[
-                ReportItem(report_id="report_diagnostic", title="AI 来客诊断报告", desc="覆盖平台表现、竞品压制、引用来源和优化建议", date="2026-05-17", status="已生成"),
-                ReportItem(report_id="report_retest", title="推荐缺口复测报告", desc="对比发布前后推荐率、首推率和引用变化", date="2026-05-17", status="可下载"),
-                ReportItem(report_id="report_exec", title="高管月报", desc="面向管理层的 AI 可见性和线索增长摘要", date="2026-05-01", status="已归档"),
-            ],
+            reports=[],
         )
 
     def record_download_receipt(self, tenant_id: str, report_id: str, _trace_id: str) -> DownloadReceiptData:
-        return DownloadReceiptData(
-            receipt_id=f"receipt_{uuid4().hex[:12]}",
-            report_id=report_id,
-            tenant_id=tenant_id,
-            downloaded_at=utc_now(),
-            status="recorded",
+        raise StarletteHTTPException(
+            status_code=404,
+            detail={"code": "REPORT_NOT_FOUND", "details": {"report_id": report_id, "repository": "empty"}},
         )
 
 
@@ -1937,9 +2008,9 @@ PROVIDER_LABELS: dict[str, str] = {
 
 def build_default_brand_questions(brand_name: str, industry: str) -> list[str]:
     return [
-        f"{brand_name}适合哪些企业使用？",
-        f"{brand_name}在{industry}领域有什么优势？",
-        f"{brand_name}和主流竞品相比应该怎么选择？",
+        f"{industry}领域有哪些适合企业采购的服务商？",
+        f"企业选择{industry}服务时应比较哪些能力？",
+        f"中大型企业采购{industry}服务有哪些风险和候选方案？",
     ]
 
 
@@ -2061,32 +2132,21 @@ def build_question_payloads(brand_name: str, industry: str, buyer_questions: lis
     ]
 
 
-def provider_quality(provider: str, index: int) -> tuple[int, int, int]:
-    base = {
-        "chatgpt": (78, 56, 31),
-        "deepseek": (74, 52, 28),
-        "kimi": (70, 47, 24),
-        "tongyi": (68, 45, 22),
-        "doubao": (72, 49, 25),
-        "baidu_ai_search": (64, 42, 20),
-        "yuanbao": (61, 39, 18),
-    }.get(provider, (58, 35, 15))
-    drift = index % 3
-    return (max(0, base[0] - drift), max(0, base[1] - drift), max(0, base[2] - drift))
-
-
 def build_scan_metrics(task_count: int, provider_count: int) -> dict[str, Any]:
     return {
         "task_count": task_count,
         "provider_count": provider_count,
-        "ai_visibility_score": 72,
-        "question_coverage": 68,
-        "competitor_pressure_count": 18,
-        "monthly_leads": 96,
-        "mention_rate": 69,
-        "recommend_rate": 47,
-        "first_rank_rate": 24,
-        "summary": "已完成多 AI 平台品牌可见度检测，并生成可发布资产与老板报告。",
+        "provider_success_count": 0,
+        "provider_failed_count": 0,
+        "provider_blocked_count": 0,
+        "valid_sample_rate": 0,
+        "mention_rate": 0,
+        "recommend_rate": 0,
+        "top1_rate": 0,
+        "top3_rate": 0,
+        "top5_rate": 0,
+        "data_status": "unverified_no_provider_evidence",
+        "summary": "尚无真实 Provider 样本，不能生成品牌可见度结论。",
     }
 
 
@@ -2112,42 +2172,135 @@ def build_real_scan_metrics(
 ) -> dict[str, Any]:
     success_count = len(results)
     mention_count = sum(1 for result in results if result.brand_mentioned)
+    recommendation_count = sum(1 for result in results if result.mention_class == "recommended")
     top_three_count = sum(1 for result in results if result.brand_rank is not None and result.brand_rank <= 3)
+    top_five_count = sum(1 for result in results if result.brand_rank is not None and result.brand_rank <= 5)
     first_rank_count = sum(1 for result in results if result.brand_rank == 1)
+    ranked_count = sum(1 for result in results if result.brand_rank is not None)
+    not_mentioned_count = sum(1 for result in results if not result.brand_mentioned)
+    citation_sample_count = sum(1 for result in results if result.native_citations)
     competitor_pressure_count = 0
     for result in results:
-        if result.brand_rank is None or result.brand_rank > 1:
-            competitor_pressure_count += 1
-            continue
         for competitor in result.competitor_mentions:
             competitor_rank = competitor.get("rank")
-            if isinstance(competitor_rank, int) and competitor_rank < result.brand_rank:
+            if (
+                result.brand_rank is not None
+                and isinstance(competitor_rank, int)
+                and competitor_rank < result.brand_rank
+            ):
                 competitor_pressure_count += 1
                 break
 
     mention_rate = percentage(mention_count, success_count)
-    recommend_rate = percentage(top_three_count, success_count)
-    first_rank_rate = percentage(first_rank_count, success_count)
-    question_coverage = percentage(success_count, total_count)
-    ai_visibility_score = round((mention_rate * 0.45) + (recommend_rate * 0.35) + (first_rank_rate * 0.2))
+    recommend_rate = percentage(recommendation_count, success_count)
+    top1_rate = percentage(first_rank_count, success_count)
+    top3_rate = percentage(top_three_count, success_count)
+    top5_rate = percentage(top_five_count, success_count)
+    valid_sample_rate = percentage(success_count, total_count)
+    repeat_groups: dict[tuple[str, str, str, str], list[tuple[str, int | None]]] = defaultdict(list)
+    for result in results:
+        repeat_groups[
+            (
+                str(result.raw_metadata.get("question_id") or ""),
+                result.provider,
+                str(result.raw_metadata.get("cohort_type") or ""),
+                str(result.raw_metadata.get("collector_surface") or ""),
+            )
+        ].append((result.mention_class, result.brand_rank))
+    repeat_agreements = [
+        max(Counter(outcomes).values()) / len(outcomes)
+        for outcomes in repeat_groups.values()
+        if len(outcomes) >= 2
+    ]
+    stability = round((sum(repeat_agreements) / len(repeat_agreements)) * 100) if repeat_agreements else None
     return {
         "task_count": total_count,
         "provider_count": provider_count,
         "provider_success_count": success_count,
-        "provider_failed_count": failed_count,
+        "provider_failed_count": max(0, failed_count - blocked_count),
         "provider_blocked_count": blocked_count,
-        "ai_visibility_score": ai_visibility_score,
-        "question_coverage": question_coverage,
+        "valid_sample_rate": valid_sample_rate,
+        "effective_denominator": success_count,
+        "not_mentioned_count": not_mentioned_count,
         "competitor_pressure_count": competitor_pressure_count,
-        "monthly_leads": max(0, round(ai_visibility_score * 1.2)),
         "mention_rate": mention_rate,
         "recommend_rate": recommend_rate,
-        "first_rank_rate": first_rank_rate,
+        "top1_rate": top1_rate,
+        "top3_rate": top3_rate,
+        "top5_rate": top5_rate,
+        "conditional_top3_rate": percentage(top_three_count, ranked_count) if ranked_count else None,
+        "ranked_sample_count": ranked_count,
+        "stability": stability,
+        "citation_recall_rate": percentage(citation_sample_count, success_count),
+        "citation_support": None,
+        "fact_accuracy": None,
+        "metric_formula_version": "measurement.v1",
+        "data_status": "provider_evidence",
         "summary": (
             f"通过消费端网页完成 {success_count}/{total_count} 个真实检测任务；"
-            f"品牌提及率 {mention_rate}%，前三推荐率 {recommend_rate}%，首推率 {first_rank_rate}%。"
+            f"有效样本中的品牌提及率 {mention_rate}%，明确推荐率 {recommend_rate}%，"
+            f"Top3 比例 {top3_rate}%；正常未提及样本 {not_mentioned_count} 条已计入分母。"
         ),
     }
+
+
+def build_measurement_metric_cards(metrics: dict[str, Any]) -> list[MetricCard]:
+    if metrics.get("data_status") != "provider_evidence":
+        return []
+    denominator = int(metrics.get("effective_denominator") or 0)
+    total = int(metrics.get("task_count") or 0)
+    sample_delta = f"{denominator}/{total} 条有效样本；失败与阻塞不进入回答分母"
+    return [
+        MetricCard(
+            label="有效样本率",
+            value=str(metrics.get("valid_sample_rate", 0)),
+            suffix="%",
+            delta=sample_delta,
+            tone="primary",
+            icon="Activity",
+        ),
+        MetricCard(
+            label="品牌提及率",
+            value=str(metrics.get("mention_rate", 0)),
+            suffix="%",
+            delta=f"正常未提及 {int(metrics.get('not_mentioned_count') or 0)} 条，已计入分母",
+            tone="primary",
+            icon="Target",
+        ),
+        MetricCard(
+            label="明确推荐率",
+            value=str(metrics.get("recommend_rate", 0)),
+            suffix="%",
+            delta="仅统计有明确推荐语义的有效样本",
+            tone="success",
+            icon="ShieldAlert",
+        ),
+        MetricCard(
+            label="Top3 比例",
+            value=str(metrics.get("top3_rate", 0)),
+            suffix="%",
+            delta=f"仅使用明确排名；有排名样本 {int(metrics.get('ranked_sample_count') or 0)} 条",
+            tone="muted",
+            icon="UserRound",
+        ),
+    ]
+
+
+def build_unverified_overview(project: ProjectData, competitors: list[CompetitorData], message: str) -> ConsoleOverview:
+    return ConsoleOverview(
+        project=ProjectOverview(
+            id=project.project_id,
+            name=project.brand_name,
+            website=project.website_url,
+            industry=project.industry,
+            competitors="、".join(competitor.name for competitor in competitors) or "待补充竞品",
+            audience="、".join(project.audiences) or "待补充目标客户",
+            date=utc_now().date(),
+        ),
+        metric_cards=[],
+        data_status="unverified",
+        message=message,
+    )
 
 
 def insert_mysql_brand_assets(
@@ -2160,213 +2313,14 @@ def insert_mysql_brand_assets(
     metrics: dict[str, Any],
     now: datetime,
 ) -> None:
-    fact_specs = [
-        ("brand_identity", "企业定位", f"{project.brand_name} 是面向{project.industry}场景的企业服务品牌。"),
-        ("product_service", "核心服务", f"{project.brand_name} 可围绕 AI 搜索可见性、内容资产和线索增长提供服务。"),
-        ("faq", "高频问答", f"{project.brand_name} 需要优先回答适用客户、竞品对比、实施流程和证据来源。"),
-        ("competitor_diff", "竞品差异", f"{project.brand_name} 的 AI 推荐提升关键在于补齐公开证据与结构化资产。"),
-    ]
-    fact_ids = []
-    for fact_type, title, fact_text in fact_specs:
-        fact_id = f"fact_{uuid4().hex[:12]}"
-        fact_ids.append(fact_id)
-        conn.execute(
-            text(
-                """
-                INSERT INTO airank_fact_atoms (
-                  id, tenant_id, project_id, fact_type, title, fact_text,
-                  source_type, source_excerpt, trust_level, disclosure,
-                  status, ai_confidence, applicable_question_ids,
-                  applicable_asset_types, reviewed_by, reviewed_at,
-                  metadata_json, created_at, updated_at
-                )
-                VALUES (
-                  :id, :tenant_id, :project_id, :fact_type, :title, :fact_text,
-                  :source_type, :source_excerpt, :trust_level, :disclosure,
-                  :status, :ai_confidence, :applicable_question_ids,
-                  :applicable_asset_types, :reviewed_by, :reviewed_at,
-                  :metadata_json, :created_at, :updated_at
-                )
-                """
-            ),
-            {
-                "id": fact_id,
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "fact_type": fact_type,
-                "title": title,
-                "fact_text": fact_text,
-                "source_type": "brand_check",
-                "source_excerpt": fact_text,
-                "trust_level": "B",
-                "disclosure": "public",
-                "status": "confirmed",
-                "ai_confidence": 0.86,
-                "applicable_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
-                "applicable_asset_types": json.dumps(["fact_page", "faq", "compare", "report"], ensure_ascii=False),
-                "reviewed_by": "brand_check",
-                "reviewed_at": now,
-                "metadata_json": json.dumps({"run_id": run.run_id, "provider_mode": provider_execution_mode()}, ensure_ascii=False),
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+    """Do not synthesize facts, publish packages, or reports from scan metrics.
 
-    gap_specs = [
-        ("high", "第三方权威信源不足", "需要补齐媒体报道、园区/行业背书、客户案例等可引用来源。", "authority_source_page"),
-        ("medium", "竞品对比证据不足", "需要生成可公开的差异化选型资料，降低 AI 回答偏向竞品的概率。", "competitor_compare_page"),
-    ]
-    for severity, title, description, asset_type in gap_specs:
-        conn.execute(
-            text(
-                """
-                INSERT INTO airank_content_gaps (
-                  id, tenant_id, project_id, run_id, gap_type, severity,
-                  title, description, related_question_ids,
-                  related_competitor_ids, suggested_asset_type,
-                  status, created_at, updated_at
-                )
-                VALUES (
-                  :id, :tenant_id, :project_id, :run_id, :gap_type, :severity,
-                  :title, :description, :related_question_ids,
-                  :related_competitor_ids, :suggested_asset_type,
-                  :status, :created_at, :updated_at
-                )
-                """
-            ),
-            {
-                "id": f"gap_{uuid4().hex[:12]}",
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "run_id": run.run_id,
-                "gap_type": "evidence_gap",
-                "severity": severity,
-                "title": title,
-                "description": description,
-                "related_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
-                "related_competitor_ids": json.dumps([competitor.competitor_id for competitor in competitors], ensure_ascii=False),
-                "suggested_asset_type": asset_type,
-                "status": "open",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+    Measurement evidence can identify a gap, but it is not a verified enterprise
+    fact source. Fact ingestion, review, content generation, and publishing are
+    separate governed workflows implemented in later productization stages.
+    """
 
-    asset_specs = [
-        ("fact_page", f"{project.brand_name} 企业事实页", "已整理品牌定位、官网来源、核心服务和公开事实，适合发布为 AI 可引用页面。", 92),
-        ("service_page", f"{project.brand_name} 服务介绍页", "围绕服务能力、适用客户、交付流程和业务价值生成结构化介绍。", 88),
-        ("faq", f"{project.brand_name} 高频问答 FAQ", "覆盖买家最常问的适用场景、竞品对比、实施流程和证据来源。", 86),
-        ("compare", f"{project.brand_name} 竞品对比页", "把主流竞品差异、选择建议和补证方向整理成可公开对比资料。", 82),
-        ("solution", f"{project.brand_name} 行业解决方案页", f"面向{project.industry}客户生成可被 AI 摘要和引用的场景方案。", 84),
-        ("case_page", f"{project.brand_name} 客户案例页", "预留案例结构、价值指标和证明材料入口，方便后续补充真实案例。", 74),
-        ("jsonld", f"{project.brand_name} JSON-LD 结构化数据", "生成 Organization、FAQ、Service 等结构化字段，提升 AI 理解效率。", 90),
-        ("sitemap", f"{project.brand_name} sitemap.xml", "收录包页面可加入 sitemap 并提交抓取，进入发布复测闭环。", 90),
-    ]
-    for asset_type, title, body, progress in asset_specs:
-        asset_id = f"asset_{uuid4().hex[:12]}"
-        conn.execute(
-            text(
-                """
-                INSERT INTO airank_content_assets (
-                  id, tenant_id, project_id, asset_type, title,
-                  body_md, status, fact_atom_ids, target_url,
-                  reviewed_by, reviewed_at, metadata_json,
-                  created_at, updated_at
-                )
-                VALUES (
-                  :id, :tenant_id, :project_id, :asset_type, :title,
-                  :body_md, :status, :fact_atom_ids, :target_url,
-                  :reviewed_by, :reviewed_at, :metadata_json,
-                  :created_at, :updated_at
-                )
-                """
-            ),
-            {
-                "id": asset_id,
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "asset_type": asset_type,
-                "title": title,
-                "body_md": body,
-                "status": "generated",
-                "fact_atom_ids": json.dumps(fact_ids, ensure_ascii=False),
-                "target_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
-                "reviewed_by": "brand_check",
-                "reviewed_at": now,
-                "metadata_json": json.dumps({"progress": progress, "display_status": "已生成", "run_id": run.run_id}, ensure_ascii=False),
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        conn.execute(
-            text(
-                """
-                INSERT INTO airank_publish_packages (
-                  id, tenant_id, project_id, asset_id, package_type,
-                  channel, status, package_ref_id, published_url,
-                  platform_meta_json, metadata_json, created_at, updated_at
-                )
-                VALUES (
-                  :id, :tenant_id, :project_id, :asset_id, :package_type,
-                  :channel, :status, :package_ref_id, :published_url,
-                  :platform_meta_json, :metadata_json, :created_at, :updated_at
-                )
-                """
-            ),
-            {
-                "id": f"pkg_{uuid4().hex[:12]}",
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "asset_id": asset_id,
-                "package_type": "content_asset",
-                "channel": "website",
-                "status": "packaged",
-                "package_ref_id": f"brand_check:{run.run_id}:{asset_type}",
-                "published_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
-                "platform_meta_json": json.dumps({"asset_type": asset_type}, ensure_ascii=False),
-                "metadata_json": json.dumps({"ready_for_publish": True}, ensure_ascii=False),
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-
-    report_specs = [
-        ("diagnostic", f"{project.brand_name} AI 来客诊断报告", "覆盖多 AI 平台排名、推荐率、首推率、引用来源和竞品压制点。"),
-        ("executive", f"{project.brand_name} 老板报告", "用管理层可读方式汇总 AI 可见性、内容缺口和下一步发布动作。"),
-        ("asset_bundle", f"{project.brand_name} 可发布资料包", "汇总企业事实页、FAQ、竞品对比页、行业解决方案页和结构化数据。"),
-        ("competitor", f"{project.brand_name} 竞品压制报告", "对比主流竞品在高意向买家问题中的推荐占位和证据差距。"),
-    ]
-    for report_type, title, summary in report_specs:
-        conn.execute(
-            text(
-                """
-                INSERT INTO airank_reports (
-                  id, tenant_id, project_id, report_type, title,
-                  status, run_id, metrics_json, generated_by,
-                  generated_at, created_at, updated_at
-                )
-                VALUES (
-                  :id, :tenant_id, :project_id, :report_type, :title,
-                  :status, :run_id, :metrics_json, :generated_by,
-                  :generated_at, :created_at, :updated_at
-                )
-                """
-            ),
-            {
-                "id": f"report_{uuid4().hex[:12]}",
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "report_type": report_type,
-                "title": title,
-                "status": "可下载",
-                "run_id": run.run_id,
-                "metrics_json": json.dumps({**metrics, "summary": summary}, ensure_ascii=False),
-                "generated_by": "brand_check",
-                "generated_at": now,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+    return
 
 
 def complete_in_memory_brand_scan(tenant_id: str, run_id: str) -> None:
@@ -2385,15 +2339,23 @@ def complete_in_memory_brand_scan(tenant_id: str, run_id: str) -> None:
     ]
     for task in related_tasks:
         SCAN_REPOSITORY._tasks[(tenant_id, task.task_id)] = task.model_copy(
-            update={"status": "completed", "attempt_count": 1, "started_at": now, "finished_at": now, "updated_at": now}
+            update={
+                "status": "failed",
+                "attempt_count": 0,
+                "started_at": now,
+                "finished_at": now,
+                "updated_at": now,
+                "error": ScanError(code="PROVIDER_EVIDENCE_REQUIRED", message="未配置真实 Provider，未生成样本。"),
+            }
         )
     SCAN_REPOSITORY._runs[(tenant_id, run_id)] = run.model_copy(
         update={
-            "status": "completed",
+            "status": "failed",
             "started_at": now,
             "finished_at": now,
             "updated_at": now,
             "metrics": build_scan_metrics(len(related_tasks), len(run.provider_scope)),
+            "error": ScanError(code="PROVIDER_EVIDENCE_REQUIRED", message="真实 Provider 证据缺失，不能完成品牌诊断。"),
         }
     )
 
@@ -2421,7 +2383,9 @@ def complete_mysql_real_brand_scan(
             for row in conn.execute(
                 text(
                     """
-                    SELECT id, question_id, provider
+                    SELECT id, question_id, provider, cohort_type, prompt_version_id,
+                           sample_index, session_id, collector_surface, evidence_level,
+                           request_json
                     FROM airank_scan_tasks
                     WHERE tenant_id = :tenant_id
                       AND project_id = :project_id
@@ -2452,6 +2416,8 @@ def complete_mysql_real_brand_scan(
         question_text = question_by_id.get(str(row["question_id"]), f"{project.brand_name} 是否值得选择？")
         task_started_at = utc_now()
         try:
+            if row["collector_surface"] != "web":
+                raise ProviderUnavailable(provider, f"collector surface {row['collector_surface']} is not implemented by browser scanner")
             result = call_provider_for_brand_rank(
                 provider=provider,
                 brand_name=project.brand_name,
@@ -2459,7 +2425,30 @@ def complete_mysql_real_brand_scan(
                 industry=project.industry,
                 competitor_names=competitor_names,
                 question_text=question_text,
+                cohort_type=str(row["cohort_type"]),
+                session_id=str(row["session_id"]),
+                prompt_version_id=str(row["prompt_version_id"]),
+                company_names=[project.company_name] if project.company_name else [],
+                product_names=project.products,
             )
+            result.raw_metadata.update(
+                {
+                    "question_id": row["question_id"],
+                    "sample_index": row["sample_index"],
+                }
+            )
+        except ValueError as exc:
+            failures.append(
+                {
+                    **row,
+                    "started_at": task_started_at,
+                    "finished_at": utc_now(),
+                    "error_code": "PROMPT_COHORT_INVALID",
+                    "error_message": str(exc)[:1000],
+                    "blocked": False,
+                }
+            )
+            continue
         except ProviderUnavailable as exc:
             failures.append(
                 {
@@ -2520,20 +2509,73 @@ def complete_mysql_real_brand_scan(
     with engine.begin() as conn:
         for row, result in successes:
             snapshot_id = f"snap_{uuid4().hex[:12]}"
-            citation_id = f"cite_{uuid4().hex[:12]}"
+            evidence_snapshot_id = f"evidence_{uuid4().hex[:12]}"
+            raw_response = {
+                "provider": result.provider,
+                "answer_text": result.answer_text,
+                "external_trace_id": result.external_trace_id,
+                "native_citations": result.native_citations,
+                "target_entity_mentions": result.target_entity_mentions,
+                "capture_metadata": result.raw_metadata,
+            }
+            raw_response_json = json.dumps(raw_response, ensure_ascii=False, sort_keys=True, default=str)
+            raw_response_sha256 = sha256_text(raw_response_json)
+            screenshot_ref_id = None
+            screenshot_path = str(result.raw_metadata.get("screenshot_path") or "")
+            screenshot_sha256 = str(result.raw_metadata.get("screenshot_sha256") or "")
+            if screenshot_path and screenshot_sha256:
+                screenshot_ref_id = f"object_{uuid4().hex[:12]}"
+                screenshot_file = FileSystemPath(screenshot_path)
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_object_refs (
+                          id, tenant_id, project_id, object_type, object_uri,
+                          content_type, byte_size, sha256, metadata_json, created_at
+                        )
+                        VALUES (
+                          :id, :tenant_id, :project_id, :object_type, :object_uri,
+                          :content_type, :byte_size, :sha256, :metadata_json, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": screenshot_ref_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "object_type": "provider_answer_screenshot",
+                        "object_uri": screenshot_file.resolve().as_uri(),
+                        "content_type": "image/png",
+                        "byte_size": screenshot_file.stat().st_size if screenshot_file.exists() else None,
+                        "sha256": screenshot_sha256,
+                        "metadata_json": json.dumps(
+                            {"provider": result.provider, "session_id": row["session_id"], "immutable": True},
+                            ensure_ascii=False,
+                        ),
+                        "created_at": finished_at,
+                    },
+                )
             conn.execute(
                 text(
                     """
                     INSERT INTO airank_answer_snapshots (
                       id, tenant_id, project_id, run_id, task_id, question_id,
-                      provider, answer_text, brand_mentioned, brand_rank,
+                      provider, cohort_type, prompt_version_id, sample_index,
+                      session_id, collector_surface, evidence_level, sample_status,
+                      answer_text, answer_sha256, raw_response_sha256,
+                      brand_mentioned, brand_rank, mention_class, target_entity_mentions_json,
                       competitor_mentions_json, sentiment, confidence,
+                      raw_response_ref_id, screenshot_ref_id, request_metadata_ref_id,
                       external_trace_id, created_at
                     )
                     VALUES (
                       :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
-                      :provider, :answer_text, :brand_mentioned, :brand_rank,
+                      :provider, :cohort_type, :prompt_version_id, :sample_index,
+                      :session_id, :collector_surface, :evidence_level, :sample_status,
+                      :answer_text, :answer_sha256, :raw_response_sha256,
+                      :brand_mentioned, :brand_rank, :mention_class, :target_entity_mentions_json,
                       :competitor_mentions_json, :sentiment, :confidence,
+                      :raw_response_ref_id, :screenshot_ref_id, :request_metadata_ref_id,
                       :external_trace_id, :created_at
                     )
                     """
@@ -2546,12 +2588,26 @@ def complete_mysql_real_brand_scan(
                     "task_id": row["id"],
                     "question_id": row["question_id"],
                     "provider": result.provider,
+                    "cohort_type": row["cohort_type"],
+                    "prompt_version_id": row["prompt_version_id"],
+                    "sample_index": row["sample_index"],
+                    "session_id": row["session_id"],
+                    "collector_surface": row["collector_surface"],
+                    "evidence_level": row["evidence_level"],
+                    "sample_status": "valid",
                     "answer_text": result.answer_text,
+                    "answer_sha256": result.raw_metadata["answer_sha256"],
+                    "raw_response_sha256": raw_response_sha256,
                     "brand_mentioned": 1 if result.brand_mentioned else 0,
                     "brand_rank": result.brand_rank,
+                    "mention_class": result.mention_class,
+                    "target_entity_mentions_json": json.dumps(result.target_entity_mentions, ensure_ascii=False),
                     "competitor_mentions_json": json.dumps(result.competitor_mentions, ensure_ascii=False),
                     "sentiment": result.sentiment,
                     "confidence": result.confidence,
+                    "raw_response_ref_id": evidence_snapshot_id,
+                    "screenshot_ref_id": screenshot_ref_id,
+                    "request_metadata_ref_id": evidence_snapshot_id,
                     "external_trace_id": result.external_trace_id,
                     "created_at": finished_at,
                 },
@@ -2559,34 +2615,68 @@ def complete_mysql_real_brand_scan(
             conn.execute(
                 text(
                     """
-                    INSERT INTO airank_source_citations (
-                      id, tenant_id, project_id, snapshot_id, citation_order,
-                      title, url, host, source_type, cited_text,
-                      relevance_score, metadata_json, created_at
+                    INSERT INTO airank_evidence_snapshots (
+                      id, tenant_id, project_id, answer_snapshot_id,
+                      raw_response_json, raw_response_sha256, screenshot_ref_id,
+                      source_panel_ref_id, request_metadata_json, captured_at, created_at
                     )
                     VALUES (
-                      :id, :tenant_id, :project_id, :snapshot_id, :citation_order,
-                      :title, :url, :host, :source_type, :cited_text,
-                      :relevance_score, :metadata_json, :created_at
+                      :id, :tenant_id, :project_id, :answer_snapshot_id,
+                      :raw_response_json, :raw_response_sha256, :screenshot_ref_id,
+                      :source_panel_ref_id, :request_metadata_json, :captured_at, :created_at
                     )
                     """
                 ),
                 {
-                    "id": citation_id,
+                    "id": evidence_snapshot_id,
                     "tenant_id": tenant_id,
                     "project_id": project.project_id,
-                    "snapshot_id": snapshot_id,
-                    "citation_order": 1,
-                    "title": f"{result.provider_label} 原始回答",
-                    "url": None,
-                    "host": result.provider[:255],
-                    "source_type": "provider_answer",
-                    "cited_text": result.answer_text[:1000],
-                    "relevance_score": result.confidence,
-                    "metadata_json": json.dumps(result.raw_metadata, ensure_ascii=False, default=str),
+                    "answer_snapshot_id": snapshot_id,
+                    "raw_response_json": raw_response_json,
+                    "raw_response_sha256": raw_response_sha256,
+                    "screenshot_ref_id": screenshot_ref_id,
+                    "source_panel_ref_id": None,
+                    "request_metadata_json": json.dumps(
+                        parse_json_value(row.get("request_json"), {}), ensure_ascii=False, default=str
+                    ),
+                    "captured_at": finished_at,
                     "created_at": finished_at,
                 },
             )
+            for citation_order, citation in enumerate(result.native_citations, start=1):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_source_citations (
+                          id, tenant_id, project_id, snapshot_id, citation_order,
+                          title, url, host, source_type, cited_text,
+                          relevance_score, metadata_json, created_at
+                        )
+                        VALUES (
+                          :id, :tenant_id, :project_id, :snapshot_id, :citation_order,
+                          :title, :url, :host, :source_type, :cited_text,
+                          :relevance_score, :metadata_json, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": f"cite_{uuid4().hex[:12]}",
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "snapshot_id": snapshot_id,
+                        "citation_order": citation_order,
+                        "title": citation.get("title"),
+                        "url": citation.get("url"),
+                        "host": citation.get("host"),
+                        "source_type": "provider_native",
+                        "cited_text": citation.get("title"),
+                        "relevance_score": None,
+                        "metadata_json": json.dumps(
+                            {"extraction": "visible_anchor_text_match", "provider": result.provider}, ensure_ascii=False
+                        ),
+                        "created_at": finished_at,
+                    },
+                )
             conn.execute(
                 text(
                     """
@@ -2797,145 +2887,31 @@ def complete_mysql_brand_scan(
         return
 
     now = utc_now()
-    host = urlparse(project.website_url if "://" in project.website_url else f"https://{project.website_url}").netloc or project.website_url
-    metrics = build_scan_metrics(len(run.provider_scope) * len(questions), len(run.provider_scope))
-    competitor_names = [competitor.name for competitor in competitors]
-    question_by_id = {question.question_id: question.question_text for question in questions}
-
+    metrics = build_scan_metrics(
+        len(run.provider_scope) * len(questions) * len(run.collector_surfaces) * run.repetitions,
+        len(run.provider_scope),
+    )
     with engine.begin() as conn:
-        task_rows = conn.execute(
-            text(
-                """
-                SELECT id, question_id, provider
-                FROM airank_scan_tasks
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND run_id = :run_id
-                ORDER BY provider ASC, question_id ASC
-                """
-            ),
-            {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
-        ).mappings().all()
-
-        for index, row in enumerate(task_rows):
-            provider = row["provider"]
-            provider_label = PROVIDER_LABELS.get(provider, provider)
-            mention, recommend, first = provider_quality(provider, index)
-            brand_rank = 1 + (index % 3)
-            question_text = question_by_id.get(row["question_id"], f"{project.brand_name} 是否值得选择？")
-            snapshot_id = f"snap_{uuid4().hex[:12]}"
-            citation_id = f"cite_{uuid4().hex[:12]}"
-            answer_text = (
-                f"在“{question_text}”这个问题下，{provider_label} 已识别到 {project.brand_name}。"
-                f"当前综合推荐排名为第 {brand_rank} 位，提及率约 {mention}%，推荐率约 {recommend}%，"
-                f"首推机会约 {first}%。建议继续补充官网事实页、客户案例、竞品对比和 FAQ，"
-                "让 AI 平台更容易引用公开证据。"
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_answer_snapshots (
-                      id, tenant_id, project_id, run_id, task_id, question_id,
-                      provider, answer_text, brand_mentioned, brand_rank,
-                      competitor_mentions_json, sentiment, confidence,
-                      external_trace_id, created_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
-                      :provider, :answer_text, :brand_mentioned, :brand_rank,
-                      :competitor_mentions_json, :sentiment, :confidence,
-                      :external_trace_id, :created_at
-                    )
-                    """
-                ),
-                {
-                    "id": snapshot_id,
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "run_id": run.run_id,
-                    "task_id": row["id"],
-                    "question_id": row["question_id"],
-                    "provider": provider,
-                    "answer_text": answer_text,
-                    "brand_mentioned": 1,
-                    "brand_rank": brand_rank,
-                    "competitor_mentions_json": json.dumps(
-                        [{"name": name, "rank": min(4, brand_rank + competitor_index + 1)} for competitor_index, name in enumerate(competitor_names)],
-                        ensure_ascii=False,
-                    ),
-                    "sentiment": "positive",
-                    "confidence": 0.82,
-                    "external_trace_id": f"brand_check:{run.run_id}:{row['id']}",
-                    "created_at": now,
-                },
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_source_citations (
-                      id, tenant_id, project_id, snapshot_id, citation_order,
-                      title, url, host, source_type, cited_text,
-                      relevance_score, metadata_json, created_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :snapshot_id, :citation_order,
-                      :title, :url, :host, :source_type, :cited_text,
-                      :relevance_score, :metadata_json, :created_at
-                    )
-                    """
-                ),
-                {
-                    "id": citation_id,
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "snapshot_id": snapshot_id,
-                    "citation_order": 1,
-                    "title": f"{project.brand_name} 官方网站",
-                    "url": project.website_url,
-                    "host": host[:255],
-                    "source_type": "owned",
-                    "cited_text": f"{project.brand_name} 官方公开资料与业务介绍",
-                    "relevance_score": 0.88,
-                    "metadata_json": json.dumps({"provider": provider, "question_id": row["question_id"]}, ensure_ascii=False),
-                    "created_at": now,
-                },
-            )
-
         conn.execute(
             text(
                 """
                 UPDATE airank_scan_tasks
-                SET status = 'completed',
-                    attempt_count = GREATEST(attempt_count, 1),
-                    started_at = COALESCE(started_at, :now),
-                    finished_at = :now,
-                    updated_at = :now,
-                    response_meta_json = :response_meta_json
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND run_id = :run_id
+                SET status = 'failed', error_code = 'PROVIDER_EVIDENCE_REQUIRED',
+                    error_message = 'Mock mode cannot produce commercial measurement evidence.',
+                    finished_at = :now, updated_at = :now
+                WHERE tenant_id = :tenant_id AND project_id = :project_id AND run_id = :run_id
                 """
             ),
-            {
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "run_id": run.run_id,
-                "now": now,
-                "response_meta_json": json.dumps({"mode": "brand_check_generated"}, ensure_ascii=False),
-            },
+            {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id, "now": now},
         )
         conn.execute(
             text(
                 """
                 UPDATE airank_scan_runs
-                SET status = 'completed',
-                    metrics_json = :metrics_json,
-                    started_at = COALESCE(started_at, :now),
-                    finished_at = :now,
-                    updated_at = :now
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND id = :run_id
+                SET status = 'failed', metrics_json = :metrics_json,
+                    error_message = 'Mock mode cannot produce commercial measurement evidence.',
+                    finished_at = :now, updated_at = :now
+                WHERE tenant_id = :tenant_id AND project_id = :project_id AND id = :run_id
                 """
             ),
             {
@@ -2946,249 +2922,6 @@ def complete_mysql_brand_scan(
                 "now": now,
             },
         )
-        conn.execute(
-            text(
-                """
-                UPDATE airank_async_jobs
-                SET status = 'completed',
-                    started_at = COALESCE(started_at, :now),
-                    finished_at = :now,
-                    result_json = :result_json,
-                    updated_at = :now
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND job_type = 'scan.provider'
-                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id')) = :run_id
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "run_id": run.run_id,
-                "now": now,
-                "result_json": json.dumps({"status": "completed", "mode": "brand_check_generated"}, ensure_ascii=False),
-            },
-        )
-        conn.execute(
-            text(
-                """
-                UPDATE airank_projects
-                SET status = 'active',
-                    updated_at = :now
-                WHERE tenant_id = :tenant_id
-                  AND id = :project_id
-                """
-            ),
-            {"tenant_id": tenant_id, "project_id": project.project_id, "now": now},
-        )
-
-        fact_specs = [
-            ("brand_identity", "企业定位", f"{project.brand_name} 是面向{project.industry}场景的企业服务品牌。"),
-            ("product_service", "核心服务", f"{project.brand_name} 可围绕 AI 搜索可见性、内容资产和线索增长提供服务。"),
-            ("faq", "高频问答", f"{project.brand_name} 需要优先回答适用客户、竞品对比、实施流程和证据来源。"),
-            ("competitor_diff", "竞品差异", f"{project.brand_name} 的 AI 推荐提升关键在于补齐公开证据与结构化资产。"),
-        ]
-        fact_ids = []
-        for fact_type, title, fact_text in fact_specs:
-            fact_id = f"fact_{uuid4().hex[:12]}"
-            fact_ids.append(fact_id)
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_fact_atoms (
-                      id, tenant_id, project_id, fact_type, title, fact_text,
-                      source_type, source_excerpt, trust_level, disclosure,
-                      status, ai_confidence, applicable_question_ids,
-                      applicable_asset_types, reviewed_by, reviewed_at,
-                      metadata_json, created_at, updated_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :fact_type, :title, :fact_text,
-                      :source_type, :source_excerpt, :trust_level, :disclosure,
-                      :status, :ai_confidence, :applicable_question_ids,
-                      :applicable_asset_types, :reviewed_by, :reviewed_at,
-                      :metadata_json, :created_at, :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": fact_id,
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "fact_type": fact_type,
-                    "title": title,
-                    "fact_text": fact_text,
-                    "source_type": "brand_check",
-                    "source_excerpt": fact_text,
-                    "trust_level": "B",
-                    "disclosure": "public",
-                    "status": "confirmed",
-                    "ai_confidence": 0.86,
-                    "applicable_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
-                    "applicable_asset_types": json.dumps(["fact_page", "faq", "compare", "report"], ensure_ascii=False),
-                    "reviewed_by": "brand_check",
-                    "reviewed_at": now,
-                    "metadata_json": json.dumps({"run_id": run.run_id}, ensure_ascii=False),
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-
-        gap_specs = [
-            ("high", "第三方权威信源不足", "需要补齐媒体报道、园区/行业背书、客户案例等可引用来源。", "authority_source_page"),
-            ("medium", "竞品对比证据不足", "需要生成可公开的差异化选型资料，降低 AI 回答偏向竞品的概率。", "competitor_compare_page"),
-        ]
-        for severity, title, description, asset_type in gap_specs:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_content_gaps (
-                      id, tenant_id, project_id, run_id, gap_type, severity,
-                      title, description, related_question_ids,
-                      related_competitor_ids, suggested_asset_type,
-                      status, created_at, updated_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :run_id, :gap_type, :severity,
-                      :title, :description, :related_question_ids,
-                      :related_competitor_ids, :suggested_asset_type,
-                      :status, :created_at, :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": f"gap_{uuid4().hex[:12]}",
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "run_id": run.run_id,
-                    "gap_type": "evidence_gap",
-                    "severity": severity,
-                    "title": title,
-                    "description": description,
-                    "related_question_ids": json.dumps([question.question_id for question in questions], ensure_ascii=False),
-                    "related_competitor_ids": json.dumps([competitor.competitor_id for competitor in competitors], ensure_ascii=False),
-                    "suggested_asset_type": asset_type,
-                    "status": "open",
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-
-        asset_specs = [
-            ("fact_page", f"{project.brand_name} 企业事实页", "已整理品牌定位、官网来源、核心服务和公开事实，适合发布为 AI 可引用页面。", 92),
-            ("service_page", f"{project.brand_name} 服务介绍页", "围绕服务能力、适用客户、交付流程和业务价值生成结构化介绍。", 88),
-            ("faq", f"{project.brand_name} 高频问答 FAQ", "覆盖买家最常问的适用场景、竞品对比、实施流程和证据来源。", 86),
-            ("compare", f"{project.brand_name} 竞品对比页", "把主流竞品差异、选择建议和补证方向整理成可公开对比资料。", 82),
-            ("solution", f"{project.brand_name} 行业解决方案页", f"面向{project.industry}客户生成可被 AI 摘要和引用的场景方案。", 84),
-            ("case_page", f"{project.brand_name} 客户案例页", "预留案例结构、价值指标和证明材料入口，方便后续补充真实案例。", 74),
-            ("jsonld", f"{project.brand_name} JSON-LD 结构化数据", "生成 Organization、FAQ、Service 等结构化字段，提升 AI 理解效率。", 90),
-            ("sitemap", f"{project.brand_name} sitemap.xml", "收录包页面可加入 sitemap 并提交抓取，进入发布复测闭环。", 90),
-        ]
-        for asset_type, title, body, progress in asset_specs:
-            asset_id = f"asset_{uuid4().hex[:12]}"
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_content_assets (
-                      id, tenant_id, project_id, asset_type, title,
-                      body_md, status, fact_atom_ids, target_url,
-                      reviewed_by, reviewed_at, metadata_json,
-                      created_at, updated_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :asset_type, :title,
-                      :body_md, :status, :fact_atom_ids, :target_url,
-                      :reviewed_by, :reviewed_at, :metadata_json,
-                      :created_at, :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": asset_id,
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "asset_type": asset_type,
-                    "title": title,
-                    "body_md": body,
-                    "status": "generated",
-                    "fact_atom_ids": json.dumps(fact_ids, ensure_ascii=False),
-                    "target_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
-                    "reviewed_by": "brand_check",
-                    "reviewed_at": now,
-                    "metadata_json": json.dumps({"progress": progress, "display_status": "已生成", "run_id": run.run_id}, ensure_ascii=False),
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_publish_packages (
-                      id, tenant_id, project_id, asset_id, package_type,
-                      channel, status, package_ref_id, published_url,
-                      platform_meta_json, metadata_json, created_at, updated_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :asset_id, :package_type,
-                      :channel, :status, :package_ref_id, :published_url,
-                      :platform_meta_json, :metadata_json, :created_at, :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": f"pkg_{uuid4().hex[:12]}",
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "asset_id": asset_id,
-                    "package_type": "content_asset",
-                    "channel": "website",
-                    "status": "packaged",
-                    "package_ref_id": f"brand_check:{run.run_id}:{asset_type}",
-                    "published_url": f"{project.website_url.rstrip('/')}/airank/{asset_type}",
-                    "platform_meta_json": json.dumps({"asset_type": asset_type}, ensure_ascii=False),
-                    "metadata_json": json.dumps({"ready_for_publish": True}, ensure_ascii=False),
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-
-        report_specs = [
-            ("diagnostic", f"{project.brand_name} AI 来客诊断报告", "覆盖多 AI 平台排名、推荐率、首推率、引用来源和竞品压制点。"),
-            ("executive", f"{project.brand_name} 老板报告", "用管理层可读方式汇总 AI 可见性、内容缺口和下一步发布动作。"),
-            ("asset_bundle", f"{project.brand_name} 可发布资料包", "汇总企业事实页、FAQ、竞品对比页、行业解决方案页和结构化数据。"),
-            ("competitor", f"{project.brand_name} 竞品压制报告", "对比主流竞品在高意向买家问题中的推荐占位和证据差距。"),
-        ]
-        for report_type, title, summary in report_specs:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO airank_reports (
-                      id, tenant_id, project_id, report_type, title,
-                      status, run_id, metrics_json, generated_by,
-                      generated_at, created_at, updated_at
-                    )
-                    VALUES (
-                      :id, :tenant_id, :project_id, :report_type, :title,
-                      :status, :run_id, :metrics_json, :generated_by,
-                      :generated_at, :created_at, :updated_at
-                    )
-                    """
-                ),
-                {
-                    "id": f"report_{uuid4().hex[:12]}",
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "report_type": report_type,
-                    "title": title,
-                    "status": "可下载",
-                    "run_id": run.run_id,
-                    "metrics_json": json.dumps({**metrics, "summary": summary}, ensure_ascii=False),
-                    "generated_by": "brand_check",
-                    "generated_at": now,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
 
 
 def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
@@ -3251,12 +2984,13 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
     audience = "、".join(audiences) if isinstance(audiences, list) and audiences else "企业品牌方 / 增长负责人"
     competitors = "、".join(row["name"] for row in competitor_rows) or "待补充竞品"
     created_at = coerce_datetime(project_row["created_at"]).date()
-    scan_completed = run_status == "completed"
-    task_count = int(metrics.get("task_count") or 0)
-    scan_delta = "本次检测已完成" if scan_completed else "检测未完成：Provider 登录待处理"
-    coverage_delta = f"{task_count} 个检测任务" if scan_completed else f"0/{task_count} 个任务完成"
-    leads_delta = "基于检测结果预估" if scan_completed else "未生成，需完成真实采样"
-    pressure_delta = "需补齐公开证据" if scan_completed else "外部网页登录/真人验证未完成"
+    data_status: Literal["empty", "collecting", "provider_evidence", "unverified"]
+    if metrics.get("data_status") == "provider_evidence" and run_status == "completed":
+        data_status = "provider_evidence"
+    elif run_status in {"queued", "running"}:
+        data_status = "collecting"
+    else:
+        data_status = "unverified"
 
     return ConsoleOverview(
         project=ProjectOverview(
@@ -3268,40 +3002,13 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
             audience=audience,
             date=created_at,
         ),
-        metric_cards=[
-            MetricCard(
-                label="AI 来客指数",
-                value=str(metrics.get("ai_visibility_score", 62)),
-                suffix="/100",
-                delta=scan_delta,
-                tone="primary",
-                icon="Activity",
-            ),
-            MetricCard(
-                label="高意向问题覆盖率",
-                value=str(metrics.get("question_coverage", 41)),
-                suffix="%",
-                delta=coverage_delta,
-                tone="primary",
-                icon="Target",
-            ),
-            MetricCard(
-                label="竞品压制问题数",
-                value=str(metrics.get("competitor_pressure_count", 127)),
-                suffix="",
-                delta=pressure_delta,
-                tone="warning",
-                icon="ShieldAlert",
-            ),
-            MetricCard(
-                label="本月 AI 来客线索",
-                value=str(metrics.get("monthly_leads", 186)),
-                suffix="",
-                delta=leads_delta,
-                tone="success",
-                icon="UserRound",
-            ),
-        ],
+        metric_cards=build_measurement_metric_cards(metrics),
+        data_status=data_status,
+        message=(
+            str(metrics.get("summary") or "")
+            if data_status == "provider_evidence"
+            else run_error_message or "真实 Provider 采样尚未完成，不展示品牌指标。"
+        ),
     )
 
 
@@ -3491,22 +3198,10 @@ def build_brand_check_data_from_existing_project(tenant_id: str, project: Projec
         asset_bundle=ASSET_BUNDLE_REPOSITORY.get_bundle(tenant_id, project.project_id),
         reports=REPORT_REPOSITORY.list_reports(tenant_id, project.project_id),
         overview=build_mysql_console_overview(tenant_id)
-        or ConsoleOverview(
-            project=ProjectOverview(
-                id=project.project_id,
-                name=project.brand_name,
-                website=project.website_url,
-                industry=project.industry,
-                competitors="、".join(competitor.name for competitor in list_mysql_project_competitors(tenant_id, project.project_id)),
-                audience="、".join(project.audiences),
-                date=utc_now().date(),
-            ),
-            metric_cards=[
-                MetricCard(label="AI 来客指数", value="72", suffix="/100", delta="本次检测已完成", tone="primary", icon="Activity"),
-                MetricCard(label="高意向问题覆盖率", value="68", suffix="%", delta=f"{len(tasks)} 个检测任务", tone="primary", icon="Target"),
-                MetricCard(label="竞品压制问题数", value="18", suffix="", delta="需补齐公开证据", tone="warning", icon="ShieldAlert"),
-                MetricCard(label="本月 AI 来客线索", value="96", suffix="", delta="基于检测结果预估", tone="success", icon="UserRound"),
-            ],
+        or build_unverified_overview(
+            project,
+            list_mysql_project_competitors(tenant_id, project.project_id),
+            "真实 Provider 样本不可用，不展示品牌指标。",
         ),
     )
 
@@ -3569,22 +3264,10 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
     tasks = SCAN_REPOSITORY.list_tasks(tenant_id, completed_run.run_id)
     asset_bundle = ASSET_BUNDLE_REPOSITORY.get_bundle(tenant_id, project.project_id)
     reports = REPORT_REPOSITORY.list_reports(tenant_id, project.project_id)
-    overview = build_mysql_console_overview(tenant_id) or ConsoleOverview(
-        project=ProjectOverview(
-            id=project.project_id,
-            name=project.brand_name,
-            website=project.website_url,
-            industry=project.industry,
-            competitors="、".join(competitor.name for competitor in competitors),
-            audience="、".join(project.audiences),
-            date=utc_now().date(),
-        ),
-        metric_cards=[
-            MetricCard(label="AI 来客指数", value="72", suffix="/100", delta="本次检测已完成", tone="primary", icon="Activity"),
-            MetricCard(label="高意向问题覆盖率", value="68", suffix="%", delta=f"{len(tasks)} 个检测任务", tone="primary", icon="Target"),
-            MetricCard(label="竞品压制问题数", value="18", suffix="", delta="需补齐公开证据", tone="warning", icon="ShieldAlert"),
-            MetricCard(label="本月 AI 来客线索", value="96", suffix="", delta="基于检测结果预估", tone="success", icon="UserRound"),
-        ],
+    overview = build_mysql_console_overview(tenant_id) or build_unverified_overview(
+        project,
+        competitors,
+        completed_run.error.message if completed_run.error else "真实 Provider 样本不可用，不展示品牌指标。",
     )
     return BrandCheckData(
         project=project,
@@ -4136,52 +3819,20 @@ def get_console_overview(
     if mysql_overview is not None:
         return ConsoleOverviewResponse(data=mysql_overview, meta=build_meta(trace_id))
 
-    project_suffix = tenant_id.removeprefix("tenant_") or "demo"
     return ConsoleOverviewResponse(
         data=ConsoleOverview(
             project=ProjectOverview(
-                id=f"project_{project_suffix}",
-                name="示例科技有限公司",
-                website="www.example.com",
-                industry="营销科技",
-                competitors="数智易、神策、Convertlab",
-                audience="中大型企业市场与增长负责人",
-                date=date(2026, 5, 17),
+                id="",
+                name="尚未创建品牌项目",
+                website="",
+                industry="",
+                competitors="",
+                audience="",
+                date=utc_now().date(),
             ),
-            metric_cards=[
-                MetricCard(
-                    label="AI 来客指数",
-                    value="62",
-                    suffix="/100",
-                    delta="较上周 +12",
-                    tone="primary",
-                    icon="Activity",
-                ),
-                MetricCard(
-                    label="高意向问题覆盖率",
-                    value="41",
-                    suffix="%",
-                    delta="较上周 +8%",
-                    tone="primary",
-                    icon="Target",
-                ),
-                MetricCard(
-                    label="竞品压制问题数",
-                    value="127",
-                    suffix="",
-                    delta="较上周 +23",
-                    tone="warning",
-                    icon="ShieldAlert",
-                ),
-                MetricCard(
-                    label="本月 AI 来客线索",
-                    value="186",
-                    suffix="",
-                    delta="较上月 +36%",
-                    tone="success",
-                    icon="UserRound",
-                ),
-            ],
+            metric_cards=[],
+            data_status="empty",
+            message="尚未创建品牌项目；创建后完成真实 Provider 采样才会显示指标。",
         ),
         meta=build_meta(trace_id),
     )

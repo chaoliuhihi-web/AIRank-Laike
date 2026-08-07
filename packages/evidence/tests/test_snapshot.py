@@ -65,3 +65,24 @@ def test_answer_snapshot_rejects_invalid_brand_rank() -> None:
             brand_rank=0,
             created_at=NOW,
         )
+
+
+def test_valid_not_mentioned_snapshot_can_be_saved_without_citations() -> None:
+    snapshot = AnswerSnapshot(
+        id="snap_not_mentioned",
+        tenant_id="tenant_1",
+        project_id="project_1",
+        run_id="run_1",
+        task_id="task_1",
+        question_id="question_1",
+        question_text="有哪些企业级 GEO 工具？",
+        provider="qianwen",
+        answer_text="可以考虑甲平台和乙平台。",
+        citations=(),
+        created_at=NOW,
+    )
+
+    assert snapshot.brand_mentioned is False
+    assert snapshot.mention_class.value == "not_mentioned"
+    assert snapshot.answer_sha256
+    assert snapshot.to_record()["citation_ids"] == []

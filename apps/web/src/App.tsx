@@ -865,8 +865,8 @@ function DashboardPage({
       />
       {overviewStatus === "fallback" && (
         <AlertBanner
-          title="当前显示 fallback 数据"
-          desc="控制台概览 API 暂不可用，页面已切换到本地兜底数据；恢复 API 后刷新即可读取实时项目数据。"
+          title="控制台 API 暂不可用"
+          desc="为避免把演示数字冒充真实结果，当前不展示本地业务指标；恢复 API 后刷新读取项目数据。"
           action="重新加载"
           onClick={() => window.location.reload()}
         />

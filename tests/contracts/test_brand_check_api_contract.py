@@ -6,7 +6,7 @@ from apps.api import main as api_main
 from apps.api.main import app
 
 
-def test_brand_check_creates_completed_visibility_loop() -> None:
+def test_brand_check_without_real_provider_is_explicitly_unverified() -> None:
     client = TestClient(app)
 
     response = client.post(
@@ -25,11 +25,12 @@ def test_brand_check_creates_completed_visibility_loop() -> None:
     body = response.json()
     assert body["meta"]["trace_id"] == "trc_brand_check"
     assert body["data"]["project"]["brand_name"] == "中关村软件园孵化器"
-    assert body["data"]["scan_run"]["status"] == "completed"
-    assert len(body["data"]["tasks"]) == 7
-    assert {task["status"] for task in body["data"]["tasks"]} == {"completed"}
-    assert body["data"]["asset_bundle"]["assets"]
-    assert body["data"]["reports"]["reports"]
+    assert body["data"]["scan_run"]["status"] == "failed"
+    assert body["data"]["scan_run"]["metrics"]["data_status"] == "unverified_no_provider_evidence"
+    assert len(body["data"]["tasks"]) == 21
+    assert {task["status"] for task in body["data"]["tasks"]} == {"failed"}
+    assert body["data"]["asset_bundle"]["assets"] == []
+    assert body["data"]["reports"]["reports"] == []
     assert body["data"]["overview"]["project"]["name"] == "中关村软件园孵化器"
 
 

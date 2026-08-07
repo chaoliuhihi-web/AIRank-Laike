@@ -32,7 +32,8 @@ def test_asset_bundle_api_matches_contract() -> None:
     body = response.json()
     assert body["meta"]["trace_id"] == "trc_asset_bundle"
     assert body["data"]["tenant_id"] == "tenant_assets"
-    assert body["data"]["assets"]
+    assert body["data"]["assets"] == []
+    assert body["data"]["completeness"] == 0
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
