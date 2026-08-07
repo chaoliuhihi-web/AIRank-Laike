@@ -45,6 +45,7 @@
             "ASSET_NOT_FOUND",
             "ASSET_REVIEW_REQUIRED",
             "REPORT_NOT_FOUND",
+            "SKILL_NOT_FOUND",
             "REPORT_EVIDENCE_MISSING",
             "OBJECT_REF_NOT_FOUND",
             "INTEGRATION_CAPABILITY_BLOCKED",

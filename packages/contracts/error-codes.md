@@ -79,6 +79,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `REPORT_EVIDENCE_MISSING` | 500 | 报告缺少证据链 |
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |
 
+## 内部 Skill
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `SKILL_NOT_FOUND` | 404 | 内部 Skill 未注册 |
+
 ## 外部能力
 
 | 错误码 | HTTP | 说明 |

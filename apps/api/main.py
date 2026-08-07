@@ -15,10 +15,12 @@ from fastapi import FastAPI, Header, Path, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from jsonschema import Draft202012Validator, ValidationError as JsonSchemaValidationError
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
+from airank_skills import load_default_registry, run_skill
 
 try:
     from .provider_scan import (
@@ -77,6 +79,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "ASSET_REVIEW_REQUIRED": (409, "Asset review is required"),
     "REPORT_NOT_FOUND": (404, "Report not found"),
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
+    "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "INTEGRATION_CAPABILITY_BLOCKED": (503, "Integration capability is blocked"),
     "INTEGRATION_CAPABILITY_DISABLED": (503, "Integration capability is disabled"),
@@ -525,6 +528,50 @@ class ConsoleActionRequest(BaseModel):
     entity_type: Optional[str] = Field(default=None, min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9_.-]*$")
     entity_id: Optional[str] = Field(default=None, min_length=1, max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillManifestData(BaseModel):
+    skill_id: str
+    version: str
+    category: Literal["measurement", "research", "knowledge", "intervention", "governance", "delivery"]
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    dependencies: list[str]
+    provider_requirements: list[str]
+    evidence_level: list[str]
+    fact_policy: dict[str, Any]
+    failure_policy: dict[str, Any]
+    quality_rubric: list[dict[str, Any]]
+    eval_cases: list[dict[str, Any]]
+    status: Literal["ready", "partial", "blocked", "disabled", "dev_only"]
+    entrypoint: str
+
+
+class SkillRegistryData(BaseModel):
+    skills: list[SkillManifestData]
+
+
+class SkillRegistryResponse(BaseModel):
+    data: SkillRegistryData
+    meta: ResponseMeta
+
+
+class SkillEvalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input: dict[str, Any]
+
+
+class SkillEvalData(BaseModel):
+    skill_id: str
+    version: str
+    manifest_status: Literal["ready", "partial", "blocked", "disabled", "dev_only"]
+    output: dict[str, Any]
+
+
+class SkillEvalResponse(BaseModel):
+    data: SkillEvalData
+    meta: ResponseMeta
 
 
 class ConsoleActionData(BaseModel):
@@ -3805,6 +3852,74 @@ def record_console_action(
     return ConsoleActionResponse(
         data=CONSOLE_ACTION_REPOSITORY.record_action(tenant_id, payload, meta.trace_id, actor_user_id),
         meta=meta,
+    )
+
+
+@app.get(f"{API_PREFIX}/admin/skills", response_model=SkillRegistryResponse)
+def get_skill_registry(
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> SkillRegistryResponse:
+    registry = load_default_registry()
+    return SkillRegistryResponse(
+        data=SkillRegistryData(
+            skills=[
+                SkillManifestData(
+                    skill_id=manifest.skill_id,
+                    version=manifest.version,
+                    category=manifest.category,  # type: ignore[arg-type]
+                    input_schema=dict(manifest.input_schema),
+                    output_schema=dict(manifest.output_schema),
+                    dependencies=list(manifest.dependencies),
+                    provider_requirements=list(manifest.provider_requirements),
+                    evidence_level=list(manifest.evidence_level),
+                    fact_policy=dict(manifest.fact_policy),
+                    failure_policy=dict(manifest.failure_policy),
+                    quality_rubric=[dict(item) for item in manifest.quality_rubric],
+                    eval_cases=[dict(item) for item in manifest.eval_cases],
+                    status=manifest.status,  # type: ignore[arg-type]
+                    entrypoint=manifest.entrypoint,
+                )
+                for manifest in registry.list()
+            ]
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.post(f"{API_PREFIX}/admin/skills/{{skill_id}}/eval", response_model=SkillEvalResponse)
+def evaluate_skill(
+    skill_id: str,
+    payload: SkillEvalRequest,
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> SkillEvalResponse:
+    registry = load_default_registry()
+    try:
+        manifest = registry.get(skill_id)
+    except KeyError as exc:
+        raise StarletteHTTPException(
+            status_code=404,
+            detail={"code": "SKILL_NOT_FOUND", "details": {"skill_id": skill_id}},
+        ) from exc
+    try:
+        Draft202012Validator(manifest.input_schema).validate(payload.input)
+    except JsonSchemaValidationError as exc:
+        raise StarletteHTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "details": {"skill_id": skill_id, "path": list(exc.absolute_path), "message": exc.message},
+            },
+        ) from exc
+    output = run_skill(skill_id, payload.input)
+    Draft202012Validator(manifest.output_schema).validate(output)
+    return SkillEvalResponse(
+        data=SkillEvalData(
+            skill_id=skill_id,
+            version=manifest.version,
+            manifest_status=manifest.status,  # type: ignore[arg-type]
+            output=output,
+        ),
+        meta=build_meta(trace_id),
     )
 
 

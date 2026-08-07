@@ -96,9 +96,9 @@
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 无 Skill 平台 | 缺正式契约 | adapt | `packages/skills` | P0 | planned | 核心 8 Skill 均能序列化、校验和升级 |
-| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 普通单测 | 无 Skill 质量门禁 | absorb | Skill Eval Lab | P0 | planned | train/dev/holdout/对抗样本和真实执行均通过 |
-| yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | release readiness 初版 | 无 Skill 生命周期门禁 | adapt | Skill Registry | P0 | planned | 缺真实 provider/human 证据时 promotion 必须阻断 |
+| yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 核心 8 Skill 已有 manifest/schema/entrypoint | 尚无 target compiler 和升级迁移 | adapt | `packages/skills` | P0 | partial | 核心 8 Skill 均能序列化、校验和升级 |
+| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 8 个 Skill 的 manifest eval 已执行真实代码 | holdout/对抗/真实 Provider eval 仍缺 | absorb | Skill Eval Lab | P0 | partial | train/dev/holdout/对抗样本和真实执行均通过 |
+| yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | registry 强制状态且当前全部为 partial | 自动 promotion evidence ledger 尚未实现 | adapt | Skill Registry | P0 | partial | 缺真实 provider/human 证据时 promotion 必须阻断 |
 | yao-meta-skill | trust/permission/package gate | 控制网络、凭证和可移植性 | trust/package/install scripts | Skill 包 → trust/report/package | sandbox/manifest | MIT | 无 | 无依赖与权限声明验证 | adapt | Skill Trust Gate | P1 | planned | 依赖、网络、secret、权限、安装模拟全部可审计 |
 | yao-open-tools | `tokscr` 本地网页截图 | 保存消费者页面与来源面板证据 | `tools/tokscr` | 页面 → PNG/PDF | 浏览器扩展 | MIT | Playwright 截图写临时目录 | 无不可变对象存储和裁剪元数据 | reference_only | Evidence Capture | P1 | planned | 截图 hash、viewport、URL、时间、裁剪参数一并保存 |
 | yao-open-tools | TokKit exact/partial/estimated | 明确成本数据精度 | `tools/tokkit` | 日志/响应 → 用量台账 | 本地日志 | MIT | 无精度枚举 | 容易把估算当真实 | absorb | Usage provenance enum | P1 | planned | 任一成本字段都有 precision 和 source |
@@ -125,7 +125,7 @@
 7. `intervention.page-blueprint`
 8. `delivery.retest-report`
 
-核心 8 Skill 在实现前必须先完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric 和 eval cases；未通过真实执行证据时只能是 `partial`。
+核心 8 Skill 已完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric、entrypoint 和可执行 eval cases，并通过内部 Admin API 暴露；因尚未通过四平台真实执行证据，全部保持 `partial`。
 
 ## 阶段一完成判定
 
