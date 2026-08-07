@@ -245,3 +245,30 @@ def test_question_governance_has_version_provenance_review_and_cohort_gates() ->
     assert "/question-maps/compile" in routes
     assert "/buyer-questions/{question_id}/review" in routes
     assert 'row["status"] == "confirmed" and row["cohort_type"] == cohort_type' in main
+
+
+def test_question_observation_batches_preserve_provenance_and_block_pii() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0010_question_observations.py"
+    ).read_text(encoding="utf-8")
+    routes = (ROOT / "apps" / "api" / "question_routes.py").read_text(encoding="utf-8")
+
+    for name in (
+        "airank_question_observation_batches",
+        "airank_question_observations",
+        "payload_sha256",
+        "content_sha256",
+        "evidence_grade",
+        "rights_attested",
+        "pii_blocked_count",
+    ):
+        assert name in migration
+    assert "/question-observation-batches" in routes
+    assert "customer_provided_not_independently_verified" in routes
+    assert "occurrence_count_is_source_frequency_not_search_volume" in routes
+    assert "detected_pii_reasons" in routes

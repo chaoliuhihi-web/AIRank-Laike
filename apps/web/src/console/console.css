@@ -1730,6 +1730,145 @@ button:disabled {
   font: 600 13px / 21px var(--console-font-family);
 }
 
+.question-observation-panel {
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #dfe7f1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.question-observation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.question-observation-heading h3 {
+  margin: 3px 0 4px;
+  color: var(--console-text-strong);
+  font: 800 17px / 24px var(--console-font-family);
+}
+
+.question-observation-heading p {
+  max-width: 780px;
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 600 12px / 19px var(--console-font-family);
+}
+
+.question-observation-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.2fr);
+  gap: 12px;
+}
+
+.question-observation-form label:not(.question-template-toggle) {
+  display: grid;
+  gap: 6px;
+  color: var(--console-text);
+  font: 700 12px / 19px var(--console-font-family);
+}
+
+.question-observation-form input:not([type="checkbox"]),
+.question-observation-form select,
+.question-observation-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--console-text);
+  font: 600 13px / 20px var(--console-font-family);
+  outline: none;
+}
+
+.question-observation-form input:not([type="checkbox"]),
+.question-observation-form select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.question-observation-form textarea {
+  min-height: 88px;
+  resize: vertical;
+  padding: 10px 12px;
+}
+
+.question-observation-wide,
+.question-observation-actions {
+  grid-column: 1 / -1;
+}
+
+.question-observation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.question-observation-notice {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #edf9f2;
+  color: #246141;
+  font: 700 12px / 19px var(--console-font-family);
+}
+
+.question-observation-batches {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.question-observation-batch {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.question-observation-batch[data-status="blocked"] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.question-observation-batch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--console-primary);
+}
+
+.question-observation-batch strong,
+.question-observation-batch small {
+  display: block;
+}
+
+.question-observation-batch strong {
+  color: var(--console-text);
+  font: 700 13px / 19px var(--console-font-family);
+}
+
+.question-observation-batch small {
+  margin-top: 2px;
+  color: var(--console-text-muted);
+  font: 600 11px / 17px var(--console-font-family);
+}
+
+.question-observation-proof {
+  color: var(--console-primary);
+  font: 700 11px / 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+}
+
 .question-compiler-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2848,14 +2987,17 @@ button:disabled {
 
   .knowledge-source-form,
   .knowledge-search-form,
-  .question-compiler-form {
+  .question-compiler-form,
+  .question-observation-form {
     grid-template-columns: 1fr;
   }
 
   .knowledge-source-form-wide,
   .knowledge-source-form-actions,
   .question-compiler-wide,
-  .question-compiler-actions {
+  .question-compiler-actions,
+  .question-observation-wide,
+  .question-observation-actions {
     grid-column: auto;
   }
 
@@ -2876,13 +3018,25 @@ button:disabled {
   }
 
   .question-compiler-heading,
-  .question-compiler-actions {
+  .question-compiler-actions,
+  .question-observation-heading,
+  .question-observation-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .question-compiler-actions > button {
+  .question-compiler-actions > button,
+  .question-observation-actions > button {
     width: 100%;
+  }
+
+  .question-observation-batch {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .question-observation-proof {
+    grid-column: 2;
+    text-align: left;
   }
 
   .tab-row {

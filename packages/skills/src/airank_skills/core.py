@@ -11,6 +11,8 @@ from airank_domain.measurement import BrandEntity, PromptCohortType, find_entity
 
 
 SkillRunner = Callable[[dict[str, Any]], dict[str, Any]]
+OBSERVATION_SOURCE_REF_PATTERN = re.compile(r"^observation:qobatch_[0-9a-f]{20}:qobs_[0-9a-f]{20}$")
+OBSERVATION_EVIDENCE_GRADES = {"user_provided_snapshot", "connector_verified", "provider_sample_verified"}
 
 
 def sample_runner(payload: dict[str, Any]) -> dict[str, Any]:
@@ -108,32 +110,71 @@ def citation_extractor(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def intent_miner(payload: dict[str, Any]) -> dict[str, Any]:
-    unique: list[str] = []
+    unique: list[tuple[str, str, str, dict[str, Any]]] = []
     seen: set[str] = set()
-    for raw in payload.get("seed_questions", []):
+    entries: list[tuple[Any, str, str, dict[str, Any]]] = []
+    for item in payload.get("observed_questions", []):
+        if not isinstance(item, dict):
+            continue
+        source_ref = str(item.get("source_ref", "")).strip()
+        evidence_grade = str(item.get("evidence_grade", "")).strip()
+        if not OBSERVATION_SOURCE_REF_PATTERN.fullmatch(source_ref):
+            continue
+        if evidence_grade not in OBSERVATION_EVIDENCE_GRADES:
+            continue
+        try:
+            occurrence_count = int(item.get("occurrence_count", 1))
+        except (TypeError, ValueError):
+            continue
+        if occurrence_count < 1:
+            continue
+        entries.append((
+            item.get("question_text", ""),
+            "observed_query",
+            source_ref,
+            {
+                "source_ref": source_ref,
+                "source_kind": "observed_query",
+                "evidence_grade": evidence_grade,
+                "occurrence_count": occurrence_count,
+                "observed_at": item.get("observed_at"),
+                "region": item.get("region"),
+            },
+        ))
+    entries.extend(
+        (
+            raw,
+            "provided_seed",
+            f"seed:{index}",
+            {"source_ref": f"seed:{index}", "source_kind": "provided_seed", "evidence_grade": "provided_seed"},
+        )
+        for index, raw in enumerate(payload.get("seed_questions", []), start=1)
+    )
+    for raw, source_kind, source_ref, provenance in entries:
         question = normalize_question(str(raw))
         key = question_dedupe_sha256(question) if question else ""
         if not question or key in seen:
             continue
         seen.add(key)
-        unique.append(question)
+        unique.append((question, source_kind, source_ref, provenance))
     questions = []
     target_names = tuple(str(value).strip() for value in payload.get("target_names", []) if str(value).strip())
     competitor_names = tuple(str(value).strip() for value in payload.get("competitor_names", []) if str(value).strip())
     regions = tuple(str(value).strip() for value in payload.get("regions", []) if str(value).strip())
-    for index, question in enumerate(unique, start=1):
+    for question, source_kind, source_ref, provenance in unique:
         governed = govern_question(
             question,
             target_names=target_names,
             competitor_names=competitor_names,
             regions=regions,
-            source_kind="provided_seed",
-            source_ref=f"seed:{index}",
+            source_kind=source_kind,  # type: ignore[arg-type]
+            source_ref=source_ref,
         )
         questions.append({
             **governed.as_dict(),
-            "source": "provided_seed",
+            "source": source_kind,
             "version": governed.question_version_id,
+            "provenance_records": [provenance],
         })
     return {"status": "valid" if questions else "blocked", "question_count": len(questions), "questions": questions}
 

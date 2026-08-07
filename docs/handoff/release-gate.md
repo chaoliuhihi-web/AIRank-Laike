@@ -473,3 +473,33 @@ Blocking conditions:
 Decision:
 
 - Buyer-question governance is an operable, evidence-backed product slice. AIRank remains `NO-GO` for commercial launch until the production and external gates above pass.
+
+## 2026-08-08 Observed Buyer Query Provenance Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: this observed-query-provenance commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- `research.intent-miner` `1.2.0` accepts only observation-shaped immutable references with an explicit evidence grade. Invalid manual references are ignored rather than promoted to observed-query evidence.
+- Tenant/project-scoped M1 observation imports preserve source metadata, rights attestation, payload/content hashes, source-local occurrence counts and provenance. Identical payload replay is idempotent.
+- Email, China mobile and China identity-number patterns are blocked before persistence. The raw PII text is absent from the batch manifest, safe observation records, compiled provenance and browser output.
+- `occurrence_count` is consistently labeled as source-local frequency, not search volume. Customer-provided records remain `user_provided_snapshot` and explicitly “not independently verified.”
+- Alembic `20260808_0010` reached real MySQL head with 47 AIRank tables. The migration recovered safely after MySQL rejected the initial reserved column name; the final schema uses `source_row_number`.
+- Full local regression passed `225 passed, 13 skipped`; real MySQL integration passed `11 passed, 2 skipped`; core Skill evaluation remained `24/24` with `0` promotion-eligible and all 8 Skills retained as `partial`.
+- Real browser QA imported one safe question with source-local frequency 7, blocked one PII row, compiled the observed candidate, applied human confirmation, and proved persistence after reload. At a 390px effective viewport, html/body scroll width stayed 390px and the final console had `0 error / 0 warning`.
+
+Blocking conditions:
+
+- M2 automatic customer-source connectors, M3 sampled calibration, industry coverage benchmark and follow-up-chain evaluation are not implemented; M1 customer-provided data is not proof of market-wide demand.
+- Production Python 3.11+ and Node 20.19+ or 22.12+ are not active on this workstation.
+- Production Yudao identity/permission-info and HTTPS S3/MinIO are not configured in the release environment.
+- Consumer browser Provider readiness remains `0/4`; API success does not satisfy Web/App evidence.
+- The branch is synchronized only as `codex/evidence-productization`; remote `main` remains outside this task's merge authority.
+
+Decision:
+
+- M1 observed-query provenance is operable and evidence-backed. AIRank remains `NO-GO` for commercial launch until connector/calibration and broader production gates pass.

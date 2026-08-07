@@ -92,11 +92,14 @@ M1 问题治理通过同一套 repository 契约支持测试内存实现与生�
 | `POST /api/v1/projects` | 根据网站和可选 hint 创建待确认项目，返回 `project_response.schema.json` |
 | `POST /api/v1/projects/{project_id}/competitors` | 给项目追加候选竞品，返回 `competitor_response.schema.json` |
 | `POST /api/v1/projects/{project_id}/buyer-questions` | 给项目追加候选买家问题，返回 `buyer_question_response.schema.json` |
+| `POST /api/v1/projects/{project_id}/question-observation-batches` | 导入客户授权的 M1 观察记录；请求/响应分别使用 `question_observation_import_request.schema.json` 与 `question_observation_import_response.schema.json` |
+| `GET /api/v1/projects/{project_id}/question-observation-batches` | 查询不可变观察批次、来源元数据、hash、可用记录/频次与 PII 阻断统计 |
+| `GET /api/v1/projects/{project_id}/question-observation-batches/{batch_id}/records` | 查询批次内已通过 PII 门禁的安全问题记录；不返回被拦截原文 |
 | `POST /api/v1/projects/{project_id}/question-maps/compile` | 预览或持久化版本化问题地图；持久化候选初始状态为 `suggested` |
 | `GET /api/v1/projects/{project_id}/question-maps` | 查询不可变编译清单、输入/输出 hash 与编译统计 |
 | `PATCH /api/v1/projects/{project_id}/buyer-questions/{question_id}/review` | 追加人工审核事件，并更新当前生命周期状态；不覆盖问题修订 |
 
-`tenant_id` 和审核人必须来自认证上下文，不能信任 request body。问题地图按输入内容和 taxonomy 版本幂等；问题按规范化 hash 去重。只有 `confirmed` 且其不可变修订 Cohort 与 ScanRun 完全一致的问题才能进入任务编译。in-memory adapter 只用于 contract test 和本地开发，MySQL 路径由 Alembic `20260808_0009` 支持。
+`tenant_id`、导入人和审核人必须来自认证上下文，不能信任 request body。观察导入要求显式来源授权声明，按 payload SHA-256 幂等；`occurrence_count` 只表示来源内频次，不等于搜索量。疑似 PII 原文不得进入持久化记录、manifest 或响应。问题地图按输入内容和 taxonomy 版本幂等；问题按规范化 hash 去重。只有 `confirmed` 且其不可变修订 Cohort 与 ScanRun 完全一致的问题才能进入任务编译。in-memory adapter 只用于 contract test 和本地开发，MySQL 路径由 Alembic `20260808_0010` 支持。
 
 ## M2 扫描契约
 

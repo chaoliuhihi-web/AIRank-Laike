@@ -25,7 +25,7 @@
 | yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
 | yao-geo-skills | `yao-doubao-crawler` | 豆包 Web/App 分终端证据 | `skills/yao-doubao-crawler` | 问题/轮次/终端 → 回答、截图、XML、来源卡 | 登录态；Appium/AVD（App） | MIT | 只有通用 Web 采样 | 无 App 契约；Web/App 证据混用 | adapt | Web Collector + App Collector | P0 | planned | 同问题 Web/App 独立标记、证据等级不同且可对比 |
 | yao-geo-skills | `yao-chatgpt-crawler` | ChatGPT AI Search 多次采样 | `skills/yao-chatgpt-crawler` | 问题/轮次 → 回答、可见来源与概率报告 | 登录态、Browser Bridge | MIT | 浏览器 provider 名录包含 ChatGPT | 没有原生来源面板结构化与会话隔离证明 | adapt | Web Collector Adapter | P1 | planned | 真实多轮样本可追踪到可见来源和截图 |
-| yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 已有版本化 taxonomy、稳定 question version、来源字段、规范化去重、人工确认和四类 Cohort 编译 | 真实查询观察源、行业覆盖 benchmark 和追问链仍缺 | adapt | Research Intent Skill | P0 | partial | 种子与模板候选可幂等编译；重复项不可入库；只有 confirmed 且 Cohort 匹配的问题可进入扫描 |
+| yao-geo-skills | `yao-geo-intent-miner` | 把种子词转为买家问题与追问链 | `skills/yao-geo-intent-miner` | 品牌/产品/竞品/区域 → 意图簇、问题、监测 Prompt | 企业事实、市场输入 | MIT | 已有版本化 taxonomy、稳定 question version、规范化去重、人工确认、四类 Cohort，以及 M1 客户授权观察批次、内容 hash、来源内频次、PII 阻断和不可变 provenance | M2 自动连接器、M3 抽样校准、行业覆盖 benchmark 和追问链仍缺 | adapt | Research Intent Skill | P0 | partial | M1 记录按批次幂等导入，PII 原文不落库；频次不得标成搜索量；编译后仍须人工确认且 Cohort 匹配才能扫描 |
 | yao-geo-skills | `yao-geo-panorama-audit` | 售前基线与机会地图 | `skills/yao-geo-panorama-audit` | 多平台样本/官网 → 基线、缺口、优先级 | Measurement 与 Page Audit | MIT | 有 overview/报告接口 | 当前 overview 含固定数字 | adapt | Diagnosis Orchestrator | P1 | planned | 全部结论带样本/页面/事实引用；无静态业务结果 |
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | crawler-lite 仅占位 | 没有生产级页面提取和诊断规则 | adapt | Page Extractability Skill | P1 | planned | 对固定真实页面运行，规则证据可定位到 DOM/HTTP 响应 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | 有内容 gap 骨架 | 无事实约束的结构化产物契约 | adapt | Page Intervention Skill | P1 | planned | 缺事实时返回待补证；JSON-LD 通过 schema 验证 |
@@ -139,8 +139,9 @@
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
-- `20260808_0006`—`0009` 已在真实 MySQL 执行，Alembic head 为 `20260808_0009`；45 张 AIRank 表完成核验。`0009` 新增问题地图、不可变问题修订与追加式人工审核，并在 MySQL 非事务 DDL 中验证了中断后安全重跑。
-- 买家问题现在使用 `airank-question-taxonomy-v1.1.0`，分别记录问题类型、意图、买家阶段、风格、时效、场景、来源、输入 hash、去重 hash 和稳定问题版本；未确认问题以及与 ScanRun Cohort 不一致的问题不会被编译成采样任务。
+- `20260808_0006`—`0010` 已在真实 MySQL 执行，Alembic head 为 `20260808_0010`；47 张 AIRank 表完成核验。`0010` 新增不可变问题观察批次与记录，并针对 MySQL 保留字导致的半迁移验证了安全重跑。
+- 买家问题现在使用 `airank-question-taxonomy-v1.2.0`，分别记录问题类型、意图、买家阶段、风格、时效、场景、来源、输入 hash、去重 hash、稳定问题版本和 provenance records；未确认问题以及与 ScanRun Cohort 不一致的问题不会被编译成采样任务。
+- `research.intent-miner` 已吸收 M0/M1 边界：无数据时只生成假设候选；客户授权数据进入 `user_provided_snapshot` 批次并明确“未独立核验”。来源内出现次数只保存为 occurrence count，不作为搜索量；疑似邮箱、手机号或身份证的原文只计算内容 hash 和阻断原因，不进入数据库、API 响应或问题版本。
 - 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
 - 千问、豆包、Kimi、DeepSeek（当前可用型号为 `deepseek-v3.2`）均已通过本仓 Provider Gateway 真实 L3 调用并返回真实 request ID；凭证只从本机私密环境映射到进程。Kimi 已暴露过的验收密钥必须在生产前轮换，DeepSeek 新型号额度和旧型号下架迁移仍是上线门禁。
 - 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。

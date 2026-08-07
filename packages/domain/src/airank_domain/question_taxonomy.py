@@ -9,7 +9,7 @@ from typing import Iterable, Literal, Sequence
 from airank_domain import sha256_text
 
 
-TAXONOMY_VERSION = "airank-question-taxonomy-v1.1.0"
+TAXONOMY_VERSION = "airank-question-taxonomy-v1.2.0"
 
 QuestionType = Literal["purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"]
 CohortType = Literal["blind", "assisted", "comparison", "fact_verification"]
@@ -17,6 +17,26 @@ PromptStyle = Literal["exploratory", "comparative", "factual", "procedural", "ev
 TemporalScope = Literal["evergreen", "current", "historical"]
 QuestionScenario = Literal["generic", "b2b_procurement", "local_selection", "replacement", "risk_validation"]
 SourceKind = Literal["provided_seed", "template_candidate", "observed_query", "imported"]
+
+
+@dataclass(frozen=True)
+class ObservedQuestionSeed:
+    question_text: str
+    source_ref: str
+    occurrence_count: int = 1
+    observed_at: str | None = None
+    region: str | None = None
+    evidence_grade: str = "user_provided_snapshot"
+
+    def provenance(self) -> dict[str, object]:
+        return {
+            "source_ref": self.source_ref,
+            "source_kind": "observed_query",
+            "occurrence_count": self.occurrence_count,
+            "observed_at": self.observed_at,
+            "region": self.region,
+            "evidence_grade": self.evidence_grade,
+        }
 
 
 def normalize_question(value: str) -> str:
@@ -196,31 +216,82 @@ def compile_question_candidates(
     regions: Sequence[str],
     seed_questions: Sequence[str],
     include_template_candidates: bool,
+    observed_questions: Sequence[ObservedQuestionSeed] = (),
 ) -> tuple[str, str, list[dict[str, object]]]:
-    entries: list[tuple[str, SourceKind, str]] = [
-        (value, "provided_seed", f"seed:{index}")
+    entries: list[tuple[str, SourceKind, str, dict[str, object]]] = [
+        (
+            value.question_text,
+            "observed_query",
+            value.source_ref,
+            value.provenance(),
+        )
+        for value in observed_questions
+        if normalize_question(value.question_text)
+    ]
+    entries.extend([
+        (
+            value,
+            "provided_seed",
+            f"seed:{index}",
+            {
+                "source_ref": f"seed:{index}",
+                "source_kind": "provided_seed",
+                "evidence_grade": "provided_seed",
+            },
+        )
         for index, value in enumerate(seed_questions, start=1)
         if normalize_question(value)
-    ]
+    ])
     if include_template_candidates:
         for index, product in enumerate(product_terms, start=1):
             product = normalize_question(product)
             if not product:
                 continue
             entries.extend([
-                (f"企业应该如何选择{product}？", "template_candidate", f"template:product-selection:{index}"),
-                (f"{product}常见风险和避坑点有哪些？", "template_candidate", f"template:product-risk:{index}"),
-                (f"{product}的价格和服务模式通常如何比较？", "template_candidate", f"template:product-price:{index}"),
+                (
+                    f"企业应该如何选择{product}？",
+                    "template_candidate",
+                    f"template:product-selection:{index}",
+                    {"source_ref": f"template:product-selection:{index}", "source_kind": "template_candidate", "evidence_grade": "template_candidate"},
+                ),
+                (
+                    f"{product}常见风险和避坑点有哪些？",
+                    "template_candidate",
+                    f"template:product-risk:{index}",
+                    {"source_ref": f"template:product-risk:{index}", "source_kind": "template_candidate", "evidence_grade": "template_candidate"},
+                ),
+                (
+                    f"{product}的价格和服务模式通常如何比较？",
+                    "template_candidate",
+                    f"template:product-price:{index}",
+                    {"source_ref": f"template:product-price:{index}", "source_kind": "template_candidate", "evidence_grade": "template_candidate"},
+                ),
             ])
             for region_index, region in enumerate(regions, start=1):
-                entries.append((f"{region}有哪些适合企业的{product}服务商？", "template_candidate", f"template:local:{index}:{region_index}"))
+                source_ref = f"template:local:{index}:{region_index}"
+                entries.append(
+                    (
+                        f"{region}有哪些适合企业的{product}服务商？",
+                        "template_candidate",
+                        source_ref,
+                        {"source_ref": source_ref, "source_kind": "template_candidate", "evidence_grade": "template_candidate"},
+                    )
+                )
             for competitor_index, competitor in enumerate(competitor_names, start=1):
                 if brand_name:
-                    entries.append((f"{brand_name}和{competitor}在{product}方面有什么区别？", "template_candidate", f"template:comparison:{index}:{competitor_index}"))
+                    source_ref = f"template:comparison:{index}:{competitor_index}"
+                    entries.append(
+                        (
+                            f"{brand_name}和{competitor}在{product}方面有什么区别？",
+                            "template_candidate",
+                            source_ref,
+                            {"source_ref": source_ref, "source_kind": "template_candidate", "evidence_grade": "template_candidate"},
+                        )
+                    )
 
     targets = tuple(dict.fromkeys(value for value in (brand_name, *company_names) if value))
     by_key: dict[str, dict[str, object]] = {}
-    for question_text, source_kind, source_ref in entries:
+    for question_text, source_kind, source_ref, provenance in entries:
         governed = govern_question(
             question_text,
             target_names=targets,
@@ -234,9 +305,13 @@ def compile_question_candidates(
             refs = existing.setdefault("deduplicated_source_refs", [])
             if isinstance(refs, list) and source_ref not in refs:
                 refs.append(source_ref)
+            records = existing.setdefault("provenance_records", [])
+            if isinstance(records, list) and provenance not in records:
+                records.append(provenance)
             continue
         item = governed.as_dict()
         item["deduplicated_source_refs"] = [source_ref]
+        item["provenance_records"] = [provenance]
         by_key[governed.dedupe_sha256] = item
 
     input_payload = {
@@ -248,6 +323,14 @@ def compile_question_candidates(
         "competitor_names": [normalize_question(value) for value in competitor_names if normalize_question(value)],
         "regions": [normalize_question(value) for value in regions if normalize_question(value)],
         "seed_questions": [normalize_question(value) for value in seed_questions if normalize_question(value)],
+        "observed_questions": [
+            {
+                "question_text": normalize_question(value.question_text),
+                **value.provenance(),
+            }
+            for value in observed_questions
+            if normalize_question(value.question_text)
+        ],
         "include_template_candidates": include_template_candidates,
     }
     input_sha256 = sha256_text(json.dumps(input_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))

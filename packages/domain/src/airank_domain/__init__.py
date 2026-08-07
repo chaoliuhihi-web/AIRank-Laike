@@ -54,6 +54,7 @@ from .knowledge import (
 )
 from .question_taxonomy import (
     GovernedQuestion,
+    ObservedQuestionSeed,
     TAXONOMY_VERSION,
     compile_question_candidates,
     govern_question,
@@ -94,6 +95,7 @@ __all__ = [
     "SampleStatus",
     "SourceStatus",
     "GovernedQuestion",
+    "ObservedQuestionSeed",
     "TAXONOMY_VERSION",
     "TrustLevel",
     "claim_job",

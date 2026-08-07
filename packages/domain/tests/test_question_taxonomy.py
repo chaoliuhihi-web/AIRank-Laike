@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from airank_domain import (
+    ObservedQuestionSeed,
     TAXONOMY_VERSION,
     compile_question_candidates,
     govern_question,
@@ -59,3 +60,32 @@ def test_compiler_marks_templates_as_candidates_and_never_invents_observed_volum
     assert any(item["cohort_type"] == "comparison" for item in questions)
     assert all("volume" not in item and item["observed_query"] is False for item in questions)
     assert all(item["question_version_id"].startswith("question_v_") for item in questions)
+
+
+def test_observed_question_keeps_attested_provenance_without_claiming_search_volume() -> None:
+    _, _, questions = compile_question_candidates(
+        brand_name="AIRank",
+        company_names=(),
+        product_terms=(),
+        competitor_names=(),
+        regions=("北京",),
+        seed_questions=("北京企业怎么选择 GEO 平台？",),
+        include_template_candidates=False,
+        observed_questions=(
+            ObservedQuestionSeed(
+                question_text="北京企业怎么选择 GEO 平台?",
+                source_ref="observation:qobatch_1:qobs_1",
+                occurrence_count=7,
+                observed_at="2026-08-01T00:00:00+00:00",
+                region="北京",
+            ),
+        ),
+    )
+
+    assert len(questions) == 1
+    question = questions[0]
+    assert question["source_kind"] == "observed_query"
+    assert question["observed_query"] is True
+    assert question["deduplicated_source_refs"] == ["observation:qobatch_1:qobs_1", "seed:1"]
+    assert question["provenance_records"][0]["occurrence_count"] == 7
+    assert "volume" not in question

@@ -42,7 +42,7 @@ def test_registry_contains_versioned_core_skills_with_complete_contracts() -> No
     assert set(SKILL_RUNNERS) == CORE_SKILL_IDS
     assert {manifest.status for manifest in manifests} == {"partial"}
     for manifest in manifests:
-        assert manifest.version == ("1.1.0" if manifest.skill_id == "research.intent-miner" else "1.0.0")
+        assert manifest.version == ("1.2.0" if manifest.skill_id == "research.intent-miner" else "1.0.0")
         assert manifest.fact_policy
         assert manifest.failure_policy
         assert manifest.quality_rubric
@@ -100,6 +100,38 @@ def test_intent_miner_normalizes_duplicates_and_keeps_competitors_out_of_blind()
     assert output["question_count"] == 2
     assert output["questions"][0]["cohort_type"] == "blind"
     assert output["questions"][1]["cohort_type"] == "comparison"
+
+
+def test_intent_miner_requires_observation_reference_before_marking_query_observed() -> None:
+    output = run_skill(
+        "research.intent-miner",
+        {
+            "seed_questions": ["企业怎么选择 GEO 平台？"],
+            "observed_questions": [
+                {
+                    "question_text": "制造企业怎么选择 GEO 平台？",
+                    "source_ref": "observation:qobatch_abcdef0123456789abcd:qobs_1234567890abcdef1234",
+                    "evidence_grade": "user_provided_snapshot",
+                    "occurrence_count": 6,
+                    "observed_at": "2026-08-01T00:00:00Z",
+                    "region": "江苏",
+                },
+                {
+                    "question_text": "伪造观察问题？",
+                    "source_ref": "manual:unverified",
+                    "evidence_grade": "user_provided_snapshot",
+                    "occurrence_count": 99,
+                },
+            ],
+        },
+    )
+
+    assert output["question_count"] == 2
+    observed = output["questions"][0]
+    assert observed["source_kind"] == "observed_query"
+    assert observed["observed_query"] is True
+    assert observed["provenance_records"][0]["occurrence_count"] == 6
+    assert all(item["question_text"] != "伪造观察问题?" for item in output["questions"])
 
 
 def test_retest_report_blocks_non_comparable_cohorts() -> None:

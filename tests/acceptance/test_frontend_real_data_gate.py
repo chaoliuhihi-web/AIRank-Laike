@@ -25,6 +25,8 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
         "fetchFactConflicts",
         "fetchFacts",
         "fetchBuyerQuestions",
+        "fetchQuestionObservationBatches",
+        "importQuestionObservations",
         "fetchPublishPackages",
         "fetchPublishAttempts",
         "fetchRetestWindows",
@@ -48,6 +50,9 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
 
     assert "当前明确标记为 disabled" in app_source
     assert "不能据此证明因果" not in app_source  # cautious conclusion comes from the real report API
+    assert "次数不是搜索量" in app_source
+    assert "客户提供观察记录（未独立核验）" in app_source
+    assert "来源内出现次数必须是" in app_source
 
 
 def test_backend_exposes_console_list_contracts() -> None:

@@ -60,19 +60,24 @@
 50. 人工确认成为采样硬门禁：新编译问题统一为 `suggested`，审核说明必填且审核主体来自认证上下文；ScanRun 只接收 `confirmed` 且问题修订 Cohort 与运行 Cohort 完全一致的条目，竞品命名问题不会泄漏进 blind 测试。
 51. 问题治理迁移 `20260808_0009` 在真实 MySQL 完成，AIRank 表数增至 45；迁移针对 MySQL 非事务 DDL 增加列、索引、外键存在性检查，已验证第一次中断后的安全重跑，不用人工删除半成品结构。
 52. 买家问题地图控制台接入真实编译、列表和审核 API，展示版本、来源、Cohort、意图、阶段、观察状态和审核门禁。真实 MySQL 浏览器验收完成 12 个候选编译、1 个规范化重复拦截、人工确认、正确 blind 任务入队及错误 comparison Cohort 返回 404；1543px 与 390px 均无页面级横向溢出，fresh console 为 `0 error / 0 warning`。
+53. `research.intent-miner` 升级至 `1.2.0`，新增 `ObservedQuestionSeed` 与 `provenance_records`。观察记录优先于种子和模板参与去重，重复来源会追加 provenance，不会把同一问题伪造为多个独立需求。
+54. 新增 M1 客户授权问题观察批次与记录：来源类型、名称、访问方式、证据等级、日期范围、payload SHA-256、记录数、来源内频次、授权声明和导入人均不可变保存；重复 payload 幂等回放同一批次。
+55. 导入门禁会拦截邮箱、中国手机号和身份证号；被拦截原文不写入数据库或响应，只保留不可逆内容 hash 与原因。`occurrence_count` 只表示该来源内出现次数，API 和控制台明确标注“不是搜索量”“客户提供、未独立核验”。
+56. Alembic `20260808_0010` 在真实 MySQL 完成，AIRank 表数增至 47。真实浏览器完成授权导入、1 条安全记录/频次 7、1 条 PII 阻断、观察问题编译、人工确认和刷新持久化；390px 有效视口无页面级横向溢出，控制台 `0 error / 0 warning`，页面与持久化层均未出现被拦截邮箱。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`220 passed, 12 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
+- `python3 -m pytest -q`：`225 passed, 13 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
 - 浏览器：`/login -> /console` 登录通过；13 个控制台路由在 1491×1055 桌面和 390×844 移动端共 26 项检查全部通过，无横向溢出、认证丢失或显式接口失败。证据中心已下钻到一条真实豆包样本，原始回答、双 SHA-256、EvidenceSnapshot、session、证据等级和真实 request ID 均可见；任务中心显示最终 ScanRun 的 12 个任务及 Kimi 明确失败原因。
 - 问题地图浏览器复验：升级 taxonomy 后使用同一输入重新编译，页面显示 `airank-question-taxonomy-v1.1.0`、12 个唯一问题、0 个新增候选、13 个重复拦截，证明新版本清单可回放且不会重复写问题。390×844 下页面宽度保持 390px，宽表只在卡片内部滚动，console `0 error / 0 warning`。
+- 观察问题浏览器复验：隔离租户通过真实 API/MySQL 导入一个 M1 批次，保存 1 条安全记录、来源内频次 7，并阻断 1 条含邮箱记录；页面显示 `airank-question-taxonomy-v1.2.0`、`user_provided_snapshot` 和“客户提供观察记录（未独立核验）”。编译候选经人工确认后刷新仍存在；390px 有效视口的 html/body `scrollWidth` 均为 390，console `0 error / 0 warning`。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
-- MySQL：Alembic `20260808_0009`；45 张 AIRank 表校验通过；新增问题地图、不可变问题修订和审核事件真实落库。迁移同时通过在线中断重跑和 `alembic upgrade head --sql` 离线发布包生成。
-- 本地真实 MySQL integration：`10 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增问题地图幂等编译、人工确认、租户隔离、suggested 排除及错误 Cohort 拒绝；既有对象引用、Provider store、Publisher 与复测链仍通过。
+- MySQL：Alembic `20260808_0010`；47 张 AIRank 表校验通过；新增观察批次/记录及来源 provenance 真实落库，PII 原文不落库。迁移同时通过在线中断重跑；离线发布 SQL 纳入最终门禁。
+- 本地真实 MySQL integration：`11 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增观察批次幂等导入、PII 阻断、provenance 编译及持久化断言；既有问题治理、对象引用、Provider store、Publisher 与复测链仍通过。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
 - 完整上线门禁：分包测试、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；总状态仍为 `BLOCKED`，真实阻塞为 GitHub/Gitee `main` 未同步、生产 Yudao 未配置、生产 HTTPS S3/MinIO 未验收、消费端浏览器 Provider `0/4`，以及当前本机 Python 3.9 / Node 20.18.2 低于生产运行时门禁。

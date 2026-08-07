@@ -303,6 +303,7 @@ export type QuestionMapCompileInput = {
   competitorNames: string[];
   regions: string[];
   seedQuestions: string[];
+  observationBatchIds?: string[];
   includeTemplateCandidates: boolean;
   persist?: boolean;
 };
@@ -315,6 +316,14 @@ export type QuestionMapCandidate = {
   cohort_type: "blind" | "assisted" | "comparison" | "fact_verification";
   source_kind: "provided_seed" | "template_candidate" | "observed_query" | "imported";
   observed_query: boolean;
+  provenance_records: Array<{
+    source_ref: string;
+    source_kind: string;
+    evidence_grade: string;
+    occurrence_count?: number;
+    observed_at?: string | null;
+    region?: string | null;
+  }>;
   status: "preview" | "suggested" | "confirmed" | "archived" | "duplicate";
 };
 
@@ -343,6 +352,56 @@ export type QuestionReview = {
   review_note: string;
   eligible_for_measurement: boolean;
   idempotent_replay: boolean;
+};
+
+export type QuestionObservationRecord = {
+  observation_id: string;
+  batch_id: string;
+  row_number: number;
+  source_record_id: string;
+  question_text: string;
+  normalized_question_text: string;
+  dedupe_sha256: string;
+  occurrence_count: number;
+  observed_at: string | null;
+  region: string | null;
+  audience_role: string | null;
+  content_sha256: string;
+  pii_status: "none_detected";
+  created_at: string;
+};
+
+export type QuestionObservationBatch = {
+  batch_id: string;
+  source_type: "site_search" | "search_console" | "customer_support" | "crm_sales" | "advertising_query" | "community_comment" | "provider_sample" | "other";
+  source_name: string;
+  access_mode: "user_provided";
+  evidence_grade: "user_provided_snapshot";
+  source_uri: string | null;
+  date_range_start: string | null;
+  date_range_end: string | null;
+  payload_sha256: string;
+  record_count: number;
+  occurrence_count: number;
+  pii_blocked_count: number;
+  status: "ready" | "blocked";
+  rights_attested: boolean;
+  imported_by: string;
+  created_at: string;
+  blocked_records: Array<{ row_number: number; content_sha256: string; reasons: string[] }>;
+  idempotent_replay: boolean;
+};
+
+export type QuestionObservationImportInput = {
+  sourceType: QuestionObservationBatch["source_type"];
+  sourceName: string;
+  records: Array<{
+    sourceRecordId: string;
+    questionText: string;
+    occurrenceCount: number;
+    region?: string;
+  }>;
+  rightsAttested: boolean;
 };
 
 export type PublishPackage = {
@@ -995,6 +1054,7 @@ export async function compileQuestionMap(projectId: string, input: QuestionMapCo
       competitor_names: input.competitorNames,
       regions: input.regions,
       seed_questions: input.seedQuestions,
+      observation_batch_ids: input.observationBatchIds ?? [],
       include_template_candidates: input.includeTemplateCandidates,
       persist: input.persist ?? true,
       created_by: session?.user.userId ?? "console_operator",
@@ -1004,6 +1064,47 @@ export async function compileQuestionMap(projectId: string, input: QuestionMapCo
     throw new Error(await readErrorMessage(response, `Question map compile request failed with ${response.status}`));
   }
   const payload = (await response.json()) as { data: QuestionMapResult };
+  return payload.data;
+}
+
+export function fetchQuestionObservationBatches(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<QuestionObservationBatch[]> {
+  return fetchData(
+    `/api/v1/projects/${projectId}/question-observation-batches`,
+    "trc_web_question_observation_batches",
+    signal,
+  );
+}
+
+export async function importQuestionObservations(
+  projectId: string,
+  input: QuestionObservationImportInput,
+): Promise<{ batch: QuestionObservationBatch; records: QuestionObservationRecord[] }> {
+  const session = getStoredAuthSession();
+  const response = await fetch(`/api/v1/projects/${projectId}/question-observation-batches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_question_observation_import") },
+    body: JSON.stringify({
+      source_type: input.sourceType,
+      source_name: input.sourceName,
+      records: input.records.map((item) => ({
+        source_record_id: item.sourceRecordId,
+        question_text: item.questionText,
+        occurrence_count: item.occurrenceCount,
+        region: item.region || undefined,
+      })),
+      rights_attested: input.rightsAttested,
+      imported_by: session?.user.userId ?? "console_operator",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Question observation import failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as {
+    data: { batch: QuestionObservationBatch; records: QuestionObservationRecord[] };
+  };
   return payload.data;
 }
 

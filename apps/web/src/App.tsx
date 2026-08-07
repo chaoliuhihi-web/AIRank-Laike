@@ -67,6 +67,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  fetchQuestionObservationBatches,
   fetchAnswerSample,
   fetchAnswerSamples,
   fetchBuyerQuestions,
@@ -90,6 +91,7 @@ import {
   fetchReports,
   getStoredAuthSession,
   loginToAirank,
+  importQuestionObservations,
   recordConsoleAction,
   recordDownloadReceipt,
   reviewBuyerQuestion,
@@ -118,6 +120,7 @@ import {
   type KnowledgeSource,
   type ProviderReadiness,
   type QuestionMapResult,
+  type QuestionObservationBatch,
   type PublishPackage,
   type ReportItem,
   type ReportList,
@@ -1837,7 +1840,16 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
   const { project } = useConsoleOverview();
   const { openPanel, recordAction } = useActionFeedback();
   const [questions, setQuestions] = useState<BuyerQuestion[]>([]);
+  const [observationBatches, setObservationBatches] = useState<QuestionObservationBatch[]>([]);
+  const [selectedObservationBatchIds, setSelectedObservationBatchIds] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [observationSourceType, setObservationSourceType] = useState<QuestionObservationBatch["source_type"]>("site_search");
+  const [observationSourceName, setObservationSourceName] = useState("");
+  const [observationRows, setObservationRows] = useState("");
+  const [observationRightsAttested, setObservationRightsAttested] = useState(false);
+  const [importingObservations, setImportingObservations] = useState(false);
+  const [observationError, setObservationError] = useState<string | null>(null);
+  const [observationNotice, setObservationNotice] = useState<string | null>(null);
   const [seedQuestions, setSeedQuestions] = useState("");
   const [productTerms, setProductTerms] = useState("");
   const [competitorNames, setCompetitorNames] = useState("");
@@ -1864,25 +1876,110 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
     }
   }, [project.id]);
 
+  const loadObservationBatches = useCallback(async (signal?: AbortSignal) => {
+    if (!project.id) return;
+    try {
+      const data = await fetchQuestionObservationBatches(project.id, signal);
+      setObservationBatches(data);
+      setSelectedObservationBatchIds((current) => current.filter((batchId) => data.some((item) => item.batch_id === batchId)));
+    } catch (error) {
+      if (signal?.aborted) return;
+      setObservationError(error instanceof Error ? error.message : "观察数据批次读取失败");
+    }
+  }, [project.id]);
+
   useEffect(() => {
     if (!project.id) return;
     const controller = new AbortController();
     void loadQuestions(controller.signal);
+    void loadObservationBatches(controller.signal);
     return () => controller.abort();
-  }, [loadQuestions, project.id]);
+  }, [loadObservationBatches, loadQuestions, project.id]);
 
   const splitQuestionInput = (value: string) => value
     .split(/[\n,，]/)
     .map((item) => item.trim())
     .filter(Boolean);
 
+  const handleObservationImport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id) return;
+    const records = splitLines(observationRows).map((line, index) => {
+      const [questionText = "", rawCount = "1", region = ""] = line.split("|").map((item) => item.trim());
+      const parsedCount = rawCount ? Number(rawCount) : 1;
+      return {
+        lineNumber: index + 1,
+        sourceRecordId: `console-row-${index + 1}`,
+        questionText,
+        occurrenceCount: parsedCount,
+        region: region || undefined,
+      };
+    }).filter((item) => item.questionText.length >= 4);
+    if (!observationSourceName.trim() || records.length === 0) {
+      setObservationError("请填写来源名称，并至少录入一条不少于 4 个字符的观察问题。");
+      return;
+    }
+    const invalidCount = records.find((item) => !Number.isInteger(item.occurrenceCount) || item.occurrenceCount < 1 || item.occurrenceCount > 1_000_000);
+    if (invalidCount) {
+      setObservationError(`第 ${invalidCount.lineNumber} 行的来源内出现次数必须是 1—1000000 的整数。`);
+      return;
+    }
+    if (!observationRightsAttested) {
+      setObservationError("必须确认数据来源已获授权，AIRank 才会保存不可变观察快照。");
+      return;
+    }
+    setImportingObservations(true);
+    setObservationError(null);
+    setObservationNotice(null);
+    try {
+      const result = await importQuestionObservations(project.id, {
+        sourceType: observationSourceType,
+        sourceName: observationSourceName.trim(),
+        records: records.map((item) => ({
+          sourceRecordId: item.sourceRecordId,
+          questionText: item.questionText,
+          occurrenceCount: item.occurrenceCount,
+          region: item.region,
+        })),
+        rightsAttested: observationRightsAttested,
+      });
+      setSelectedObservationBatchIds((current) => Array.from(new Set([...current, result.batch.batch_id])));
+      setObservationNotice(
+        `已保存 ${result.batch.record_count} 条客户提供记录；${result.batch.pii_blocked_count} 条因疑似个人信息未落原文。频次仅代表该来源记录，不等于搜索量。`,
+      );
+      setObservationRows("");
+      await loadObservationBatches();
+      void recordAction({
+        actionType: "question.observation_import",
+        label: "导入买家问题观察批次",
+        entityType: "question_observation_batch",
+        entityId: result.batch.batch_id,
+        payload: {
+          record_count: result.batch.record_count,
+          pii_blocked_count: result.batch.pii_blocked_count,
+          evidence_grade: result.batch.evidence_grade,
+        },
+      });
+    } catch (error) {
+      setObservationError(error instanceof Error ? error.message : "观察数据导入失败");
+    } finally {
+      setImportingObservations(false);
+    }
+  };
+
+  const toggleObservationBatch = (batchId: string) => {
+    setSelectedObservationBatchIds((current) => current.includes(batchId)
+      ? current.filter((item) => item !== batchId)
+      : [...current, batchId]);
+  };
+
   const handleCompile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!project.id) return;
     const seeds = splitLines(seedQuestions);
     const products = splitQuestionInput(productTerms);
-    if (seeds.length === 0 && products.length === 0) {
-      setCompileError("至少填写一个种子问题或产品/服务词。系统不会凭空生成问题。");
+    if (seeds.length === 0 && products.length === 0 && selectedObservationBatchIds.length === 0) {
+      setCompileError("至少填写一个种子问题、产品/服务词或选择一个观察批次。系统不会凭空生成问题。");
       return;
     }
     setCompiling(true);
@@ -1893,6 +1990,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
         competitorNames: splitQuestionInput(competitorNames),
         regions: splitQuestionInput(regions),
         seedQuestions: seeds,
+        observationBatchIds: selectedObservationBatchIds,
         includeTemplateCandidates: includeTemplates,
       });
       setCompileResult(result);
@@ -1948,11 +2046,72 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
         <section className="airank-console-card question-compiler-card">
           <div className="question-compiler-heading">
             <div>
-              <span className="section-kicker">Research Intent Skill · v1.1</span>
+              <span className="section-kicker">Research Intent Skill · v1.2</span>
               <h2>编译买家问题地图</h2>
               <p>种子问题保留为 provided_seed；规则扩展只标记为 template_candidate，不冒充真实用户搜索或搜索量。</p>
             </div>
             <Badge tone="primary">{compileResult?.taxonomy_version ?? "等待输入"}</Badge>
+          </div>
+          <div className="question-observation-panel">
+            <div className="question-observation-heading">
+              <div>
+                <span className="section-kicker">M1 · 用户提供观察数据</span>
+                <h3>导入真实问题来源</h3>
+                <p>每行格式：问题 | 来源内出现次数 | 地区。系统保存内容 hash 和来源批次；次数不是搜索量，当前证据未经过独立连接器核验。</p>
+              </div>
+              <Badge tone="warning">user_provided_snapshot</Badge>
+            </div>
+            <form className="question-observation-form" onSubmit={handleObservationImport}>
+              <label>
+                来源类型
+                <select value={observationSourceType} onChange={(event) => setObservationSourceType(event.target.value as QuestionObservationBatch["source_type"])}>
+                  <option value="site_search">站内搜索</option>
+                  <option value="search_console">Search Console</option>
+                  <option value="customer_support">客服问题</option>
+                  <option value="crm_sales">CRM / 销售访谈</option>
+                  <option value="advertising_query">投放搜索词</option>
+                  <option value="community_comment">社群 / 评论</option>
+                  <option value="provider_sample">AI 平台采样问题</option>
+                  <option value="other">其他授权来源</option>
+                </select>
+              </label>
+              <label>
+                来源名称
+                <input value={observationSourceName} onChange={(event) => setObservationSourceName(event.target.value)} placeholder="例如：官网站内搜索导出 2026-08" />
+              </label>
+              <label className="question-observation-wide">
+                观察问题
+                <textarea value={observationRows} onChange={(event) => setObservationRows(event.target.value)} placeholder="制造企业如何选择 GEO 平台？ | 7 | 上海&#10;GEO 监测是否支持原始回答追溯？ | 3 | 北京" />
+              </label>
+              <div className="question-observation-actions">
+                <label className="question-template-toggle">
+                  <input type="checkbox" checked={observationRightsAttested} onChange={(event) => setObservationRightsAttested(event.target.checked)} />
+                  我确认数据来源已获授权且可用于问题研究
+                </label>
+                <button className="ghost-button" type="submit" disabled={importingObservations}>{importingObservations ? "保存并检查中…" : "保存观察批次"}</button>
+              </div>
+            </form>
+            {observationError && <p className="question-governance-error">{observationError}</p>}
+            {observationNotice && <p className="question-observation-notice">{observationNotice}</p>}
+            {observationBatches.length > 0 && (
+              <div className="question-observation-batches">
+                {observationBatches.map((batch) => (
+                  <label className="question-observation-batch" data-status={batch.status} key={batch.batch_id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedObservationBatchIds.includes(batch.batch_id)}
+                      disabled={batch.status !== "ready"}
+                      onChange={() => toggleObservationBatch(batch.batch_id)}
+                    />
+                    <span>
+                      <strong>{batch.source_name}</strong>
+                      <small>{batch.record_count} 条可用 · 来源内频次 {batch.occurrence_count} · PII 拦截 {batch.pii_blocked_count}</small>
+                    </span>
+                    <span className="question-observation-proof" title={batch.payload_sha256}>{batch.evidence_grade}<small>{batch.payload_sha256.slice(0, 10)}</small></span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <form className="question-compiler-form" onSubmit={handleCompile}>
             <label className="question-compiler-wide">
@@ -1967,6 +2126,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                 <input type="checkbox" checked={includeTemplates} onChange={(event) => setIncludeTemplates(event.target.checked)} />
                 生成可审核的模板候选
               </label>
+              {selectedObservationBatchIds.length > 0 && <Badge tone="success">已选 {selectedObservationBatchIds.length} 个观察批次</Badge>}
               <button className="airank-console-primary-button" type="submit" disabled={compiling}>{compiling ? "编译并去重中…" : "编译并保存候选"}</button>
             </div>
           </form>
@@ -2012,7 +2172,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                     <td><strong>{row.question_text}</strong><Badge tone={row.intent_level === "high" ? "primary" : row.intent_level === "medium" ? "warning" : "muted"}>{row.question_type}</Badge></td>
                     <td><Badge tone={row.cohort_type === "blind" ? "success" : row.cohort_type === "comparison" ? "warning" : "primary"}>{row.cohort_type}</Badge><small title={row.question_version_id ?? undefined}>{row.question_version_id ? `v · ${row.question_version_id.slice(-8)}` : row.taxonomy_version}</small></td>
                     <td><span className={`intent ${row.intent_level === "high" ? "high" : "mid"}`}>{row.intent_level}</span><small>{row.buyer_stage} · {row.prompt_style}</small></td>
-                    <td><strong>{row.source_kind}</strong><small title={row.source_ref}>{row.observed_query ? "已取证用户查询" : "非真实搜索量"} · {row.source_ref}</small></td>
+                    <td><strong>{row.source_kind}</strong><small title={row.source_ref}>{row.observed_query ? "客户提供观察记录（未独立核验）" : "非真实搜索量"} · {row.source_ref}</small></td>
                     <td><Badge tone={row.coverage_status === "covered" ? "success" : row.coverage_status === "gap" ? "danger" : "warning"}>{row.coverage_status}</Badge><small>{row.recommended_providers.join("、") || "扫描时选择 Provider"}</small></td>
                     <td>
                       <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{row.status}</Badge>
@@ -2033,7 +2193,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
               <CheckLine text="问题总数" value={String(questions.length)} checked={questions.length > 0} />
               <CheckLine text="已确认可测量" value={String(confirmedCount)} checked={confirmedCount > 0} />
               <CheckLine text="待人工确认" value={String(suggestedCount)} checked={suggestedCount === 0 && questions.length > 0} />
-              <CheckLine text="真实观察查询" value={String(observedCount)} checked={observedCount > 0} />
+              <CheckLine text="客户观察记录" value={String(observedCount)} checked={observedCount > 0} />
             </div>
           </Panel>
           <Panel title="待处理问题">

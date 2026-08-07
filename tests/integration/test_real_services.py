@@ -48,6 +48,7 @@ from apps.api.evidence_routes import MySQLEvidenceRepository
 from apps.api.question_routes import (
     MySQLQuestionGovernanceRepository,
     QuestionMapCompileRequest,
+    QuestionObservationImportRequest,
     QuestionReviewRequest,
 )
 from airank_evidence import FilesystemObjectStorage
@@ -76,7 +77,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0009"
+EXPECTED_ALEMBIC_HEAD = "20260808_0010"
 
 
 def require_real_flag(flag: str) -> None:
@@ -142,7 +143,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 45
+        assert table_count == 47
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -152,6 +153,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             ("airank_content_assets", "target_url"),
             ("airank_publish_packages", "published_url"),
             ("airank_object_refs", "object_uri"),
+            ("airank_question_observation_batches", "source_uri"),
         )
         for table_name, column_name in url_columns:
             url_length = conn.execute(
@@ -423,6 +425,107 @@ def test_real_mysql_question_map_review_and_cohort_gate() -> None:
         assert revision_status["status"] == "suggested"
         assert revision_status["reviewed_by"] is None
         assert revision_status["reviewed_at"] is None
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_observed_query_batch_is_pii_safe_idempotent_and_compilable() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_qobs_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    question_repo = MySQLQuestionGovernanceRepository(database_url())
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-observed-query.example.com",
+                brand_name_hint="AIRank Observed Query",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        payload = QuestionObservationImportRequest(
+            source_type="site_search",
+            source_name="站内搜索导出",
+            date_range_start="2026-08-01T00:00:00Z",
+            date_range_end="2026-08-07T23:59:59Z",
+            records=[
+                {
+                    "source_record_id": "query-1",
+                    "question_text": "制造企业如何选择 GEO 监测平台？",
+                    "occurrence_count": 9,
+                    "observed_at": "2026-08-06T08:00:00Z",
+                    "region": "江苏",
+                },
+                {
+                    "source_record_id": "query-2",
+                    "question_text": "请联系 buyer@example.com 获取 GEO 报价",
+                    "occurrence_count": 1,
+                },
+            ],
+            rights_attested=True,
+            imported_by="integration_researcher",
+        )
+        imported = question_repo.import_observations(
+            tenant_id,
+            project.project_id,
+            payload,
+            "integration_researcher",
+        )
+        assert imported.batch.status == "ready"
+        assert imported.batch.evidence_grade == "user_provided_snapshot"
+        assert imported.batch.record_count == 1
+        assert imported.batch.occurrence_count == 9
+        assert imported.batch.pii_blocked_count == 1
+        assert imported.batch.blocked_records[0].reasons == ["email"]
+        assert len(imported.records) == 1
+
+        replay = question_repo.import_observations(
+            tenant_id,
+            project.project_id,
+            payload,
+            "integration_researcher",
+        )
+        assert replay.batch.idempotent_replay is True
+        assert replay.batch.batch_id == imported.batch.batch_id
+
+        compiled = question_repo.compile_map(
+            tenant_id,
+            project.project_id,
+            QuestionMapCompileRequest(
+                observation_batch_ids=[imported.batch.batch_id],
+                include_template_candidates=False,
+                persist=True,
+                created_by="integration_researcher",
+            ),
+            "integration_researcher",
+        )
+        assert compiled.question_count == 1
+        assert compiled.questions[0].source_kind == "observed_query"
+        assert compiled.questions[0].observed_query is True
+        assert compiled.questions[0].provenance_records[0]["occurrence_count"] == 9
+
+        with engine.connect() as conn:
+            counts = conn.execute(text("""
+                SELECT
+                  (SELECT COUNT(*) FROM airank_question_observation_batches WHERE tenant_id=:tenant_id) AS batch_count,
+                  (SELECT COUNT(*) FROM airank_question_observations WHERE tenant_id=:tenant_id) AS observation_count
+            """), {"tenant_id": tenant_id}).mappings().one()
+            stored_text = conn.execute(text("""
+                SELECT CONCAT(COALESCE(GROUP_CONCAT(question_text), ''),
+                              COALESCE(GROUP_CONCAT(normalized_question_text), ''))
+                FROM airank_question_observations
+                WHERE tenant_id=:tenant_id
+            """), {"tenant_id": tenant_id}).scalar_one()
+            manifest = conn.execute(text("""
+                SELECT CAST(manifest_json AS CHAR)
+                FROM airank_question_observation_batches
+                WHERE tenant_id=:tenant_id AND id=:batch_id
+            """), {"tenant_id": tenant_id, "batch_id": imported.batch.batch_id}).scalar_one()
+        assert dict(counts) == {"batch_count": 1, "observation_count": 1}
+        assert "buyer@example.com" not in stored_text
+        assert "buyer@example.com" not in manifest
     finally:
         cleanup_tenant(engine, tenant_id)
 

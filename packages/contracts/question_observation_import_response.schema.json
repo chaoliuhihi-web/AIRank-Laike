@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/question_observation_import_response.schema.json",
+  "title": "AIRank Question Observation Import Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["batch", "records"],
+      "properties": {
+        "batch": { "$ref": "#/$defs/batch" },
+        "records": { "type": "array", "items": { "$ref": "#/$defs/record" } }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "blocked_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row_number", "content_sha256", "reasons"],
+      "properties": {
+        "row_number": { "type": "integer", "minimum": 1 },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reasons": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batch_id", "tenant_id", "project_id", "source_type", "source_name",
+        "access_mode", "evidence_grade", "source_uri", "date_range_start", "date_range_end",
+        "payload_sha256", "record_count", "occurrence_count", "pii_blocked_count",
+        "status", "rights_attested", "imported_by", "created_at", "blocked_records",
+        "idempotent_replay"
+      ],
+      "properties": {
+        "batch_id": { "type": "string", "pattern": "^qobatch_[0-9a-f]{20}$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "source_type": {
+          "type": "string",
+          "enum": ["site_search", "search_console", "customer_support", "crm_sales", "advertising_query", "community_comment", "provider_sample", "other"]
+        },
+        "source_name": { "type": "string", "minLength": 2, "maxLength": 255 },
+        "access_mode": { "const": "user_provided" },
+        "evidence_grade": { "const": "user_provided_snapshot" },
+        "source_uri": { "type": ["string", "null"], "maxLength": 2048 },
+        "date_range_start": { "type": ["string", "null"], "format": "date-time" },
+        "date_range_end": { "type": ["string", "null"], "format": "date-time" },
+        "payload_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "record_count": { "type": "integer", "minimum": 0 },
+        "occurrence_count": { "type": "integer", "minimum": 0 },
+        "pii_blocked_count": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string", "enum": ["ready", "blocked"] },
+        "rights_attested": { "const": true },
+        "imported_by": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "blocked_records": { "type": "array", "items": { "$ref": "#/$defs/blocked_record" } },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_id", "batch_id", "row_number", "source_record_id", "question_text",
+        "normalized_question_text", "dedupe_sha256", "occurrence_count", "observed_at",
+        "region", "audience_role", "content_sha256", "pii_status", "created_at"
+      ],
+      "properties": {
+        "observation_id": { "type": "string", "pattern": "^qobs_[0-9a-f]{20}$" },
+        "batch_id": { "type": "string", "pattern": "^qobatch_[0-9a-f]{20}$" },
+        "row_number": { "type": "integer", "minimum": 1 },
+        "source_record_id": { "type": "string", "minLength": 1 },
+        "question_text": { "type": "string", "minLength": 4 },
+        "normalized_question_text": { "type": "string", "minLength": 4 },
+        "dedupe_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "occurrence_count": { "type": "integer", "minimum": 1 },
+        "observed_at": { "type": ["string", "null"], "format": "date-time" },
+        "region": { "type": ["string", "null"] },
+        "audience_role": { "type": ["string", "null"] },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pii_status": { "const": "none_detected" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "response_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

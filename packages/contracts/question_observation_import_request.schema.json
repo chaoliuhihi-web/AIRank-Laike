@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/question_observation_import_request.schema.json",
+  "title": "AIRank Question Observation Import Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_type", "source_name", "records", "rights_attested", "imported_by"],
+  "properties": {
+    "source_type": {
+      "type": "string",
+      "enum": ["site_search", "search_console", "customer_support", "crm_sales", "advertising_query", "community_comment", "provider_sample", "other"]
+    },
+    "source_name": { "type": "string", "minLength": 2, "maxLength": 255 },
+    "source_uri": { "type": ["string", "null"], "maxLength": 2048 },
+    "date_range_start": { "type": ["string", "null"], "format": "date-time" },
+    "date_range_end": { "type": ["string", "null"], "format": "date-time" },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_text"],
+        "properties": {
+          "source_record_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 255 },
+          "question_text": { "type": "string", "minLength": 4, "maxLength": 500 },
+          "occurrence_count": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "region": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+          "audience_role": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+        }
+      }
+    },
+    "rights_attested": { "const": true },
+    "imported_by": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}
