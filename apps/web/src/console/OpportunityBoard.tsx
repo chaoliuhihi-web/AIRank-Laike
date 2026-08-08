@@ -4,6 +4,7 @@ import type {
   OpportunityActionDirectory,
   OpportunityActionList,
   OpportunityActionRouting,
+  OpportunityCapacityPortfolio,
   OpportunityDependency,
   OpportunityExecutionPortfolio,
   OpportunityList,
@@ -47,6 +48,24 @@ const slaLabels: Record<OpportunityAction["sla_state"], string> = {
   final: "已终结",
 };
 
+const scheduleStateLabels: Record<NonNullable<OpportunityCapacityPortfolio["latest_schedule"]>["items"][number]["schedule_state"], string> = {
+  scheduled: "容量内可排",
+  unplanned: "缺少批准计划",
+  dates_missing: "缺少起止时间",
+  owner_missing: "缺少有效责任成员",
+  calendar_missing: "缺少工作日历",
+  calendar_unavailable: "计划区间无可用日",
+  dependency_blocked: "前置依赖阻断",
+  capacity_exceeded: "日容量冲突",
+  outside_horizon: "超出 90 天",
+};
+
+const windowLabels = {
+  day_0_30: "0–30 天",
+  day_31_60: "31–60 天",
+  day_61_90: "61–90 天",
+} as const;
+
 function routeFor(item: InterventionOpportunity): string {
   if (item.source_kind === "citation_support") return "/console/evidence";
   if (item.source_kind === "fact_governance" || item.intervention_gate === "evidence_blocked") return "/console/facts";
@@ -65,12 +84,23 @@ function shortHash(value: string): string {
   return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
 }
 
+function dateTimeLocal(value: string): string {
+  const parsed = new Date(value);
+  const offset = parsed.getTimezoneOffset() * 60_000;
+  return new Date(parsed.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function todayLocal(): string {
+  return dateTimeLocal(new Date().toISOString()).slice(0, 10);
+}
+
 export function OpportunityBoard({
   data,
   actionData,
   routingData,
   directoryData,
   planningData,
+  capacityData,
   currentUserId,
   deriving,
   actingActionId,
@@ -88,6 +118,9 @@ export function OpportunityBoard({
   onSavePlan,
   onAddDependency,
   onWaiveDependency,
+  onSaveCapacityCalendar,
+  onSaveCapacityException,
+  onGenerateSchedule,
   onNavigate,
 }: {
   data: OpportunityList;
@@ -95,6 +128,7 @@ export function OpportunityBoard({
   routingData: OpportunityActionRouting;
   directoryData: OpportunityActionDirectory;
   planningData: OpportunityExecutionPortfolio;
+  capacityData: OpportunityCapacityPortfolio;
   currentUserId: string;
   deriving: boolean;
   actingActionId: string | null;
@@ -109,14 +143,20 @@ export function OpportunityBoard({
   onPutRoute: (sourceKind: OpportunitySourceKind, teamId: string) => void;
   onSaveDirectoryBinding: (teamId: string, externalGroupId: string, expectedVersion?: number) => void;
   onRunDirectorySync: (teamId: string) => void;
-  onSavePlan: (action: OpportunityAction, effortHours: string, budgetAmount: string, assumptions: string, expectedVersion?: number) => void;
+  onSavePlan: (action: OpportunityAction, effortHours: string, budgetAmount: string, plannedStartAt: string, plannedDueAt: string, assumptions: string, expectedVersion?: number) => void;
   onAddDependency: (action: OpportunityAction, prerequisiteActionId: string, rationale: string) => void;
   onWaiveDependency: (dependency: OpportunityDependency, waiverReason: string) => void;
+  onSaveCapacityCalendar: (memberId: string, timezone: string, weeklyCapacityHours: string, workdays: number[], assumptions: string, expectedVersion?: number) => void;
+  onSaveCapacityException: (memberId: string, exceptionDate: string, availableHours: string, reason: string, expectedVersion?: number) => void;
+  onGenerateSchedule: (asOfDate: string) => void;
   onNavigate: (path: string) => void;
 }) {
   const latest = data.latest_derivation_run;
   const actionsByOpportunity = new Map(actionData.actions.map((item) => [item.opportunity_id, item]));
   const plansByAction = new Map(planningData.plans.map((item) => [item.action_id, item]));
+  const calendarsByMember = new Map(capacityData.calendars.map((item) => [item.member_id, item]));
+  const deliveryMembers = routingData.teams.flatMap((team) => team.members.map((member) => ({ ...member, teamName: team.name })));
+  const latestSchedule = capacityData.latest_schedule;
   const currentOpportunityIds = new Set(data.opportunities.map((item) => item.opportunity_id));
   const currentUserTeamIds = new Set(
     routingData.teams
@@ -413,6 +453,8 @@ export function OpportunityBoard({
                           action,
                           String(form.get("effort_hours") || "").trim(),
                           String(form.get("budget_amount") || "").trim(),
+                          String(form.get("planned_start_at") || "").trim(),
+                          String(form.get("planned_due_at") || "").trim(),
                           String(form.get("assumptions") || "").trim(),
                           plan?.version,
                         );
@@ -420,6 +462,8 @@ export function OpportunityBoard({
                     >
                       <label>人工工时<input name="effort_hours" type="number" min="0.01" max="10000" step="0.01" required defaultValue={plan?.estimated_effort_hours ?? "8"} /></label>
                       <label>预算（CNY）<input name="budget_amount" type="number" min="0" max="100000000" step="0.01" required defaultValue={plan?.estimated_budget_amount ?? "0"} /></label>
+                      <label>计划开始<input name="planned_start_at" type="datetime-local" required defaultValue={dateTimeLocal(plan?.planned_start_at ?? new Date().toISOString())} /></label>
+                      <label>计划完成<input name="planned_due_at" type="datetime-local" required defaultValue={dateTimeLocal(plan?.planned_due_at ?? action.due_at)} /></label>
                       <label className="opportunity-plan-assumptions">估算依据<input name="assumptions" minLength={20} maxLength={4000} required defaultValue={plan?.assumptions ?? "由实施负责人根据当前证据范围人工估算，实际投入以交付记录为准。"} /></label>
                       <button type="submit" disabled={planningMutationKey === `plan:${action.action_id}`}>
                         {planningMutationKey === `plan:${action.action_id}` ? "保存中…" : "批准人工计划"}
@@ -475,7 +519,162 @@ export function OpportunityBoard({
                 );
               })}
           </div>
-          <p className="opportunity-planning-disclaimer"><strong>效果声明：禁止。</strong> 当前没有自动日历排程，人工估算也不能替代合同、发票、工时单或发布后复测。</p>
+          <p className="opportunity-planning-disclaimer"><strong>效果声明：禁止。</strong> 人工估算和工作日历不能替代合同、发票、工时单、外部日历回执或发布后复测。</p>
+        </section>
+      )}
+
+      {(deliveryMembers.length > 0 || actionData.actions.length > 0) && (
+        <section className="opportunity-capacity-panel" aria-label="机会行动三十六十九十天容量排程">
+          <header>
+            <div>
+              <span className="opportunity-eyebrow">airank.opportunity-capacity-schedule.v1</span>
+              <h4>30 / 60 / 90 天容量排程</h4>
+              <p>按成员人工工作日历、计划日期和前置依赖生成不可变快照；逐日计算冲突，但不移动行动、不伪造工时，也不预测品牌推荐或增长。</p>
+            </div>
+            <span data-complete={capacityData.capacity_coverage_complete}>
+              日历 {capacityData.configured_calendar_count}/{capacityData.active_member_count}
+            </span>
+          </header>
+
+          {deliveryMembers.length === 0 ? (
+            <p className="opportunity-planning-warning">尚无交付成员，无法建立责任人工作日历。先配置团队成员与来源路由。</p>
+          ) : (
+            <div className="opportunity-capacity-calendars">
+              {deliveryMembers.map((member) => {
+                const calendar = calendarsByMember.get(member.member_id);
+                return (
+                  <article key={member.member_id} data-configured={Boolean(calendar)}>
+                    <div className="opportunity-capacity-member">
+                      <div>
+                        <strong>{member.display_name || member.user_id}</strong>
+                        <span>{member.teamName} · 成员 v{member.version}</span>
+                      </div>
+                      <span>{calendar ? `${calendar.weekly_capacity_hours} h/周 · 日历 v${calendar.version}` : "未配置日历"}</span>
+                    </div>
+                    <form
+                      className="opportunity-capacity-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const form = new FormData(event.currentTarget);
+                        const workdays = String(form.get("workdays") || "")
+                          .split(",")
+                          .map((value) => Number(value.trim()))
+                          .filter((value) => Number.isInteger(value) && value >= 1 && value <= 7);
+                        onSaveCapacityCalendar(
+                          member.member_id,
+                          String(form.get("timezone") || "").trim(),
+                          String(form.get("weekly_capacity_hours") || "").trim(),
+                          Array.from(new Set(workdays)).sort(),
+                          String(form.get("capacity_assumptions") || "").trim(),
+                          calendar?.version,
+                        );
+                      }}
+                    >
+                      <label>时区<input name="timezone" required defaultValue={calendar?.timezone ?? "Asia/Shanghai"} /></label>
+                      <label>每周可用工时<input name="weekly_capacity_hours" type="number" min="0.01" max="168" step="0.01" required defaultValue={calendar?.weekly_capacity_hours ?? "40"} /></label>
+                      <label>工作日（1=周一）<input name="workdays" required pattern="[1-7](,[1-7])*" defaultValue={(calendar?.workdays ?? [1, 2, 3, 4, 5]).join(",")} /></label>
+                      <label className="opportunity-capacity-assumptions">容量依据<input name="capacity_assumptions" minLength={20} maxLength={2000} required defaultValue={calendar?.assumptions ?? "由交付负责人确认未来九十天可投入容量，真实投入以工时记录为准。"} /></label>
+                      <button type="submit" disabled={planningMutationKey === `calendar:${member.member_id}`}>
+                        {planningMutationKey === `calendar:${member.member_id}` ? "保存中…" : calendar ? "更新工作日历" : "建立工作日历"}
+                      </button>
+                    </form>
+                    {calendar && (
+                      <>
+                        <form
+                          className="opportunity-capacity-exception-form"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const form = new FormData(event.currentTarget);
+                            const exceptionDate = String(form.get("exception_date") || "");
+                            const existing = calendar.exceptions.find((item) => item.exception_date === exceptionDate);
+                            onSaveCapacityException(
+                              member.member_id,
+                              exceptionDate,
+                              String(form.get("available_hours") || "").trim(),
+                              String(form.get("exception_reason") || "").trim(),
+                              existing?.version,
+                            );
+                          }}
+                        >
+                          <label>日期例外<input name="exception_date" type="date" required defaultValue={todayLocal()} /></label>
+                          <label>当日可用工时<input name="available_hours" type="number" min="0" max="24" step="0.01" required defaultValue="0" /></label>
+                          <label className="opportunity-capacity-assumptions">原因<input name="exception_reason" minLength={8} maxLength={1000} required defaultValue="团队确认当日不可用于本项目交付。" /></label>
+                          <button type="submit" disabled={planningMutationKey === `calendar-exception:${member.member_id}`}>
+                            {planningMutationKey === `calendar-exception:${member.member_id}` ? "记录中…" : "记录日期例外"}
+                          </button>
+                        </form>
+                        <div className="opportunity-capacity-proof">
+                          <span>人工来源 · 外部日历未核验</span>
+                          <span>事件 {calendar.event_count}</span>
+                          <code title={calendar.last_event_sha256}>{shortHash(calendar.last_event_sha256)}</code>
+                          {calendar.exceptions.slice(-3).map((item) => (
+                            <span key={item.exception_id}>{item.exception_date} · {item.available_hours} h · v{item.version}</span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          <form
+            className="opportunity-schedule-create"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              onGenerateSchedule(String(form.get("as_of_date") || ""));
+            }}
+          >
+            <label>排程基准日<input name="as_of_date" type="date" required defaultValue={todayLocal()} /></label>
+            <button type="submit" disabled={planningMutationKey === "capacity-schedule"}>
+              {planningMutationKey === "capacity-schedule" ? "正在冻结…" : "生成不可变 90 天排程"}
+            </button>
+            <span>窗口固定为 90 天；源清单与结果均保存 SHA-256。</span>
+          </form>
+
+          {latestSchedule ? (
+            <div className="opportunity-schedule-result" data-feasible={latestSchedule.schedule_feasible}>
+              <div className="opportunity-schedule-summary">
+                <div><span>排程状态</span><strong>{latestSchedule.schedule_feasible ? "当前可行" : "存在阻断"}</strong></div>
+                <div><span>容量冲突</span><strong>{latestSchedule.capacity_conflict_count}</strong></div>
+                <div><span>其他阻断</span><strong>{latestSchedule.blocked_count}</strong></div>
+                <div><span>超出 90 天</span><strong>{latestSchedule.outside_horizon_count}</strong></div>
+              </div>
+              <div className="opportunity-schedule-windows">
+                {latestSchedule.windows.map((window) => (
+                  <article key={window.window_code}>
+                    <strong>{windowLabels[window.window_code]}</strong>
+                    <span>{window.start_date} → {window.end_date}</span>
+                    <span>人工计划 {window.scheduled_effort_hours} / 容量 {window.available_capacity_hours} h</span>
+                    <span>利用率 {window.utilization_rate === null ? "不可计算" : `${(Number(window.utilization_rate) * 100).toFixed(1)}%`} · 阻断 {window.blocked_action_count}</span>
+                  </article>
+                ))}
+              </div>
+              <div className="opportunity-schedule-items">
+                {latestSchedule.items.map((item) => (
+                  <article key={item.item_id} data-state={item.schedule_state}>
+                    <div>
+                      <strong>{scheduleStateLabels[item.schedule_state]} · {shortHash(item.action_id)}</strong>
+                      <span>{item.window_code === "unscheduled" || item.window_code === "outside_horizon" ? item.window_code : windowLabels[item.window_code]}</span>
+                    </div>
+                    <span>{item.estimated_effort_hours === null ? "未估算" : `${item.estimated_effort_hours} h`} · 峰值利用率 {item.peak_daily_utilization === null ? "—" : `${(Number(item.peak_daily_utilization) * 100).toFixed(1)}%`}</span>
+                    <span>{item.reason_codes.length ? item.reason_codes.join(" · ") : "无阻断原因"}</span>
+                    <code title={item.item_sha256}>{shortHash(item.item_sha256)}</code>
+                  </article>
+                ))}
+              </div>
+              <div className="opportunity-capacity-proof">
+                <span>基准日 {latestSchedule.as_of_date} · {latestSchedule.created_by}</span>
+                <code title={latestSchedule.source_manifest_sha256}>源 {shortHash(latestSchedule.source_manifest_sha256)}</code>
+                <code title={latestSchedule.result_sha256}>结果 {shortHash(latestSchedule.result_sha256)}</code>
+                <strong>效果声明：禁止</strong>
+              </div>
+            </div>
+          ) : (
+            <p className="opportunity-planning-warning">尚未生成排程快照。未批准计划、缺日期、缺责任成员和缺工作日历都会按真实阻断展示。</p>
+          )}
         </section>
       )}
 

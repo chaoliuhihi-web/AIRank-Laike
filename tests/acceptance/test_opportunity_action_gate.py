@@ -108,3 +108,40 @@ def test_opportunity_execution_planning_is_visible_in_the_real_asset_workflow() 
     assert "putOpportunityExecutionPlan" in api
     assert "createOpportunityDependency" in api
     assert "waiveOpportunityDependency" in api
+
+
+def test_opportunity_capacity_schedule_freezes_sources_and_never_forecasts_outcomes() -> None:
+    migration = (ROOT / "apps/api/alembic/versions/20260809_0038_opportunity_capacity_schedules.py").read_text(encoding="utf-8")
+    routes = (ROOT / "apps/api/opportunity_schedule_routes.py").read_text(encoding="utf-8")
+    for required in (
+        "airank_opportunity_capacity_calendars",
+        "airank_opportunity_capacity_exceptions",
+        "airank_opportunity_capacity_events",
+        "airank_opportunity_schedule_runs",
+        "airank_opportunity_schedule_items",
+        "previous_event_sha256",
+        "source_manifest_sha256",
+        "result_sha256",
+        "outcome_forecast_allowed",
+    ):
+        assert required in migration
+    assert 'CAPACITY_CONTRACT_VERSION = "airank.opportunity-capacity-calendar.v1"' in routes
+    assert 'SCHEDULE_CONTRACT_VERSION = "airank.opportunity-capacity-schedule.v1"' in routes
+    assert 'SCHEDULE_POLICY_VERSION = "airank.opportunity-capacity-policy.v1"' in routes
+    assert '"external_calendar_verified": False' in routes
+    assert '"outcome_forecast_allowed": False' in routes
+    assert 'item["state"] = "capacity_exceeded"' in routes
+    assert 'item["reasons"].append("daily_capacity_exceeded")' in routes
+
+
+def test_opportunity_capacity_schedule_is_visible_in_the_real_asset_workflow() -> None:
+    board = (ROOT / "apps/web/src/console/OpportunityBoard.tsx").read_text(encoding="utf-8")
+    api = (ROOT / "apps/web/src/console/api.ts").read_text(encoding="utf-8")
+    assert "airank.opportunity-capacity-schedule.v1" in board
+    assert "30 / 60 / 90 天容量排程" in board
+    assert "外部日历未核验" in board
+    assert "效果声明：禁止" in board
+    assert "fetchOpportunityCapacityPortfolio" in api
+    assert "putOpportunityCapacityCalendar" in api
+    assert "putOpportunityCapacityException" in api
+    assert "createOpportunityExecutionSchedule" in api

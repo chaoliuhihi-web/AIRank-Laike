@@ -221,6 +221,10 @@ GET  /api/v1/projects/{project_id}/opportunity-execution-portfolio
 PUT  /api/v1/projects/{project_id}/opportunity-actions/{action_id}/plan
 POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/dependencies
 POST /api/v1/projects/{project_id}/opportunity-dependencies/{dependency_id}/waivers
+GET  /api/v1/projects/{project_id}/opportunity-capacity-portfolio
+PUT  /api/v1/projects/{project_id}/opportunity-action-team-members/{member_id}/capacity-calendar
+PUT  /api/v1/projects/{project_id}/opportunity-action-team-members/{member_id}/capacity-calendar/exceptions/{exception_date}
+POST /api/v1/projects/{project_id}/opportunity-execution-schedules
 ```
 
 行动使用 `airank.opportunity-action.v1`。只有最新完整推导中的不可变机会快照能创建每个稳定机会唯一的行动；默认截止日期由严重度映射，责任人通过认证身份自助领取，任务版本和 Idempotency-Key 阻止覆盖与重复副作用。`evidence_blocked` 即使已领取也不会自动转为执行中，必须由更新且 `ready_for_action` 的机会快照执行 `refresh_evidence`。`verify_not_observed` 只能绑定比来源更新的最新完整推导，并证明该稳定机会不在该次完整 manifest 中；`waive` 必须由责任人提供至少 20 字原因。两种终结都固定 `effect_claim_allowed=false`，不得解释为品牌推荐、增长或长期解决。所有状态变化写入带前序 hash 的追加事件。
@@ -230,6 +234,8 @@ POST /api/v1/projects/{project_id}/opportunity-dependencies/{dependency_id}/waiv
 交付成员目录使用 `airank.opportunity-action-directory-sync.v1`。一个团队只允许一个版本化 Yudao 部门绑定，凭证仅来自 API/Worker 进程环境，绑定、任务 payload、响应和审计均不得保存 token。Scheduler 派发 `opportunity.directory.sync` 时冻结 binding version；Worker 在外部调用前重检租户、项目、团队、部门和版本，任何漂移都失败关闭。同步只创建或更新 `membership_source=yudao` 的成员，目录未变化时不递增成员版本，目录中消失的外部成员才被停用；同 user ID 的手工成员保持原名称、容量、版本和 `external_membership_verified=false`，并在运行结果计入 `manual_conflict_count`。成功和失败运行都保存响应 hash、计数、错误分类与审计事件，但不保存外部正文或凭证。协议 fixture 通过不等于生产 Yudao 已验证。
 
 执行计划与依赖使用 `airank.opportunity-execution-plan.v1`。计划写入、依赖创建和依赖豁免同样要求 `airank:opportunity:admin`；GET 只返回当前项目的人工计划、覆盖率、依赖阻断与拓扑层级。预算和工时仅为人工估算，只有所有未终结行动均存在 approved plan 时才计算组合汇总，任何响应都固定 `outcome_forecast_allowed=false`。依赖创建使用 `Idempotency-Key`，项目内图变更通过行动行锁串行化并拒绝自依赖、执行中目标和循环依赖。未满足依赖阻止 open 行动被领取为 `in_progress`，以及已领取的证据阻断行动刷新为执行中；最新完整复测仍可按独立观测证据终结行动。依赖豁免必须提交乐观锁版本、实质原因和非效果声明确认。
+
+容量日历与 90 天执行组合使用 `airank.opportunity-capacity-calendar.v1`、`airank.opportunity-capacity-schedule.v1` 和固定的 `airank.opportunity-capacity-policy.v1`。写入同样只允许管理员和可信 actor；日历必须提交 IANA 时区、ISO 工作日、每周可用工时及至少 20 字人工依据，日期例外保存独立版本。当前不连接外部日历，所有日历/例外均固定 `manual` 和 `external_calendar_verified=false`。排程以 `as_of_date` 建立 90 天不可变快照，冻结所有活动行动、批准计划、责任成员、容量日历、日期例外和活动依赖的版本与 hash；逐日计算人工计划工时及共享成员冲突，输出 `day_0_30`、`day_31_60`、`day_61_90` 三个窗口。缺计划、日期、责任人、日历、可用容量或前置依赖都保留为显式阻断；超出窗口单独计数。`Idempotency-Key` 只允许相同请求重放，历史运行与逐行动结果不可修改；所有响应固定 `outcome_forecast_allowed=false`，排程可行不等于业务效果可实现。
 
 ## 幂等
 

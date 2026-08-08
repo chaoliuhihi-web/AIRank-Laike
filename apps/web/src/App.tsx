@@ -87,6 +87,7 @@ import {
   createFactAcquisitionTask,
   createPageAudit,
   createOpportunityAction,
+  createOpportunityExecutionSchedule,
   downloadReportEvidencePacket,
   deriveEvidenceGaps,
   deriveOpportunities,
@@ -107,6 +108,7 @@ import {
   fetchOpportunityActions,
   fetchOpportunityActionRouting,
   fetchOpportunityActionDirectory,
+  fetchOpportunityCapacityPortfolio,
   fetchOpportunityExecutionPortfolio,
   fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
@@ -164,6 +166,8 @@ import {
   upsertOpportunityActionMember,
   putOpportunityActionRoute,
   putOpportunityActionDirectoryBinding,
+  putOpportunityCapacityCalendar,
+  putOpportunityCapacityException,
   runOpportunityActionDirectorySync,
   putOpportunityExecutionPlan,
   waiveOpportunityDependency,
@@ -195,6 +199,7 @@ import {
   type OpportunityActionList,
   type OpportunityActionRouting,
   type OpportunityActionDirectory,
+  type OpportunityCapacityPortfolio,
   type OpportunityDependency,
   type OpportunityExecutionPortfolio,
   type OpportunitySourceKind,
@@ -4521,6 +4526,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     outcome_forecast_allowed: false,
     known_limitations: ["human_estimate_not_invoice_or_spend"],
   });
+  const [opportunityCapacity, setOpportunityCapacity] = useState<OpportunityCapacityPortfolio>({
+    project_id: "",
+    contract_version: "airank.opportunity-capacity-calendar.v1",
+    active_member_count: 0,
+    configured_calendar_count: 0,
+    capacity_coverage_complete: false,
+    calendars: [],
+    latest_schedule: null,
+    outcome_forecast_allowed: false,
+    known_limitations: ["manual_capacity_not_external_calendar"],
+  });
   const [derivingOpportunities, setDerivingOpportunities] = useState(false);
   const [actingOpportunityId, setActingOpportunityId] = useState<string | null>(null);
   const [routingMutationKey, setRoutingMutationKey] = useState<string | null>(null);
@@ -4564,6 +4580,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setOpportunityRouting({ project_id: "", contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
       setOpportunityDirectory({ project_id: "", contract_version: "airank.opportunity-action-directory-sync.v1", bindings: [], recent_sync_runs: [], configured_team_count: 0, verified_team_count: 0, known_limitations: ["yudao_action_team_sync_not_configured"] });
       setOpportunityPlanning({ project_id: "", contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
+      setOpportunityCapacity({ project_id: "", contract_version: "airank.opportunity-capacity-calendar.v1", active_member_count: 0, configured_calendar_count: 0, capacity_coverage_complete: false, calendars: [], latest_schedule: null, outcome_forecast_allowed: false, known_limitations: ["manual_capacity_not_external_calendar"] });
       return;
     }
     const controller = new AbortController();
@@ -4579,8 +4596,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchOpportunityActionRouting(project.id, controller.signal),
       fetchOpportunityActionDirectory(project.id, controller.signal),
       fetchOpportunityExecutionPortfolio(project.id, controller.signal),
+      fetchOpportunityCapacityPortfolio(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityDirectory, nextOpportunityPlanning]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityDirectory, nextOpportunityPlanning, nextOpportunityCapacity]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
@@ -4592,6 +4610,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunityRouting(nextOpportunityRouting);
         setOpportunityDirectory(nextOpportunityDirectory);
         setOpportunityPlanning(nextOpportunityPlanning);
+        setOpportunityCapacity(nextOpportunityCapacity);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4622,6 +4641,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunityRouting({ project_id: project.id, contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
         setOpportunityDirectory({ project_id: project.id, contract_version: "airank.opportunity-action-directory-sync.v1", bindings: [], recent_sync_runs: [], configured_team_count: 0, verified_team_count: 0, known_limitations: ["directory_state_unavailable"] });
         setOpportunityPlanning({ project_id: project.id, contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
+        setOpportunityCapacity({ project_id: project.id, contract_version: "airank.opportunity-capacity-calendar.v1", active_member_count: 0, configured_calendar_count: 0, capacity_coverage_complete: false, calendars: [], latest_schedule: null, outcome_forecast_allowed: false, known_limitations: ["capacity_state_unavailable"] });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4808,7 +4828,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     }
     setRoutingMutationKey(`member:${teamId}`);
     try {
-      setOpportunityRouting(await upsertOpportunityActionMember(project.id, teamId, userId));
+      const routing = await upsertOpportunityActionMember(project.id, teamId, userId);
+      setOpportunityRouting(routing);
+      setOpportunityCapacity(await fetchOpportunityCapacityPortfolio(project.id));
       notify({ title: "当前账号已加入团队", desc: "默认容量为 5 个活动行动；手工成员身份未经过 Yudao 外部目录核验。", tone: "success" });
     } catch (error) {
       notify({ title: "团队成员未更新", desc: error instanceof Error ? error.message : "成员版本或管理员权限不满足。", tone: "danger" });
@@ -4845,9 +4867,13 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         externalGroupId,
         expectedVersion,
       );
-      const routing = await fetchOpportunityActionRouting(project.id);
+      const [routing, capacity] = await Promise.all([
+        fetchOpportunityActionRouting(project.id),
+        fetchOpportunityCapacityPortfolio(project.id),
+      ]);
       setOpportunityDirectory(directory);
       setOpportunityRouting(routing);
+      setOpportunityCapacity(capacity);
       notify({
         title: "Yudao 成员目录已绑定",
         desc: "绑定处于 pending；只有真实同步成功后，外部成员才会标记为已核验。凭证未进入请求或数据库。",
@@ -4865,9 +4891,13 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setRoutingMutationKey(`directory-run:${teamId}`);
     try {
       const directory = await runOpportunityActionDirectorySync(project.id, teamId);
-      const routing = await fetchOpportunityActionRouting(project.id);
+      const [routing, capacity] = await Promise.all([
+        fetchOpportunityActionRouting(project.id),
+        fetchOpportunityCapacityPortfolio(project.id),
+      ]);
       setOpportunityDirectory(directory);
       setOpportunityRouting(routing);
+      setOpportunityCapacity(capacity);
       const run = directory.recent_sync_runs.find((item) => item.team_id === teamId);
       notify({
         title: "交付成员目录真实同步完成",
@@ -4878,12 +4908,14 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
     } catch (error) {
       try {
-        const [directory, routing] = await Promise.all([
+        const [directory, routing, capacity] = await Promise.all([
           fetchOpportunityActionDirectory(project.id),
           fetchOpportunityActionRouting(project.id),
+          fetchOpportunityCapacityPortfolio(project.id),
         ]);
         setOpportunityDirectory(directory);
         setOpportunityRouting(routing);
+        setOpportunityCapacity(capacity);
       } catch {
         // Preserve the original, more actionable synchronization error.
       }
@@ -4897,6 +4929,8 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     action: OpportunityAction,
     effortHours: string,
     budgetAmount: string,
+    plannedStartAt: string,
+    plannedDueAt: string,
     assumptions: string,
     expectedVersion?: number,
   ) => {
@@ -4906,10 +4940,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       const plan = await putOpportunityExecutionPlan(project.id, action.action_id, {
         estimatedEffortHours: effortHours,
         estimatedBudgetAmount: budgetAmount,
+        plannedStartAt,
+        plannedDueAt,
         assumptions,
         expectedVersion,
       });
-      setOpportunityPlanning(await fetchOpportunityExecutionPortfolio(project.id));
+      const [nextPlanning, nextCapacity] = await Promise.all([
+        fetchOpportunityExecutionPortfolio(project.id),
+        fetchOpportunityCapacityPortfolio(project.id),
+      ]);
+      setOpportunityPlanning(nextPlanning);
+      setOpportunityCapacity(nextCapacity);
       notify({
         title: plan.idempotent_replay ? "人工计划未变化" : "人工计划已批准",
         desc: `记录 ${plan.estimated_effort_hours} 小时、¥${plan.estimated_budget_amount} 人工估算；不作为实际支出或效果预测。`,
@@ -4970,6 +5011,88 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
     } catch (error) {
       notify({ title: "依赖豁免未记录", desc: error instanceof Error ? error.message : "豁免原因或版本不满足门禁。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
+    }
+  };
+
+  const submitOpportunityCapacityCalendar = async (
+    memberId: string,
+    timezone: string,
+    weeklyCapacityHours: string,
+    workdays: number[],
+    assumptions: string,
+    expectedVersion?: number,
+  ) => {
+    if (!project.id) return;
+    setPlanningMutationKey(`calendar:${memberId}`);
+    try {
+      const calendar = await putOpportunityCapacityCalendar(project.id, memberId, {
+        timezone,
+        weeklyCapacityHours,
+        workdays,
+        assumptions,
+        expectedVersion,
+      });
+      setOpportunityCapacity(await fetchOpportunityCapacityPortfolio(project.id));
+      notify({
+        title: calendar.idempotent_replay ? "成员容量未变化" : "成员工作日历已保存",
+        desc: `每周 ${calendar.weekly_capacity_hours} 小时，工作日 ${calendar.workdays.join("/")}；这是人工计划容量，不是外部日历或真实工时。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "成员工作日历未保存", desc: error instanceof Error ? error.message : "时区、工作日、容量或版本不满足门禁。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
+    }
+  };
+
+  const submitOpportunityCapacityException = async (
+    memberId: string,
+    exceptionDate: string,
+    availableHours: string,
+    reason: string,
+    expectedVersion?: number,
+  ) => {
+    if (!project.id) return;
+    setPlanningMutationKey(`calendar-exception:${memberId}`);
+    try {
+      await putOpportunityCapacityException(
+        project.id,
+        memberId,
+        exceptionDate,
+        availableHours,
+        reason,
+        expectedVersion,
+      );
+      setOpportunityCapacity(await fetchOpportunityCapacityPortfolio(project.id));
+      notify({
+        title: "容量日期例外已审计",
+        desc: `${exceptionDate} 可用 ${availableHours} 小时；人工例外不会冒充飞书、Yudao 或其他外部日历回执。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "容量日期例外未保存", desc: error instanceof Error ? error.message : "日期、容量、原因或版本不满足门禁。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
+    }
+  };
+
+  const submitOpportunitySchedule = async (asOfDate: string) => {
+    if (!project.id) return;
+    setPlanningMutationKey("capacity-schedule");
+    try {
+      const schedule = await createOpportunityExecutionSchedule(project.id, asOfDate);
+      setOpportunityCapacity(await fetchOpportunityCapacityPortfolio(project.id));
+      notify({
+        title: schedule.idempotent_replay ? "排程快照已复用" : "30/60/90 排程快照已冻结",
+        desc: schedule.schedule_feasible
+          ? `${schedule.scheduled_count} 个行动在当前人工容量内；该结论不包含增长或推荐预测。`
+          : `${schedule.blocked_count} 个行动阻断、${schedule.capacity_conflict_count} 个容量冲突、${schedule.outside_horizon_count} 个超出窗口。`,
+        tone: schedule.schedule_feasible ? "success" : "warning",
+      });
+    } catch (error) {
+      notify({ title: "排程快照未生成", desc: error instanceof Error ? error.message : "行动、计划、成员或日历证据不完整。", tone: "danger" });
     } finally {
       setPlanningMutationKey(null);
     }
@@ -5203,6 +5326,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         routingData={opportunityRouting}
         directoryData={opportunityDirectory}
         planningData={opportunityPlanning}
+        capacityData={opportunityCapacity}
         currentUserId={getStoredAuthSession()?.user.userId ?? ""}
         deriving={derivingOpportunities}
         actingActionId={actingOpportunityId}
@@ -5217,9 +5341,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         onPutRoute={(sourceKind, teamId) => void submitOpportunityRoute(sourceKind, teamId)}
         onSaveDirectoryBinding={(teamId, externalGroupId, expectedVersion) => void submitOpportunityDirectoryBinding(teamId, externalGroupId, expectedVersion)}
         onRunDirectorySync={(teamId) => void submitOpportunityDirectoryRun(teamId)}
-        onSavePlan={(action, effortHours, budgetAmount, assumptions, expectedVersion) => void submitOpportunityPlan(action, effortHours, budgetAmount, assumptions, expectedVersion)}
+        onSavePlan={(action, effortHours, budgetAmount, plannedStartAt, plannedDueAt, assumptions, expectedVersion) => void submitOpportunityPlan(action, effortHours, budgetAmount, plannedStartAt, plannedDueAt, assumptions, expectedVersion)}
         onAddDependency={(action, prerequisiteActionId, rationale) => void submitOpportunityDependency(action, prerequisiteActionId, rationale)}
         onWaiveDependency={(dependency, waiverReason) => void submitOpportunityDependencyWaiver(dependency, waiverReason)}
+        onSaveCapacityCalendar={(memberId, timezone, weeklyCapacityHours, workdays, assumptions, expectedVersion) => void submitOpportunityCapacityCalendar(memberId, timezone, weeklyCapacityHours, workdays, assumptions, expectedVersion)}
+        onSaveCapacityException={(memberId, exceptionDate, availableHours, reason, expectedVersion) => void submitOpportunityCapacityException(memberId, exceptionDate, availableHours, reason, expectedVersion)}
+        onGenerateSchedule={(asOfDate) => void submitOpportunitySchedule(asOfDate)}
         onNavigate={onNavigate}
       />
       <Panel title="真实扫描 → 证据缺口">

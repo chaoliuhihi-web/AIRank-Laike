@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_capacity_calendar.schema.json",
+  "title": "AIRank Opportunity Capacity Calendar",
+  "type": "object",
+  "required": ["calendar_id", "team_id", "member_id", "user_id", "display_name", "member_status", "member_version", "contract_version", "timezone", "weekly_capacity_hours", "workdays", "assumptions", "capacity_source", "external_calendar_verified", "status", "exceptions", "version", "event_count", "last_event_sha256", "created_by", "updated_by", "created_at", "updated_at", "idempotent_replay"],
+  "additionalProperties": false,
+  "properties": {
+    "calendar_id": { "type": "string", "pattern": "^opportunity_capacity_calendar_[0-9a-f]{20}$" },
+    "team_id": { "type": "string", "pattern": "^opportunity_action_team_[0-9a-f]{20}$" },
+    "member_id": { "type": "string", "pattern": "^opportunity_action_member_[0-9a-f]{20}$" },
+    "user_id": { "type": "string", "minLength": 1 },
+    "display_name": { "type": ["string", "null"] },
+    "member_status": { "enum": ["active", "disabled"] },
+    "member_version": { "type": "integer", "minimum": 1 },
+    "contract_version": { "const": "airank.opportunity-capacity-calendar.v1" },
+    "timezone": { "type": "string", "minLength": 1 },
+    "weekly_capacity_hours": { "$ref": "#/$defs/decimal" },
+    "workdays": { "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 7 } },
+    "assumptions": { "type": "string", "minLength": 1 },
+    "capacity_source": { "const": "manual" },
+    "external_calendar_verified": { "const": false },
+    "status": { "enum": ["active", "disabled"] },
+    "exceptions": { "type": "array", "items": { "$ref": "opportunity_capacity_exception.schema.json" } },
+    "version": { "type": "integer", "minimum": 1 },
+    "event_count": { "type": "integer", "minimum": 1 },
+    "last_event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "created_by": { "type": "string", "minLength": 1 },
+    "updated_by": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "idempotent_replay": { "type": "boolean" }
+  },
+  "$defs": {
+    "decimal": { "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "string", "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.(?:0*[1-9][0-9]*))$" }] }
+  }
+}

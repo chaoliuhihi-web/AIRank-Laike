@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_capacity_portfolio_response.schema.json",
+  "title": "AIRank Opportunity Capacity Portfolio Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["project_id", "contract_version", "active_member_count", "configured_calendar_count", "capacity_coverage_complete", "calendars", "latest_schedule", "outcome_forecast_allowed", "known_limitations"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "contract_version": { "const": "airank.opportunity-capacity-calendar.v1" },
+        "active_member_count": { "type": "integer", "minimum": 0 },
+        "configured_calendar_count": { "type": "integer", "minimum": 0 },
+        "capacity_coverage_complete": { "type": "boolean" },
+        "calendars": { "type": "array", "items": { "$ref": "opportunity_capacity_calendar.schema.json" } },
+        "latest_schedule": { "oneOf": [{ "$ref": "opportunity_schedule_run.schema.json" }, { "type": "null" }] },
+        "outcome_forecast_allowed": { "const": false },
+        "known_limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "meta": { "type": "object", "required": ["trace_id", "request_id"], "additionalProperties": false, "properties": { "trace_id": { "type": "string", "minLength": 1 }, "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" } } }
+  }
+}

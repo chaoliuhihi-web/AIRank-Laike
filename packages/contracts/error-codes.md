@@ -163,6 +163,11 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPPORTUNITY_DEPENDENCY_INVALID` | 409 | 机会行动依赖无效，例如行动依赖自身 |
 | `OPPORTUNITY_DEPENDENCY_CYCLE` | 409 | 新依赖会形成循环，或持久依赖图已无法拓扑排序 |
 | `OPPORTUNITY_DEPENDENCY_VERSION_CONFLICT` | 409 | 机会行动依赖版本已变化，必须刷新后再豁免 |
+| `OPPORTUNITY_CAPACITY_MEMBER_NOT_FOUND` | 404 | 容量日历对应的交付成员不存在、已停用或不属于当前租户项目 |
+| `OPPORTUNITY_CAPACITY_CALENDAR_NOT_FOUND` | 404 | 指定成员尚未建立当前项目的容量日历 |
+| `OPPORTUNITY_CAPACITY_VERSION_CONFLICT` | 409 | 容量日历版本已变化，必须刷新后再更新 |
+| `OPPORTUNITY_CAPACITY_EXCEPTION_VERSION_CONFLICT` | 409 | 日期容量例外版本已变化，必须刷新后再更新 |
+| `OPPORTUNITY_SCHEDULE_IDEMPOTENCY_CONFLICT` | 409 | 相同排程幂等键已被用于不同请求，不允许覆盖不可变排程 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

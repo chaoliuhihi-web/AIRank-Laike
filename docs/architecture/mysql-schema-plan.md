@@ -57,6 +57,11 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_intervention_opportunity_snapshots` | 品牌/引用/事实/页面机会的不可变证据快照与透明行动优先分 | 是 |
 | `airank_opportunity_actions` | 机会责任人、SLA、证据刷新、复测终结和禁止效果声明的当前投影 | 是 |
 | `airank_opportunity_action_events` | 机会行动带前序 hash、版本和幂等键的追加式事件 | 是 |
+| `airank_opportunity_capacity_calendars` | 交付成员人工容量日历、版本和来源声明 | 是 |
+| `airank_opportunity_capacity_exceptions` | 成员逐日容量例外与人工依据 | 是 |
+| `airank_opportunity_capacity_events` | 日历及例外的前序 hash 追加事件 | 是 |
+| `airank_opportunity_schedule_runs` | 冻结来源清单与 30/60/90 窗口的不可变排程运行 | 是 |
+| `airank_opportunity_schedule_items` | 排程运行内每行动的容量、依赖和窗口结果 | 是 |
 | `airank_content_assets` | FAQ、选型指南、案例页等内容资产 | 是 |
 | `airank_publish_packages` | 发布包导出、发布 URL、状态 | 是 |
 | `airank_retest_runs` | 复测批次和增长对比 | 是 |
@@ -191,6 +196,11 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_opportunity_action_plan_events` | `tenant_id` | `project_id` | 计划、依赖和豁免的 hash 链追加事件 | aggregate/version 唯一，项目/aggregate/时间索引覆盖 |
 | `airank_opportunity_action_team_sync_bindings` | `tenant_id` | `project_id` | 机会交付团队到 Yudao 部门的版本化同步策略和当前状态 | 每团队唯一、到期时间和外部部门索引覆盖；不保存 token 或凭证值 |
 | `airank_opportunity_action_team_sync_runs` | `tenant_id` | `project_id` | 每次目录同步的冻结绑定版本、响应 hash、成员变更/冲突计数和失败分类 | 绑定/idempotency 唯一，项目/状态/时间索引覆盖；失败运行同样留痕 |
+| `airank_opportunity_capacity_calendars` | `tenant_id` | `project_id` | 团队成员人工计划容量、IANA 时区、ISO 工作日和版本 | 每项目/member 唯一，团队/状态索引覆盖；固定 manual 且外部日历未核验 |
+| `airank_opportunity_capacity_exceptions` | `tenant_id` | `project_id` | 指定日期的人工可用工时例外 | 每 calendar/date 唯一，项目/日期索引覆盖；不冒充外部日历回执 |
+| `airank_opportunity_capacity_events` | `tenant_id` | `project_id` | 日历与例外变更的前序 hash 事件链 | aggregate/version 唯一，项目/aggregate/时间索引覆盖 |
+| `airank_opportunity_schedule_runs` | `tenant_id` | `project_id` | 90 天不可变排程、来源/结果 hash、三窗口汇总和限制 | 项目/idempotency 唯一，来源快照可索引对比；固定禁止效果预测 |
+| `airank_opportunity_schedule_items` | `tenant_id` | `project_id` | 每行动冻结版本、窗口、逐日容量冲突和原因码结果 | run/action 唯一，项目/window/state 索引覆盖；不自动修改行动计划 |
 | `airank_integration_capabilities` | 无 | 无 | 能力探测状态，非租户业务数据 | `uk_airank_capabilities`、`idx_airank_capabilities_status` 覆盖 |
 | `airank_audit_events` | `tenant_id` | `project_id` 可空 | 审计列表、实体审计、trace 排查 | `idx_airank_audit_events_project`、`idx_airank_audit_events_entity`、`idx_airank_audit_events_trace` 覆盖 |
 
@@ -225,7 +235,7 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 
 - Bootstrap SQL 和 Alembic 初始迁移的核心 tenant/project 查询索引可支撑 M1 CRUD、M2 worker claim、M3/M4 证据回溯的最小闭环。
 - M1 不新增 DDL；后续如出现慢查询，优先基于真实 query plan 新增 Alembic migration，不在业务代码里绕过租户过滤。
-- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0037`，共 91 张 `airank_*` 表；这只证明本地迁移和数据库链路，不替代生产备份、回滚演练、容量或外部服务验收。
+- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0038`，共 96 张 `airank_*` 表；这只证明本地迁移和数据库链路，不替代生产备份、回滚演练、容量或外部服务验收。
 
 ## 与 yudao 的字段映射
 

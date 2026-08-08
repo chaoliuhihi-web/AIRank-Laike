@@ -157,6 +157,11 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "OPPORTUNITY_ACTION_DIRECTORY_BINDING_CHANGED": (409, "Opportunity action directory binding changed during synchronization"),
     "OPPORTUNITY_ACTION_DIRECTORY_SYNC_FAILED": (503, "Opportunity action directory synchronization failed"),
     "OPPORTUNITY_PLAN_VERSION_CONFLICT": (409, "Opportunity execution plan version is stale"),
+    "OPPORTUNITY_CAPACITY_MEMBER_NOT_FOUND": (404, "Opportunity capacity member was not found"),
+    "OPPORTUNITY_CAPACITY_CALENDAR_NOT_FOUND": (404, "Opportunity capacity calendar was not found"),
+    "OPPORTUNITY_CAPACITY_VERSION_CONFLICT": (409, "Opportunity capacity calendar version is stale"),
+    "OPPORTUNITY_CAPACITY_EXCEPTION_VERSION_CONFLICT": (409, "Opportunity capacity exception version is stale"),
+    "OPPORTUNITY_SCHEDULE_IDEMPOTENCY_CONFLICT": (409, "Opportunity schedule idempotency key payload conflict"),
     "OPPORTUNITY_DEPENDENCY_NOT_FOUND": (404, "Opportunity action dependency was not found"),
     "OPPORTUNITY_DEPENDENCY_INVALID": (409, "Opportunity action dependency is invalid"),
     "OPPORTUNITY_DEPENDENCY_CYCLE": (409, "Opportunity action dependency would create a cycle"),
@@ -6104,3 +6109,10 @@ except ImportError:  # pragma: no cover
     from opportunity_planning_routes import router as opportunity_planning_router  # type: ignore[no-redef]
 
 app.include_router(opportunity_planning_router)
+
+try:
+    from .opportunity_schedule_routes import router as opportunity_schedule_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from opportunity_schedule_routes import router as opportunity_schedule_router  # type: ignore[no-redef]
+
+app.include_router(opportunity_schedule_router)

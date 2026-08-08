@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_schedule_create_request.schema.json",
+  "title": "AIRank Opportunity Schedule Create Request",
+  "type": "object",
+  "required": ["as_of_date"],
+  "additionalProperties": false,
+  "properties": {
+    "as_of_date": { "type": "string", "format": "date" },
+    "horizon_days": { "const": 90, "default": 90 }
+  }
+}

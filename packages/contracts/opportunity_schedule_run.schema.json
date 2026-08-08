@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_schedule_run.schema.json",
+  "title": "AIRank Opportunity 30/60/90 Capacity Schedule Run",
+  "type": "object",
+  "required": ["run_id", "project_id", "contract_version", "policy_version", "as_of_date", "horizon_days", "status", "source_manifest_sha256", "result_sha256", "action_count", "scheduled_count", "blocked_count", "outside_horizon_count", "capacity_conflict_count", "schedule_feasible", "windows", "items", "outcome_forecast_allowed", "known_limitations", "created_by", "created_at", "idempotent_replay"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string", "pattern": "^opportunity_schedule_run_[0-9a-f]{20}$" },
+    "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+    "contract_version": { "const": "airank.opportunity-capacity-schedule.v1" },
+    "policy_version": { "const": "airank.opportunity-capacity-policy.v1" },
+    "as_of_date": { "type": "string", "format": "date" },
+    "horizon_days": { "const": 90 },
+    "status": { "const": "complete" },
+    "source_manifest_sha256": { "$ref": "#/$defs/hash" },
+    "result_sha256": { "$ref": "#/$defs/hash" },
+    "action_count": { "type": "integer", "minimum": 0 },
+    "scheduled_count": { "type": "integer", "minimum": 0 },
+    "blocked_count": { "type": "integer", "minimum": 0 },
+    "outside_horizon_count": { "type": "integer", "minimum": 0 },
+    "capacity_conflict_count": { "type": "integer", "minimum": 0 },
+    "schedule_feasible": { "type": "boolean" },
+    "windows": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/window" }
+    },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "outcome_forecast_allowed": { "const": false },
+    "known_limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "created_by": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "idempotent_replay": { "type": "boolean" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "decimal": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }] },
+    "nullable_decimal": { "oneOf": [{ "$ref": "#/$defs/decimal" }, { "type": "null" }] },
+    "window": {
+      "type": "object",
+      "required": ["window_code", "start_date", "end_date", "available_capacity_hours", "scheduled_effort_hours", "utilization_rate", "action_count", "blocked_action_count"],
+      "additionalProperties": false,
+      "properties": {
+        "window_code": { "enum": ["day_0_30", "day_31_60", "day_61_90"] },
+        "start_date": { "type": "string", "format": "date" },
+        "end_date": { "type": "string", "format": "date" },
+        "available_capacity_hours": { "$ref": "#/$defs/decimal" },
+        "scheduled_effort_hours": { "$ref": "#/$defs/decimal" },
+        "utilization_rate": { "$ref": "#/$defs/nullable_decimal" },
+        "action_count": { "type": "integer", "minimum": 0 },
+        "blocked_action_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": ["item_id", "action_id", "action_version", "plan_id", "plan_version", "member_id", "member_version", "calendar_id", "calendar_version", "window_code", "schedule_state", "reason_codes", "planned_start_at", "planned_due_at", "estimated_effort_hours", "scheduled_effort_hours", "peak_daily_utilization", "item_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "item_id": { "type": "string", "pattern": "^opportunity_schedule_item_[0-9a-f]{20}$" },
+        "action_id": { "type": "string", "pattern": "^opportunity_action_[0-9a-f]{20}$" },
+        "action_version": { "type": "integer", "minimum": 1 },
+        "plan_id": { "oneOf": [{ "type": "string", "pattern": "^opportunity_plan_[0-9a-f]{20}$" }, { "type": "null" }] },
+        "plan_version": { "type": ["integer", "null"], "minimum": 1 },
+        "member_id": { "oneOf": [{ "type": "string", "pattern": "^opportunity_action_member_[0-9a-f]{20}$" }, { "type": "null" }] },
+        "member_version": { "type": ["integer", "null"], "minimum": 1 },
+        "calendar_id": { "oneOf": [{ "type": "string", "pattern": "^opportunity_capacity_calendar_[0-9a-f]{20}$" }, { "type": "null" }] },
+        "calendar_version": { "type": ["integer", "null"], "minimum": 1 },
+        "window_code": { "enum": ["day_0_30", "day_31_60", "day_61_90", "outside_horizon", "unscheduled"] },
+        "schedule_state": { "enum": ["scheduled", "unplanned", "dates_missing", "owner_missing", "calendar_missing", "calendar_unavailable", "dependency_blocked", "capacity_exceeded", "outside_horizon"] },
+        "reason_codes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "planned_start_at": { "type": ["string", "null"], "format": "date-time" },
+        "planned_due_at": { "type": ["string", "null"], "format": "date-time" },
+        "estimated_effort_hours": { "$ref": "#/$defs/nullable_decimal" },
+        "scheduled_effort_hours": { "$ref": "#/$defs/decimal" },
+        "peak_daily_utilization": { "$ref": "#/$defs/nullable_decimal" },
+        "item_sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

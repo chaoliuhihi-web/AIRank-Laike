@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_capacity_exception.schema.json",
+  "title": "AIRank Opportunity Capacity Exception",
+  "type": "object",
+  "required": ["exception_id", "exception_date", "available_hours", "reason", "exception_source", "external_calendar_verified", "version", "created_by", "updated_by", "created_at", "updated_at", "idempotent_replay"],
+  "additionalProperties": false,
+  "properties": {
+    "exception_id": { "type": "string", "pattern": "^opportunity_capacity_exception_[0-9a-f]{20}$" },
+    "exception_date": { "type": "string", "format": "date" },
+    "available_hours": { "$ref": "#/$defs/decimal" },
+    "reason": { "type": "string", "minLength": 1 },
+    "exception_source": { "const": "manual" },
+    "external_calendar_verified": { "const": false },
+    "version": { "type": "integer", "minimum": 1 },
+    "created_by": { "type": "string", "minLength": 1 },
+    "updated_by": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "idempotent_replay": { "type": "boolean" }
+  },
+  "$defs": {
+    "decimal": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }] }
+  }
+}

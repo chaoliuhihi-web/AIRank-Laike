@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_capacity_exception_put_request.schema.json",
+  "title": "AIRank Opportunity Capacity Exception Put Request",
+  "type": "object",
+  "required": ["available_hours", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "available_hours": { "$ref": "#/$defs/non_negative_decimal" },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 1000 },
+    "expected_version": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "non_negative_decimal": {
+      "oneOf": [
+        { "type": "number", "minimum": 0, "maximum": 24 },
+        { "type": "string", "pattern": "^(?:0*(?:[0-9]|1[0-9]|2[0-3])(?:\\.[0-9]+)?|0*24(?:\\.0+)?)$" }
+      ]
+    }
+  }
+}

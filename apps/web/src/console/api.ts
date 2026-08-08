@@ -488,6 +488,117 @@ export type OpportunityExecutionPortfolio = {
   known_limitations: string[];
 };
 
+export type OpportunityCapacityException = {
+  exception_id: string;
+  exception_date: string;
+  available_hours: string;
+  reason: string;
+  exception_source: "manual";
+  external_calendar_verified: false;
+  version: number;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityCapacityCalendar = {
+  calendar_id: string;
+  team_id: string;
+  member_id: string;
+  user_id: string;
+  display_name: string | null;
+  member_status: "active" | "disabled";
+  member_version: number;
+  contract_version: "airank.opportunity-capacity-calendar.v1";
+  timezone: string;
+  weekly_capacity_hours: string;
+  workdays: number[];
+  assumptions: string;
+  capacity_source: "manual";
+  external_calendar_verified: false;
+  status: "active" | "disabled";
+  exceptions: OpportunityCapacityException[];
+  version: number;
+  event_count: number;
+  last_event_sha256: string;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityScheduleWindow = {
+  window_code: "day_0_30" | "day_31_60" | "day_61_90";
+  start_date: string;
+  end_date: string;
+  available_capacity_hours: string;
+  scheduled_effort_hours: string;
+  utilization_rate: string | null;
+  action_count: number;
+  blocked_action_count: number;
+};
+
+export type OpportunityScheduleItem = {
+  item_id: string;
+  action_id: string;
+  action_version: number;
+  plan_id: string | null;
+  plan_version: number | null;
+  member_id: string | null;
+  member_version: number | null;
+  calendar_id: string | null;
+  calendar_version: number | null;
+  window_code: "day_0_30" | "day_31_60" | "day_61_90" | "outside_horizon" | "unscheduled";
+  schedule_state: "scheduled" | "unplanned" | "dates_missing" | "owner_missing" | "calendar_missing" | "calendar_unavailable" | "dependency_blocked" | "capacity_exceeded" | "outside_horizon";
+  reason_codes: string[];
+  planned_start_at: string | null;
+  planned_due_at: string | null;
+  estimated_effort_hours: string | null;
+  scheduled_effort_hours: string;
+  peak_daily_utilization: string | null;
+  item_sha256: string;
+};
+
+export type OpportunityScheduleRun = {
+  run_id: string;
+  project_id: string;
+  contract_version: "airank.opportunity-capacity-schedule.v1";
+  policy_version: "airank.opportunity-capacity-policy.v1";
+  as_of_date: string;
+  horizon_days: 90;
+  status: "complete";
+  source_manifest_sha256: string;
+  result_sha256: string;
+  action_count: number;
+  scheduled_count: number;
+  blocked_count: number;
+  outside_horizon_count: number;
+  capacity_conflict_count: number;
+  schedule_feasible: boolean;
+  windows: OpportunityScheduleWindow[];
+  items: OpportunityScheduleItem[];
+  outcome_forecast_allowed: false;
+  known_limitations: string[];
+  created_by: string;
+  created_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityCapacityPortfolio = {
+  project_id: string;
+  contract_version: "airank.opportunity-capacity-calendar.v1";
+  active_member_count: number;
+  configured_calendar_count: number;
+  capacity_coverage_complete: boolean;
+  calendars: OpportunityCapacityCalendar[];
+  latest_schedule: OpportunityScheduleRun | null;
+  outcome_forecast_allowed: false;
+  known_limitations: string[];
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -2121,12 +2232,22 @@ export function fetchOpportunityExecutionPortfolio(projectId: string, signal?: A
   );
 }
 
+export function fetchOpportunityCapacityPortfolio(projectId: string, signal?: AbortSignal): Promise<OpportunityCapacityPortfolio> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-capacity-portfolio`,
+    "trc_web_opportunity_capacity_portfolio",
+    signal,
+  );
+}
+
 export async function putOpportunityExecutionPlan(
   projectId: string,
   actionId: string,
   input: {
     estimatedEffortHours: string;
     estimatedBudgetAmount: string;
+    plannedStartAt: string;
+    plannedDueAt: string;
     assumptions: string;
     expectedVersion?: number;
   },
@@ -2141,6 +2262,8 @@ export async function putOpportunityExecutionPlan(
         estimated_effort_hours: input.estimatedEffortHours,
         estimated_budget_amount: input.estimatedBudgetAmount,
         currency: "CNY",
+        planned_start_at: new Date(input.plannedStartAt).toISOString(),
+        planned_due_at: new Date(input.plannedDueAt).toISOString(),
         assumptions: input.assumptions,
         ...(input.expectedVersion ? { expected_version: input.expectedVersion } : {}),
       }),
@@ -2148,6 +2271,76 @@ export async function putOpportunityExecutionPlan(
   );
   if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity execution plan update failed with ${response.status}`));
   return ((await response.json()) as { data: OpportunityExecutionPlan }).data;
+}
+
+export async function putOpportunityCapacityCalendar(
+  projectId: string,
+  memberId: string,
+  input: {
+    timezone: string;
+    weeklyCapacityHours: string;
+    workdays: number[];
+    assumptions: string;
+    expectedVersion?: number;
+  },
+): Promise<OpportunityCapacityCalendar> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-team-members/${encodeURIComponent(memberId)}/capacity-calendar`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_capacity_calendar") },
+      body: JSON.stringify({
+        timezone: input.timezone,
+        weekly_capacity_hours: input.weeklyCapacityHours,
+        workdays: input.workdays,
+        assumptions: input.assumptions,
+        ...(input.expectedVersion ? { expected_version: input.expectedVersion } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity capacity calendar update failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityCapacityCalendar }).data;
+}
+
+export async function putOpportunityCapacityException(
+  projectId: string,
+  memberId: string,
+  exceptionDate: string,
+  availableHours: string,
+  reason: string,
+  expectedVersion?: number,
+): Promise<OpportunityCapacityException> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-team-members/${encodeURIComponent(memberId)}/capacity-calendar/exceptions/${encodeURIComponent(exceptionDate)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_capacity_exception") },
+      body: JSON.stringify({
+        available_hours: availableHours,
+        reason,
+        ...(expectedVersion ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity capacity exception update failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityCapacityException }).data;
+}
+
+export async function createOpportunityExecutionSchedule(projectId: string, asOfDate: string): Promise<OpportunityScheduleRun> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-execution-schedules`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-schedule-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_capacity_schedule"),
+      },
+      body: JSON.stringify({ as_of_date: asOfDate, horizon_days: 90 }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity schedule generation failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityScheduleRun }).data;
 }
 
 export async function createOpportunityDependency(

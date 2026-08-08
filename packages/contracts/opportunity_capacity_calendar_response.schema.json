@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_capacity_calendar_response.schema.json",
+  "title": "AIRank Opportunity Capacity Calendar Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": { "$ref": "opportunity_capacity_calendar.schema.json" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "meta": { "type": "object", "required": ["trace_id", "request_id"], "additionalProperties": false, "properties": { "trace_id": { "type": "string", "minLength": 1 }, "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" } } }
+  }
+}

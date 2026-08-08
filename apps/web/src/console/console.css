@@ -855,6 +855,302 @@ body,
   color: #a54837;
 }
 
+.opportunity-capacity-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d8e2f0;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.opportunity-capacity-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.opportunity-capacity-panel h4 {
+  margin: 3px 0 4px;
+  color: var(--console-text-strong);
+  font: 820 16px / 22px var(--console-font-family);
+}
+
+.opportunity-capacity-panel header p {
+  max-width: 820px;
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 600 12px / 19px var(--console-font-family);
+}
+
+.opportunity-capacity-panel > header > span {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #fff3df;
+  color: #8a5d12;
+  font: 750 10px / 15px var(--console-font-family);
+}
+
+.opportunity-capacity-panel > header > span[data-complete="true"] {
+  background: #e9f8ef;
+  color: #247346;
+}
+
+.opportunity-capacity-calendars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.opportunity-capacity-calendars > article {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #efdfb7;
+  border-left: 4px solid #d49a2e;
+  border-radius: 9px;
+  background: #fffaf0;
+}
+
+.opportunity-capacity-calendars > article[data-configured="true"] {
+  border-color: #cbded3;
+  border-left-color: #46966a;
+  background: #f7fcf9;
+}
+
+.opportunity-capacity-member {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.opportunity-capacity-member > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.opportunity-capacity-member strong {
+  color: var(--console-text-strong);
+  font: 800 12px / 18px var(--console-font-family);
+}
+
+.opportunity-capacity-member span {
+  color: var(--console-text-muted);
+  font: 600 10px / 16px var(--console-font-family);
+  overflow-wrap: anywhere;
+}
+
+.opportunity-capacity-member > span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #edf7f1;
+  color: #247346;
+  font-weight: 750;
+}
+
+.opportunity-capacity-form,
+.opportunity-capacity-exception-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(110px, 0.6fr) minmax(130px, 0.7fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.opportunity-capacity-exception-form {
+  grid-template-columns: minmax(130px, 0.7fr) minmax(120px, 0.7fr) minmax(220px, 1.4fr) auto;
+  padding-top: 10px;
+  border-top: 1px dashed #cbded3;
+}
+
+.opportunity-capacity-form label,
+.opportunity-capacity-exception-form label,
+.opportunity-schedule-create label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--console-text-muted);
+  font: 700 10px / 16px var(--console-font-family);
+}
+
+.opportunity-capacity-form .opportunity-capacity-assumptions {
+  grid-column: 1 / -1;
+}
+
+.opportunity-capacity-form input,
+.opportunity-capacity-exception-form input,
+.opportunity-schedule-create input {
+  min-width: 0;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--console-border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--console-text-strong);
+}
+
+.opportunity-capacity-form button,
+.opportunity-capacity-exception-form button,
+.opportunity-schedule-create button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid #b8d8c5;
+  border-radius: 8px;
+  background: #edf8f1;
+  color: #247346;
+  font: 750 11px / 17px var(--console-font-family);
+}
+
+.opportunity-capacity-form button {
+  grid-column: 1 / -1;
+}
+
+.opportunity-capacity-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.opportunity-capacity-proof span,
+.opportunity-capacity-proof code,
+.opportunity-capacity-proof strong {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--console-text-muted);
+  font: 700 10px / 16px var(--console-font-family);
+  overflow-wrap: anywhere;
+}
+
+.opportunity-capacity-proof strong {
+  background: #fff0ed;
+  color: #a54837;
+}
+
+.opportunity-schedule-create {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.5fr) auto minmax(260px, 1fr);
+  gap: 8px;
+  align-items: end;
+  padding: 11px;
+  border: 1px solid #d8e2f0;
+  border-radius: 9px;
+  background: #f8faff;
+}
+
+.opportunity-schedule-create > span {
+  align-self: center;
+  color: var(--console-text-muted);
+  font: 600 10px / 16px var(--console-font-family);
+}
+
+.opportunity-schedule-result {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #efc8bf;
+  border-left: 4px solid #d85842;
+  border-radius: 9px;
+  background: #fff9f7;
+}
+
+.opportunity-schedule-result[data-feasible="true"] {
+  border-color: #b7d9c5;
+  border-left-color: #46966a;
+  background: #f7fcf9;
+}
+
+.opportunity-schedule-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.opportunity-schedule-summary > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-right: 1px solid var(--console-border);
+}
+
+.opportunity-schedule-summary > div:last-child {
+  border-right: 0;
+}
+
+.opportunity-schedule-summary span,
+.opportunity-schedule-windows span,
+.opportunity-schedule-items span {
+  color: var(--console-text-muted);
+  font: 600 10px / 16px var(--console-font-family);
+  overflow-wrap: anywhere;
+}
+
+.opportunity-schedule-summary strong {
+  color: var(--console-text-strong);
+  font: 820 15px / 21px var(--console-font-family);
+}
+
+.opportunity-schedule-windows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.opportunity-schedule-windows > article {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid #d8e2f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.opportunity-schedule-windows strong,
+.opportunity-schedule-items strong {
+  color: var(--console-text-strong);
+  font: 780 11px / 17px var(--console-font-family);
+}
+
+.opportunity-schedule-items {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-schedule-items > article {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(190px, 0.9fr) minmax(220px, 1.2fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid #efc8bf;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.opportunity-schedule-items > article[data-state="scheduled"] {
+  border-color: #b7d9c5;
+}
+
+.opportunity-schedule-items > article > div {
+  display: grid;
+  gap: 2px;
+}
+
+.opportunity-schedule-items code {
+  color: var(--console-text-muted);
+  font: 650 10px / 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 @media (max-width: 760px) {
   .opportunity-board {
     padding: 15px;
@@ -904,11 +1200,19 @@ body,
   .opportunity-action-list article,
   .opportunity-routing-panel > header,
   .opportunity-planning-panel > header,
+  .opportunity-capacity-panel > header,
   .opportunity-planning-action-title,
   .opportunity-plan-form,
   .opportunity-dependency-form,
   .opportunity-dependency-list > div,
   .opportunity-dependency-list form,
+  .opportunity-capacity-calendars,
+  .opportunity-capacity-member,
+  .opportunity-capacity-form,
+  .opportunity-capacity-exception-form,
+  .opportunity-schedule-create,
+  .opportunity-schedule-windows,
+  .opportunity-schedule-items > article,
   .opportunity-routing-create,
   .opportunity-routing-teams,
   .opportunity-routing-grid {
@@ -929,6 +1233,23 @@ body,
   }
 
   .opportunity-planning-summary > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--console-border);
+  }
+
+  .opportunity-capacity-form .opportunity-capacity-assumptions,
+  .opportunity-capacity-form button {
+    grid-column: auto;
+  }
+
+  .opportunity-schedule-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opportunity-schedule-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .opportunity-schedule-summary > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--console-border);
   }
 
