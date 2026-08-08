@@ -1,11 +1,11 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T16:28:09+08:00
+Generated: 2026-08-08T17:08:23+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
 | --- | --- | --- |
-| working tree | PASS | `git status --short --branch` |
+| working tree | BLOCKED | `git status --short --branch` |
 | origin main ref | PASS | `git rev-parse HEAD && git ls-remote origin refs/heads/main` |
 | gitee main ref | PASS | `git rev-parse HEAD && git ls-remote gitee refs/heads/main` |
 | diff check | PASS | `git diff --check` |
@@ -33,10 +33,37 @@ Result: BLOCKED
 
 ## working tree
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 ## codex/evidence-productization
+ M docs/handoff/release-readiness-current.md
+?? apps/api/__pycache__/
+?? apps/api/alembic/__pycache__/
+?? apps/api/alembic/versions/__pycache__/
+?? apps/scheduler/airank_scheduler/__pycache__/
+?? apps/scheduler/tests/__pycache__/
+?? apps/worker/airank_worker/__pycache__/
+?? apps/worker/tests/__pycache__/
+?? packages/crawler-lite/src/airank_crawler_lite/__pycache__/
+?? packages/crawler-lite/tests/__pycache__/
+?? packages/domain/src/airank_domain/__pycache__/
+?? packages/evidence/src/airank_evidence/__pycache__/
+?? packages/evidence/tests/__pycache__/
+?? packages/outbound-security/src/airank_outbound_security/__pycache__/
+?? packages/outbound-security/tests/__pycache__/
+?? packages/provider-gateway/src/airank_provider_gateway/__pycache__/
+?? packages/provider-gateway/tests/__pycache__/
+?? packages/score/src/airank_score/__pycache__/
+?? packages/score/tests/__pycache__/
+?? packages/skills/src/airank_skills/__pycache__/
+?? packages/xinghe-adapter/src/airank_xinghe_adapter/__pycache__/
+?? packages/xinghe-adapter/tests/__pycache__/
+?? scripts/__pycache__/
+?? tests/__pycache__/
+?? tests/acceptance/__pycache__/
+?? tests/contracts/__pycache__/
+?? tests/integration/__pycache__/
 ```
 
 ## origin main ref
@@ -44,7 +71,7 @@ Status: PASS
 Status: PASS
 
 ```text
-6318ac3b020a42cc48ea35907d8ab6c58cb9c8a3
+3341f746308d894075f714013b608a1e4d5ca327
 ```
 
 ## gitee main ref
@@ -52,7 +79,7 @@ Status: PASS
 Status: PASS
 
 ```text
-6318ac3b020a42cc48ea35907d8ab6c58cb9c8a3
+3341f746308d894075f714013b608a1e4d5ca327
 ```
 
 ## diff check
@@ -96,12 +123,11 @@ Status: BLOCKED
 
 ```text
 {
-  "AIRANK_ENV": "local",
+  "AIRANK_ENV": "production",
   "AIRANK_OBJECT_STORAGE_DRIVER": "local",
   "endpoint_scheme": "provider-default",
   "allow_http": false,
   "blockers": [
-    "AIRANK_ENV=local; release requires production",
     "AIRANK_OBJECT_STORAGE_DRIVER=local; production requires s3/minio"
   ]
 }
@@ -114,7 +140,7 @@ Status: PASS
 ```text
 {
   "python": "3.11.15",
-  "node": "v24.13.1",
+  "node": "v24.14.0",
   "required": {
     "python": "3.11+",
     "node": "20.19+ or 22.12+"
@@ -128,10 +154,10 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 43%]
-........................................................................ [ 87%]
-.....................                                                    [100%]
-165 passed in 1.19s
+........................................................................ [ 42%]
+........................................................................ [ 85%]
+........................                                                 [100%]
+168 passed in 1.03s
 ```
 
 ## crawler lite tests
@@ -149,7 +175,7 @@ Status: PASS
 
 ```text
 ..............................................................           [100%]
-62 passed in 0.53s
+62 passed in 0.48s
 ```
 
 ## scheduler tests
@@ -158,7 +184,7 @@ Status: PASS
 
 ```text
 .....                                                                    [100%]
-5 passed in 0.20s
+5 passed in 0.21s
 ```
 
 ## worker tests
@@ -167,7 +193,7 @@ Status: PASS
 
 ```text
 ................................                                         [100%]
-32 passed in 0.13s
+32 passed in 0.12s
 ```
 
 ## score tests
@@ -176,7 +202,7 @@ Status: PASS
 
 ```text
 ................                                                         [100%]
-16 passed in 0.05s
+16 passed in 0.04s
 ```
 
 ## evidence tests
@@ -185,7 +211,7 @@ Status: PASS
 
 ```text
 ....................................                                     [100%]
-36 passed in 0.06s
+36 passed in 0.04s
 ```
 
 ## outbound security tests
@@ -194,7 +220,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.02s
+23 passed in 0.01s
 ```
 
 ## provider gateway tests
@@ -203,7 +229,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.04s
+23 passed in 0.02s
 ```
 
 ## core skill evaluation
@@ -237,9 +263,9 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
-dist/assets/index-eqD1u92P.css   64.10 kB │ gzip:  10.73 kB
-dist/assets/index-D-WVi7mb.js   354.60 kB │ gzip: 107.35 kB
-✓ built in 717ms
+dist/assets/index-IJxJGAw-.css   66.73 kB │ gzip:  11.07 kB
+dist/assets/index-DGe2kMOy.js   358.93 kB │ gzip: 108.63 kB
+✓ built in 700ms
 ```
 
 ## real integration tests
@@ -248,7 +274,7 @@ Status: PASS
 
 ```text
 .....s..................s..                                              [100%]
-25 passed, 2 skipped in 2.95s
+25 passed, 2 skipped in 2.85s
 ```
 
 ## alembic offline sql
@@ -302,7 +328,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -313,7 +339,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -324,7 +350,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -339,7 +365,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -350,7 +376,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -361,7 +387,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -372,7 +398,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -383,7 +409,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T08:27:08.408181+00:00",
+    "checked_at": "2026-08-08T09:07:26.353075+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -423,7 +449,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/18/18405daae5fe29203f56d1094e65a9d0ecd485094cfdc55cc65b9368b4e7e70b.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/01/0186dc78ea74ea68f7d841ad729b4ee7c6028088562885e95ffae03c01cb1588.png"
     },
     {
       "provider": "qianwen",
@@ -436,7 +462,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/cb/cb82092109212b32a09a160f6168e63ea11c9974e9e99bae698579928ccf905d.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/65/655a7667e6772f04b35f94da1ab07b15f4f5fd723e633914ab7783a28f88ffdd.png"
     },
     {
       "provider": "kimi",
@@ -449,7 +475,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/8b/8b8a8ca4e9a3a14ae0a74c718b0f5c639c7a7133cc184f443b75d39b9901b595.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/14/14029398631cb8cb67044a6689c0c8a399d5d1e86079d11fc00003d8ad105d47.png"
     },
     {
       "provider": "deepseek",
@@ -462,7 +488,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/cb/cb909637d23db32e2fc5bd2f029e78565f6b83020240966661138ae3665d3fe9.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/e2/e21df78b747620f7f01f6fd67b4772634c0748a4e33336e2c34fc99cab015334.png"
     }
   ]
 }
