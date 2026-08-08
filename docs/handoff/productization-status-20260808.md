@@ -88,6 +88,8 @@
 78. Consumer 采集器现在必须主动点击可见且可用的“新建对话/New chat”控件，并把验证结果写入请求元数据；找不到新会话控件或点击后没有输入框时采样失败闭合。质量契约升级为 `airank.measurement-quality.v4`，共 24 项检查：Web/App 有效样本除不同 session ID 外还必须具备 `conversation_isolation_verified=true`；失败 ScanRun 允许生成审计报告，但 `run_status_publishable` 永远阻断发布。
 79. 千问 L3 真实提交证明 L2 输入入口存在并不代表可采样：匿名会话在提交后弹出滑块验证码。采集器已扩展中文滑块挑战识别，验证码文案不再被误当成短回答；`CAPTCHA_REQUIRED` 保留全新会话证明、失败现场截图和原始响应 hash。真实 MySQL Worker 验证结果为 ScanRun `failed`、Task `failed/SCAN_PROVIDER_BLOCKED`、Sample `blocked`，截图对象与 hash 均不可变，v4 质量报告可读取但 `publishable=false`；隔离租户与临时对象已清理。
 80. 生产门禁不再接受隐式本地默认值：必须显式设置 `AIRANK_API_AUTH_ENFORCEMENT=required`、`AIRANK_AUTH_MODE=yudao` 和 `AIRANK_ENV=production`；对象存储必须为 `s3/minio`，禁止明文 HTTP 和 `AIRANK_S3_ALLOW_HTTP=true`。Capability Probe 的默认认证模式同步为 `yudao`，避免 release auth 检查显示通过、能力探针却按 dev fallback 解释同一环境。
+81. 使用本机私密 env 注入真实 Provider 凭证，在同一盲测问题、API 采集面下完成千问、豆包、DeepSeek 各 3 次独立 Worker 采样。结果为 9/9 Task completed、9/9 Sample valid、每平台 3 个不同 session、3 个原始响应 hash、3 个真实 trace、3 条请求审计和 1 个实际路由；9 条正常未提及全部保留在有效分母。`airank.measurement-quality.v4` 返回 `publishable=true`、0 个 blocked check。隔离租户和临时对象已清理，未输出或持久化任何密钥。
+82. 三平台报告的交付边界保持收敛：`known_limitations` 明确包含无 Provider 引用、引用支持度未评测和事实准确率未评测，因此本次只证明 API 可见度测量链可交付，不证明 Consumer Web/App 呈现、来源支持或品牌事实准确。将全局输出上限压到 256 曾导致豆包 `PROVIDER_EMPTY_RESPONSE`，最终使用 Provider 级上限（豆包 4096，千问/DeepSeek 256）复测通过；Provider 参数必须版本化并按平台门禁，不能用一个全局值粗暴覆盖。
 
 ## 验收证据
 
@@ -102,6 +104,7 @@
 - 数据质量浏览器复验：真实 MySQL `quality_blocked` 报告显示“未通过数据质量门禁；不可作为客户交付物下载”，按钮禁用；直接调用下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。390px 有效视口 html/body `scrollWidth` 均为 390，console `0 error / 0 warning`。
 - 终端证据浏览器复验：真实 MySQL `airank.measurement-quality.v2` 返回唯一阻断 `consumer_screenshots_complete`，同时证明 `consumer_source_panels_inspected` 和无来源状态一致性通过。证据中心展示 Web 样本 1、有效 1、证据完整 0、截图 0、来源面板明确无 1、阻断 1；样本下钻可见原始回答、双 hash、外部会话 ID 与“界面未呈现（已检查）”。390px 有效视口无页面级横向溢出，console `0 error / 0 warning`；截图为 `/tmp/airank-surface-evidence-mobile.png`。
 - 真实采样：最终同轮 12 个任务中 9 个成功、3 个失败；DeepSeek/豆包/千问各 3 次成功，9 条正常未提及全部计入分母；证据等级分布为 API 无联网、未使用联网和联网未验证各 3 条，不把 API 证据包装成 Web/App 证据。
+- 最新三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；缺少 Provider 引用、引用支持度和事实准确率继续作为限制项展示。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
 - MySQL：Alembic `20260808_0016`；57 张 AIRank 表校验通过；新增不可变来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest 和请求 route 审计，既有引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt 继续通过。
@@ -112,7 +115,7 @@
 
 ## 下一实施顺序
 
-1. 轮换已在会话中暴露过的 Kimi 密钥，并使用同一版已确认问题在千问、豆包、Kimi、DeepSeek 上各执行至少 3 次独立采样；单次 L3 通路已验证，但完成同批次重复采样前四平台测量门禁保持 `partial`。
+1. 千问、豆包、DeepSeek 的 API 3 次独立采样已通过；轮换已在会话中暴露过的 Kimi 密钥并通过安全环境注入后，使用同一版问题补齐 Kimi 3 次采样，再合并为四平台同批次门禁。Kimi 完成前四平台测量状态保持 `partial`。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
 4. 在已完成的来源页抓取、对象存证和精确边界基础上，补待复核队列、claim 细粒度框选、双人复核一致性与人工标注 benchmark；单人真实复核闭环已经通过，但不能替代生产质量抽检。

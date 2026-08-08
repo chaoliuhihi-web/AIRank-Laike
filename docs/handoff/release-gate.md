@@ -667,3 +667,26 @@ Blocking conditions:
 Decision:
 
 - L2 input discovery is no longer counted as Provider readiness. AIRank remains a commercial `NO-GO` until L3 generation, production infrastructure and end-to-end delivery gates pass.
+
+## 2026-08-08 Three-Provider API Repetition Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Qianwen, Doubao and DeepSeek each completed three real, independent API samples for the same blind buyer question through the durable Worker path.
+- All nine tasks completed with nine valid samples, nine distinct per-provider sessions, nine raw-response hashes, nine external request traces and nine Provider request audits. Every Provider used one recorded route.
+- All nine valid answers did not mention the test brand and remained in the valid denominator.
+- `airank.measurement-quality.v4` returned `publishable=true` with no blocked checks for this API-only visibility run.
+- Provider-specific output limits were validated: Qianwen and DeepSeek accepted 256 tokens for the concise probe, while Doubao required 4096 to avoid `PROVIDER_EMPTY_RESPONSE`. The global 256-token experiment remained non-publishable and was not used as proof.
+- The isolated tenant and temporary object directory were removed after verification. Provider keys were loaded only from local private env files and were neither printed nor committed.
+
+Limitations and blockers:
+
+- The quality report explicitly retained `valid_samples_have_no_provider_citations`, `citation_support_not_evaluated` and `fact_accuracy_not_evaluated`. This gate supports an API visibility result only.
+- Kimi repetition remains blocked pending rotation and secure injection of the key previously exposed in conversation history.
+- Consumer Web/App evidence remains a separate `0/4` L3 gate and cannot be upgraded by API results.
+
+Decision:
+
+- Three-provider API repetition is deliverable within its stated evidence scope. Four-platform measurement, citations, fact accuracy, Consumer surfaces and the overall commercial release remain `partial/blocked`.
