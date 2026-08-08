@@ -76,3 +76,8 @@ def test_commercial_metrics_and_report_require_final_production_peer_review() ->
     assert "双人复核与一致性门禁" in page
     assert "单人预审永远不会直接进入客户指标" in page
     assert "benchmark_quality_passed" in page
+    assert "我的独立复核待办" in page
+    assert "fetchEvidenceReviewCases(project.id, undefined" in page
+    assert 'reviewCase.next_action === "submit_secondary" || reviewCase.next_action === "adjudicate"' in page
+    assert "必须先打开原始样本、精确 Claim 和不可变来源" in page
+    assert "打开证据样本" in page

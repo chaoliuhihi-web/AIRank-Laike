@@ -1010,3 +1010,23 @@ Limitations and blockers:
 Decision:
 
 - AIRank no longer risks applying a source decision to the first or whole-answer Claim by UI default. Commercial status remains `NO-GO` until independent reviewer quality and external production gates pass.
+
+## 2026-08-08 Project Reviewer Inbox Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Evidence Center now loads an actor-specific project-wide independent-review inbox instead of requiring reviewers to open every sample before discovering work. Only cases whose server-computed `next_action` is `submit_secondary` or `adjudicate` appear as actionable.
+- The inbox does not expose a peer's unfinished label or rationale and does not allow an evidence-free quick decision. Reviewers must open the immutable sample, exact Claim and source context before using the existing blind review form.
+- Real MySQL/browser acceptance created one benchmark primary case, signed in as a different reviewer and received one project task with `current_actor_role=null`, `next_action=submit_secondary` and `visible_decisions=[]`. Opening it loaded the immutable answer, exact 0–46 Claim and sample-level second-review form.
+- Desktop 1543px and mobile 390x844 had no page-level overflow; a fresh authenticated page reported zero console warnings/errors. Cleanup deleted 15 isolated rows across 14 tables and left zero tenant rows.
+
+Limitations and blockers:
+
+- The inbox currently reads the existing whole-project case set and renders at most 12 actionable items at once. Server-side pagination, persistent assignment, reviewer-group routing, SLA/escalation and customer-team sampling remain `partial`.
+- The real customer benchmark is still 0/20. This workflow makes collection operable but cannot manufacture independent labels or kappa.
+
+Decision:
+
+- Review work is now discoverable without weakening blind review, but AIRank remains commercial `NO-GO` until reviewer quality, production infrastructure, Consumer collection and longitudinal evidence pass their gates.

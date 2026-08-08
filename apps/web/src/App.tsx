@@ -2138,6 +2138,8 @@ function EvidencePage() {
   const [factRationale, setFactRationale] = useState("人工核对回答声明、当前审核事实与原始来源边界。");
   const [reviewQueue, setReviewQueue] = useState<EvidenceReviewQueue | null>(null);
   const [reviewQueueError, setReviewQueueError] = useState<string | null>(null);
+  const [reviewInbox, setReviewInbox] = useState<EvidenceReviewQueue | null>(null);
+  const [reviewInboxError, setReviewInboxError] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [reviewPurpose, setReviewPurpose] = useState<"production" | "benchmark">("production");
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { label: string; rationale: string }>>({});
@@ -2178,6 +2180,26 @@ function EvidencePage() {
         if (controller.signal.aborted) return;
         setSourceRegistry([]);
         setSourceRegistryError(error instanceof Error ? error.message : "来源注册表接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id) {
+      setReviewInbox(null);
+      setReviewInboxError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchEvidenceReviewCases(project.id, undefined, controller.signal)
+      .then((queue) => {
+        setReviewInbox(queue);
+        setReviewInboxError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReviewInbox(null);
+        setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办不可用");
       });
     return () => controller.abort();
   }, [project.id]);
@@ -2434,6 +2456,15 @@ function EvidencePage() {
     if (!project.id || !selected?.snapshot_id) return;
     setReviewQueue(await fetchEvidenceReviewCases(project.id, selected.snapshot_id));
   };
+  const refreshReviewInbox = async () => {
+    if (!project.id) return;
+    try {
+      setReviewInbox(await fetchEvidenceReviewCases(project.id));
+      setReviewInboxError(null);
+    } catch (error) {
+      setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办刷新失败");
+    }
+  };
   const refreshQuality = async () => {
     if (!project.id || !selectedRunId) return;
     setQuality(await fetchMeasurementQuality(project.id, selectedRunId));
@@ -2564,7 +2595,7 @@ function EvidencePage() {
         rationale: factRationale.trim(),
         purpose: reviewPurpose,
       });
-      await Promise.all([refreshFactAccuracy(), refreshReviewQueue(), refreshQuality()]);
+      await Promise.all([refreshFactAccuracy(), refreshReviewQueue(), refreshReviewInbox(), refreshQuality()]);
     } catch (error) {
       setFactAccuracyError(error instanceof Error ? error.message : "事实准确性审核失败");
     } finally {
@@ -2667,7 +2698,7 @@ function EvidencePage() {
         sourceEnd: segment.source_end,
         purpose: reviewPurpose,
       });
-      await Promise.all([refreshCitationSupport(), refreshReviewQueue(), refreshQuality()]);
+      await Promise.all([refreshCitationSupport(), refreshReviewQueue(), refreshReviewInbox(), refreshQuality()]);
     } catch (error) {
       setCitationActionError(error instanceof Error ? error.message : "引用支持度复核失败");
     } finally {
@@ -2692,6 +2723,7 @@ function EvidencePage() {
       });
       await Promise.all([
         refreshReviewQueue(),
+        refreshReviewInbox(),
         refreshCitationSupport(),
         refreshFactAccuracy(),
         refreshQuality(),
@@ -2701,6 +2733,12 @@ function EvidencePage() {
     } finally {
       setReviewAction(null);
     }
+  };
+  const openReviewCaseSample = async (reviewCase: EvidenceReviewCase) => {
+    await openSample(reviewCase.snapshot_id);
+    window.requestAnimationFrame(() => {
+      document.getElementById("evidence-sample-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
   const openSourceReview = (entry: SourceRegistryEntry) => {
     const current = entry.current_revision;
@@ -2808,6 +2846,11 @@ function EvidencePage() {
   const completedCitationCaptureCount = selected?.citations.filter(
     (citation) => citationCaptures[citation.citation_id]?.[0]?.status === "completed",
   ).length ?? 0;
+  const actionableReviewCases = reviewInbox?.cases.filter(
+    (reviewCase) => reviewCase.next_action === "submit_secondary" || reviewCase.next_action === "adjudicate",
+  ) ?? [];
+  const secondaryReviewInboxCount = actionableReviewCases.filter((reviewCase) => reviewCase.next_action === "submit_secondary").length;
+  const adjudicationReviewInboxCount = actionableReviewCases.filter((reviewCase) => reviewCase.next_action === "adjudicate").length;
 
   return (
     <>
@@ -2816,6 +2859,42 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
+      <Panel title={`我的独立复核待办 · ${actionableReviewCases.length}`}>
+        <p className="rail-caption">
+          这里按当前登录账号从整个项目汇总可执行的第二审核与第三人裁决。队列不会显示其他审核人的未终结标签；必须先打开原始样本、精确 Claim 和不可变来源，再在样本内提交决定。
+        </p>
+        {reviewInboxError && <DataStateCard title="项目复核待办读取失败" desc={reviewInboxError} tone="danger" />}
+        {reviewInbox && (
+          <>
+            <dl className="evidence-metadata review-inbox-metrics">
+              <div><dt>当前账号可执行</dt><dd>{actionableReviewCases.length}</dd></div>
+              <div><dt>等待第二审核</dt><dd>{secondaryReviewInboxCount}</dd></div>
+              <div><dt>等待第三人裁决</dt><dd>{adjudicationReviewInboxCount}</dd></div>
+              <div><dt>项目全部 case</dt><dd>{reviewInbox.cases.length}</dd></div>
+            </dl>
+            {actionableReviewCases.length === 0 ? (
+              <DataStateCard title="当前账号没有可执行复核" desc="可能尚未建立复核 case，或当前账号已参与这些任务；独立审核必须切换到未参与的可信账号。" tone="warning" />
+            ) : (
+              <div className="review-inbox-list">
+                {actionableReviewCases.slice(0, 12).map((reviewCase) => (
+                  <article className="review-inbox-card" key={reviewCase.case_id}>
+                    <div>
+                      <strong>{reviewCase.review_kind === "citation_support" ? "引用支持" : "事实准确性"} · {reviewCase.next_action === "adjudicate" ? "第三人裁决" : "第二人复核"}</strong>
+                      <small>{reviewCase.purpose === "benchmark" ? `${reviewCase.benchmark_version} · 仅质量评测` : "生产指标复核"}</small>
+                      <small>样本 {reviewCase.snapshot_id} · Claim {reviewCase.claim_id}</small>
+                      <small>创建于 {formatDateTime(reviewCase.created_at)} · 证据 {reviewCase.evidence_basis_sha256.slice(0, 12)}…</small>
+                    </div>
+                    <button className="table-action" type="button" disabled={loadingDetail === reviewCase.snapshot_id} onClick={() => void openReviewCaseSample(reviewCase)}>
+                      {loadingDetail === reviewCase.snapshot_id ? "读取中" : "打开证据样本"}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
+            {actionableReviewCases.length > 12 && <small className="review-inbox-overflow">当前先显示 12/{actionableReviewCases.length} 条；请优先完成已展示任务，后续任务不会被删除。</small>}
+          </>
+        )}
+      </Panel>
       <Panel title="证据与派生指标完整性">
         <div className="integrity-audit-head">
           <p className="rail-caption">
@@ -2977,7 +3056,7 @@ function EvidencePage() {
       )}
       {detailError && <DataStateCard title="样本详情读取失败" desc={detailError} tone="danger" />}
       {selected && (
-        <section className="evidence-detail-grid">
+        <section className="evidence-detail-grid" id="evidence-sample-detail">
           <Panel title={selected.sample_status === "valid" ? "不可变原始回答" : "不可变失败证据"}>
             {selected.sample_status === "valid"
               ? <div className="evidence-answer evidence-answer--selectable" ref={answerTextRef}>{selected.answer_text}</div>

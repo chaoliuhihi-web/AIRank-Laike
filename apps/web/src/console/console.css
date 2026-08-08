@@ -2039,6 +2039,50 @@ button:disabled {
   margin: 14px 0;
 }
 
+.review-inbox-metrics {
+  margin: 14px 0;
+}
+
+.review-inbox-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.review-inbox-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: #fbfcff;
+}
+
+.review-inbox-card > div {
+  min-width: 0;
+}
+
+.review-inbox-card strong,
+.review-inbox-card small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.review-inbox-card small,
+.review-inbox-overflow {
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.review-inbox-card .table-action {
+  flex: 0 0 auto;
+}
+
 .review-purpose-control {
   display: grid;
   gap: 6px;
@@ -2046,6 +2090,22 @@ button:disabled {
   margin: 14px 0;
   color: var(--console-text-muted);
   font: var(--console-font-meta);
+}
+
+@media (max-width: 900px) {
+  .review-inbox-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .review-inbox-card {
+    display: grid;
+  }
+
+  .review-inbox-card .table-action {
+    width: 100%;
+  }
 }
 
 .review-purpose-control select {
