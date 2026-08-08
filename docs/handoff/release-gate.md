@@ -1250,10 +1250,34 @@ Decision:
 ### Still blocked
 
 - The live project still has no approved enterprise FactRevision, so the brand opportunity cannot become content-ready. No intervention content, external publication or recommendation outcome was produced.
-- Opportunity ownership, SLA/escalation, budget/effort estimates, dependency ordering and explicit human resolution/waiver events are not yet implemented. Citation-zero observations are deliberately not auto-interpreted as support gaps without a governed lifecycle.
+- Opportunity self-claim, due dates, versioned waiver and evidence-backed “not observed” closure now exist. Yudao team routing, capacity-aware assignment, automatic SLA escalation/notification, budget/effort estimates and dependency ordering remain open. Citation-zero observations are deliberately not auto-interpreted as support gaps without a governed lifecycle.
 - Production Yudao authentication/directory, HTTPS object storage, customer notification and publishing endpoints, Consumer Web/App evidence, reviewer benchmark 0/20, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 customer evidence remain open.
 - The strict report remains `BLOCKED`: local filesystem storage is not production S3/MinIO; real Yudao permission endpoints are absent; optional Crawler/KB/content/workflow/Hermes capabilities are `dev_only`; Consumer browser L3 remains 0/4 because Doubao/Kimi require login and Qianwen/DeepSeek require human verification. Provider API success is not substituted for Consumer evidence.
 
 ### Decision
 
 - The cross-domain diagnosis slice is evidence-backed and internally deliverable, but AIRank remains commercial `NO-GO`. The opportunity board is an auditable action queue, not proof that any model will recommend the brand.
+
+## Governed opportunity action gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0034` adds one current action projection per stable opportunity plus append-only, previous-hash-linked action events under `airank.opportunity-action.v1`.
+- Actions can only be created from the latest complete immutable opportunity snapshot. They freeze the source and latest snapshot/run IDs, snapshot/evidence hashes, action type, owner, severity-derived due date, version and idempotent creation request.
+- Claiming uses the authenticated actor and optimistic version. Another actor cannot release, refresh, waive or complete the owner's action. An `evidence_blocked` action remains blocked after claim; only a newer `ready_for_action` snapshot can refresh it into open/in-progress.
+- A previous non-empty baseline may now be followed by a complete zero-opportunity derivation, so an all-clear observation is recorded rather than rejected as missing input. The first ever derivation still fails closed when no governed source evidence exists.
+- `verified_not_observed` requires the owner's explicit acknowledgement and a newer latest complete derivation whose opportunity manifest is internally consistent and does not contain the stable opportunity. A waiver requires an owner and a substantive reason. Both keep `effect_claim_allowed=false`; neither is a recommendation, growth or permanent-resolution claim.
+- Contract/acceptance tests cover trusted actors, strict request schemas, final-state acknowledgement, SLA derivation, zero-opportunity snapshots and non-effect semantics. Full local regression passes `498 passed, 32 skipped`; real MySQL passes `30 passed, 2 skipped`, including create/claim, cross-owner rejection, evidence refresh, zero-opportunity verification and a four-event hash chain. Node 24 production build passes.
+- The live browser project creates and claims the real evidence-blocked Doubao non-mention opportunity. The board shows the authenticated owner, 30-day SLA, two events/version 2 and “effect claim forbidden”; it does not expose a completion button while the opportunity persists. The requested 390×844 viewport renders at 312×675 with no page-level horizontal overflow and zero console warnings/errors.
+- The strict gate on feature commit `7cd8c1a` passes every executable engineering check: 211 contract, 6 crawler-lite, 85 acceptance, 15 Scheduler, 41 Worker, 16 score, 48 evidence, 23 outbound-security, 26 Provider Gateway and 10 Xinghe adapter tests; 7/7 native-citation cases; 30/30 core Skill cases; the Node 24 production Web build; real MySQL `30 passed, 2 skipped`; offline SQL; and real Alembic head `20260809_0034`.
+
+### Still blocked
+
+- Opportunity actions do not yet use Yudao team-directory routing, capacity limits or automatic SLA escalation/notification. Resource budgets, effort estimates and cross-opportunity dependency scheduling are also absent.
+- The live action is intentionally evidence-blocked because the project still has no approved enterprise FactRevision. No content, publication, retest improvement or recommendation outcome was produced.
+- All external production blockers from the preceding gate remain: production Yudao, HTTPS object storage, customer notification/publishing endpoints, Consumer Web/App sessions, reviewer benchmark, credential/model migration and elapsed customer observation windows.
+- Under the strict external policy, the report remains `BLOCKED`: object storage is local rather than production HTTPS S3/MinIO; no real Yudao permission endpoint is configured; optional Crawler/KB/content/workflow/Hermes capabilities remain `dev_only`; and Consumer Browser L3 is `0/4` because Doubao/Kimi require login while Qianwen/DeepSeek require human verification. Provider API evidence is not substituted for Consumer evidence.
+
+### Decision
+
+- AIRank can now turn evidence-backed opportunities into owned, auditable work without turning task completion into a marketing outcome. This closes an internal delivery gap but does not change the commercial `NO-GO` decision.
