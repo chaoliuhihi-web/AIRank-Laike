@@ -1327,3 +1327,25 @@ Decision:
 ### Decision
 
 - AIRank can now turn an evidence-backed opportunity queue into a constrained human execution portfolio without inventing ROI. This engineering slice is complete, but the product remains commercial `NO-GO` until the external production, browser and customer-evidence gates pass.
+
+## Opportunity action Yudao directory gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0037` adds one optimistic-versioned Yudao department binding per opportunity delivery team and immutable directory-sync runs. The real MySQL database is at head with 91 AIRank tables.
+- API, Scheduler and Worker share `airank.opportunity-action-directory-sync.v1`. Jobs freeze tenant, project, team, binding, external group and binding version but never persist directory credentials. The Worker revalidates every scope field before the upstream request, and a binding change during fetch records a failed run with zero member writes.
+- Sync writes are limited to `membership_source=yudao`. Equal snapshots do not increment member versions, disappeared external members are disabled, and an existing manual member with the same user ID is preserved with `external_membership_verified=false` and reported as a manual conflict.
+- The opportunity workflow now uses the real directory API for binding, immediate sync, run status, response hash and created/updated/unchanged/disabled/manual-conflict counts. The production TypeScript/Vite build passes; this new UI has not received a fresh browser click/visual run and remains explicitly pending.
+- Focused contract, API, repository, Scheduler and Worker tests cover strict schemas, permissions, idempotent replay, stable member versions, manual-member preservation, binding drift and retryable failure. The exact real MySQL binding → Scheduler → Worker → Yudao protocol fixture → member provenance → audit chain passes.
+- On clean, GitHub/Gitee-synchronized commit `0efb887`, the strict release gate passes 222 contract, 6 crawler-lite, 89 acceptance, 20 Scheduler, 45 standalone Worker, 16 score, 48 evidence, 23 outbound-security, 26 Provider Gateway and 10 Xinghe adapter tests; Provider-native citations pass 7/7, core Skills pass 30/30, the Node 24 production Web build passes, real MySQL passes `34 passed, 2 skipped`, and offline SQL plus real Alembic head `20260809_0037` pass. The wider default regression separately passes `524 passed, 34 skipped`; the focused real MySQL directory chain was also verified in the `33 passed, 2 skipped` integration run before the final strict gate.
+
+### Still blocked
+
+- No production Yudao department, permission endpoint or runtime credential was supplied. The protocol fixture proves AIRank's boundary and failure policy, not a real customer directory E2E.
+- The strict report remains `BLOCKED`: runtime authentication is `disabled/dev_only`, object storage is local rather than production HTTPS S3/MinIO, and optional Crawler/KB/content/workflow/Hermes services are unconfigured `dev_only` capabilities.
+- Consumer Browser L3 was deliberately not rerun in this slice. The last verified result remains 0/4: Doubao and Kimi require authenticated sessions, while Qianwen and DeepSeek require human captcha verification. Provider API success is a different evidence grade and cannot replace those missing Consumer proofs.
+- Customer HTTPS notification and publishing endpoints, the 20-case reviewer benchmark, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 customer evidence remain open. Calendar-aware capacity and a governed 30/60/90 execution portfolio also remain unimplemented.
+
+### Decision
+
+- Opportunity delivery teams now have an auditable external-directory synchronization boundary without corrupting manual ownership data. This engineering slice is complete, but AIRank remains commercial `NO-GO`; no production identity, external delivery, publication or GEO outcome is claimed.
