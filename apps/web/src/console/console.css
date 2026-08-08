@@ -1452,6 +1452,84 @@ button:disabled {
   min-width: 980px;
 }
 
+.source-registry-table {
+  min-width: 1100px;
+}
+
+.source-registry-table td small {
+  display: block;
+  max-width: 300px;
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.source-registry-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.source-registry-form-head,
+.source-registry-form-wide,
+.source-registry-form-actions {
+  grid-column: 1 / -1;
+}
+
+.source-registry-form-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.source-registry-form-head strong,
+.source-registry-form-head span {
+  display: block;
+}
+
+.source-registry-form-head span {
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.source-registry-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.source-registry-form input,
+.source-registry-form select,
+.source-registry-form textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--console-text-strong);
+  font: 500 13px / 20px var(--console-font-family);
+}
+
+.source-registry-form textarea {
+  resize: vertical;
+}
+
+.source-registry-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .task-table {
   min-width: 1050px;
 }
@@ -3536,7 +3614,8 @@ button:disabled {
   .knowledge-source-form,
   .knowledge-search-form,
   .question-compiler-form,
-  .question-observation-form {
+  .question-observation-form,
+  .source-registry-form {
     grid-template-columns: 1fr;
   }
 
@@ -3545,11 +3624,16 @@ button:disabled {
   .question-compiler-wide,
   .question-compiler-actions,
   .question-observation-wide,
-  .question-observation-actions {
+  .question-observation-actions,
+  .source-registry-form-head,
+  .source-registry-form-wide,
+  .source-registry-form-actions {
     grid-column: auto;
   }
 
   .knowledge-source-form-actions,
+  .source-registry-form-head,
+  .source-registry-form-actions,
   .knowledge-search-policy,
   .knowledge-search-results li > div {
     align-items: stretch;
@@ -3557,6 +3641,7 @@ button:disabled {
   }
 
   .knowledge-source-form-actions > button,
+  .source-registry-form-actions > button,
   .knowledge-search-form > button {
     width: 100%;
   }

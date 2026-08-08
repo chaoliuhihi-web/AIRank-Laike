@@ -43,6 +43,11 @@ from .report import (
     canonical_json_sha256,
 )
 from .snapshot import AnswerSnapshot, SourceCitation
+from .source_registry import (
+    SourceClassificationRevision,
+    current_source_classification,
+    normalize_source_host,
+)
 
 __all__ = [
     "AnswerSnapshot",
@@ -70,6 +75,7 @@ __all__ = [
     "ReportEvidencePacket",
     "ReportEvidencePacketError",
     "SourceCitation",
+    "SourceClassificationRevision",
     "S3CompatibleObjectStorage",
     "StoredObject",
     "build_object_storage_from_env",
@@ -82,4 +88,6 @@ __all__ = [
     "canonical_json_sha256",
     "fact_source_ref_from_citation",
     "generate_gap_from_citations",
+    "current_source_classification",
+    "normalize_source_host",
 ]

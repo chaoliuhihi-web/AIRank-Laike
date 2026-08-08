@@ -759,3 +759,25 @@ Limitations and blockers:
 Decision:
 
 - The previous manual-only observation-window gap is closed at the durable application and database-contract level. Effect monitoring remains `partial`, and AIRank remains commercial `NO-GO` until real elapsed observations and the other production gates pass.
+
+## 2026-08-08 Citation Source Registry Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- AIRank now derives a project Source Registry exclusively from exact DNS hosts already present in immutable Citation records. Unknown hosts remain `unclassified`; the service does not infer categories or authority from a parent domain, brand name or model output.
+- Alembic `20260808_0020` adds append-only source-classification revisions with category, type, ecosystem, confidence, authority, usage, risk, evidence, validity, trusted reviewer, supersedes link, request hash and idempotency key.
+- Manual review requires an actually observed host, tenant/project scope, a trusted authenticated actor and the latest revision ID. Stale updates fail closed; old revisions and original Citation evidence are retained.
+- Replaying an idempotency key for an older revision marks that historical revision as replayed while preserving the newest revision as current.
+- Real MySQL integration passed `25 passed, 2 skipped`, including the unclassified, v1, replay, stale-conflict, v2, audit and cleanup paths. Browser QA completed unclassified to v1 to v2 through the Evidence Center; desktop and 390px layouts had no page-level horizontal overflow and the console reported zero warnings/errors. The isolated 14-row QA tenant was removed with zero rows remaining.
+- Full local regression passed `375 passed, 27 skipped`; Node 24 TypeScript/Vite and npm audit gates are recorded separately after the final full gate run.
+
+Limitations and blockers:
+
+- Versioned bulk import of the public CN-GEO source taxonomy, double-review workflow, labeled reviewer-agreement benchmark, expiry operations and evidence-packet/report integration remain incomplete.
+- Four-platform same-cohort repetition remains incomplete until Kimi is securely reinjected after rotation. Consumer Web/App L3, production Yudao, production HTTPS object storage and customer publishing credentials remain external blockers.
+
+Decision:
+
+- The prior source-type placeholder is replaced by an auditable human-governed registry. Source authority governance remains `partial`, and AIRank remains commercial `NO-GO`.

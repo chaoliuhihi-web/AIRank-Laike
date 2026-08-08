@@ -142,6 +142,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CITATION_CLAIM_NOT_FOUND": (404, "Citation claim not found"),
     "CITATION_SUPPORT_EVIDENCE_INVALID": (409, "Citation support evidence is invalid"),
     "FACT_ACCURACY_EVIDENCE_INVALID": (409, "Fact accuracy evidence is invalid"),
+    "SOURCE_REGISTRY_ENTRY_NOT_FOUND": (404, "Citation source registry entry not found"),
+    "SOURCE_CLASSIFICATION_VERSION_CONFLICT": (409, "Citation source classification version conflict"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
@@ -5866,3 +5868,10 @@ except ImportError:  # pragma: no cover
     from citation_capture_routes import router as citation_capture_router  # type: ignore[no-redef]
 
 app.include_router(citation_capture_router)
+
+try:
+    from .source_registry_routes import router as source_registry_router
+except ImportError:  # pragma: no cover
+    from source_registry_routes import router as source_registry_router  # type: ignore[no-redef]
+
+app.include_router(source_registry_router)

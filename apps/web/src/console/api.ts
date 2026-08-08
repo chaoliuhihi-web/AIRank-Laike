@@ -459,6 +459,56 @@ export type CitationSourceCapture = {
   idempotent_replay: boolean;
 };
 
+export type SourceClassificationRevision = {
+  revision_id: string;
+  revision_number: number;
+  normalized_host: string;
+  source_category_l1:
+    | "brand_corporate"
+    | "government_public"
+    | "news_media"
+    | "vertical_professional"
+    | "platform_community"
+    | "business_services"
+    | "research_documentation"
+    | "search_page_proxy"
+    | "other";
+  source_type: string;
+  ecosystem: string | null;
+  classification_status: "reviewed" | "curated";
+  classification_method: "human_review" | "dataset_import";
+  classification_confidence: "low" | "medium" | "high";
+  authority_level: "unknown" | "low" | "medium" | "high" | "official";
+  usage_policy: "primary_evidence" | "context_only" | "lead_only" | "prohibited";
+  risk_level: "low" | "medium" | "high" | "critical";
+  evidence_note: string;
+  evidence_url: string | null;
+  source_dataset_name: string | null;
+  source_dataset_version: string | null;
+  valid_until: string | null;
+  reviewed_by: string;
+  reviewed_at: string;
+  supersedes_revision_id: string | null;
+  request_sha256: string;
+  effective: boolean;
+  idempotent_replay: boolean;
+};
+
+export type SourceRegistryEntry = {
+  tenant_id: string;
+  project_id: string;
+  normalized_host: string;
+  reviewable: boolean;
+  citation_count: number;
+  sample_count: number;
+  provider_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  classification_status: "unclassified" | "reviewed" | "curated";
+  current_revision: SourceClassificationRevision | null;
+  history: SourceClassificationRevision[];
+};
+
 export type MeasurementQualityReport = {
   contract_version: "airank.measurement-quality.v4";
   run_id: string;
@@ -1424,6 +1474,67 @@ export function fetchCitationSourceCapture(
     "trc_web_citation_capture",
     signal,
   );
+}
+
+export function fetchSourceRegistry(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<SourceRegistryEntry[]> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/source-registry`,
+    "trc_web_source_registry",
+    signal,
+  );
+}
+
+export async function reviewSourceRegistryEntry(
+  projectId: string,
+  host: string,
+  input: {
+    sourceCategoryL1: SourceClassificationRevision["source_category_l1"];
+    sourceType: string;
+    ecosystem?: string;
+    classificationConfidence: SourceClassificationRevision["classification_confidence"];
+    authorityLevel: SourceClassificationRevision["authority_level"];
+    usagePolicy: SourceClassificationRevision["usage_policy"];
+    riskLevel: SourceClassificationRevision["risk_level"];
+    evidenceNote: string;
+    evidenceUrl?: string;
+    validUntil?: string;
+    supersedesRevisionId?: string;
+  },
+): Promise<SourceRegistryEntry> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/source-registry/${encodeURIComponent(host)}/reviews`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_source_registry_review"),
+        "Content-Type": "application/json",
+        "Idempotency-Key": `source-review-${randomPart}`,
+      },
+      body: JSON.stringify({
+        source_category_l1: input.sourceCategoryL1,
+        source_type: input.sourceType,
+        ecosystem: input.ecosystem?.trim() || undefined,
+        classification_confidence: input.classificationConfidence,
+        authority_level: input.authorityLevel,
+        usage_policy: input.usagePolicy,
+        risk_level: input.riskLevel,
+        evidence_note: input.evidenceNote.trim(),
+        evidence_url: input.evidenceUrl?.trim() || undefined,
+        valid_until: input.validUntil || undefined,
+        reviewed_by: session?.user.userId ?? "console-reviewer",
+        supersedes_revision_id: input.supersedesRevisionId || undefined,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Source registry review failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: SourceRegistryEntry }).data;
 }
 
 export async function createCitationSupportReview(

@@ -102,6 +102,7 @@ import {
   fetchSkillPromotionLedger,
   fetchScanRuns,
   fetchScanTasks,
+  fetchSourceRegistry,
   fallbackReportList,
   fetchReports,
   getStoredAuthSession,
@@ -114,6 +115,7 @@ import {
   resolveFactConflict,
   saveKnowledgeSource,
   searchKnowledge,
+  reviewSourceRegistryEntry,
   runBrandCheck,
   storeAuthSession,
   updateProviderRoute,
@@ -150,6 +152,7 @@ import {
   type ScanRun,
   type ScanTask,
   type SkillPromotionLedger,
+  type SourceRegistryEntry,
 } from "./console/api";
 import type { Tone } from "./console/data";
 
@@ -237,6 +240,23 @@ const sourcePanelStatusLabels: Record<string, string> = {
   not_present: "界面未呈现（已检查）",
   not_inspected: "未检查",
   not_applicable: "不适用",
+};
+const sourceCategoryLabels: Record<string, string> = {
+  brand_corporate: "品牌与企业官网",
+  government_public: "政府与公共机构",
+  news_media: "新闻与媒体",
+  vertical_professional: "垂直专业内容",
+  platform_community: "平台与社区",
+  business_services: "商业信息与服务",
+  research_documentation: "研究与文档",
+  search_page_proxy: "搜索与页面代理",
+  other: "其他",
+};
+const sourceUsageLabels: Record<string, string> = {
+  primary_evidence: "可作主要证据",
+  context_only: "仅作背景",
+  lead_only: "仅作线索",
+  prohibited: "禁止使用",
 };
 const publishingSteps: [string, string][] = [
   ["事实核验", "只使用已审核且未过期的事实"],
@@ -1850,6 +1870,43 @@ function EvidencePage() {
   const [factClaimId, setFactClaimId] = useState("");
   const [factRevisionId, setFactRevisionId] = useState("");
   const [factRationale, setFactRationale] = useState("人工核对回答声明、当前审核事实与原始来源边界。");
+  const [sourceRegistry, setSourceRegistry] = useState<SourceRegistryEntry[]>([]);
+  const [sourceRegistryError, setSourceRegistryError] = useState<string | null>(null);
+  const [sourceReviewHost, setSourceReviewHost] = useState("");
+  const [sourceReviewBusy, setSourceReviewBusy] = useState(false);
+  const [sourceReviewForm, setSourceReviewForm] = useState({
+    sourceCategoryL1: "other" as NonNullable<SourceRegistryEntry["current_revision"]>["source_category_l1"],
+    sourceType: "unknown",
+    ecosystem: "",
+    classificationConfidence: "low" as NonNullable<SourceRegistryEntry["current_revision"]>["classification_confidence"],
+    authorityLevel: "unknown" as NonNullable<SourceRegistryEntry["current_revision"]>["authority_level"],
+    usagePolicy: "context_only" as NonNullable<SourceRegistryEntry["current_revision"]>["usage_policy"],
+    riskLevel: "medium" as NonNullable<SourceRegistryEntry["current_revision"]>["risk_level"],
+    evidenceNote: "",
+    evidenceUrl: "",
+    validUntil: "",
+    supersedesRevisionId: "",
+  });
+
+  useEffect(() => {
+    if (!project.id) {
+      setSourceRegistry([]);
+      setSourceRegistryError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchSourceRegistry(project.id, controller.signal)
+      .then((rows) => {
+        setSourceRegistry(rows);
+        setSourceRegistryError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setSourceRegistry([]);
+        setSourceRegistryError(error instanceof Error ? error.message : "来源注册表接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
 
   useEffect(() => {
     if (!project.id) return;
@@ -2182,6 +2239,51 @@ function EvidencePage() {
       setCitationAction(null);
     }
   };
+  const openSourceReview = (entry: SourceRegistryEntry) => {
+    const current = entry.current_revision;
+    setSourceReviewHost(entry.normalized_host);
+    setSourceReviewForm({
+      sourceCategoryL1: current?.source_category_l1 ?? "other",
+      sourceType: current?.source_type ?? "unknown",
+      ecosystem: current?.ecosystem ?? "",
+      classificationConfidence: current?.classification_confidence ?? "low",
+      authorityLevel: current?.authority_level ?? "unknown",
+      usagePolicy: current?.usage_policy ?? "context_only",
+      riskLevel: current?.risk_level ?? "medium",
+      evidenceNote: "",
+      evidenceUrl: current?.evidence_url ?? "",
+      validUntil: current?.valid_until?.slice(0, 10) ?? "",
+      supersedesRevisionId: current?.revision_id ?? "",
+    });
+    setSourceRegistryError(null);
+  };
+  const submitSourceReview = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !sourceReviewHost) return;
+    if (!/^[a-z0-9_-]+$/.test(sourceReviewForm.sourceType)) {
+      setSourceRegistryError("来源细分类只能使用小写字母、数字、下划线或连字符。");
+      return;
+    }
+    if (sourceReviewForm.evidenceNote.trim().length < 8) {
+      setSourceRegistryError("请填写至少 8 个字符的人工分类依据；系统不会自动猜测权威度。");
+      return;
+    }
+    setSourceReviewBusy(true);
+    setSourceRegistryError(null);
+    try {
+      const reviewed = await reviewSourceRegistryEntry(project.id, sourceReviewHost, {
+        ...sourceReviewForm,
+        validUntil: sourceReviewForm.validUntil ? `${sourceReviewForm.validUntil}T23:59:59Z` : undefined,
+        supersedesRevisionId: sourceReviewForm.supersedesRevisionId || undefined,
+      });
+      setSourceRegistry((current) => current.map((entry) => entry.normalized_host === reviewed.normalized_host ? reviewed : entry));
+      setSourceReviewHost("");
+    } catch (error) {
+      setSourceRegistryError(error instanceof Error ? error.message : "来源人工复核失败");
+    } finally {
+      setSourceReviewBusy(false);
+    }
+  };
   const selectedProviderRequest = selected?.request_metadata.provider_request;
   const selectedSourcePanelStatus = selectedProviderRequest
     && typeof selectedProviderRequest === "object"
@@ -2203,6 +2305,58 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
+      <Panel title={`引用来源注册表 · ${sourceRegistry.length} 个已观测域名`}>
+        <p className="rail-caption">
+          这里只汇总当前项目 Citation 记录中实际出现的精确域名。未知来源保留为 unclassified；分类、权威度与用途必须由人工给出依据并形成追加版本，不能由域名或模型自动推断。
+        </p>
+        {sourceRegistryError && <DataStateCard title="来源注册表操作失败" desc={sourceRegistryError} tone="danger" />}
+        {sourceRegistry.length === 0 ? (
+          <DataStateCard title="尚无可分类的引用域名" desc="完成带来源引用的可验证采样后，这里才会出现来源；系统不会预置媒体数量或伪造权威来源。" tone="warning" />
+        ) : (
+          <div className="airank-console-card table-card evidence-table-wrap">
+            <table className="question-table source-registry-table">
+              <thead><tr><th>精确域名</th><th>Citation 出现</th><th>人工分类</th><th>权威 / 用途</th><th>复核证据</th><th>操作</th></tr></thead>
+              <tbody>
+                {sourceRegistry.map((entry) => {
+                  const current = entry.current_revision;
+                  return (
+                    <tr key={entry.normalized_host}>
+                      <td><strong>{entry.normalized_host}</strong><small>{entry.reviewable ? "可人工复核" : "历史主机格式异常，仅保留"}</small></td>
+                      <td><strong>{entry.citation_count} 次引用</strong><small>{entry.sample_count} 个样本 · {entry.provider_count} 个平台</small></td>
+                      <td>
+                        <Badge tone={current?.effective ? "success" : current ? "warning" : "muted"}>{entry.classification_status}</Badge>
+                        <small>{current ? `${sourceCategoryLabels[current.source_category_l1] ?? current.source_category_l1} · ${current.source_type}` : "未知来源，不猜测类型"}</small>
+                      </td>
+                      <td><strong>{current?.authority_level ?? "unknown"}</strong><small>{current ? sourceUsageLabels[current.usage_policy] ?? current.usage_policy : "尚无用途结论"}</small></td>
+                      <td>{current ? <><strong>{current.classification_method} · v{current.revision_number}</strong><small>{current.reviewed_by} · {formatDateTime(current.reviewed_at)}</small></> : <><strong>待人工复核</strong><small>不进入权威来源结论</small></>}</td>
+                      <td><button className="table-action" type="button" disabled={!entry.reviewable} onClick={() => openSourceReview(entry)}>{current ? "新增版本" : "人工分类"}</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {sourceReviewHost && (
+          <form className="source-registry-form" onSubmit={(event) => void submitSourceReview(event)}>
+            <div className="source-registry-form-head">
+              <div><strong>人工复核 · {sourceReviewHost}</strong><span>提交后生成不可变新版本；旧版本不会被覆盖。</span></div>
+              <button className="table-action" type="button" onClick={() => setSourceReviewHost("")}>取消</button>
+            </div>
+            <label>一级分类<select value={sourceReviewForm.sourceCategoryL1} onChange={(event) => setSourceReviewForm((current) => ({ ...current, sourceCategoryL1: event.target.value as typeof current.sourceCategoryL1 }))}>{Object.entries(sourceCategoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+            <label>来源细分类<input value={sourceReviewForm.sourceType} onChange={(event) => setSourceReviewForm((current) => ({ ...current, sourceType: event.target.value }))} placeholder="如 news_media / brand_corporate" /></label>
+            <label>生态 / 主体<input value={sourceReviewForm.ecosystem} onChange={(event) => setSourceReviewForm((current) => ({ ...current, ecosystem: event.target.value }))} placeholder="可选，填写已核对的主体" /></label>
+            <label>分类置信度<select value={sourceReviewForm.classificationConfidence} onChange={(event) => setSourceReviewForm((current) => ({ ...current, classificationConfidence: event.target.value as typeof current.classificationConfidence }))}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+            <label>权威等级<select value={sourceReviewForm.authorityLevel} onChange={(event) => setSourceReviewForm((current) => ({ ...current, authorityLevel: event.target.value as typeof current.authorityLevel }))}><option value="unknown">未知</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="official">官方</option></select></label>
+            <label>使用政策<select value={sourceReviewForm.usagePolicy} onChange={(event) => setSourceReviewForm((current) => ({ ...current, usagePolicy: event.target.value as typeof current.usagePolicy }))}><option value="primary_evidence">可作主要证据</option><option value="context_only">仅作背景</option><option value="lead_only">仅作线索</option><option value="prohibited">禁止使用</option></select></label>
+            <label>风险等级<select value={sourceReviewForm.riskLevel} onChange={(event) => setSourceReviewForm((current) => ({ ...current, riskLevel: event.target.value as typeof current.riskLevel }))}><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">严重</option></select></label>
+            <label>有效至<input type="date" value={sourceReviewForm.validUntil} onChange={(event) => setSourceReviewForm((current) => ({ ...current, validUntil: event.target.value }))} /></label>
+            <label className="source-registry-form-wide">证据 URL<input value={sourceReviewForm.evidenceUrl} onChange={(event) => setSourceReviewForm((current) => ({ ...current, evidenceUrl: event.target.value }))} placeholder="可选；必须是无凭证、无 fragment 的 HTTPS 地址" /></label>
+            <label className="source-registry-form-wide">人工分类依据<textarea rows={3} value={sourceReviewForm.evidenceNote} onChange={(event) => setSourceReviewForm((current) => ({ ...current, evidenceNote: event.target.value }))} placeholder="说明核对了什么页面、主体或样本，以及为什么采用该分类与用途。" /></label>
+            <div className="source-registry-form-actions"><button className="airank-console-primary-button" type="submit" disabled={sourceReviewBusy}>{sourceReviewBusy ? "提交中…" : "保存人工复核版本"}</button></div>
+          </form>
+        )}
+      </Panel>
       {quality && (
         <Panel title={`测量质量门禁 · ${quality.publishable ? "可交付" : "已阻断"}`}>
           <DataStateCard

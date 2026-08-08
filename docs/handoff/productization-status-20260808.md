@@ -97,11 +97,12 @@
 87. 完成事实准确率正式证据链：`20260808_0019` 新增追加式 `airank_fact_accuracy_reviews`，AnswerClaim 区分引用声明与品牌/竞品事实声明并保存主体、精确回答边界和 hash。人工裁决只能绑定当前有效、人工审核、可披露、无开放冲突且精确落到 KnowledgeSegment 原文边界的事实修订；事实/来源失效后历史裁决保留但自动退出当前指标。`accurate/inaccurate/outdated/insufficient` 分开统计，只有完整决定性覆盖才计算事实准确率。复测报告从 MySQL 批量重算，客户证据包升级为 `airank.report-evidence-packet.v2` 并加入不复制原文的事实证据索引，历史 v1 仍可读取。证据中心完成桌面和 390×844 浏览器真实点击闭环，随后清理隔离 QA 项目；恢复原项目后 9 条正常未提及仍全部保留，console 为 0 error。
 88. 深度吸收 `yao-geo-effect-monitor` 与 GEOFlow 的定时任务/恢复方法并重建为 AIRank 自有 `apps/scheduler`：T0 到期时只登记真实基线锚点，T+7/T+14/T+30 从基线任务冻结的 `request_json.question_text`、Prompt 版本、Provider、Cohort、surface、evidence level 与模型上下文克隆任务，并为每个样本创建全新 session；问题在基线后被编辑也不会改变复测问题。缺基线、缺任务或缺冻结 Prompt 时窗口明确 `blocked` 并保存追加式审计；终态比较仍走现有 v4 数据质量门禁和审慎归因。
 89. Worker 与 Scheduler 默认 fail-closed：租户、项目、精确 job/window 至少需要一个有效范围，项目范围必须绑定租户；全局多租户运行必须同时设置专用环境开关和 `--allow-global-scope`。Worker 新增调用外部服务前的只读 `--dry-run` 和有界 `--drain --max-jobs`。真实数据库预览发现 71 个到期 `scan.provider` 历史任务但没有领取；隔离真实 MySQL 调度测试验证 frozen Prompt、fresh session、精确 scope、幂等派发、失败复测 `quality_blocked` 和 `completed_with_limitations`。全量测试为 `368 passed, 26 skipped`，真实 MySQL integration 为 `24 passed, 2 skipped`。
+90. 深度吸收 `geo-citation-lab` 来源类型治理并重建为 AIRank 自有 Source Registry：只聚合项目 Citation 中实际出现的精确 DNS host，不按父域、名称或模型猜测；未知来源保持 `unclassified`。人工复核以追加版本保存分类、主体、置信度、权威度、用途、风险、证据、有效期、可信审核人和 supersedes 链，旧 Citation 与历史版本不可变。`20260808_0020` 已在真实 MySQL 升级；定向测试覆盖 v1/v2、过期乐观锁、旧版幂等回放不篡改当前版本和审计事件。证据中心隔离浏览器验收从未分类操作到 v2，桌面/390px 无页面级横向溢出、console `0 error / 0 warning`，14 行 QA 数据随后精确清理为 0。当前全量测试 `375 passed, 27 skipped`，真实 MySQL integration `25 passed, 2 skipped`；公开 CN-GEO 字典批量导入、双人复核 benchmark 和报告联动仍为 `partial`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`354 passed, 25 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：`375 passed, 27 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -114,8 +115,8 @@
 - 最新三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；缺少 Provider 引用、引用支持度和事实准确率继续作为限制项展示。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260808_0019`；61 张 AIRank 表校验通过；新增追加式事实准确率裁决表和不可变客户报告证据包表，审计 Provider 路由控制与变更事件表，以及既有不可变来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest、请求 route 审计、引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt 继续通过。
-- 本地真实 MySQL integration：`23 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增事实声明/裁决、当前事实失效、事实指标重算和 v2 证据包 hash 往返，并继续覆盖 packet/hash/可信操作者绑定下载回执、路由控制热更新、失败 ScanRun、来源页抓取、Provider 跨 Worker 容量竞争/TTL 回收、引用、页面审计、问题治理、Publisher、扫描 attempt 与复测链。
+- MySQL：Alembic `20260808_0020`；62 张 AIRank 表校验通过；新增追加式 Source Registry 分类修订表，并继续校验事实准确率裁决、不可变客户报告证据包、Provider 路由控制与变更事件、来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest、请求 route 审计、引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt。
+- 本地真实 MySQL integration：`25 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增 Source Registry 未分类/v1/v2/幂等/审计与 `0020` schema head，并继续覆盖事实声明/裁决、当前事实失效、事实指标重算、v2 证据包、packet/hash/可信操作者绑定下载回执、路由控制热更新、失败 ScanRun、来源页抓取、Provider 跨 Worker 容量竞争/TTL 回收、引用、页面审计、问题治理、Publisher、扫描 attempt 与复测链。
 - 报表中心浏览器复验：真实项目当前没有合格报告时显示“尚无客户报告”，不生成趋势或增长数字；“生成老板报告”被明确门禁阻断并提示不会伪造任务成功。1024px 桌面视口无页面级横向溢出，console `0 error / 0 warning`。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
