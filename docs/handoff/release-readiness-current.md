@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T20:10:31+08:00
+Generated: 2026-08-08T20:13:15+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -13,21 +13,21 @@ Result: BLOCKED
 | API authentication configuration | BLOCKED | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
 | production object storage configuration | BLOCKED | `validate AIRANK_ENV and S3/MinIO transport configuration` |
 | runtime versions | PASS | `validate Python and Node production runtime versions` |
-| contract tests | BLOCKED | `python3 -m pytest tests/contracts -q` |
-| crawler lite tests | BLOCKED | `python3 -m pytest packages/crawler-lite/tests -q` |
-| acceptance tests | BLOCKED | `python3 -m pytest tests/acceptance -q` |
-| scheduler tests | BLOCKED | `python3 -m pytest apps/scheduler/tests -q` |
-| worker tests | BLOCKED | `cd apps/worker && python3 -m pytest -q` |
-| score tests | BLOCKED | `cd packages/score && python3 -m pytest -q` |
-| evidence tests | BLOCKED | `cd packages/evidence && python3 -m pytest -q` |
-| outbound security tests | BLOCKED | `python3 -m pytest packages/outbound-security/tests -q` |
-| provider gateway tests | BLOCKED | `python3 -m pytest packages/provider-gateway/tests -q` |
-| core skill evaluation | BLOCKED | `python3 scripts/evaluate_core_skills.py` |
-| xinghe adapter tests | BLOCKED | `cd packages/xinghe-adapter && python3 -m pytest -q` |
+| contract tests | PASS | `python3 -m pytest tests/contracts -q` |
+| crawler lite tests | PASS | `python3 -m pytest packages/crawler-lite/tests -q` |
+| acceptance tests | PASS | `python3 -m pytest tests/acceptance -q` |
+| scheduler tests | PASS | `python3 -m pytest apps/scheduler/tests -q` |
+| worker tests | PASS | `cd apps/worker && python3 -m pytest -q` |
+| score tests | PASS | `cd packages/score && python3 -m pytest -q` |
+| evidence tests | PASS | `cd packages/evidence && python3 -m pytest -q` |
+| outbound security tests | PASS | `python3 -m pytest packages/outbound-security/tests -q` |
+| provider gateway tests | PASS | `python3 -m pytest packages/provider-gateway/tests -q` |
+| core skill evaluation | PASS | `python3 scripts/evaluate_core_skills.py` |
+| xinghe adapter tests | PASS | `cd packages/xinghe-adapter && python3 -m pytest -q` |
 | web build | PASS | `cd apps/web && npm run build` |
-| real integration tests | BLOCKED | `python3 -m pytest tests/integration -q` |
-| alembic offline sql | BLOCKED | `cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql` |
-| alembic real mysql | BLOCKED | `cd apps/api && python3 -m alembic upgrade head` |
+| real integration tests | PASS | `python3 -m pytest tests/integration -q` |
+| alembic offline sql | PASS | `cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql` |
+| alembic real mysql | PASS | `cd apps/api && python3 -m alembic upgrade head` |
 | capability probe | BLOCKED | `CapabilityProbe(ProbeConfig.from_env()).run()` |
 | browser provider readiness | BLOCKED | `probe_provider_generation_readiness(DEFAULT_PROVIDER_SCOPE)` |
 
@@ -44,7 +44,7 @@ Status: PASS
 Status: PASS
 
 ```text
-3c3e6ae7d9df3bb14efddd701fff983b1b714682
+e77d1df127d63753d47f9a90cfe856003bf7d9b4
 ```
 
 ## gitee main ref
@@ -52,7 +52,7 @@ Status: PASS
 Status: PASS
 
 ```text
-3c3e6ae7d9df3bb14efddd701fff983b1b714682
+e77d1df127d63753d47f9a90cfe856003bf7d9b4
 ```
 
 ## diff check
@@ -113,7 +113,7 @@ Status: PASS
 
 ```text
 {
-  "python": "3.12.13",
+  "python": "3.11.15",
   "node": "v24.14.0",
   "required": {
     "python": "3.11+",
@@ -125,98 +125,114 @@ Status: PASS
 
 ## contract tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+........................................................................ [ 40%]
+........................................................................ [ 80%]
+....................................                                     [100%]
+=============================== warnings summary ===============================
+.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+180 passed, 1 warning in 1.82s
 ```
 
 ## crawler lite tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+......                                                                   [100%]
+6 passed in 0.02s
 ```
 
 ## acceptance tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+...................................................................      [100%]
+=============================== warnings summary ===============================
+.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+67 passed, 1 warning in 0.60s
 ```
 
 ## scheduler tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+.......                                                                  [100%]
+7 passed in 0.26s
 ```
 
 ## worker tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+...................................                                      [100%]
+35 passed in 0.16s
 ```
 
 ## score tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+................                                                         [100%]
+16 passed in 0.05s
 ```
 
 ## evidence tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+...............................................                          [100%]
+47 passed in 0.08s
 ```
 
 ## outbound security tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+.......................                                                  [100%]
+23 passed in 0.02s
 ```
 
 ## provider gateway tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+.......................                                                  [100%]
+23 passed in 0.04s
 ```
 
 ## core skill evaluation
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-Traceback (most recent call last):
-  File "/Users/bruce/Developer/work/AIRank-productization/scripts/evaluate_core_skills.py", line 14, in <module>
-    from airank_skills import build_promotion_ledger, evaluate_registry  # noqa: E402
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/bruce/Developer/work/AIRank-productization/packages/skills/src/airank_skills/__init__.py", line 4, in <module>
-    from .evaluation import SkillEvaluationReport, build_promotion_ledger, evaluate_registry
-  File "/Users/bruce/Developer/work/AIRank-productization/packages/skills/src/airank_skills/evaluation.py", line 9, in <module>
-    from jsonschema import Draft202012Validator
-ModuleNotFoundError: No module named 'jsonschema'
+{"case_count": 30, "passed_case_count": 30, "promotion_eligible_count": 0, "retained_partial_count": 10, "skill_count": 10, "status": "pass"}
 ```
 
 ## xinghe adapter tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+......                                                                   [100%]
+6 passed in 0.04s
 ```
 
 ## web build
@@ -235,31 +251,60 @@ computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
 dist/assets/index-5riTn7Pq.css   71.39 kB │ gzip:  11.65 kB
 dist/assets/index-DLx2d2rj.js   396.80 kB │ gzip: 118.30 kB
-✓ built in 738ms
+✓ built in 724ms
 ```
 
 ## real integration tests
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named pytest
+......s...................s...                                           [100%]
+28 passed, 2 skipped in 4.39s
 ```
 
 ## alembic offline sql
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named alembic.__main__; 'alembic' is a package and cannot be directly executed
+INFO  [alembic.runtime.migration] Context impl MySQLImpl.
+INFO  [alembic.runtime.migration] Generating static SQL
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260517_0001, initial AIRank MySQL schema
+INFO  [alembic.runtime.migration] Running upgrade 20260517_0001 -> 20260517_0002, reconcile URL column lengths with API contracts
+INFO  [alembic.runtime.migration] Running upgrade 20260517_0002 -> 20260808_0003, add evidence-grade measurement contracts
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0003 -> 20260808_0004, add governed fact revisions, conflicts, claims, and supports
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0004 -> 20260808_0005, add provider manifest, probe, request, usage, circuit, and quota ledgers
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0005 -> 20260808_0006, add immutable knowledge source content and exact-boundary segments
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0006 -> 20260808_0007, add content review, immutable publishing snapshots, and retest windows
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0007 -> 20260808_0008, add evidence-backed retest comparison and report fields
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0008 -> 20260808_0009, add governed buyer-question maps and immutable revisions
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0009 -> 20260808_0010, add immutable buyer-query observation batches and records
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0010 -> 20260808_0011, add immutable scan task attempt ledger
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0011 -> 20260808_0012, add immutable page extractability audit runs and findings
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0012 -> 20260808_0013, add answer claims and append-only citation support reviews
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0013 -> 20260808_0014, add immutable citation source captures and exact source boundaries
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0014 -> 20260808_0015, add distributed provider QPS tokens and concurrency leases
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0015 -> 20260808_0016, add immutable provider route manifests and route request audit
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0016 -> 20260808_0017, add audited provider route control overrides
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0017 -> 20260808_0018, add immutable customer report evidence packets
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0018 -> 20260808_0019, add governed answer fact classifications and immutable accuracy reviews
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0019 -> 20260808_0020, add versioned citation source registry reviews
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0020 -> 20260808_0021, allow immutable report packets to supersede when governed evidence changes
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0021 -> 20260808_0022, persist public provider request contracts for historical audit joins
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0022 -> 20260808_0023, bind governed facts to a stable comparison subject
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0023 -> 20260808_0024, add governed knowledge source synchronization
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0024 -> 20260808_0025, add independent evidence review cases and agreement gates
 ```
 
 ## alembic real mysql
 
-Status: BLOCKED
+Status: PASS
 
 ```text
-/Users/bruce/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3: No module named alembic.__main__; 'alembic' is a package and cannot be directly executed
+INFO  [alembic.runtime.migration] Context impl MySQLImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
 ```
 
 ## capability probe
@@ -272,7 +317,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -283,7 +328,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -294,7 +339,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -309,7 +354,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -320,7 +365,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -331,7 +376,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -342,7 +387,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -353,7 +398,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:10:31.043332+00:00",
+    "checked_at": "2026-08-08T12:12:17.944809+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -378,6 +423,72 @@ Blockers:
 Status: BLOCKED
 
 ```text
-ModuleNotFoundError("No module named 'fastapi'")
+{
+  "mode": "browser",
+  "minimum_success_count": 4,
+  "providers": [
+    {
+      "provider": "doubao",
+      "label": "豆包",
+      "status": "blocked",
+      "url": "https://www.doubao.com/chat/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
+      "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
+      "blocker_code": "login_required",
+      "reason": "web page requires login",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/34/34611c8bde948c24eb6a59a1d5bfb34f89c279efa75237201c93bc5b740f891e.png"
+    },
+    {
+      "provider": "qianwen",
+      "label": "千问",
+      "status": "blocked",
+      "url": "https://www.qianwen.com/?ch=tongyi_redirect",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/qianwen",
+      "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
+      "blocker_code": "captcha_required",
+      "reason": "web page returned login or human verification text instead of an answer",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/c7/c7cb30c14591d0f98a6150b458b803cdeff32538f6866c589ade73daed2f1839.png"
+    },
+    {
+      "provider": "kimi",
+      "label": "Kimi",
+      "status": "blocked",
+      "url": "https://www.kimi.com/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
+      "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
+      "blocker_code": "login_required",
+      "reason": "web page requires login",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/29/29e1974038e7910de1631bafa81ca8112bac899e41f2cc87b1f28b51382606bb.png"
+    },
+    {
+      "provider": "deepseek",
+      "label": "DeepSeek",
+      "status": "blocked",
+      "url": "https://chat.deepseek.com/sign_in",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
+      "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
+      "blocker_code": "captcha_required",
+      "reason": "web page requires captcha verification",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/e6/e63f9bf5878a185cb3f81376ac6284f172d94d6a488cb9bc6089b83f31e0c949.png"
+    }
+  ]
+}
+
+Warnings:
+- doubao=blocked (web page requires login)
+- qianwen=blocked (web page returned login or human verification text instead of an answer)
+- kimi=blocked (web page requires login)
+- deepseek=blocked (web page requires captcha verification)
+
+Blockers:
+- browser_provider_ready=0/4
 ```
 
