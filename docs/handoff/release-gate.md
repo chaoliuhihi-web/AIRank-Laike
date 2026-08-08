@@ -824,7 +824,8 @@ Limitations and blockers:
 - This is Provider API evidence, not Consumer Web/App evidence. Consumer L3 remains `0/4`, and API search status is kept separate from browser screenshots and source panels.
 - The accepted batch contains no Provider-native citations, so it does not prove citation support or fact accuracy. It also does not prove any intervention caused a brand-visibility change.
 - The Kimi credential used for local acceptance appeared in conversation history and must be rotated before production. DeepSeek `v3.2` remains behind a model-sunset migration gate; `v4-pro` requires account quota.
-- Production Yudao, HTTPS S3/MinIO, customer publishing credentials, real elapsed T+7/T+14/T+30 evidence and the full brand-to-customer-report browser E2E remain open.
+- The fresh strict gate passes Python 3.11.15, Node 24.13.1, both remote `main` refs, all split test suites, the Web build, real MySQL and Alembic. It remains blocked because production API enforcement/Yudao and HTTPS S3/MinIO are unconfigured, optional Xinghe integrations are still `dev_only`, and Consumer browser L3 is `0/4` (login or captcha).
+- Customer publishing credentials, real elapsed T+7/T+14/T+30 evidence and the full brand-to-customer-report browser E2E remain open.
 
 Decision:
 

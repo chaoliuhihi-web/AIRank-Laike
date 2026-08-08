@@ -124,7 +124,7 @@
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 完整上线门禁：分包测试（含 Provider Gateway 21 项）、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；本轮用 Node 24.14.0 重跑 Web 构建通过，GitHub/Gitee `main` 已同步到同一提交。总状态仍为 `BLOCKED`：生产 Yudao、生产 HTTPS S3/MinIO 和受支持的 Python 运行时未配置；消费端 L3 真实生成当前 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。L2 入口发现不再计入就绪平台数。
+- 最新严格上线门禁（提交 `6318ac3`）：工作树、GitHub/Gitee `main`、diff、运行产物、Python 3.11.15、Node 24.13.1、全部分包测试（Provider Gateway 23 项）、Web 构建、真实 MySQL 25/2、离线 SQL 与真实 Alembic 均为 `PASS`。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成当前 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。Python 运行时不再是 blocker，L2 入口发现仍不计入就绪平台数。
 
 ## 下一实施顺序
 
