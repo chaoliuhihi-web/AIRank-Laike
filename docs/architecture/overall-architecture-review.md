@@ -130,7 +130,7 @@ flowchart LR
 | --- | --- |
 | 租户用户 | `airank_tenant_bindings`、`airank_user_bindings`、`airank_project_members` |
 | 项目资产 | `airank_projects`、`airank_competitors`、`airank_buyer_questions` |
-| 扫描证据 | `airank_scan_runs`、`airank_scan_tasks`、`airank_answer_snapshots`、`airank_source_citations` |
+| 扫描证据 | `airank_scan_runs`、`airank_scan_tasks`、`airank_scan_task_attempts`、`airank_answer_snapshots`、`airank_evidence_snapshots`、`airank_source_citations` |
 | 事实与缺口 | `airank_fact_atoms`、`airank_fact_sources`、`airank_content_gaps` |
 | 内容与发布 | `airank_content_assets`、`airank_publish_packages` |
 | 复测报告 | `airank_retest_runs`、`airank_reports` |

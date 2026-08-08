@@ -1806,6 +1806,28 @@ function EvidencePage() {
             <details className="evidence-json"><summary>查看请求元数据</summary><pre>{JSON.stringify(selected.request_metadata, null, 2)}</pre></details>
             <details className="evidence-json"><summary>查看原始响应</summary><pre>{JSON.stringify(selected.raw_response, null, 2)}</pre></details>
           </Panel>
+          <Panel title={`Worker 尝试链（${selected.attempts.length}）`}>
+            {selected.attempts.length === 0 ? (
+              <DataStateCard title="无 Worker attempt 记录" desc="这是迁移前或人工导入样本；系统不会为历史数据补造执行记录。" tone="warning" />
+            ) : (
+              <div className="airank-console-card table-card evidence-table-wrap">
+                <table className="question-table evidence-table">
+                  <thead><tr><th>Attempt</th><th>状态</th><th>Job / 请求</th><th>时间</th><th>结果</th></tr></thead>
+                  <tbody>
+                    {selected.attempts.map((attempt) => (
+                      <tr key={attempt.attempt_id}>
+                        <td><strong>#{attempt.attempt_number}</strong><small>{attempt.provider} · {attempt.collector_surface}</small></td>
+                        <td><Badge tone={attempt.status === "succeeded" ? "success" : attempt.status === "running" ? "primary" : attempt.status === "blocked" ? "warning" : "danger"}>{attempt.status}</Badge></td>
+                        <td><strong>{attempt.job_id}</strong><small>{attempt.provider_request_id || "无外部请求 ID"}</small></td>
+                        <td>{formatDateTime(attempt.started_at)}<small>{attempt.completed_at ? `结束 ${formatDateTime(attempt.completed_at)}` : "尚未结束"}</small></td>
+                        <td>{attempt.error_code ? <><strong>{attempt.error_code}</strong><small>{attempt.error_message || "无错误详情"}</small></> : <><strong>{attempt.evidence_snapshot_id || "待落证据"}</strong><small>{attempt.answer_snapshot_id || "无回答快照"}</small></>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
         </section>
       )}
     </>

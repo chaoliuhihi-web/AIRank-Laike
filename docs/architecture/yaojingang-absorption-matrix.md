@@ -85,7 +85,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TokHub | Provider manifest | 统一模型、端点、能力和生命周期 | channel/store models | manifest → eligible upstreams | provider catalog | Apache-2.0 | 四平台 manifest、别名、能力、官方 host、模型生命周期契约已实现 | manifest 持久化同步与后台编辑仍缺 | adapt | Provider Manifest | P0 | partial | manifest schema、版本与迁移测试通过 |
 | TokHub | L1/L2/L3 探测 | 区分网络、鉴权、模型和生成故障 | probe services/`probe_runs` | channel → layer results | 凭证、网络 | Apache-2.0 | Gateway 已区分网络、鉴权/模型和真实生成状态；三平台完成真实 L2/L3 | Kimi 安全运行时注入和四平台持久化 probe 记录仍缺 | absorb | Provider Health | P0 | partial | 四平台各产生真实 L1/L2/L3 记录和 request id |
-| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 统一 Gateway 已有重试、退避、进程内熔断和半开恢复；真实扫描默认入持久队列，Worker 拥有批次租约、阶段心跳、并发触发延后和失效关闭证据 | 仍缺每任务独立持久、attempt 版本证据、跨进程 Redis/MySQL circuit state 与多上游路由 | adapt | Provider Gateway | P1 | partial | 多 Worker 不重复调用；租约过期生成 `SCAN_RUN_LEASE_EXPIRED` 不可变失败样本；故障注入下不调用熔断通道 |
+| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 统一 Gateway 已有重试、退避、进程内熔断和半开恢复；每个真实采样槽由独立 Worker/job/事务执行，完成即持久化；attempt 台账关联回答、证据、请求 ID 和错误，未知结果只封闭单槽 | 仍缺跨进程 Redis/MySQL circuit state 与多上游路由 | adapt | Provider Gateway | P1 | partial | 多 Worker 可并行同一批次不同槽；单槽租约过期生成 `SCAN_TASK_LEASE_EXPIRED` 不可变失败样本且不重放；故障注入下不调用熔断通道 |
 | TokHub | QPS、并发与配额预留 | 避免超额和预算并发穿透 | quota/reservation/store | request → reserve/commit/release | Redis/事务 | Apache-2.0 | 已有进程内 QPS/并发、预留/提交/失败释放与持久化表 | 事务型租户配额 repository 尚未接入 runtime | adapt | Quota Service | P1 | partial | 并发测试不超额度，失败归还预留 |
 | TokHub | 用量 exact/estimated 标记 | 不把估算成本冒充精确成本 | usage events/rollups | response → tokens/cost/provenance | 价格版本 | Apache-2.0 | ProviderUsage 与 usage events 已区分 exact/estimated/unknown；真实三平台均返回 exact | 价格版本、成本计算和报表筛选仍缺 | absorb | Usage Ledger | P1 | partial | 缺上游 usage 时标 estimated，报告可过滤 |
 | TokHub | 凭证加密、指纹、轮换 | 支撑安全私有 Provider | credential store/migrations | secret → ciphertext/fingerprint | 主密钥/KMS | Apache-2.0 | env 注入 | 无租户级 vault 与轮换审计 | adapt | Credential Vault | P1 | planned | 明文扫描为零；轮换不暴露旧值；删除执行 scrub |
@@ -139,11 +139,11 @@
 
 - `20260808_0003_measurement_credibility.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0003`；9 个关键 AnswerSnapshot 字段和 2 张新表均完成核验，随后删除临时验收库。
 - `20260808_0004_fact_evidence_governance.py` 已在临时 MySQL 空库真实执行，Alembic head 为 `20260808_0004`；29 张 AIRank 表、5 张事实治理表和 3 个 FactAtom 版本字段完成核验，随后删除临时验收库。
-- `20260808_0006`—`0010` 已在真实 MySQL 执行，Alembic head 为 `20260808_0010`；47 张 AIRank 表完成核验。`0010` 新增不可变问题观察批次与记录，并针对 MySQL 保留字导致的半迁移验证了安全重跑。
+- `20260808_0006`—`0011` 已在真实 MySQL 执行，Alembic head 为 `20260808_0011`；48 张 AIRank 表完成核验。`0010` 新增不可变问题观察批次与记录，`0011` 新增采样任务 attempt 台账。
 - 买家问题现在使用 `airank-question-taxonomy-v1.2.0`，分别记录问题类型、意图、买家阶段、风格、时效、场景、来源、输入 hash、去重 hash、稳定问题版本和 provenance records；未确认问题以及与 ScanRun Cohort 不一致的问题不会被编译成采样任务。
 - `research.intent-miner` 已吸收 M0/M1 边界：无数据时只生成假设候选；客户授权数据进入 `user_provided_snapshot` 批次并明确“未独立核验”。来源内出现次数只保存为 occurrence count，不作为搜索量；疑似邮箱、手机号或身份证的原文只计算内容 hash 和阻断原因，不进入数据库、API 响应或问题版本。
 - `airank.measurement-quality.v3` 将复测报告的“已生成”与“可交付”分开：每个 ScanRun 都能重算内容寻址质量报告，未提及仍计入有效分母；单次采样、少于 3 个独立 sample index 或重用 session 会直接阻断交付。除样本、签名、有效率、回答/原始响应 hash 外，API/Web/App/manual_import 分别执行证据门禁。Web/App 的 `source_panel_status` 必须为 `captured` 或 `not_present`；有引用时还必须绑定不可变来源面板对象。基线与复测任一质量失败或口径不可比时，报告只保存为 `quality_blocked` 且下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。
-- 真实 ScanRun 默认由 `airank_async_jobs` 与 Worker 异步执行；批次主租约在 Provider 调用和证据落库阶段持续心跳，并发 Worker 把冗余触发延后而不消耗尝试次数。主 Worker 崩溃后禁止无条件重放，会为每个未持久任务写入 `SCAN_RUN_LEASE_EXPIRED` 不可变失败样本，并要求新建 ScanRun 重试。因尚未达到“每任务一事务 + attempt 版本证据”，状态仍为 `partial`。
+- 真实 ScanRun 默认由 `airank_async_jobs` 与 Worker 异步执行；每个采样槽独立领取、心跳并在单事务中写回答、证据、引用、请求审计、attempt 和 job/task 状态。同批次不同槽可由多个 Worker 并行；运行指标只在全部槽终态后从持久化样本重算。进程崩溃只把结果未知的当前槽记为 `SCAN_TASK_LEASE_EXPIRED` 与 `unknown` attempt，不重放 Provider，也不破坏兄弟槽证据。证据中心可下钻 attempt 链。跨进程熔断和多上游路由尚未完成，因此 TokHub 路由能力仍为 `partial`。
 - 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
 - 千问、豆包、Kimi、DeepSeek（当前可用型号为 `deepseek-v3.2`）均已通过本仓 Provider Gateway 真实 L3 调用并返回真实 request ID；凭证只从本机私密环境映射到进程。Kimi 已暴露过的验收密钥必须在生产前轮换，DeepSeek 新型号额度和旧型号下架迁移仍是上线门禁。
 - 全量 Python 测试：`184 passed, 8 skipped`；本地真实 MySQL integration 为 `7 passed, 1 skipped`（仅 Yudao 外部服务跳过）。跳过项不能视为已通过。

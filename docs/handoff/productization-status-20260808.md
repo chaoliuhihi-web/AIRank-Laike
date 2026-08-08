@@ -63,7 +63,7 @@
 53. `research.intent-miner` 升级至 `1.2.0`，新增 `ObservedQuestionSeed` 与 `provenance_records`。观察记录优先于种子和模板参与去重，重复来源会追加 provenance，不会把同一问题伪造为多个独立需求。
 54. 新增 M1 客户授权问题观察批次与记录：来源类型、名称、访问方式、证据等级、日期范围、payload SHA-256、记录数、来源内频次、授权声明和导入人均不可变保存；重复 payload 幂等回放同一批次。
 55. 导入门禁会拦截邮箱、中国手机号和身份证号；被拦截原文不写入数据库或响应，只保留不可逆内容 hash 与原因。`occurrence_count` 只表示该来源内出现次数，API 和控制台明确标注“不是搜索量”“客户提供、未独立核验”。
-56. Alembic `20260808_0010` 在真实 MySQL 完成，AIRank 表数增至 47。真实浏览器完成授权导入、1 条安全记录/频次 7、1 条 PII 阻断、观察问题编译、人工确认和刷新持久化；390px 有效视口无页面级横向溢出，控制台 `0 error / 0 warning`，页面与持久化层均未出现被拦截邮箱。
+56. Alembic `20260808_0011` 在真实 MySQL 完成，AIRank 表数增至 48；新增不可变扫描 attempt 台账。真实浏览器完成授权导入、1 条安全记录/频次 7、1 条 PII 阻断、观察问题编译、人工确认和刷新持久化；390px 有效视口无页面级横向溢出，控制台 `0 error / 0 warning`，页面与持久化层均未出现被拦截邮箱。
 57. 新增内容寻址的 `airank.measurement-quality.v1`：按 ScanRun 重算 10 项基础质量检查，覆盖样本存在、签名数量、样本 ID、采样位重复、状态分区、有效样本、有效率、回答 hash、原始响应 hash 和提及分类；结果包含 data/report SHA-256 与 known limitations。
 58. 质量门明确保留正常未提及样本并计入有效分母；没有 Provider 引用、未评测引用支持度/事实准确率或缺少重复稳定性会进入限制项，不会被偷偷补值。
 59. 复测报告只有在基线/复测各自 `publishable=true` 且样本契约可比时才写为 `generated`；否则写为 `quality_blocked/completed_with_limitations`。下载接口对阻断及旧版无质量清单报告返回 `409 REPORT_QUALITY_BLOCKED`，不再把文件存在等同于可交付。
@@ -71,8 +71,9 @@
 61. 质量契约升级为 `airank.measurement-quality.v2`：每个任务样本独立绑定 Evidence Manifest，总计 21 项检查。API 必须关联 Provider 请求审计；Web/App 必须有不可变截图并明确来源面板为 `captured/not_present`；有引用时必须保存来源面板对象；App 额外要求设备/App 环境 hash；manual_import 要求导入源 hash。各采集面独立输出样本数、有效数、证据完整数、截图数、来源面板状态和阻断数。历史 v1/无版本报告在列表中降级为 `quality_blocked`，下载回执接口拒绝放行，必须按 v2 重算。
 62. 浏览器真实 MySQL 验收使用一条有效且未提及的豆包 Web 样本：有效率为 100%、未提及正确计入分母、来源面板明确记录为“界面未呈现（已检查）”，但因截图对象缺失，质量报告仍为 `blocked`。证据中心展示具体阻断和 `web/consumer_web` 汇总；390px 有效视口无页面级溢出，console `0 error / 0 warning`。
 63. 扫描失败和阻塞不再只写任务错误：每个失败槽位创建空回答 AnswerSnapshot、不可变原始失败 EvidenceSnapshot、请求元数据和原始响应 SHA-256；Web 采集如已进入页面则把失败现场截图复制到内容寻址对象存储。登录/验证码/配额/鉴权等外部动作阻塞与超时、网络、上游、解析失败严格分开；两者都不计入品牌未提及分母。真实同批次验收完成“千问 API 有效未提及 + 千问 Web 超时失败”，失败样本可下钻到原始 hash 和截图对象，质量门禁的原始响应 hash 检查通过。
-64. 品牌检测在 MySQL 路径默认只创建真实任务并入队，API 不再同步占用请求线程执行整批 Provider 调用；只有显式 `AIRANK_SCAN_DISPATCH_MODE=inline` 可用于诊断。Worker 对 ScanRun 实施原子主租约、阶段心跳、并发触发延后、终态幂等回放和租约过期失效关闭。崩溃时不自动重放结果未知的外部调用，每个未落库任务保留 `SCAN_RUN_LEASE_EXPIRED` 不可变原始失败证据。任务中心每 3 秒、批次列表每 5 秒刷新，不再把入队写成“检测完成”。当前仍是批次级 Worker，每任务独立事务与 attempt 版本证据尚待实现。
+64. 品牌检测在 MySQL 路径默认只创建真实任务并入队，API 不再同步占用请求线程执行整批 Provider 调用；只有显式 `AIRANK_SCAN_DISPATCH_MODE=inline` 可用于诊断。Worker 已改为每个采样槽独立领取、心跳和原子落证据，同批次不同槽可并行；运行指标只在全部槽终态后从持久化样本重算。`airank_scan_task_attempts` 记录 job、attempt、Worker lease、回答/证据 ID、请求 ID、时间和错误。崩溃只把结果未知的当前槽写为 `SCAN_TASK_LEASE_EXPIRED`/`unknown`，不会重放 Provider 或抹掉兄弟槽证据；证据中心可下钻 attempt 链。任务中心每 3 秒、批次列表每 5 秒刷新，不再把入队写成“检测完成”。
 65. 真实千问 Worker 浏览器验收发现“单次采样却显示可交付”的门禁假阳性；质量契约因此升级为 `airank.measurement-quality.v3`。每个问题/Provider/Cohort/采集面/模型口径必须至少有 3 个不同 sample index 与 3 个独立 session；单次采样和会话复用必须 `quality_blocked`。已完成的真实千问样本仍保留为 valid/未提及原始证据，但前端正确显示“样本证据不可作为客户报告交付”，不会因 API 调用成功而越过重复性门禁。
+66. 任务级 Worker 与 attempt 台账完成真实千问和浏览器复验：`qwen3.6-plus` 返回真实 request ID，attempt #1 记录 job、起止时间、`succeeded` 和回答/证据 ID；证据中心可下钻。390×844 无页面级横向溢出，新登录态页面 console `0 error / 0 warning`。单样本仍被 v3 质量门阻断。隔离验收租户已清理为 0 行。全量本地测试 `247 passed, 17 skipped`，真实 MySQL `15 passed, 2 skipped`。
 
 ## 验收证据
 

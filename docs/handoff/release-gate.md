@@ -616,3 +616,32 @@ Blocking conditions:
 Decision:
 
 - AIRank now has a truthful durable queue boundary and fail-closed crash behavior for real scans. It is not yet commercially launchable because task-level durability and the broader external production gates are incomplete.
+
+## 2026-08-08 Task-Level Scan Durability Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Commit: pending task-level-scan-durability commit on `codex/evidence-productization`
+
+Reviewer: Codex
+
+Passed:
+
+- Each `scan.provider` job now executes exactly one sampling slot. Different workers may process sibling slots in the same run without sharing a run-level in-memory result buffer.
+- A completed slot persists AnswerSnapshot, EvidenceSnapshot, citations, Provider request audit, task/job state and attempt state atomically. Mid-run MySQL verification observed one durable snapshot while the sibling task remained queued and the run remained `running`.
+- Run metrics and terminal status are recomputed exclusively from durable rows and only after every slot is terminal. Normal not-mentioned samples remain in the valid denominator; failed and blocked samples remain outside it.
+- Alembic `20260808_0011` created `airank_scan_task_attempts`. The ledger records job, attempt number, Provider/surface, start/end, outcome, linked answer/evidence, external request ID and structured error metadata.
+- A timed-out external call with unknown outcome is not replayed. Only that slot receives immutable `SCAN_TASK_LEASE_EXPIRED` evidence and an `unknown` attempt; queued/completed sibling slots remain untouched.
+- Terminal job requeue is idempotent and does not call the Provider again. Internal dependency failure writes failure evidence and a failed attempt for only the claimed slot.
+- The evidence-detail API and console expose the Worker attempt chain instead of leaving the audit ledger database-only.
+- A fresh real Qianwen task completed through the task-level Worker with model `qwen3.6-plus`, a real external request ID and a `succeeded` attempt linked to immutable answer/evidence snapshots. The valid not-mentioned answer remained in the denominator, while the single-session run remained correctly quality-blocked.
+- Browser QA displayed attempt #1, its job, real request ID, start/end time and linked evidence. At 390×844 the document width stayed 390 with no page-level overflow; a fresh authenticated tab had 0 console errors and 0 warnings. The isolated QA tenant was removed afterward with zero rows remaining.
+- Full local regression passed `247 passed, 17 skipped`; real MySQL integration passed `15 passed, 2 skipped`; the schema head is `20260808_0011` with 48 AIRank tables. Web TypeScript/Vite build and npm high-severity audit passed; Node `20.18.2` remains below the required production patch floor.
+
+Blocking conditions:
+
+- Distributed circuit-breaker state, transactional tenant quota enforcement, multi-upstream routing, four-platform same-cohort repetition, Consumer App collection, four logged-in Consumer Web sessions, production Yudao, HTTPS object storage, customer Publisher receipts, supported production runtimes, remote-main synchronization and complete customer-report E2E remain open.
+
+Decision:
+
+- The batch-crash evidence-loss blocker is closed. Provider reliability remains `partial`, and AIRank remains commercial `NO-GO` until the remaining external and production gates pass.

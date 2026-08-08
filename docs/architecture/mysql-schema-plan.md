@@ -38,6 +38,7 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_buyer_questions` | AI 来客问题地图 | 是 |
 | `airank_scan_runs` | 一次扫描批次 | 是 |
 | `airank_scan_tasks` | 单平台、单问题扫描任务 | 是 |
+| `airank_scan_task_attempts` | 单采样槽 Worker 尝试、结果未知与证据关联台账 | 是 |
 | `airank_answer_snapshots` | AI 回答快照 | 是 |
 | `airank_source_citations` | 回答引用和来源归因 | 是 |
 | `airank_fact_atoms` | 可信事实卡内部 FactAtom，含可信等级、可公开程度、来源片段、风险提示 | 是 |
@@ -106,7 +107,7 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 2. M1 初始化 `apps/api` 后创建 Alembic `0001_initial_airank_schema`，内容必须与 bootstrap SQL 对齐。
 3. `apps/api` 只访问 AIRank 主库，不直接访问 yudao 数据库。
 4. `apps/api` 认证中间件调用 yudao `/admin-api/system/auth/get-permission-info`，拿到 `tenant_id` 和 user 后写入 binding 表。
-5. `apps/worker` 从 `airank_async_jobs` 领取任务，写 `scan_runs`、`scan_tasks`、`answer_snapshots`、`source_citations`。
+5. `apps/worker` 从 `airank_async_jobs` 逐槽领取任务，在单事务中写 `scan_task_attempts`、`scan_tasks`、`answer_snapshots`、`evidence_snapshots`、`source_citations` 和 job 终态；全部槽终态后再聚合 `scan_runs`。
 6. M2 开始由业务写入 `airank_outbox_events`，再由 outbox dispatcher 分发 `scan.completed`、`fact_atom.confirmed` 等事件。
 7. `packages/xinghe-adapter/status` 定时刷新 `airank_integration_capabilities`。
 8. 报告和证据包文件写对象存储，本库只写 `airank_object_refs`。
@@ -142,7 +143,8 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_competitors` | `tenant_id` | `project_id` | 项目竞品列表，按 `priority` 排序 | `idx_airank_competitors_project` 覆盖；API 必须过滤 `deleted_at IS NULL` |
 | `airank_buyer_questions` | `tenant_id` | `project_id` | 问题列表、按类型/意图筛选、按优先级排序 | `idx_airank_questions_project_priority`、`idx_airank_questions_type`、`idx_airank_questions_intent` 覆盖 |
 | `airank_scan_runs` | `tenant_id` | `project_id` | 项目扫描批次列表、按状态筛选、租户级最近扫描 | `idx_airank_scan_runs_project_status`、`idx_airank_scan_runs_created` 覆盖 |
-| `airank_scan_tasks` | `tenant_id` | `project_id` | worker 领取任务、项目任务状态列表、单 run 去重 | `idx_airank_scan_tasks_worker`、`idx_airank_scan_tasks_project`、`uk_airank_scan_tasks_once` 覆盖 |
+| `airank_scan_tasks` | `tenant_id` | `project_id` | worker 领取任务、项目任务状态列表、单 run 采样槽去重 | `idx_airank_scan_tasks_worker`、`idx_airank_scan_tasks_project`、`uk_airank_scan_tasks_sample` 覆盖 |
+| `airank_scan_task_attempts` | `tenant_id` | `project_id` | 按 run/task 下钻 Worker attempt、未知结果、回答/证据关联 | `uk_airank_scan_attempt_number`、`idx_airank_scan_attempt_run`、`idx_airank_scan_attempt_job` 覆盖 |
 | `airank_answer_snapshots` | `tenant_id` | `project_id` | 按 run/question 查回答，按品牌出现和排名统计 | `idx_airank_snapshots_run_question`、`idx_airank_snapshots_brand_rank` 覆盖 |
 | `airank_source_citations` | `tenant_id` | `project_id` | 按 snapshot 回溯引用，按 host 做来源统计 | `idx_airank_citations_snapshot`、`idx_airank_citations_host` 覆盖 |
 | `airank_fact_atoms` | `tenant_id` | `project_id` | 事实库列表、可信等级/公开等级筛选、事实类型筛选 | `idx_airank_fact_atoms_project_status`、`idx_airank_fact_atoms_trust`、`idx_airank_fact_atoms_type` 覆盖 |

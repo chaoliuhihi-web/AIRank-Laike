@@ -272,3 +272,30 @@ def test_question_observation_batches_preserve_provenance_and_block_pii() -> Non
     assert "customer_provided_not_independently_verified" in routes
     assert "occurrence_count_is_source_frequency_not_search_volume" in routes
     assert "detected_pii_reasons" in routes
+
+
+def test_scan_worker_persists_task_level_attempt_evidence() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0011_scan_task_attempts.py"
+    ).read_text(encoding="utf-8")
+    worker = (ROOT / "apps" / "worker" / "airank_worker" / "scan.py").read_text(encoding="utf-8")
+    evidence_routes = (ROOT / "apps" / "api" / "evidence_routes.py").read_text(encoding="utf-8")
+
+    for name in (
+        "airank_scan_task_attempts",
+        "attempt_number",
+        "answer_snapshot_id",
+        "evidence_snapshot_id",
+        "provider_request_id",
+        "completed_at",
+    ):
+        assert name in migration
+    assert "only_task_id=task_id" in worker
+    assert "SCAN_TASK_LEASE_EXPIRED" in worker
+    assert "attempt_status=\"unknown\"" in worker
+    assert "attempts: list[ScanTaskAttemptData]" in evidence_routes

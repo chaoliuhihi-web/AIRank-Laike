@@ -84,7 +84,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0010"
+EXPECTED_ALEMBIC_HEAD = "20260808_0011"
 
 
 def require_real_flag(flag: str) -> None:
@@ -150,7 +150,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 47
+        assert table_count == 48
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -886,7 +886,7 @@ def test_real_mysql_brand_check_defaults_to_durable_worker_dispatch(
         cleanup_tenant(engine, tenant_id)
 
 
-def test_real_mysql_scan_worker_fail_closes_expired_run_lease(
+def test_real_mysql_scan_worker_fail_closes_only_expired_task_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_real_flag("AIRANK_RUN_REAL_MYSQL")
@@ -937,6 +937,7 @@ def test_real_mysql_scan_worker_fail_closes_expired_run_lease(
             "scan-worker-that-crashes",
             owner_started_at,
             job_types={"scan.provider"},
+            tenant_id=tenant_id,
         )
         assert owner_job is not None
         with engine.begin() as conn:
@@ -951,36 +952,32 @@ def test_real_mysql_scan_worker_fail_closes_expired_run_lease(
                 {"tenant_id": tenant_id, "run_id": run.run_id, "started_at": owner_started_at},
             )
 
-        concurrent = run_next_real_scan_job(
-            store,
-            worker_id="scan-concurrent-worker",
-            now=owner_started_at + timedelta(seconds=1),
-        )
-        assert concurrent is not None
-        assert concurrent.status == "in_progress"
-        assert concurrent.idempotent_replay is True
-        with engine.connect() as conn:
-            deferred_job = conn.execute(
+            conn.execute(
                 text(
                     """
-                    SELECT status, attempt_count, locked_by
-                    FROM airank_async_jobs
-                    WHERE tenant_id=:tenant_id AND id=:job_id
+                    UPDATE airank_scan_tasks
+                    SET status='running', attempt_count=1,
+                        started_at=:started_at, updated_at=:started_at
+                    WHERE tenant_id=:tenant_id AND id=:task_id
                     """
                 ),
-                {"tenant_id": tenant_id, "job_id": concurrent.trigger_job_id},
-            ).mappings().one()
-        assert deferred_job == {"status": "queued", "attempt_count": 0, "locked_by": None}
+                {
+                    "tenant_id": tenant_id,
+                    "task_id": owner_job.payload["scan_task_id"],
+                    "started_at": owner_started_at,
+                },
+            )
 
         recovered = run_next_real_scan_job(
             store,
             worker_id="scan-recovery-worker",
             now=owner_started_at + timedelta(seconds=owner_job.timeout_seconds + 1),
+            tenant_id=tenant_id,
         )
         assert recovered is not None
         assert recovered.status == "failed"
         assert recovered.task_count == 2
-        assert recovered.failed_count == 2
+        assert recovered.failed_count == 1
 
         with engine.connect() as conn:
             run_row = conn.execute(
@@ -1021,29 +1018,48 @@ def test_real_mysql_scan_worker_fail_closes_expired_run_lease(
                 ),
                 {"tenant_id": tenant_id, "run_id": run.run_id},
             ).mappings().all()
+            attempt_rows = conn.execute(
+                text(
+                    """
+                    SELECT status, attempt_number, answer_snapshot_id, evidence_snapshot_id,
+                           error_code, completed_at
+                    FROM airank_scan_task_attempts
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id
+                    ORDER BY attempt_number, id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
 
-        assert run_row["status"] == "failed"
-        assert "Automatic replay was suppressed" in run_row["error_message"]
+        assert run_row["status"] == "running"
+        assert run_row["error_message"] is None
         assert {(row["status"], row["error_code"]) for row in task_rows} == {
-            ("failed", "SCAN_RUN_LEASE_EXPIRED")
+            ("failed", "SCAN_TASK_LEASE_EXPIRED"),
+            ("queued", None),
         }
-        assert sorted(row["status"] for row in job_rows) == ["failed", "timeout"]
-        assert len(evidence_rows) == 2
+        assert sorted(row["status"] for row in job_rows) == ["failed", "queued"]
+        assert len(evidence_rows) == 1
+        assert len(attempt_rows) == 1
+        assert attempt_rows[0]["status"] == "unknown"
+        assert attempt_rows[0]["attempt_number"] == 1
+        assert attempt_rows[0]["answer_snapshot_id"]
+        assert attempt_rows[0]["evidence_snapshot_id"]
+        assert attempt_rows[0]["error_code"] == "SCAN_TASK_LEASE_EXPIRED"
+        assert attempt_rows[0]["completed_at"] is not None
         for row in evidence_rows:
             raw = json.loads(row["raw_response_json"])
             assert row["answer_text"] == ""
             assert row["answer_sha256"] is None
             assert row["sample_status"] == "failed"
             assert row["raw_response_sha256"] == row["evidence_sha256"]
-            assert raw["failure"]["error_code"] == "SCAN_RUN_LEASE_EXPIRED"
+            assert raw["failure"]["error_code"] == "SCAN_TASK_LEASE_EXPIRED"
             assert raw["failure"]["automatic_replay_suppressed"] is True
             assert raw["capture_metadata"]["provider_response_available"] is False
-        assert run_next_real_scan_job(store, worker_id="scan-recovery-worker") is None
     finally:
         cleanup_tenant(engine, tenant_id)
 
 
-def test_real_mysql_scan_worker_internal_failure_preserves_all_task_evidence(
+def test_real_mysql_scan_worker_internal_failure_preserves_only_claimed_task_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_real_flag("AIRANK_RUN_REAL_MYSQL")
@@ -1092,6 +1108,7 @@ def test_real_mysql_scan_worker_internal_failure_preserves_all_task_evidence(
             run_next_real_scan_job(
                 MySQLJobLeaseStore(database_url()),
                 worker_id="scan-internal-failure-worker",
+                tenant_id=tenant_id,
             )
         assert caught.value.code == "SCAN_WORKER_INTERNAL_ERROR"
         assert caught.value.retryable is False
@@ -1117,12 +1134,27 @@ def test_real_mysql_scan_worker_internal_failure_preserves_all_task_evidence(
                 ),
                 {"tenant_id": tenant_id, "run_id": run.run_id},
             ).mappings().one()
+            attempt_statuses = conn.execute(
+                text(
+                    """
+                    SELECT status, error_code, answer_snapshot_id, evidence_snapshot_id
+                    FROM airank_scan_task_attempts
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
         assert counts == {
-            "failed_tasks": 2,
-            "failed_jobs": 2,
-            "failure_snapshots": 2,
-            "run_status": "failed",
+            "failed_tasks": 1,
+            "failed_jobs": 1,
+            "failure_snapshots": 1,
+            "run_status": "running",
         }
+        assert len(attempt_statuses) == 1
+        assert attempt_statuses[0]["status"] == "failed"
+        assert attempt_statuses[0]["error_code"] == "SCAN_WORKER_INTERNAL_ERROR"
+        assert attempt_statuses[0]["answer_snapshot_id"]
+        assert attempt_statuses[0]["evidence_snapshot_id"]
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -1207,13 +1239,42 @@ def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
         )
 
         lease_store = MySQLJobLeaseStore(database_url())
+        first_dispatch = run_next_real_scan_job(
+            lease_store,
+            worker_id="scan-integration-worker",
+            tenant_id=tenant_id,
+        )
+        assert first_dispatch is not None
+        assert first_dispatch.run_id == run.run_id
+        assert first_dispatch.status == "completed"
+        assert first_dispatch.task_count == 2
+        assert first_dispatch.completed_count == 1
+        assert first_dispatch.failed_count == 0
+        with engine.connect() as conn:
+            durable_mid_run = conn.execute(
+                text(
+                    """
+                    SELECT
+                      (SELECT status FROM airank_scan_runs
+                       WHERE tenant_id=:tenant_id AND id=:run_id) AS run_status,
+                      (SELECT COUNT(*) FROM airank_answer_snapshots
+                       WHERE tenant_id=:tenant_id AND run_id=:run_id) AS snapshot_count,
+                      (SELECT COUNT(*) FROM airank_scan_tasks
+                       WHERE tenant_id=:tenant_id AND run_id=:run_id AND status='queued') AS queued_count
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().one()
+        assert durable_mid_run == {"run_status": "running", "snapshot_count": 1, "queued_count": 1}
+
         dispatch = run_next_real_scan_job(
             lease_store,
             worker_id="scan-integration-worker",
+            tenant_id=tenant_id,
         )
         assert dispatch is not None
         assert dispatch.run_id == run.run_id
-        assert dispatch.status == "completed"
+        assert dispatch.status == "failed"
         assert dispatch.task_count == 2
         assert dispatch.completed_count == 1
         assert dispatch.failed_count == 1
@@ -1231,10 +1292,29 @@ def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
                 {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
             ).mappings().all()
         assert sorted(row["status"] for row in job_rows) == ["failed", "succeeded"]
+        with engine.connect() as conn:
+            attempt_rows = conn.execute(
+                text(
+                    """
+                    SELECT status, attempt_number, answer_snapshot_id, evidence_snapshot_id
+                    FROM airank_scan_task_attempts
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id
+                    ORDER BY status, id
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().all()
+        assert {row["status"] for row in attempt_rows} == {"blocked", "succeeded"}
+        assert {row["attempt_number"] for row in attempt_rows} == {1}
+        assert all(row["answer_snapshot_id"] and row["evidence_snapshot_id"] for row in attempt_rows)
 
         failed_job_id = next(row["id"] for row in job_rows if row["status"] == "failed")
         lease_store.requeue_for_retry(failed_job_id, datetime.now(timezone.utc))
-        replay = run_next_real_scan_job(lease_store, worker_id="scan-integration-worker")
+        replay = run_next_real_scan_job(
+            lease_store,
+            worker_id="scan-integration-worker",
+            tenant_id=tenant_id,
+        )
         assert replay is not None
         assert replay.status == "failed"
         assert replay.idempotent_replay is True
@@ -1267,6 +1347,11 @@ def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
         assert detail.raw_response["sample_status"] == "blocked"
         assert detail.raw_response["failure"]["error_code"] == "SCAN_PROVIDER_BLOCKED"
         assert detail.request_metadata["failure"]["blocked"] is True
+        assert len(detail.attempts) == 1
+        assert detail.attempts[0].status == "blocked"
+        assert detail.attempts[0].attempt_number == 1
+        assert detail.attempts[0].answer_snapshot_id == blocked_sample.snapshot_id
+        assert detail.attempts[0].evidence_snapshot_id == detail.evidence_snapshot_id
 
         quality = quality_repo.get_quality_report(tenant_id, project.project_id, run.run_id)
         raw_hash_check = next(check for check in quality["checks"] if check["code"] == "raw_response_hashes_present")

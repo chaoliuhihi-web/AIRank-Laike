@@ -47,9 +47,40 @@ def run_next_real_scan_job(
     *,
     worker_id: str,
     now: datetime | None = None,
+    tenant_id: str | None = None,
 ) -> ScanDispatchResult | None:
     claimed_at = now or utc_now()
-    job = store.claim_next(worker_id, claimed_at, job_types={"scan.provider"})
+    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
+    if database_url:
+        engine = create_engine(database_url, pool_pre_ping=True)
+        timed_out_jobs = [
+            timed_out
+            for timed_out in store.sweep_timeouts(
+                claimed_at,
+                tenant_id=tenant_id,
+                job_types={"scan.provider"},
+            )
+            if timed_out.job_type == "scan.provider"
+        ]
+        recovered_timeouts: list[ScanDispatchResult] = []
+        for timed_out in timed_out_jobs:
+            recovered = _recover_timed_out_scan_job(
+                engine,
+                database_url=database_url,
+                job=timed_out,
+                finished_at=claimed_at,
+            )
+            if recovered is not None:
+                recovered_timeouts.append(recovered)
+        if recovered_timeouts:
+            return recovered_timeouts[-1]
+
+    job = store.claim_next(
+        worker_id,
+        claimed_at,
+        job_types={"scan.provider"},
+        tenant_id=tenant_id,
+    )
     if job is None:
         return None
     payload = job.payload if isinstance(job.payload, Mapping) else {}
@@ -61,7 +92,6 @@ def run_next_real_scan_job(
         store.fail(job.id, worker_id, utc_now(), error.code, error.message)
         raise error
 
-    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
     if not database_url:
         error = ScanWorkerError("DATABASE_NOT_CONFIGURED", "AIRANK_DATABASE_URL is required")
         store.fail(job.id, worker_id, utc_now(), error.code, error.message)
@@ -81,7 +111,8 @@ def run_next_real_scan_job(
         task_row = conn.execute(
             text(
                 """
-                SELECT tenant_id, project_id, run_id, status, error_code, error_message
+                SELECT tenant_id, project_id, run_id, provider, collector_surface,
+                       status, error_code, error_message
                 FROM airank_scan_tasks
                 WHERE id = :task_id
                 """
@@ -101,7 +132,7 @@ def run_next_real_scan_job(
             store.fail(job.id, worker_id, utc_now(), error.code, error.message)
             raise error
 
-        if run_row["status"] in {"completed", "failed", "canceled"}:
+        if str(task_row["status"]) in {"completed", "succeeded", "failed", "canceled"}:
             return _replay_terminal_run(
                 store,
                 worker_id=worker_id,
@@ -110,8 +141,66 @@ def run_next_real_scan_job(
                 task_row=dict(task_row),
                 engine=engine,
             )
+        if str(run_row["status"]) == "canceled":
+            error = ScanWorkerError("SCAN_RUN_CANCELED", "scan run was canceled before task execution")
+            store.fail(job.id, worker_id, utc_now(), error.code, error.message)
+            raise error
 
-        claimed_run = conn.execute(
+        claimed_task = conn.execute(
+            text(
+                """
+                UPDATE airank_scan_tasks
+                SET status = 'running',
+                    attempt_count = GREATEST(attempt_count, :attempt_count),
+                    started_at = COALESCE(started_at, :started_at),
+                    updated_at = :started_at
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND id = :task_id
+                  AND status = 'queued'
+                """
+            ),
+            {
+                "tenant_id": job.tenant_id,
+                "project_id": project_id,
+                "task_id": task_id,
+                "attempt_count": job.attempt_count,
+                "started_at": claimed_at,
+            },
+        ).rowcount
+        if claimed_task == 1:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_scan_task_attempts (
+                      id, tenant_id, project_id, run_id, task_id, job_id,
+                      attempt_number, provider, collector_surface, status,
+                      metadata_json, started_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :job_id,
+                      :attempt_number, :provider, :collector_surface, 'running',
+                      :metadata_json, :started_at, :started_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"scan_attempt_{uuid4().hex[:12]}",
+                    "tenant_id": job.tenant_id,
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "job_id": job.id,
+                    "attempt_number": job.attempt_count,
+                    "provider": task_row["provider"],
+                    "collector_surface": task_row["collector_surface"],
+                    "metadata_json": json.dumps(
+                        {"worker_id": worker_id, "lease_timeout_seconds": job.timeout_seconds},
+                        ensure_ascii=False,
+                    ),
+                    "started_at": claimed_at,
+                },
+            )
+        conn.execute(
             text(
                 """
                 UPDATE airank_scan_runs
@@ -119,67 +208,41 @@ def run_next_real_scan_job(
                     started_at = COALESCE(started_at, :started_at),
                     updated_at = :started_at
                 WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
                   AND id = :run_id
-                  AND status = 'queued'
+                  AND status IN ('queued', 'running')
                 """
             ),
-            {"tenant_id": job.tenant_id, "run_id": run_id, "started_at": claimed_at},
-        ).rowcount
+            {
+                "tenant_id": job.tenant_id,
+                "project_id": project_id,
+                "run_id": run_id,
+                "started_at": claimed_at,
+            },
+        )
 
-        if claimed_run != 1 and run_row["status"] == "running":
-            live_run_jobs = conn.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM airank_async_jobs
-                    WHERE tenant_id = :tenant_id
-                      AND project_id = :project_id
-                      AND job_type = 'scan.provider'
-                      AND status = 'running'
-                      AND id <> :job_id
-                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id')) = :run_id
-                    """
-                ),
-                {
-                    "tenant_id": job.tenant_id,
-                    "project_id": project_id,
-                    "job_id": job.id,
-                    "run_id": run_id,
-                },
-            ).scalar_one()
-        else:
-            live_run_jobs = 0
-
-    if claimed_run != 1:
-        if live_run_jobs:
-            # Another scan job owns the run-level lease. It will update every
-            # task/job in this run. Defer this redundant trigger so concurrent
-            # workers cannot drain the whole queue while the owner is healthy.
-            try:
-                store.defer_claim(job.id, worker_id, utc_now(), delay_seconds=5)
-            except Exception:
-                # The owner may have completed the entire run between the live
-                # lease query and this update. The persisted run/task state is
-                # authoritative and the next claim is an idempotent replay.
-                pass
-            return _scan_result(engine, job.id, run_id, "in_progress", idempotent_replay=True)
-        # The run says running but its prior async-job lease has expired. Calls
-        # may already have reached an external Provider, so automatic replay is
-        # unsafe. Fail closed and preserve one immutable infrastructure-failure
-        # sample for every task that has no answer snapshot.
-        _fail_unpersisted_scan_tasks(
+    if claimed_task != 1:
+        # A requeued job whose task is still running has an unknown external-call
+        # outcome. Never replay it automatically: preserve one immutable failure
+        # sample for this slot only, leaving completed sibling slots untouched.
+        _fail_unpersisted_scan_task(
             engine,
             tenant_id=job.tenant_id,
             project_id=project_id,
             run_id=run_id,
+            task_id=task_id,
+            job_id=job.id,
+            attempt_number=job.attempt_count,
+            attempt_status="suppressed",
             finished_at=utc_now(),
-            error_code="SCAN_RUN_LEASE_EXPIRED",
+            error_code="SCAN_TASK_LEASE_EXPIRED",
             error_message=(
-                "The scan worker lease expired before durable batch completion. "
+                "The scan task lease expired before durable evidence persistence. "
                 "Automatic replay was suppressed to prevent duplicate Provider calls; create a new scan run to retry."
             ),
-            capture_mode="worker_lease_expired",
+            capture_mode="worker_task_lease_expired",
         )
+        _finalize_run_from_durable_state(database_url, job.tenant_id, project_id, run_id)
         return _scan_result(engine, job.id, run_id, "failed")
 
     try:
@@ -206,6 +269,9 @@ def run_next_real_scan_job(
             questions,
             run,
             progress_hook=heartbeat_scan,
+            only_task_id=task_id,
+            worker_job_id=job.id,
+            worker_attempt_number=job.attempt_count,
         )
     except StarletteHTTPException:
         # The scan orchestrator persists task failures, immutable failure evidence,
@@ -217,11 +283,15 @@ def run_next_real_scan_job(
             f"scan worker execution failed: {type(exc).__name__}",
             retryable=False,
         )
-        _fail_unpersisted_scan_tasks(
+        _fail_unpersisted_scan_task(
             engine,
             tenant_id=job.tenant_id,
             project_id=project_id,
             run_id=run_id,
+            task_id=task_id,
+            job_id=job.id,
+            attempt_number=job.attempt_count,
+            attempt_status="failed",
             finished_at=utc_now(),
             error_code=error.code,
             error_message=(
@@ -230,17 +300,87 @@ def run_next_real_scan_job(
             ),
             capture_mode="worker_internal_failure",
         )
+        try:
+            _finalize_run_from_durable_state(database_url, job.tenant_id, project_id, run_id)
+        except Exception:
+            # The task failure and evidence are already durable. A later worker
+            # will aggregate the run after the transient dependency recovers.
+            pass
         raise error from exc
 
-    return _scan_result(engine, job.id, run_id, "completed")
+    persisted_job = store.get(job.id)
+    result_status = "completed" if persisted_job.status.value == "succeeded" else persisted_job.status.value
+    return _scan_result(engine, job.id, run_id, result_status)
 
 
-def _fail_unpersisted_scan_tasks(
+def _recover_timed_out_scan_job(
+    engine: Any,
+    *,
+    database_url: str,
+    job: Any,
+    finished_at: datetime,
+) -> ScanDispatchResult | None:
+    payload = job.payload if isinstance(job.payload, Mapping) else {}
+    run_id = str(payload.get("run_id") or "")
+    task_id = str(payload.get("scan_task_id") or "")
+    project_id = str(payload.get("project_id") or job.project_id or "")
+    if not run_id or not task_id or not project_id:
+        return None
+    with engine.begin() as conn:
+        scope = conn.execute(
+            text(
+                """
+                SELECT t.status AS task_status, r.status AS run_status
+                FROM airank_scan_tasks t
+                JOIN airank_scan_runs r
+                  ON r.tenant_id = t.tenant_id AND r.id = t.run_id
+                WHERE t.tenant_id = :tenant_id
+                  AND t.project_id = :project_id
+                  AND t.run_id = :run_id
+                  AND t.id = :task_id
+                """
+            ),
+            {
+                "tenant_id": job.tenant_id,
+                "project_id": project_id,
+                "run_id": run_id,
+                "task_id": task_id,
+            },
+        ).mappings().first()
+    if scope is None or str(scope["task_status"]) != "running":
+        return None
+
+    _fail_unpersisted_scan_task(
+        engine,
+        tenant_id=job.tenant_id,
+        project_id=project_id,
+        run_id=run_id,
+        task_id=task_id,
+        job_id=job.id,
+        attempt_number=job.attempt_count,
+        attempt_status="unknown",
+        finished_at=finished_at,
+        error_code="SCAN_TASK_LEASE_EXPIRED",
+        error_message=(
+            "The scan task worker timed out before durable evidence persistence. "
+            "Automatic replay was suppressed to prevent duplicate Provider calls; create a new scan run to retry."
+        ),
+        capture_mode="worker_task_timeout",
+    )
+    _finalize_run_from_durable_state(database_url, job.tenant_id, project_id, run_id)
+    return _scan_result(engine, job.id, run_id, "failed")
+
+
+def _fail_unpersisted_scan_task(
     engine: Any,
     *,
     tenant_id: str,
     project_id: str,
     run_id: str,
+    task_id: str,
+    job_id: str,
+    attempt_number: int,
+    attempt_status: str,
     finished_at: datetime,
     error_code: str,
     error_message: str,
@@ -259,17 +399,22 @@ def _fail_unpersisted_scan_tasks(
                 WHERE t.tenant_id = :tenant_id
                   AND t.project_id = :project_id
                   AND t.run_id = :run_id
+                  AND t.id = :task_id
                   AND t.status IN ('queued', 'running')
                   AND s.id IS NULL
                 ORDER BY t.id
                 """
             ),
-            {"tenant_id": tenant_id, "project_id": project_id, "run_id": run_id},
+            {"tenant_id": tenant_id, "project_id": project_id, "run_id": run_id, "task_id": task_id},
         ).mappings().all()
 
+        answer_snapshot_id: str | None = None
+        evidence_snapshot_id: str | None = None
         for task in task_rows:
             snapshot_id = f"snap_{uuid4().hex[:12]}"
             evidence_id = f"evidence_{uuid4().hex[:12]}"
+            answer_snapshot_id = snapshot_id
+            evidence_snapshot_id = evidence_id
             raw_response = {
                 "provider": task["provider"],
                 "sample_status": "failed",
@@ -369,6 +514,112 @@ def _fail_unpersisted_scan_tasks(
         conn.execute(
             text(
                 """
+                UPDATE airank_scan_task_attempts
+                SET status = 'unknown',
+                    error_code = :error_code,
+                    error_message = :error_message,
+                    completed_at = :finished_at
+                WHERE tenant_id = :tenant_id
+                  AND task_id = :task_id
+                  AND status = 'running'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "task_id": task_id,
+                "error_code": error_code,
+                "error_message": error_message,
+                "finished_at": finished_at,
+            },
+        )
+        attempt_update = conn.execute(
+            text(
+                """
+                UPDATE airank_scan_task_attempts
+                SET status = :status,
+                    answer_snapshot_id = :answer_snapshot_id,
+                    evidence_snapshot_id = :evidence_snapshot_id,
+                    error_code = :error_code,
+                    error_message = :error_message,
+                    metadata_json = :metadata_json,
+                    completed_at = :finished_at
+                WHERE tenant_id = :tenant_id
+                  AND task_id = :task_id
+                  AND job_id = :job_id
+                  AND attempt_number = :attempt_number
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "task_id": task_id,
+                "job_id": job_id,
+                "attempt_number": attempt_number,
+                "status": attempt_status,
+                "answer_snapshot_id": answer_snapshot_id,
+                "evidence_snapshot_id": evidence_snapshot_id,
+                "error_code": error_code,
+                "error_message": error_message,
+                "metadata_json": json.dumps(
+                    {
+                        "capture_mode": capture_mode,
+                        "automatic_replay_suppressed": True,
+                        "provider_response_available": False,
+                    },
+                    ensure_ascii=False,
+                ),
+                "finished_at": finished_at,
+            },
+        )
+        if attempt_update.rowcount == 0 and task_rows:
+            task = task_rows[0]
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_scan_task_attempts (
+                      id, tenant_id, project_id, run_id, task_id, job_id,
+                      attempt_number, provider, collector_surface, status,
+                      answer_snapshot_id, evidence_snapshot_id,
+                      error_code, error_message, metadata_json,
+                      started_at, completed_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :job_id,
+                      :attempt_number, :provider, :collector_surface, :status,
+                      :answer_snapshot_id, :evidence_snapshot_id,
+                      :error_code, :error_message, :metadata_json,
+                      :finished_at, :finished_at, :finished_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"scan_attempt_{uuid4().hex[:12]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "job_id": job_id,
+                    "attempt_number": attempt_number,
+                    "provider": task["provider"],
+                    "collector_surface": task["collector_surface"],
+                    "status": attempt_status,
+                    "answer_snapshot_id": answer_snapshot_id,
+                    "evidence_snapshot_id": evidence_snapshot_id,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "metadata_json": json.dumps(
+                        {
+                            "capture_mode": capture_mode,
+                            "automatic_replay_suppressed": True,
+                            "provider_response_available": False,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "finished_at": finished_at,
+                },
+            )
+
+        conn.execute(
+            text(
+                """
                 UPDATE airank_scan_tasks
                 SET status = 'failed',
                     attempt_count = GREATEST(attempt_count, 1),
@@ -381,6 +632,7 @@ def _fail_unpersisted_scan_tasks(
                 WHERE tenant_id = :tenant_id
                   AND project_id = :project_id
                   AND run_id = :run_id
+                  AND id = :task_id
                   AND status IN ('queued', 'running')
                 """
             ),
@@ -388,6 +640,7 @@ def _fail_unpersisted_scan_tasks(
                 "tenant_id": tenant_id,
                 "project_id": project_id,
                 "run_id": run_id,
+                "task_id": task_id,
                 "finished_at": finished_at,
                 "error_code": error_code,
                 "error_message": error_message,
@@ -413,41 +666,39 @@ def _fail_unpersisted_scan_tasks(
                 WHERE tenant_id = :tenant_id
                   AND project_id = :project_id
                   AND job_type = 'scan.provider'
-                  AND status IN ('queued', 'running')
-                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.run_id')) = :run_id
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.scan_task_id')) = :task_id
                 """
             ),
             {
                 "tenant_id": tenant_id,
                 "project_id": project_id,
                 "run_id": run_id,
+                "task_id": task_id,
                 "finished_at": finished_at,
                 "error_code": error_code,
                 "error_message": error_message,
             },
         )
-        conn.execute(
-            text(
-                """
-                UPDATE airank_scan_runs
-                SET status = 'failed',
-                    error_message = :error_message,
-                    finished_at = :finished_at,
-                    updated_at = :finished_at
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND id = :run_id
-                  AND status = 'running'
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "project_id": project_id,
-                "run_id": run_id,
-                "error_message": error_message,
-                "finished_at": finished_at,
-            },
-        )
+
+
+def _finalize_run_from_durable_state(
+    database_url: str,
+    tenant_id: str,
+    project_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    from apps.api import main as api_main
+
+    project = api_main.get_mysql_project(tenant_id, project_id)
+    run = api_main.MySQLScanRepository(database_url).get_run(tenant_id, run_id)
+    competitors = api_main.list_mysql_project_competitors(tenant_id, project_id)
+    question_ids = set(run.question_scope.question_ids)
+    questions = [
+        question
+        for question in api_main.list_mysql_project_questions(tenant_id, project_id)
+        if question.question_id in question_ids
+    ]
+    return api_main.finalize_mysql_scan_run_if_terminal(tenant_id, project, competitors, questions, run)
 
 
 def _replay_terminal_run(

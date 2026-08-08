@@ -216,6 +216,22 @@ export type AnswerSampleDetail = AnswerSample & {
   evidence_captured_at: string;
   screenshot: EvidenceObject;
   source_panel: EvidenceObject;
+  attempts: Array<{
+    attempt_id: string;
+    job_id: string;
+    attempt_number: number;
+    status: "running" | "succeeded" | "failed" | "blocked" | "unknown" | "suppressed";
+    provider: string;
+    collector_surface: string;
+    answer_snapshot_id: string | null;
+    evidence_snapshot_id: string | null;
+    provider_request_id: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    metadata: Record<string, unknown>;
+    started_at: string;
+    completed_at: string | null;
+  }>;
   citations: Array<{
     citation_id: string;
     citation_order: number;

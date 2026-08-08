@@ -72,6 +72,23 @@ class EvidenceObjectData(BaseModel):
     content_url: Optional[str]
 
 
+class ScanTaskAttemptData(BaseModel):
+    attempt_id: str
+    job_id: str
+    attempt_number: int
+    status: str
+    provider: str
+    collector_surface: str
+    answer_snapshot_id: Optional[str]
+    evidence_snapshot_id: Optional[str]
+    provider_request_id: Optional[str]
+    error_code: Optional[str]
+    error_message: Optional[str]
+    metadata: dict[str, Any]
+    started_at: datetime
+    completed_at: Optional[datetime]
+
+
 @dataclass(frozen=True)
 class EvidenceObjectContent:
     payload: bytes
@@ -90,6 +107,7 @@ class AnswerSampleDetailData(AnswerSampleData):
     screenshot: EvidenceObjectData
     source_panel: EvidenceObjectData
     citations: list[CitationData]
+    attempts: list[ScanTaskAttemptData]
 
 
 class AnswerSampleListResponse(BaseModel):
@@ -290,6 +308,18 @@ class MySQLEvidenceRepository:
                 ),
                 {"tenant_id": tenant_id, "snapshot_id": snapshot_id},
             ).mappings().all()
+            attempts = []
+            if row["task_id"]:
+                attempts = conn.execute(
+                    text(
+                        """
+                        SELECT * FROM airank_scan_task_attempts
+                        WHERE tenant_id=:tenant_id AND task_id=:task_id
+                        ORDER BY attempt_number ASC, started_at ASC, id ASC
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "task_id": row["task_id"]},
+                ).mappings().all()
             object_ids = [
                 object_id
                 for object_id in (
@@ -344,6 +374,25 @@ class MySQLEvidenceRepository:
                     metadata=self._json_object(citation["metadata_json"]),
                 )
                 for citation in citations
+            ],
+            attempts=[
+                ScanTaskAttemptData(
+                    attempt_id=attempt["id"],
+                    job_id=attempt["job_id"],
+                    attempt_number=attempt["attempt_number"],
+                    status=attempt["status"],
+                    provider=attempt["provider"],
+                    collector_surface=attempt["collector_surface"],
+                    answer_snapshot_id=attempt["answer_snapshot_id"],
+                    evidence_snapshot_id=attempt["evidence_snapshot_id"],
+                    provider_request_id=attempt["provider_request_id"],
+                    error_code=attempt["error_code"],
+                    error_message=attempt["error_message"],
+                    metadata=self._json_object(attempt["metadata_json"]),
+                    started_at=attempt["started_at"],
+                    completed_at=attempt["completed_at"],
+                )
+                for attempt in attempts
             ],
         )
 

@@ -35,6 +35,8 @@
             "SCAN_RUN_NOT_FOUND",
             "SCAN_RUN_ALREADY_RUNNING",
             "SCAN_RUN_LEASE_EXPIRED",
+            "SCAN_TASK_LEASE_EXPIRED",
+            "SCAN_RUN_CANCELED",
             "SCAN_TASK_NOT_FOUND",
             "SCAN_JOB_INVALID",
             "SCAN_JOB_SCOPE_MISMATCH",

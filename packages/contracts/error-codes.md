@@ -55,11 +55,13 @@ FACT_DISCLOSURE_FORBIDDEN
 | --- | --- | --- |
 | `SCAN_RUN_NOT_FOUND` | 404 | 扫描批次不存在 |
 | `SCAN_RUN_ALREADY_RUNNING` | 409 | 扫描已在运行 |
-| `SCAN_RUN_LEASE_EXPIRED` | 500 | 扫描 Worker 租约过期；为避免重复调用 Provider 已失效关闭，需新建批次重试 |
+| `SCAN_RUN_LEASE_EXPIRED` | 500 | 兼容旧批次：整批 Worker 租约过期；新任务级 Worker 不再产生此码 |
+| `SCAN_TASK_LEASE_EXPIRED` | 500 | 单个扫描任务租约过期且外部调用结果未知；仅封闭该采样槽并禁止自动重放 |
+| `SCAN_RUN_CANCELED` | 409 | 扫描批次已取消，任务不会继续执行 |
 | `SCAN_TASK_NOT_FOUND` | 404 | 扫描任务不存在 |
 | `SCAN_JOB_INVALID` | 500 | 扫描 job 缺失 run/task/project 作用域 |
 | `SCAN_JOB_SCOPE_MISMATCH` | 409 | 扫描 job 与批次、任务或租户作用域不一致 |
-| `SCAN_WORKER_INTERNAL_ERROR` | 500 | Worker 内部失败；未落库任务失效关闭且禁止自动重放 |
+| `SCAN_WORKER_INTERNAL_ERROR` | 500 | Worker 内部失败；仅当前任务失效关闭且禁止自动重放 |
 | `SCAN_PROVIDER_TIMEOUT` | 502 | provider 超时 |
 | `SCAN_PROVIDER_FAILED` | 502 | provider 网络、上游或解析失败，可按策略重试 |
 | `SCAN_PROVIDER_BLOCKED` | 502 | provider 拒绝或阻断 |

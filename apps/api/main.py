@@ -78,6 +78,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "SCAN_RUN_NOT_FOUND": (404, "Scan run not found"),
     "SCAN_RUN_ALREADY_RUNNING": (409, "Scan run is already running"),
     "SCAN_RUN_LEASE_EXPIRED": (500, "Scan worker lease expired"),
+    "SCAN_TASK_LEASE_EXPIRED": (500, "Scan task worker lease expired"),
+    "SCAN_RUN_CANCELED": (409, "Scan run was canceled"),
     "SCAN_TASK_NOT_FOUND": (404, "Scan task not found"),
     "SCAN_JOB_INVALID": (500, "Scan job payload is invalid"),
     "SCAN_JOB_SCOPE_MISMATCH": (409, "Scan job scope does not match its run"),
@@ -2609,6 +2611,242 @@ def build_real_scan_metrics(
     }
 
 
+def finalize_mysql_scan_run_if_terminal(
+    tenant_id: str,
+    project: ProjectData,
+    competitors: list[CompetitorData],
+    questions: list[BuyerQuestionData],
+    run: ScanRunData,
+) -> dict[str, Any]:
+    """Aggregate one run strictly from durable task/snapshot rows.
+
+    Workers persist one sampling slot at a time.  A run can therefore only be
+    finalized after every slot is terminal; metrics are never computed from a
+    worker's in-memory subset.
+    """
+
+    engine = mysql_engine()
+    if engine is None:
+        return {"terminal": False, "status": "running"}
+
+    finished_at = utc_now()
+    with engine.begin() as conn:
+        run_row = conn.execute(
+            text(
+                """
+                SELECT status, metrics_json, error_message
+                FROM airank_scan_runs
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND id = :run_id
+                  AND deleted_at IS NULL
+                FOR UPDATE
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+        ).mappings().first()
+        if run_row is None:
+            raise KeyError(run.run_id)
+        if str(run_row["status"]) in {"completed", "failed", "canceled"}:
+            stored_metrics = parse_json_value(run_row["metrics_json"], {})
+            return {
+                "terminal": True,
+                "status": str(run_row["status"]),
+                "metrics": stored_metrics,
+                "error_message": run_row["error_message"],
+            }
+
+        task_rows = [
+            dict(row)
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT id, status, error_code, response_meta_json
+                    FROM airank_scan_tasks
+                    WHERE tenant_id = :tenant_id
+                      AND project_id = :project_id
+                      AND run_id = :run_id
+                    ORDER BY id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+            ).mappings().all()
+        ]
+        pending_count = sum(1 for row in task_rows if str(row["status"]) in {"queued", "running"})
+        if pending_count:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_scan_runs
+                    SET status = 'running',
+                        started_at = COALESCE(started_at, :now),
+                        updated_at = :now
+                    WHERE tenant_id = :tenant_id
+                      AND project_id = :project_id
+                      AND id = :run_id
+                      AND status IN ('queued', 'running')
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "now": finished_at,
+                },
+            )
+            return {
+                "terminal": False,
+                "status": "running",
+                "task_count": len(task_rows),
+                "pending_count": pending_count,
+            }
+
+        snapshot_rows = [
+            dict(row)
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT s.provider, s.answer_text, s.brand_mentioned, s.brand_rank,
+                           s.mention_class, s.target_entity_mentions_json,
+                           s.competitor_mentions_json, s.sentiment, s.confidence,
+                           s.external_trace_id, s.question_id, s.cohort_type,
+                           s.collector_surface, s.evidence_level,
+                           COUNT(c.id) AS native_citation_count
+                    FROM airank_answer_snapshots s
+                    LEFT JOIN airank_source_citations c
+                      ON c.tenant_id = s.tenant_id
+                     AND c.project_id = s.project_id
+                     AND c.snapshot_id = s.id
+                    WHERE s.tenant_id = :tenant_id
+                      AND s.project_id = :project_id
+                      AND s.run_id = :run_id
+                      AND s.sample_status = 'valid'
+                    GROUP BY s.id
+                    ORDER BY s.created_at, s.id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+            ).mappings().all()
+        ]
+        persisted_results = [
+            ProviderScanResult(
+                provider=str(row["provider"]),
+                provider_label=PROVIDER_LABELS.get(str(row["provider"]), str(row["provider"])),
+                answer_text=str(row["answer_text"] or ""),
+                brand_mentioned=bool(row["brand_mentioned"]),
+                brand_rank=int(row["brand_rank"]) if row["brand_rank"] is not None else None,
+                competitor_mentions=parse_json_value(row["competitor_mentions_json"], []),
+                sentiment=str(row["sentiment"] or "unknown"),
+                mention_class=str(row["mention_class"] or "unknown"),
+                target_entity_mentions=parse_json_value(row["target_entity_mentions_json"], []),
+                confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+                external_trace_id=str(row["external_trace_id"]) if row["external_trace_id"] else None,
+                native_citations=[{} for _ in range(int(row["native_citation_count"] or 0))],
+                raw_metadata={
+                    "question_id": row["question_id"],
+                    "cohort_type": row["cohort_type"],
+                    "collector_surface": row["collector_surface"],
+                    "capture_mode": row["collector_surface"],
+                    "evidence_level": row["evidence_level"],
+                },
+            )
+            for row in snapshot_rows
+        ]
+        failed_rows = [row for row in task_rows if str(row["status"]) == "failed"]
+        blocked_count = sum(
+            1
+            for row in failed_rows
+            if bool(parse_json_value(row.get("response_meta_json"), {}).get("blocked"))
+            or "BLOCK" in str(row.get("error_code") or "")
+        )
+        provider_minimum_success_count = minimum_provider_success_count(run.provider_scope)
+        minimum_success_count = minimum_scan_success_count(
+            run.provider_scope,
+            len(questions),
+            len(task_rows),
+        )
+        metrics = build_real_scan_metrics(
+            persisted_results,
+            failed_count=len(failed_rows),
+            blocked_count=blocked_count,
+            total_count=len(task_rows),
+            provider_count=len(run.provider_scope),
+        )
+        metrics.update(
+            {
+                "provider_minimum_success_count": provider_minimum_success_count,
+                "minimum_success_count": minimum_success_count,
+                "provider_mode": provider_execution_mode(),
+            }
+        )
+        success_count = len(persisted_results)
+        run_status = "completed" if success_count >= minimum_success_count else "failed"
+        if run_status == "failed" and provider_execution_mode() == "browser":
+            run_error_message = (
+                f"Only {success_count}/{minimum_success_count} required consumer web scan tasks completed; "
+                "browser login or human verification may be required."
+            )
+        elif run_status == "failed":
+            run_error_message = (
+                f"Only {success_count}/{minimum_success_count} required external AI scan tasks completed; "
+                "AIRank did not generate a deliverable visibility result."
+            )
+        else:
+            run_error_message = None
+
+        conn.execute(
+            text(
+                """
+                UPDATE airank_scan_runs
+                SET status = :status,
+                    metrics_json = :metrics_json,
+                    error_message = :error_message,
+                    started_at = COALESCE(started_at, :started_at),
+                    finished_at = :finished_at,
+                    updated_at = :finished_at
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND id = :run_id
+                  AND status IN ('queued', 'running')
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project.project_id,
+                "run_id": run.run_id,
+                "status": run_status,
+                "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                "error_message": run_error_message,
+                "started_at": run.started_at or finished_at,
+                "finished_at": finished_at,
+            },
+        )
+        if run_status == "completed":
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_projects
+                    SET status = 'active', updated_at = :now
+                    WHERE tenant_id = :tenant_id AND id = :project_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id, "now": finished_at},
+            )
+            insert_mysql_brand_assets(conn, tenant_id, project, competitors, questions, run, metrics, finished_at)
+
+        return {
+            "terminal": True,
+            "status": run_status,
+            "metrics": metrics,
+            "error_message": run_error_message,
+            "success_count": success_count,
+            "failed_count": len(failed_rows),
+            "blocked_count": blocked_count,
+            "minimum_success_count": minimum_success_count,
+            "provider_minimum_success_count": provider_minimum_success_count,
+        }
+
+
 def build_measurement_metric_cards(metrics: dict[str, Any]) -> list[MetricCard]:
     if metrics.get("data_status") != "provider_evidence":
         return []
@@ -2814,6 +3052,9 @@ def complete_mysql_real_brand_scan(
     run: ScanRunData,
     *,
     progress_hook: Callable[[str, str], None] | None = None,
+    only_task_id: str | None = None,
+    worker_job_id: str | None = None,
+    worker_attempt_number: int | None = None,
 ) -> None:
     engine = mysql_engine()
     if engine is None:
@@ -2826,11 +3067,7 @@ def complete_mysql_real_brand_scan(
     failures: list[dict[str, Any]] = []
 
     with engine.begin() as conn:
-        task_rows = [
-            dict(row)
-            for row in conn.execute(
-                text(
-                    """
+        task_query = """
                     SELECT id, question_id, provider, cohort_type, prompt_version_id,
                            sample_index, session_id, collector_surface, evidence_level,
                            request_json
@@ -2838,12 +3075,21 @@ def complete_mysql_real_brand_scan(
                     WHERE tenant_id = :tenant_id
                       AND project_id = :project_id
                       AND run_id = :run_id
-                    ORDER BY provider ASC, question_id ASC
-                    """
-                ),
-                {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id},
+        """
+        task_params = {"tenant_id": tenant_id, "project_id": project.project_id, "run_id": run.run_id}
+        if only_task_id is not None:
+            task_query += " AND id = :task_id"
+            task_params["task_id"] = only_task_id
+        task_query += " ORDER BY provider ASC, question_id ASC"
+        task_rows = [
+            dict(row)
+            for row in conn.execute(
+                text(task_query),
+                task_params,
             ).mappings().all()
         ]
+        if only_task_id is not None and not task_rows:
+            raise KeyError(only_task_id)
         conn.execute(
             text(
                 """
@@ -3051,35 +3297,6 @@ def complete_mysql_real_brand_scan(
     finished_at = utc_now()
     if progress_hook is not None:
         progress_hook("", "database_persist_start")
-    failed_count = len(failures)
-    blocked_count = sum(1 for failure in failures if failure.get("blocked"))
-    provider_minimum_success_count = minimum_provider_success_count(run.provider_scope)
-    minimum_success_count = minimum_scan_success_count(run.provider_scope, len(questions), len(task_rows))
-    success_count = len(successes)
-    metrics = build_real_scan_metrics(
-        [result for _, result in successes],
-        failed_count=failed_count,
-        blocked_count=blocked_count,
-        total_count=len(task_rows),
-        provider_count=len(run.provider_scope),
-    )
-    metrics.update(
-        {
-            "provider_minimum_success_count": provider_minimum_success_count,
-            "minimum_success_count": minimum_success_count,
-            "provider_mode": provider_execution_mode(),
-        }
-    )
-    run_status = "completed" if success_count >= minimum_success_count else "failed"
-    run_error_message = None
-    if run_status == "failed" and provider_execution_mode() == "browser":
-        run_error_message = (
-            f"Only {success_count}/{minimum_success_count} required consumer web scan tasks completed; "
-            "browser login or human verification may be required."
-        )
-    elif run_status == "failed":
-        run_error_message = "No configured external AI provider completed successfully; AIRank did not generate visibility results."
-
     with engine.begin() as conn:
         for row, result in successes:
             snapshot_id = f"snap_{uuid4().hex[:12]}"
@@ -3236,6 +3453,44 @@ def complete_mysql_real_brand_scan(
                     "created_at": finished_at,
                 },
             )
+            if worker_job_id is not None and worker_attempt_number is not None:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_scan_task_attempts
+                        SET status = 'succeeded',
+                            answer_snapshot_id = :answer_snapshot_id,
+                            evidence_snapshot_id = :evidence_snapshot_id,
+                            provider_request_id = :provider_request_id,
+                            error_code = NULL,
+                            error_message = NULL,
+                            metadata_json = :metadata_json,
+                            completed_at = :completed_at
+                        WHERE tenant_id = :tenant_id
+                          AND task_id = :task_id
+                          AND job_id = :job_id
+                          AND attempt_number = :attempt_number
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "task_id": row["id"],
+                        "job_id": worker_job_id,
+                        "attempt_number": worker_attempt_number,
+                        "answer_snapshot_id": snapshot_id,
+                        "evidence_snapshot_id": evidence_snapshot_id,
+                        "provider_request_id": result.external_trace_id,
+                        "metadata_json": json.dumps(
+                            {
+                                "evidence_level": result.raw_metadata.get("evidence_level") or row["evidence_level"],
+                                "capture_mode": result.raw_metadata.get("capture_mode"),
+                                "provider_attempt_count": int(result.raw_metadata.get("attempt_count") or 1),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "completed_at": finished_at,
+                    },
+                )
             conn.execute(
                 text(
                     """
@@ -3415,7 +3670,7 @@ def complete_mysql_real_brand_scan(
                     "project_id": project.project_id,
                     "run_id": run.run_id,
                     "task_id": row["id"],
-                    "started_at": started_at,
+                    "started_at": row["started_at"],
                     "finished_at": finished_at,
                     "response_meta_json": json.dumps(
                         {
@@ -3594,6 +3849,51 @@ def complete_mysql_real_brand_scan(
                     "created_at": failure["finished_at"],
                 },
             )
+            if worker_job_id is not None and worker_attempt_number is not None:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_scan_task_attempts
+                        SET status = :status,
+                            answer_snapshot_id = :answer_snapshot_id,
+                            evidence_snapshot_id = :evidence_snapshot_id,
+                            provider_request_id = :provider_request_id,
+                            error_code = :error_code,
+                            error_message = :error_message,
+                            metadata_json = :metadata_json,
+                            completed_at = :completed_at
+                        WHERE tenant_id = :tenant_id
+                          AND task_id = :task_id
+                          AND job_id = :job_id
+                          AND attempt_number = :attempt_number
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "task_id": failure["id"],
+                        "job_id": worker_job_id,
+                        "attempt_number": worker_attempt_number,
+                        "status": failure_status,
+                        "answer_snapshot_id": failure_snapshot_id,
+                        "evidence_snapshot_id": failure_evidence_id,
+                        "provider_request_id": (
+                            public_provider_metadata.get("provider_request_id")
+                            or public_provider_metadata.get("browser_trace_id")
+                        ),
+                        "error_code": failure["error_code"],
+                        "error_message": failure["error_message"],
+                        "metadata_json": json.dumps(
+                            {
+                                "blocked": bool(failure.get("blocked")),
+                                "retryable": bool(failure.get("retryable")),
+                                "provider_error_code": failure.get("provider_error_code"),
+                                "upstream_error_code": failure.get("upstream_error_code"),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "completed_at": failure["finished_at"],
+                    },
+                )
             conn.execute(
                 text(
                     """
@@ -3739,49 +4039,8 @@ def complete_mysql_real_brand_scan(
                 },
             )
 
-        conn.execute(
-            text(
-                """
-                UPDATE airank_scan_runs
-                SET status = :status,
-                    metrics_json = :metrics_json,
-                    error_message = :error_message,
-                    started_at = COALESCE(started_at, :started_at),
-                    finished_at = :finished_at,
-                    updated_at = :finished_at
-                WHERE tenant_id = :tenant_id
-                  AND project_id = :project_id
-                  AND id = :run_id
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "project_id": project.project_id,
-                "run_id": run.run_id,
-                "status": run_status,
-                "metrics_json": json.dumps(metrics, ensure_ascii=False),
-                "error_message": run_error_message,
-                "started_at": started_at,
-                "finished_at": finished_at,
-            },
-        )
-
-        if run_status == "completed":
-            conn.execute(
-                text(
-                    """
-                    UPDATE airank_projects
-                    SET status = 'active',
-                        updated_at = :now
-                    WHERE tenant_id = :tenant_id
-                      AND id = :project_id
-                    """
-                ),
-                {"tenant_id": tenant_id, "project_id": project.project_id, "now": finished_at},
-            )
-            insert_mysql_brand_assets(conn, tenant_id, project, competitors, questions, run, metrics, finished_at)
-
-    if run_status != "completed":
+    aggregate = finalize_mysql_scan_run_if_terminal(tenant_id, project, competitors, questions, run)
+    if aggregate.get("terminal") and aggregate.get("status") != "completed":
         raise StarletteHTTPException(
             status_code=503,
             detail={
@@ -3791,11 +4050,11 @@ def complete_mysql_real_brand_scan(
                     "run_id": run.run_id,
                     "provider_mode": provider_execution_mode(),
                     "providers": run.provider_scope,
-                    "success_count": success_count,
-                    "minimum_success_count": minimum_success_count,
-                    "provider_minimum_success_count": provider_minimum_success_count,
-                    "failed_count": failed_count,
-                    "blocked_count": blocked_count,
+                    "success_count": aggregate.get("success_count", 0),
+                    "minimum_success_count": aggregate.get("minimum_success_count", 0),
+                    "provider_minimum_success_count": aggregate.get("provider_minimum_success_count", 0),
+                    "failed_count": aggregate.get("failed_count", 0),
+                    "blocked_count": aggregate.get("blocked_count", 0),
                     "failures": [
                         {
                             "provider": failure["provider"],
@@ -3817,6 +4076,9 @@ def complete_mysql_brand_scan(
     run: ScanRunData,
     *,
     progress_hook: Callable[[str, str], None] | None = None,
+    only_task_id: str | None = None,
+    worker_job_id: str | None = None,
+    worker_attempt_number: int | None = None,
 ) -> None:
     if provider_execution_mode() != "mock":
         complete_mysql_real_brand_scan(
@@ -3826,6 +4088,9 @@ def complete_mysql_brand_scan(
             questions,
             run,
             progress_hook=progress_hook,
+            only_task_id=only_task_id,
+            worker_job_id=worker_job_id,
+            worker_attempt_number=worker_attempt_number,
         )
         return
 

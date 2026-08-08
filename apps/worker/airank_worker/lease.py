@@ -43,14 +43,16 @@ class InMemoryJobLeaseStore:
         now: datetime,
         *,
         job_types: set[str] | None = None,
+        tenant_id: str | None = None,
     ) -> AsyncJob | None:
-        self.sweep_timeouts(now)
+        self.sweep_timeouts(now, tenant_id=tenant_id, job_types=job_types)
         claimable = [
             job
             for job in self._jobs.values()
             if job.status == AsyncJobStatus.QUEUED
             and job.is_due(now)
             and (not job_types or job.job_type in job_types)
+            and (tenant_id is None or job.tenant_id == tenant_id)
         ]
         if not claimable:
             return None
@@ -87,10 +89,20 @@ class InMemoryJobLeaseStore:
         self._jobs[job_id] = updated
         return updated
 
-    def sweep_timeouts(self, now: datetime) -> list[AsyncJob]:
+    def sweep_timeouts(
+        self,
+        now: datetime,
+        *,
+        tenant_id: str | None = None,
+        job_types: set[str] | None = None,
+    ) -> list[AsyncJob]:
         timed_out: list[AsyncJob] = []
         for job in list(self._jobs.values()):
-            if job.is_timed_out(now):
+            if (
+                job.is_timed_out(now)
+                and (tenant_id is None or job.tenant_id == tenant_id)
+                and (not job_types or job.job_type in job_types)
+            ):
                 updated = timeout_job(job, now)
                 self._jobs[job.id] = updated
                 timed_out.append(updated)
@@ -207,8 +219,9 @@ class MySQLJobLeaseStore:
         now: datetime,
         *,
         job_types: set[str] | None = None,
+        tenant_id: str | None = None,
     ) -> AsyncJob | None:
-        self.sweep_timeouts(now)
+        self.sweep_timeouts(now, tenant_id=tenant_id, job_types=job_types)
         with self._engine.begin() as conn:
             query = text(
                 """
@@ -217,14 +230,20 @@ class MySQLJobLeaseStore:
                 WHERE status = 'queued'
                   AND scheduled_at <= :now
                   {job_type_clause}
+                  {tenant_clause}
                 ORDER BY priority ASC, scheduled_at ASC, id ASC
                 LIMIT 1
-                """.format(job_type_clause="AND job_type IN :job_types" if job_types else "")
+                """.format(
+                    job_type_clause="AND job_type IN :job_types" if job_types else "",
+                    tenant_clause="AND tenant_id = :tenant_id" if tenant_id else "",
+                )
             )
             params: dict[str, object] = {"now": now}
             if job_types:
                 query = query.bindparams(bindparam("job_types", expanding=True))
                 params["job_types"] = sorted(job_types)
+            if tenant_id:
+                params["tenant_id"] = tenant_id
             row = conn.execute(
                 query,
                 params,
@@ -283,9 +302,26 @@ class MySQLJobLeaseStore:
         self._update_job(updated)
         return updated
 
-    def sweep_timeouts(self, now: datetime) -> list[AsyncJob]:
+    def sweep_timeouts(
+        self,
+        now: datetime,
+        *,
+        tenant_id: str | None = None,
+        job_types: set[str] | None = None,
+    ) -> list[AsyncJob]:
         with self._engine.begin() as conn:
-            rows = conn.execute(text("SELECT * FROM airank_async_jobs WHERE status = 'running'")).mappings().all()
+            query = "SELECT * FROM airank_async_jobs WHERE status = 'running'"
+            params: dict[str, object] = {}
+            if tenant_id:
+                query += " AND tenant_id = :tenant_id"
+                params["tenant_id"] = tenant_id
+            if job_types:
+                query += " AND job_type IN :job_types"
+                statement = text(query).bindparams(bindparam("job_types", expanding=True))
+                params["job_types"] = sorted(job_types)
+            else:
+                statement = text(query)
+            rows = conn.execute(statement, params).mappings().all()
             timed_out: list[AsyncJob] = []
             for row in rows:
                 job = self._row_to_job(row)

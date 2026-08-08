@@ -72,18 +72,20 @@ PYTHONPATH=.:apps/worker:packages/domain/src:packages/evidence/src:packages/prov
   python3 -m airank_worker.main --job-type scan --once
 ```
 
-`scan.provider` jobs are run-level triggers in the current implementation. The
-first job atomically changes the ScanRun from `queued` to `running`, executes the
-versioned task set, and persists every success/failure snapshot before closing
-all jobs in that run. It refreshes the durable job heartbeat between Provider
-calls and persistence phases. Concurrent trigger jobs are deferred without
-spending an attempt, so multiple workers cannot drain the queue or duplicate
-Provider calls. If the owning lease expires, the next trigger fails the run
-closed with `SCAN_RUN_LEASE_EXPIRED` and writes an immutable infrastructure
-failure sample for every unpersisted task; it never automatically replays an
-external call with an unknown outcome. This remains `partial`: the next
-milestone is one-task-per-worker persistence with attempt-versioned evidence,
-rather than holding a whole run in one process.
+Every `scan.provider` job owns exactly one versioned sampling slot. Multiple
+workers may process different slots from the same ScanRun concurrently. A slot
+persists its AnswerSnapshot, EvidenceSnapshot, native citations, Provider audit,
+job state and immutable `airank_scan_task_attempts` row in one database
+transaction; completed sibling evidence therefore survives a process crash.
+Run metrics are recomputed only from durable rows after every task is terminal.
+
+The attempt ledger records the job, attempt number, worker lease, timestamps,
+outcome and linked evidence IDs. A timed-out call whose external outcome is
+unknown is never replayed automatically: only that slot receives
+`SCAN_TASK_LEASE_EXPIRED`, an empty-answer immutable failure snapshot and an
+`unknown` attempt. Requeuing an already-terminal job is an idempotent replay and
+does not call the Provider again. Dedicated workers/tests may pass a tenant
+scope; the production CLI processes all tenants.
 
 ## M2 mock scan provider
 
