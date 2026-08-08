@@ -1021,6 +1021,7 @@ Passed:
 - The inbox does not expose a peer's unfinished label or rationale and does not allow an evidence-free quick decision. Reviewers must open the immutable sample, exact Claim and source context before using the existing blind review form.
 - Real MySQL/browser acceptance created one benchmark primary case, signed in as a different reviewer and received one project task with `current_actor_role=null`, `next_action=submit_secondary` and `visible_decisions=[]`. Opening it loaded the immutable answer, exact 0–46 Claim and sample-level second-review form.
 - Desktop 1543px and mobile 390x844 had no page-level overflow; a fresh authenticated page reported zero console warnings/errors. Cleanup deleted 15 isolated rows across 14 tables and left zero tenant rows.
+- The strict gate on clean commit `602ec00` passed both remote `main` refs, Python 3.11.15, Node 24.14.0, 187 contract tests, 75 acceptance tests, every package/worker/scheduler suite, 7/7 citation parser cases, 30/30 core Skill cases, the production Web build, real MySQL 28/2, offline SQL and real Alembic `0026`. External production and Consumer requirements correctly kept the overall result `BLOCKED`.
 
 Limitations and blockers:
 
