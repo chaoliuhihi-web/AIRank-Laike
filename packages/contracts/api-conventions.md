@@ -124,7 +124,7 @@ GET  /api/v1/reports/{report_id}/evidence-packets/latest
 GET  /api/v1/evidence-objects/{object_ref_id}/content
 ```
 
-生成接口必须携带 `Idempotency-Key`，操作者来自认证上下文。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。当前新包使用 `airank.report-evidence-packet.v2`，采用内容寻址保存，包含公式、限制项、风险、样本/引用/事实准确性/对象索引和文件哈希，但不复制原始回答正文；事实索引保存声明与回答边界、当前审核裁决、FactRevision/KnowledgeSource/KnowledgeSegment 引用及原文边界 hash，并与报告中的声明数、确定性覆盖率和准确率复算一致。历史 v1 包仍可下载，但新建时不会冒充 v2。原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
+生成接口必须携带每次客户导出动作唯一的 `Idempotency-Key`，操作者来自认证上下文；服务端再按完整内容 hash 去重，所以同一证据不会重复建包，而来源修订或有效期状态变化可以形成新的不可变版本。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。当前新包使用 `airank.report-evidence-packet.v3`，采用内容寻址保存，包含公式、限制项、风险、样本/引用/事实准确性/来源治理/对象索引和文件哈希，但不复制原始回答正文或人工分类说明正文。事实索引保存声明与回答边界、当前审核裁决、FactRevision/KnowledgeSource/KnowledgeSegment 引用及原文边界 hash，并与报告中的声明数、确定性覆盖率和准确率复算一致。来源治理索引按 Citation 精确 host 保存当前分类修订及其 hash，未分类、过期、未知权威、禁止用途和无法解析 host 分开进入限制项；治理覆盖不完整时仍可交付观测事实，但不得生成整体来源权威性结论。历史 v1/v2 包仍可下载，但新建时不会冒充 v3。原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
 
 事实准确性审核接口：
 

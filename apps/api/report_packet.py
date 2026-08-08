@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Optional, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -14,10 +14,12 @@ from airank_evidence import (
     ObjectStorage,
     ObjectStorageError,
     REPORT_EVIDENCE_PACKET_VERSION,
+    SOURCE_GOVERNANCE_VERSION,
     ReportEvidencePacketError,
     build_object_storage_from_env,
     build_report_evidence_packet,
     canonical_json_sha256,
+    normalize_source_host,
 )
 
 
@@ -26,6 +28,11 @@ class ReportEvidencePacketSummary(BaseModel):
     citation_count: int
     fact_claim_count: int
     fact_accuracy_review_count: int
+    source_host_count: int
+    source_effective_classification_count: int
+    source_authority_resolved_count: int
+    source_authority_coverage_rate: Optional[float]
+    source_authority_summary_eligible: bool
     evidence_object_count: int
     known_limitation_count: int
 
@@ -38,6 +45,7 @@ class ReportEvidencePacketData(BaseModel):
     schema_version: Literal[
         "airank.report-evidence-packet.v1",
         "airank.report-evidence-packet.v2",
+        "airank.report-evidence-packet.v3",
     ]
     status: Literal["ready"]
     object_ref_id: str
@@ -125,6 +133,7 @@ class MySQLReportEvidencePacketRepository:
         trace_id: str,
     ) -> ReportEvidencePacketData:
         created_at = datetime.now(timezone.utc)
+        unavailable_idempotent_replay = None
         with self._engine.begin() as conn:
             by_key = self._find_by_idempotency_key(conn, tenant_id, idempotency_key)
             if by_key is not None:
@@ -136,10 +145,12 @@ class MySQLReportEvidencePacketRepository:
                             "details": {"idempotency_key": idempotency_key},
                         },
                     )
-                return self._packet_data(by_key, replay=True)
-            existing = self._find_for_report(conn, tenant_id, report_id)
-            if existing is not None:
-                return self._packet_data(existing, replay=True)
+                object_status = self._packet_object_status(by_key)
+                if object_status == "available":
+                    return self._packet_data(by_key, replay=True)
+                if object_status == "integrity_failed":
+                    self._raise_object_integrity_failed(by_key)
+                unavailable_idempotent_replay = by_key
             report_row = self._load_report(conn, tenant_id, report_id)
             report_record = self._report_record(report_row)
             (
@@ -147,11 +158,14 @@ class MySQLReportEvidencePacketRepository:
                 citation_index,
                 fact_accuracy_index,
                 object_index,
+                source_governance,
             ) = self._load_evidence_indices(
                 conn,
                 tenant_id,
                 report_row["project_id"],
                 report_record["evidence_index"],
+                evaluated_at=_datetime_value(report_record["generated_at"]),
+                evaluation_clock=created_at,
             )
 
         try:
@@ -161,6 +175,7 @@ class MySQLReportEvidencePacketRepository:
                 citation_index=citation_index,
                 fact_accuracy_index=fact_accuracy_index,
                 evidence_object_index=object_index,
+                source_governance=source_governance,
             )
         except ReportEvidencePacketError as exc:
             message = str(exc)
@@ -175,6 +190,41 @@ class MySQLReportEvidencePacketRepository:
                     "details": {"report_id": report_id, "reason": message},
                 },
             ) from exc
+
+        if (
+            unavailable_idempotent_replay is not None
+            and str(unavailable_idempotent_replay["content_sha256"]) != packet.sha256
+        ):
+            self._raise_object_unavailable(
+                unavailable_idempotent_replay,
+                reason="idempotent_packet_missing_and_evidence_changed",
+            )
+
+        with self._engine.begin() as conn:
+            exact_replay = self._find_by_content(
+                conn,
+                tenant_id,
+                report_id,
+                packet.sha256,
+            )
+        if exact_replay is not None:
+            object_status = self._packet_object_status(exact_replay)
+            if object_status == "available":
+                return self._packet_data(exact_replay, replay=True)
+            if object_status == "integrity_failed":
+                self._raise_object_integrity_failed(exact_replay)
+            if object_status == "driver_mismatch":
+                self._raise_object_unavailable(
+                    exact_replay,
+                    reason="configured_storage_driver_mismatch",
+                )
+            return self._restore_packet_object(
+                exact_replay,
+                packet=packet,
+                created_by=created_by,
+                trace_id=trace_id,
+                restored_at=created_at,
+            )
 
         partition = hashlib.sha256(f"{tenant_id}:{report_row['project_id']}".encode("utf-8")).hexdigest()[:24]
         object_key = (
@@ -200,7 +250,12 @@ class MySQLReportEvidencePacketRepository:
 
         object_ref_id = f"object_{packet.sha256[:24]}"
         with self._engine.begin() as conn:
-            replay = self._find_for_report(conn, tenant_id, report_id)
+            replay = self._find_by_content(
+                conn,
+                tenant_id,
+                report_id,
+                packet.sha256,
+            )
             if replay is not None:
                 return self._packet_data(replay, replay=True)
             current_report = self._report_record(self._load_report(conn, tenant_id, report_id))
@@ -267,7 +322,12 @@ class MySQLReportEvidencePacketRepository:
                             "details": {"idempotency_key": idempotency_key},
                         },
                     )
-                replay = self._find_for_report(conn, tenant_id, report_id)
+                replay = self._find_by_content(
+                    conn,
+                    tenant_id,
+                    report_id,
+                    packet.sha256,
+                )
                 if replay is not None:
                     return self._packet_data(replay, replay=True)
                 raise StarletteHTTPException(
@@ -309,7 +369,12 @@ class MySQLReportEvidencePacketRepository:
                     "created_at": created_at,
                 },
             )
-            row = self._find_for_report(conn, tenant_id, report_id)
+            row = self._find_by_content(
+                conn,
+                tenant_id,
+                report_id,
+                packet.sha256,
+            )
             assert row is not None
             return self._packet_data(row, replay=False)
 
@@ -370,18 +435,22 @@ class MySQLReportEvidencePacketRepository:
         tenant_id: str,
         project_id: str,
         evidence_index: Any,
+        *,
+        evaluated_at: datetime | None = None,
+        evaluation_clock: datetime | None = None,
     ) -> tuple[
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]],
+        dict[str, Any],
     ]:
         if not isinstance(evidence_index, dict):
-            return [], [], [], []
+            return [], [], [], [], self._empty_source_governance(evaluated_at)
         baseline_run_id = str(evidence_index.get("baseline_run_id") or "")
         compare_run_id = str(evidence_index.get("compare_run_id") or "")
         if not baseline_run_id or not compare_run_id:
-            return [], [], [], []
+            return [], [], [], [], self._empty_source_governance(evaluated_at)
         params = {
             "tenant_id": tenant_id,
             "project_id": project_id,
@@ -651,7 +720,169 @@ class MySQLReportEvidencePacketRepository:
             for row in object_rows
             if str(row["id"]) in linked_object_ids
         ]
-        return samples, citations, fact_accuracy_index, objects
+        source_governance = self._load_source_governance(
+            conn,
+            tenant_id,
+            project_id,
+            citations,
+            samples,
+            evaluated_at=evaluated_at,
+            evaluation_clock=evaluation_clock,
+        )
+        return samples, citations, fact_accuracy_index, objects, source_governance
+
+    @staticmethod
+    def _empty_source_governance(evaluated_at: datetime | None) -> dict[str, Any]:
+        timestamp = evaluated_at or datetime.now(timezone.utc)
+        return {
+            "policy_version": SOURCE_GOVERNANCE_VERSION,
+            "evaluated_at": timestamp.isoformat(),
+            "entries": [],
+            "unresolved_citation_ids": [],
+        }
+
+    def _load_source_governance(
+        self,
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        citations: list[dict[str, Any]],
+        samples: list[dict[str, Any]],
+        *,
+        evaluated_at: datetime | None,
+        evaluation_clock: datetime | None,
+    ) -> dict[str, Any]:
+        timestamp = evaluated_at or datetime.now(timezone.utc)
+        clock = evaluation_clock or datetime.now(timezone.utc)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=timezone.utc)
+        snapshot_run = {
+            str(item["snapshot_id"]): str(item["run_id"])
+            for item in samples
+            if item.get("snapshot_id") and item.get("run_id")
+        }
+        by_host: dict[str, dict[str, set[str]]] = {}
+        unresolved_citation_ids: list[str] = []
+        for citation in citations:
+            citation_id = str(citation.get("citation_id") or "")
+            try:
+                normalized_host = normalize_source_host(str(citation.get("host") or ""))
+            except ValueError:
+                unresolved_citation_ids.append(citation_id)
+                continue
+            aggregate = by_host.setdefault(
+                normalized_host,
+                {"citation_ids": set(), "snapshot_ids": set(), "run_ids": set()},
+            )
+            aggregate["citation_ids"].add(citation_id)
+            snapshot_id = str(citation.get("snapshot_id") or "")
+            aggregate["snapshot_ids"].add(snapshot_id)
+            run_id = snapshot_run.get(snapshot_id)
+            if run_id:
+                aggregate["run_ids"].add(run_id)
+
+        revision_rows = conn.execute(
+            text(
+                """
+                SELECT * FROM airank_source_classification_revisions
+                WHERE tenant_id=:tenant_id AND project_id=:project_id
+                ORDER BY normalized_host ASC, revision_number DESC,
+                         reviewed_at DESC, id DESC
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+        latest_by_host: dict[str, Any] = {}
+        for row in revision_rows:
+            host = str(row["normalized_host"])
+            if host in by_host and host not in latest_by_host:
+                latest_by_host[host] = row
+
+        state_timestamp = timestamp
+        for row in latest_by_host.values():
+            reviewed_at = _datetime_value(row["reviewed_at"])
+            state_timestamp = max(state_timestamp, reviewed_at)
+            if row["valid_until"] is not None:
+                valid_until = _datetime_value(row["valid_until"])
+                if valid_until < clock:
+                    state_timestamp = max(
+                        state_timestamp,
+                        valid_until + timedelta(microseconds=1),
+                    )
+
+        entries: list[dict[str, Any]] = []
+        for normalized_host in sorted(by_host):
+            aggregate = by_host[normalized_host]
+            row = latest_by_host.get(normalized_host)
+            current_revision: dict[str, Any] | None = None
+            classification_status = "unclassified"
+            if row is not None:
+                reviewed_at = _datetime_value(row["reviewed_at"])
+                valid_until = (
+                    _datetime_value(row["valid_until"])
+                    if row["valid_until"] is not None
+                    else None
+                )
+                classification_status = str(row["classification_status"])
+                current_revision = {
+                    "revision_id": str(row["id"]),
+                    "revision_number": int(row["revision_number"]),
+                    "normalized_host": normalized_host,
+                    "source_category_l1": str(row["source_category_l1"]),
+                    "source_type": str(row["source_type"]),
+                    "ecosystem": str(row["ecosystem"]) if row["ecosystem"] else None,
+                    "classification_status": classification_status,
+                    "classification_method": str(row["classification_method"]),
+                    "classification_confidence": str(row["classification_confidence"]),
+                    "authority_level": str(row["authority_level"]),
+                    "usage_policy": str(row["usage_policy"]),
+                    "risk_level": str(row["risk_level"]),
+                    "evidence_note_sha256": hashlib.sha256(
+                        str(row["evidence_note"]).encode("utf-8")
+                    ).hexdigest(),
+                    "evidence_url": str(row["evidence_url"]) if row["evidence_url"] else None,
+                    "source_dataset_name": (
+                        str(row["source_dataset_name"])
+                        if row["source_dataset_name"]
+                        else None
+                    ),
+                    "source_dataset_version": (
+                        str(row["source_dataset_version"])
+                        if row["source_dataset_version"]
+                        else None
+                    ),
+                    "valid_until": valid_until.isoformat() if valid_until else None,
+                    "reviewed_by": str(row["reviewed_by"]),
+                    "reviewed_at": reviewed_at.isoformat(),
+                    "supersedes_revision_id": (
+                        str(row["supersedes_revision_id"])
+                        if row["supersedes_revision_id"]
+                        else None
+                    ),
+                    "request_sha256": str(row["request_sha256"]),
+                    "effective": valid_until is None or valid_until >= state_timestamp,
+                }
+                current_revision["revision_record_sha256"] = canonical_json_sha256(
+                    current_revision
+                )
+            entries.append(
+                {
+                    "normalized_host": normalized_host,
+                    "citation_ids": sorted(aggregate["citation_ids"]),
+                    "snapshot_ids": sorted(aggregate["snapshot_ids"]),
+                    "run_ids": sorted(aggregate["run_ids"]),
+                    "classification_status": classification_status,
+                    "current_revision": current_revision,
+                }
+            )
+        return {
+            "policy_version": SOURCE_GOVERNANCE_VERSION,
+            "evaluated_at": state_timestamp.isoformat(),
+            "entries": entries,
+            "unresolved_citation_ids": sorted(unresolved_citation_ids),
+        }
 
     def _insert_object_ref(
         self,
@@ -716,6 +947,25 @@ class MySQLReportEvidencePacketRepository:
             },
         )
 
+    def _find_by_content(
+        self,
+        conn: Any,
+        tenant_id: str,
+        report_id: str,
+        content_sha256: str,
+    ) -> Any:
+        return self._packet_query(
+            conn,
+            "p.tenant_id=:tenant_id AND p.report_id=:report_id "
+            "AND p.schema_version=:schema_version AND p.content_sha256=:content_sha256",
+            {
+                "tenant_id": tenant_id,
+                "report_id": report_id,
+                "schema_version": REPORT_EVIDENCE_PACKET_VERSION,
+                "content_sha256": content_sha256,
+            },
+        )
+
     def _find_latest_for_report(self, conn: Any, tenant_id: str, report_id: str) -> Any:
         return self._packet_query(
             conn,
@@ -723,12 +973,163 @@ class MySQLReportEvidencePacketRepository:
             {"tenant_id": tenant_id, "report_id": report_id},
         )
 
+    def _packet_object_status(self, row: Any) -> str:
+        metadata = _json_value(row.get("object_metadata_json"), {})
+        object_key = str(metadata.get("object_key") or "")
+        stored_driver = str(metadata.get("storage_driver") or "")
+        if not object_key:
+            return "missing"
+        storage = self._storage()
+        if not stored_driver or storage.driver != stored_driver:
+            return "driver_mismatch"
+        try:
+            payload = storage.get_bytes(object_key)
+        except ObjectStorageError:
+            return "missing"
+        packet_sha256 = str(row["content_sha256"])
+        expected_sha256 = str(row.get("object_sha256") or "")
+        packet_size = int(row["byte_size"])
+        expected_size = int(row.get("object_byte_size") or 0)
+        if expected_sha256 != packet_sha256 or expected_size != packet_size:
+            return "integrity_failed"
+        if hashlib.sha256(payload).hexdigest() != expected_sha256 or len(payload) != expected_size:
+            return "integrity_failed"
+        return "available"
+
+    @staticmethod
+    def _raise_object_unavailable(row: Any, *, reason: str) -> None:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={
+                "code": "EVIDENCE_OBJECT_UNAVAILABLE",
+                "details": {
+                    "object_ref_id": str(row["object_ref_id"]),
+                    "reason": reason,
+                },
+            },
+        )
+
+    @staticmethod
+    def _raise_object_integrity_failed(row: Any) -> None:
+        raise StarletteHTTPException(
+            status_code=409,
+            detail={
+                "code": "EVIDENCE_INTEGRITY_FAILED",
+                "details": {"object_ref_id": str(row["object_ref_id"])},
+            },
+        )
+
+    def _restore_packet_object(
+        self,
+        row: Any,
+        *,
+        packet: Any,
+        created_by: str,
+        trace_id: str,
+        restored_at: datetime,
+    ) -> ReportEvidencePacketData:
+        metadata = _json_value(row.get("object_metadata_json"), {})
+        object_key = str(metadata.get("object_key") or "")
+        if not object_key:
+            self._raise_object_unavailable(row, reason="object_key_missing")
+        try:
+            stored = self._storage().put_bytes(
+                packet.canonical_bytes,
+                key=object_key,
+                content_type="application/json",
+            )
+        except ObjectStorageError as exc:
+            raise StarletteHTTPException(
+                status_code=503,
+                detail={
+                    "code": "EVIDENCE_OBJECT_UNAVAILABLE",
+                    "details": {
+                        "object_ref_id": str(row["object_ref_id"]),
+                        "reason": "object_restore_failed",
+                        "error_type": type(exc).__name__,
+                    },
+                },
+            ) from exc
+        if stored.sha256 != str(row["content_sha256"]):
+            self._raise_object_integrity_failed(row)
+
+        repaired_metadata = {
+            **metadata,
+            "immutable": True,
+            "object_key": stored.key,
+            "storage_driver": stored.driver,
+        }
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_object_refs
+                    SET object_uri=:object_uri, content_type=:content_type,
+                        byte_size=:byte_size, sha256=:sha256, metadata_json=:metadata_json
+                    WHERE tenant_id=:tenant_id AND id=:object_ref_id
+                    """
+                ),
+                {
+                    "object_uri": stored.uri,
+                    "content_type": stored.content_type,
+                    "byte_size": stored.byte_size,
+                    "sha256": stored.sha256,
+                    "metadata_json": json.dumps(repaired_metadata, sort_keys=True),
+                    "tenant_id": str(row["tenant_id"]),
+                    "object_ref_id": str(row["object_ref_id"]),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_audit_events (
+                      id, tenant_id, project_id, event_type, entity_type,
+                      entity_id, trace_id, payload_json, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id,
+                      'report.evidence_packet_object_restored',
+                      'report_evidence_packet', :entity_id, :trace_id,
+                      :payload_json, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"audit_{uuid4().hex[:20]}",
+                    "tenant_id": str(row["tenant_id"]),
+                    "project_id": str(row["project_id"]),
+                    "entity_id": str(row["id"]),
+                    "trace_id": trace_id,
+                    "payload_json": json.dumps(
+                        {
+                            "report_id": str(row["report_id"]),
+                            "packet_id": str(row["id"]),
+                            "content_sha256": stored.sha256,
+                            "object_ref_id": str(row["object_ref_id"]),
+                            "restored_by": created_by,
+                        },
+                        sort_keys=True,
+                    ),
+                    "created_at": restored_at,
+                },
+            )
+            repaired = self._find_by_content(
+                conn,
+                str(row["tenant_id"]),
+                str(row["report_id"]),
+                stored.sha256,
+            )
+        assert repaired is not None
+        return self._packet_data(repaired, replay=True)
+
     @staticmethod
     def _packet_query(conn: Any, where_clause: str, params: dict[str, Any]) -> Any:
         return conn.execute(
             text(
                 f"""
-                SELECT p.*, o.content_type
+                SELECT p.*, o.content_type,
+                       o.byte_size AS object_byte_size,
+                       o.sha256 AS object_sha256,
+                       o.metadata_json AS object_metadata_json
                 FROM airank_report_evidence_packets p
                 JOIN airank_object_refs o
                   ON o.tenant_id=p.tenant_id AND o.id=p.object_ref_id
@@ -763,6 +1164,21 @@ class MySQLReportEvidencePacketRepository:
                 citation_count=int(summary.get("citations", 0)),
                 fact_claim_count=int(summary.get("fact_claims", 0)),
                 fact_accuracy_review_count=int(summary.get("fact_accuracy_reviews", 0)),
+                source_host_count=int(summary.get("source_hosts", 0)),
+                source_effective_classification_count=int(
+                    summary.get("source_effective_classifications", 0)
+                ),
+                source_authority_resolved_count=int(
+                    summary.get("source_authority_resolved", 0)
+                ),
+                source_authority_coverage_rate=(
+                    float(summary["source_authority_coverage_rate"])
+                    if summary.get("source_authority_coverage_rate") is not None
+                    else None
+                ),
+                source_authority_summary_eligible=bool(
+                    summary.get("source_authority_summary_eligible", False)
+                ),
                 evidence_object_count=int(summary.get("evidence_objects", 0)),
                 known_limitation_count=int(summary.get("known_limitations", 0)),
             ),

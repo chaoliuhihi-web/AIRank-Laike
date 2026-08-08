@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 
 import pytest
 
@@ -15,6 +16,71 @@ from airank_evidence.report import canonical_json_sha256
 
 
 NOW = datetime(2026, 5, 17, 13, 0, tzinfo=timezone.utc)
+
+
+def source_governance_for(
+    citation_index: list[dict],
+    *,
+    reviewed: bool = False,
+    valid_until: str | None = None,
+) -> dict:
+    by_host: dict[str, dict[str, set[str]]] = {}
+    unresolved: list[str] = []
+    for citation in citation_index:
+        host = citation.get("host")
+        if not host:
+            unresolved.append(citation["citation_id"])
+            continue
+        aggregate = by_host.setdefault(host, {"citation_ids": set(), "snapshot_ids": set()})
+        aggregate["citation_ids"].add(citation["citation_id"])
+        aggregate["snapshot_ids"].add(citation["snapshot_id"])
+    entries = []
+    for host, aggregate in sorted(by_host.items()):
+        revision = None
+        status = "unclassified"
+        if reviewed:
+            status = "reviewed"
+            revision = {
+                "revision_id": f"source_revision_{host}",
+                "revision_number": 1,
+                "normalized_host": host,
+                "source_category_l1": "news_media",
+                "source_type": "regional_news_media",
+                "ecosystem": "Example Media",
+                "classification_status": "reviewed",
+                "classification_method": "human_review",
+                "classification_confidence": "high",
+                "authority_level": "high",
+                "usage_policy": "primary_evidence",
+                "risk_level": "low",
+                "evidence_note_sha256": hashlib.sha256(b"human reviewed source").hexdigest(),
+                "evidence_url": f"https://{host}/about",
+                "source_dataset_name": None,
+                "source_dataset_version": None,
+                "valid_until": valid_until,
+                "reviewed_by": "reviewer_1",
+                "reviewed_at": "2026-08-08T11:00:00+00:00",
+                "supersedes_revision_id": None,
+                "request_sha256": "c" * 64,
+                "effective": valid_until is None or valid_until >= "2026-08-08T12:00:00+00:00",
+            }
+            revision["revision_record_sha256"] = canonical_json_sha256(revision)
+        entries.append(
+            {
+                "normalized_host": host,
+                "citation_ids": sorted(aggregate["citation_ids"]),
+                "snapshot_ids": sorted(aggregate["snapshot_ids"]),
+                "run_ids": [],
+                "classification_status": status,
+                "current_revision": revision,
+            }
+        )
+    return {
+        "policy_version": "airank.source-governance.v1",
+        "evaluated_at": "2026-08-08T12:00:00+00:00",
+        "entries": entries,
+        "unresolved_citation_ids": sorted(unresolved),
+    }
 
 
 def test_report_conclusion_requires_full_evidence_chain() -> None:
@@ -152,7 +218,7 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
             "collector_surface": "web",
         },
     ]
-    citation_index = [{"citation_id": "cite_1", "snapshot_id": "snap_1", "url": "https://example.com"}]
+    citation_index = [{"citation_id": "cite_1", "snapshot_id": "snap_1", "url": "https://example.com", "host": "example.com"}]
     object_index = [{"object_ref_id": "object_1", "sha256": "4" * 64, "byte_size": 123}]
 
     first = build_report_evidence_packet(
@@ -161,6 +227,7 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         citation_index=citation_index,
         fact_accuracy_index=[],
         evidence_object_index=object_index,
+        source_governance=source_governance_for(citation_index),
     )
     replay = build_report_evidence_packet(
         report_record=publishable_report_record(),
@@ -168,6 +235,7 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         citation_index=citation_index,
         fact_accuracy_index=[],
         evidence_object_index=object_index,
+        source_governance=source_governance_for(citation_index),
     )
 
     assert first.packet_id == replay.packet_id
@@ -175,7 +243,10 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
     assert first.canonical_bytes == replay.canonical_bytes
     assert first.manifest["quality_gates"]["eligible"] is True
     assert first.manifest["measurement"]["formulas"]["mention_rate"].endswith("valid_sample_count")
-    assert first.manifest["measurement"]["known_limitations"] == ["citation_support_not_evaluated"]
+    assert first.manifest["measurement"]["known_limitations"] == [
+        "citation_support_not_evaluated",
+        "source_authority_unclassified",
+    ]
     assert first.manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert first.manifest["attribution"]["policy"] == "observational_non_causal.v1"
     assert first.manifest["counts"] == {
@@ -183,8 +254,13 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         "citations": 1,
         "fact_claims": 0,
         "fact_accuracy_reviews": 0,
+        "source_hosts": 1,
+        "source_effective_classifications": 0,
+        "source_authority_resolved": 0,
+        "source_authority_coverage_rate": 0.0,
+        "source_authority_summary_eligible": False,
         "evidence_objects": 1,
-        "known_limitations": 1,
+        "known_limitations": 2,
     }
 
 
@@ -233,6 +309,7 @@ def test_report_evidence_packet_rejects_ineligible_report(mutator, message: str)
             citation_index=[],
             fact_accuracy_index=[],
             evidence_object_index=[],
+            source_governance=source_governance_for([]),
         )
 
 
@@ -306,8 +383,71 @@ def test_report_evidence_packet_binds_fact_review_hash_and_metrics() -> None:
             }
         ],
         evidence_object_index=[],
+        source_governance=source_governance_for([]),
     )
 
     assert packet.manifest["counts"]["fact_claims"] == 1
     assert packet.manifest["counts"]["fact_accuracy_reviews"] == 1
+    assert packet.manifest["source_governance"]["summary"]["authority_summary_eligible"] is False
     assert packet.manifest["fact_accuracy_index"][0]["latest_review"]["review_record_sha256"] == review["review_record_sha256"]
+
+
+def test_report_evidence_packet_binds_effective_source_governance_hashes() -> None:
+    citations = [
+        {
+            "citation_id": "cite_1",
+            "snapshot_id": "snap_1",
+            "url": "https://news.example.com/article",
+            "host": "news.example.com",
+        }
+    ]
+    packet = build_report_evidence_packet(
+        report_record=publishable_report_record(),
+        sample_index=[
+            {
+                "task_id": "task_1",
+                "run_id": "scan_baseline",
+                "snapshot_id": "snap_1",
+                "sample_status": "valid",
+                "mention_class": "not_mentioned",
+                "answer_sha256": "3" * 64,
+                "raw_response_sha256": "5" * 64,
+                "evidence_snapshot_id": "evidence_1",
+                "collector_surface": "web",
+            },
+            {
+                "task_id": "task_2",
+                "run_id": "scan_compare",
+                "snapshot_id": "snap_2",
+                "sample_status": "valid",
+                "mention_class": "recommended",
+                "answer_sha256": "6" * 64,
+                "raw_response_sha256": "7" * 64,
+                "evidence_snapshot_id": "evidence_2",
+                "collector_surface": "web",
+            },
+        ],
+        citation_index=citations,
+        fact_accuracy_index=[],
+        evidence_object_index=[],
+        source_governance=source_governance_for(citations, reviewed=True),
+    )
+
+    summary = packet.manifest["source_governance"]["summary"]
+    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v3"
+    assert summary["source_host_count"] == 1
+    assert summary["authority_coverage_rate"] == 1.0
+    assert summary["authority_summary_eligible"] is True
+    assert packet.manifest["source_governance"]["known_limitations"] == []
+
+    tampered = source_governance_for(citations, reviewed=True)
+    tampered["entries"][0]["current_revision"]["authority_level"] = "low"
+    with pytest.raises(ReportEvidencePacketError, match="revision hash"):
+        build_report_evidence_packet(
+            report_record=publishable_report_record(),
+            sample_index=packet.manifest["sample_index"],
+            citation_index=citations,
+            fact_accuracy_index=[],
+            evidence_object_index=[],
+            source_governance=tampered,
+        )

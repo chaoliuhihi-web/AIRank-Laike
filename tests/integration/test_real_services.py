@@ -58,7 +58,7 @@ from apps.api.question_routes import (
     QuestionObservationImportRequest,
     QuestionReviewRequest,
 )
-from airank_evidence import FilesystemObjectStorage
+from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
 from airank_provider_gateway import (
     HealthState,
     ImplementationStatus,
@@ -92,7 +92,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0020"
+EXPECTED_ALEMBIC_HEAD = "20260808_0021"
 
 
 def require_real_flag(flag: str) -> None:
@@ -1737,6 +1737,43 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
                             "created_at": captured_at,
                         },
                     )
+                    source_hosts = {
+                        1: "news.example.com",
+                        2: "docs.example.com",
+                        3: None,
+                    }
+                    source_host = source_hosts[task.sample_index]
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_source_citations (
+                              id, tenant_id, project_id, snapshot_id,
+                              citation_order, title, url, host, source_type,
+                              cited_text, metadata_json, created_at
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :snapshot_id,
+                              1, :title, :url, :host, 'provider_native',
+                              :cited_text, JSON_OBJECT('integration_test', TRUE),
+                              :created_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": f"citation_packet_{uuid4().hex[:16]}",
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "snapshot_id": snapshot_id,
+                            "title": "Packet source governance fixture",
+                            "url": (
+                                f"https://{source_host}/evidence"
+                                if source_host
+                                else "https://example.invalid/unresolved-host"
+                            ),
+                            "host": source_host,
+                            "cited_text": "报告来源治理集成测试引用。",
+                            "created_at": captured_at,
+                        },
+                    )
                     conn.execute(
                         text(
                             """
@@ -1826,6 +1863,61 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
                     {"captured_at": captured_at, "tenant_id": tenant_id, "run_id": run.run_id},
                 )
 
+            for normalized_host, valid_until, authority_level, usage_policy in (
+                (
+                    "news.example.com",
+                    captured_at + timedelta(days=30),
+                    "high",
+                    "primary_evidence",
+                ),
+                (
+                    "docs.example.com",
+                    captured_at - timedelta(days=1),
+                    "medium",
+                    "context_only",
+                ),
+            ):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_source_classification_revisions (
+                          id, tenant_id, project_id, normalized_host,
+                          revision_number, source_category_l1, source_type,
+                          ecosystem, classification_status, classification_method,
+                          classification_confidence, authority_level, usage_policy,
+                          risk_level, evidence_note, evidence_url,
+                          source_dataset_name, source_dataset_version, valid_until,
+                          reviewed_by, reviewed_at, supersedes_revision_id,
+                          idempotency_key, request_sha256, created_at
+                        ) VALUES (
+                          :id, :tenant_id, :project_id, :normalized_host,
+                          1, 'news_media', 'integration_source',
+                          'AIRank integration fixture', 'reviewed', 'human_review',
+                          'high', :authority_level, :usage_policy,
+                          'low', :evidence_note, :evidence_url,
+                          NULL, NULL, :valid_until,
+                          'integration_reviewer', :reviewed_at, NULL,
+                          :idempotency_key, :request_sha256, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": f"source_class_{uuid4().hex}",
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "normalized_host": normalized_host,
+                        "authority_level": authority_level,
+                        "usage_policy": usage_policy,
+                        "evidence_note": "Integration reviewer verified the fixture source identity.",
+                        "evidence_url": f"https://{normalized_host}/about",
+                        "valid_until": valid_until,
+                        "reviewed_at": captured_at - timedelta(days=2),
+                        "idempotency_key": f"source-governance-{normalized_host}-{uuid4().hex[:8]}",
+                        "request_sha256": "d" * 64,
+                        "created_at": captured_at - timedelta(days=2),
+                    },
+                )
+
         baseline_quality = quality_repo.get_quality_report(
             tenant_id, project.project_id, runs[0].run_id
         )
@@ -1905,10 +1997,40 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         manifest_bytes = storage.get_bytes(object_metadata["object_key"])
         assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
         manifest = json.loads(manifest_bytes)
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v3"
         assert manifest["counts"]["samples"] == 6
+        assert manifest["counts"]["citations"] == 6
         assert sum(
             item["mention_class"] == "not_mentioned" for item in manifest["sample_index"]
         ) == 3
+        source_summary = manifest["source_governance"]["summary"]
+        assert source_summary["source_host_count"] == 2
+        assert source_summary["classified_host_count"] == 2
+        assert source_summary["effective_classified_host_count"] == 1
+        assert source_summary["expired_classification_count"] == 1
+        assert source_summary["unresolved_citation_count"] == 2
+        assert source_summary["authority_coverage_rate"] == 0.5
+        assert source_summary["authority_summary_eligible"] is False
+        assert "source_classification_expired" in manifest["measurement"]["known_limitations"]
+        assert "citation_host_unresolved" in manifest["measurement"]["known_limitations"]
+        reviewed_entry = next(
+            item
+            for item in manifest["source_governance"]["entries"]
+            if item["normalized_host"] == "news.example.com"
+        )
+        revision = reviewed_entry["current_revision"]
+        revision_record = {
+            key: value
+            for key, value in revision.items()
+            if key != "revision_record_sha256"
+        }
+        assert revision["revision_record_sha256"] == canonical_json_sha256(
+            revision_record
+        )
+        assert packet.summary.source_host_count == 2
+        assert packet.summary.source_authority_resolved_count == 1
+        assert packet.summary.source_authority_coverage_rate == 0.5
+        assert packet.summary.source_authority_summary_eligible is False
 
         receipt = MySQLReportRepository(database_url()).record_download_receipt(
             tenant_id,

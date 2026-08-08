@@ -256,7 +256,7 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
         assert quality["metrics"]["fact_accuracy_coverage_rate"] == 1.0
         assert quality["metrics"]["fact_accuracy"] == 1.0
         with engine.begin() as conn:
-            _, _, fact_index, _ = report_packet_repository._load_evidence_indices(
+            _, _, fact_index, _, _ = report_packet_repository._load_evidence_indices(
                 conn,
                 tenant_id,
                 project.project_id,

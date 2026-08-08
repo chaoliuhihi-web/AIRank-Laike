@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v2` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/object index、内容寻址 SHA-256、packet 级 download receipt；历史 v1 只读兼容，HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v3` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2 只读兼容，HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -724,7 +724,7 @@ Passed:
 - Alembic `20260808_0019` adds append-only fact-accuracy reviews. Commercially eligible reviews require a current, approved, human-reviewed, public/redacted FactRevision, a current source, no open conflict and an exact excerpt boundary inside the source segment.
 - `accurate`, `inaccurate`, `outdated` and `insufficient` remain distinct. `insufficient` does not bind a fabricated FactRevision, and fact accuracy is only calculated when every registered brand/competitor factual claim has a decisive current review.
 - Superseding or invalidating a fact/source preserves historical reviews while automatically removing them from current metrics. AI-derived labels cannot overwrite the raw claim or human review history.
-- Retest reports and `airank.report-evidence-packet.v2` recompute fact claim count, review coverage and accuracy from current MySQL evidence. The packet stores hashes and boundaries, not copied answer/source bodies; historical v1 packets remain readable.
+- Retest reports and `airank.report-evidence-packet.v3` recompute fact claim count, review coverage, accuracy and source-governance eligibility from current MySQL evidence. The packet stores hashes and boundaries, not copied answer/source or human-note bodies; historical v1/v2 packets remain readable.
 - The Evidence Center supports exact claim registration and human verdicts. Desktop and 390x844 browser QA completed the path, showed 100% only for the isolated 1/1 QA fact, kept the run blocked for missing repetition/citations, then removed the QA project. Reloading the real project preserved all nine valid not-mentioned samples and reported zero console errors.
 - Full local regression passed `354 passed, 25 skipped`; real MySQL integration passed `23 passed, 2 skipped`. They cover exact boundaries, idempotency, audit, recalculation, packet hash validation and stale-evidence invalidation. Node 24 TypeScript/Vite build and the high-severity npm audit passed with zero known vulnerabilities.
 
@@ -775,9 +775,31 @@ Passed:
 
 Limitations and blockers:
 
-- Versioned bulk import of the public CN-GEO source taxonomy, double-review workflow, labeled reviewer-agreement benchmark, expiry operations and evidence-packet/report integration remain incomplete.
+- Versioned bulk import of the public CN-GEO source taxonomy, double-review workflow, labeled reviewer-agreement benchmark and expiry operations remain incomplete. Evidence-packet/report integration is closed by the v3 gate below.
 - Four-platform same-cohort repetition remains incomplete until Kimi is securely reinjected after rotation. Consumer Web/App L3, production Yudao, production HTTPS object storage and customer publishing credentials remain external blockers.
 
 Decision:
 
 - The prior source-type placeholder is replaced by an auditable human-governed registry. Source authority governance remains `partial`, and AIRank remains commercial `NO-GO`.
+
+## 2026-08-08 Source-Governed Evidence Packet Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- New customer artifacts use `airank.report-evidence-packet.v3`. Each Citation is reconciled to its exact snapshot and normalized host; the manifest carries the current source-classification revision, request hash, review time, validity and revision-record hash without copying the review-note body.
+- Unclassified, expired, unknown-authority, prohibited-use and unresolved-host cases are counted separately and become explicit limitations. Observed answers and citations remain deliverable, but incomplete governance coverage makes `source_authority_summary_eligible=false`; the UI does not convert partial coverage into an overall authority claim.
+- Alembic `20260808_0021` keeps multiple immutable packet versions for the same report/schema. A source review or expiry transition changes the packet basis and creates a new content-addressed version; identical evidence replays the existing content hash.
+- Packet replay now verifies backing object availability and integrity. A missing object can only be restored from a freshly rebuilt identical canonical payload with the same SHA-256 and emits `report.evidence_packet_object_restored`; a corrupt object fails closed with `EVIDENCE_INTEGRITY_FAILED`.
+- Real MySQL exercised 6 valid API samples, 6 citations, 2 normalized hosts, one effective high-authority source, one expired source and 2 unresolved citations. Browser export showed `1/2` valid authority coverage and the explicit no-overall-conclusion warning; the object was downloaded, browser-hashed and receipt-recorded. Desktop and 390px had no page-level horizontal overflow and zero warning/error logs. The isolated 55-row QA tenant was deleted and its temporary object directory moved to Trash.
+- Full local regression passed `379 passed, 27 skipped`; real MySQL integration passed `25 passed, 2 skipped`; Node 24 TypeScript/Vite build passed and npm high-severity audit reported zero vulnerabilities. The absorption matrix remains `13 sources / 67 rows / 21 GEO skills`, and the core Skill evaluation remains `24/24` with zero falsely promoted Skills.
+
+Limitations and blockers:
+
+- HTML/PDF/Word rendering, digital signatures, a public verification CLI, versioned public taxonomy import, double-review workflow and expiry operations remain incomplete.
+- This gate proves truthful governed JSON delivery, not four-platform same-cohort measurement, Consumer Web/App evidence, production authentication/storage or real customer uplift.
+
+Decision:
+
+- Source-governed customer evidence is no longer a report-integration gap. The artifact channel remains `partial`, and AIRank remains commercial `NO-GO` until the external production and measurement gates pass.

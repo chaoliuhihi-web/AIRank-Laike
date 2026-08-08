@@ -113,7 +113,7 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3";
   status: "ready";
   object_ref_id: string;
   content_url: string;
@@ -128,6 +128,11 @@ export type ReportEvidencePacket = {
     citation_count: number;
     fact_claim_count: number;
     fact_accuracy_review_count: number;
+    source_host_count: number;
+    source_effective_classification_count: number;
+    source_authority_resolved_count: number;
+    source_authority_coverage_rate: number | null;
+    source_authority_summary_eligible: boolean;
     evidence_object_count: number;
     known_limitation_count: number;
   };
@@ -1836,7 +1841,7 @@ export async function recordDownloadReceipt(packet: ReportEvidencePacket): Promi
 
 export async function createReportEvidencePacket(reportId: string): Promise<ReportEvidencePacket> {
   const headers = buildApiHeaders("trc_web_report_packet");
-  headers["Idempotency-Key"] = `report-packet-${reportId}-v2`;
+  headers["Idempotency-Key"] = `report-packet-${reportId}-v3-${crypto.randomUUID()}`;
   const response = await fetch(`/api/v1/reports/${reportId}/evidence-packets`, {
     method: "POST",
     headers,

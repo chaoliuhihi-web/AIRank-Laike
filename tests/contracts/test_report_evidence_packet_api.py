@@ -56,7 +56,7 @@ def packet_data(tenant_id: str, report_id: str, created_by: str) -> ReportEviden
         report_id=report_id,
         tenant_id=tenant_id,
         project_id="project_report",
-        schema_version="airank.report-evidence-packet.v2",
+        schema_version="airank.report-evidence-packet.v3",
         status="ready",
         object_ref_id="object_" + "2" * 24,
         content_url="/api/v1/evidence-objects/object_" + "2" * 24 + "/content",
@@ -71,6 +71,11 @@ def packet_data(tenant_id: str, report_id: str, created_by: str) -> ReportEviden
             citation_count=5,
             fact_claim_count=3,
             fact_accuracy_review_count=2,
+            source_host_count=4,
+            source_effective_classification_count=3,
+            source_authority_resolved_count=2,
+            source_authority_coverage_rate=0.5,
+            source_authority_summary_eligible=False,
             evidence_object_count=4,
             known_limitation_count=1,
         ),
@@ -203,6 +208,21 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         )
         """,
         """
+        CREATE TABLE airank_source_classification_revisions (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          normalized_host VARCHAR(253), revision_number INT,
+          source_category_l1 VARCHAR(64), source_type VARCHAR(96), ecosystem VARCHAR(160),
+          classification_status VARCHAR(32), classification_method VARCHAR(32),
+          classification_confidence VARCHAR(16), authority_level VARCHAR(16),
+          usage_policy VARCHAR(32), risk_level VARCHAR(16), evidence_note TEXT,
+          evidence_url VARCHAR(2048), source_dataset_name VARCHAR(160),
+          source_dataset_version VARCHAR(64), valid_until DATETIME,
+          reviewed_by VARCHAR(64), reviewed_at DATETIME,
+          supersedes_revision_id VARCHAR(64), idempotency_key VARCHAR(160),
+          request_sha256 CHAR(64), created_at DATETIME
+        )
+        """,
+        """
         CREATE TABLE airank_answer_claims (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           snapshot_id VARCHAR(64), claim_text TEXT, answer_start INT, answer_end INT,
@@ -233,7 +253,7 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
           source_record_sha256 CHAR(64), object_ref_id VARCHAR(64), content_sha256 CHAR(64),
           byte_size BIGINT, summary_json TEXT, idempotency_key VARCHAR(160),
           created_by VARCHAR(128), created_at DATETIME,
-          UNIQUE (tenant_id, report_id, schema_version), UNIQUE (tenant_id, idempotency_key)
+          UNIQUE (tenant_id, idempotency_key), UNIQUE (tenant_id, content_sha256)
         )
         """,
         """
@@ -404,6 +424,9 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     assert latest.packet_id == created.packet_id
     assert created.summary.sample_count == 2
     assert created.summary.citation_count == 1
+    assert created.summary.source_host_count == 1
+    assert created.summary.source_effective_classification_count == 0
+    assert created.summary.source_authority_summary_eligible is False
 
     with repository._engine.connect() as conn:
         object_row = conn.execute(
@@ -417,10 +440,181 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     manifest = json.loads(payload)
     assert manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert manifest["counts"]["samples"] == 2
+    assert manifest["schema_version"] == "airank.report-evidence-packet.v3"
+    assert manifest["source_governance"]["summary"]["unclassified_host_count"] == 1
     assert "answer_text" not in payload.decode("utf-8")
     assert audit["event_type"] == "report.evidence_packet_created"
     assert audit["trace_id"] == "trc_packet_real"
     assert "idempotency_key" not in audit["payload_json"]
+
+
+def test_mysql_report_packet_restores_missing_content_addressed_object(tmp_path: Path) -> None:
+    storage = FilesystemObjectStorage(tmp_path / "objects")
+    repository = MySQLReportEvidencePacketRepository(
+        "sqlite+pysqlite:///:memory:",
+        object_storage=storage,
+    )
+    create_packet_tables(repository)
+    seed_publishable_report(repository)
+    created = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-restore-v3",
+        "user_report",
+        "trc_packet_create",
+    )
+    with repository._engine.connect() as conn:
+        object_row = conn.execute(
+            text("SELECT metadata_json FROM airank_object_refs WHERE id=:id"),
+            {"id": created.object_ref_id},
+        ).mappings().one()
+    object_key = json.loads(object_row["metadata_json"])["object_key"]
+    storage.delete(object_key)
+
+    restored = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-restore-v3",
+        "restoring_user",
+        "trc_packet_restore",
+    )
+
+    assert restored.packet_id == created.packet_id
+    assert restored.content_sha256 == created.content_sha256
+    assert restored.idempotent_replay is True
+    assert hashlib.sha256(storage.get_bytes(object_key)).hexdigest() == created.content_sha256
+    with repository._engine.connect() as conn:
+        events = conn.execute(
+            text("SELECT event_type, trace_id, payload_json FROM airank_audit_events ORDER BY created_at")
+        ).mappings().all()
+    assert [event["event_type"] for event in events] == [
+        "report.evidence_packet_created",
+        "report.evidence_packet_object_restored",
+    ]
+    assert events[-1]["trace_id"] == "trc_packet_restore"
+    assert json.loads(events[-1]["payload_json"])["restored_by"] == "restoring_user"
+
+
+def test_mysql_report_packet_rejects_corrupted_existing_object(tmp_path: Path) -> None:
+    storage = FilesystemObjectStorage(tmp_path / "objects")
+    repository = MySQLReportEvidencePacketRepository(
+        "sqlite+pysqlite:///:memory:",
+        object_storage=storage,
+    )
+    create_packet_tables(repository)
+    seed_publishable_report(repository)
+    created = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-corrupt-v3",
+        "user_report",
+        "trc_packet_create",
+    )
+    with repository._engine.connect() as conn:
+        object_row = conn.execute(
+            text("SELECT metadata_json FROM airank_object_refs WHERE id=:id"),
+            {"id": created.object_ref_id},
+        ).mappings().one()
+    object_key = json.loads(object_row["metadata_json"])["object_key"]
+    target = storage._target(object_key)
+    target.chmod(0o644)
+    target.write_bytes(b"tampered")
+
+    with pytest.raises(StarletteHTTPException) as exc_info:
+        repository.create_packet(
+            "tenant_report",
+            "report_real",
+            "report-packet-corrupt-v3",
+            "user_report",
+            "trc_packet_corrupt",
+        )
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "EVIDENCE_INTEGRITY_FAILED"
+
+
+def test_mysql_report_packet_creates_new_immutable_version_when_source_governance_changes(
+    tmp_path: Path,
+) -> None:
+    storage = FilesystemObjectStorage(tmp_path / "objects")
+    repository = MySQLReportEvidencePacketRepository(
+        "sqlite+pysqlite:///:memory:",
+        object_storage=storage,
+    )
+    create_packet_tables(repository)
+    seed_publishable_report(repository)
+
+    unclassified = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-unclassified-v3",
+        "user_report",
+        "trc_packet_unclassified",
+    )
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_source_classification_revisions (
+                  id, tenant_id, project_id, normalized_host, revision_number,
+                  source_category_l1, source_type, ecosystem,
+                  classification_status, classification_method,
+                  classification_confidence, authority_level, usage_policy,
+                  risk_level, evidence_note, evidence_url,
+                  source_dataset_name, source_dataset_version, valid_until,
+                  reviewed_by, reviewed_at, supersedes_revision_id,
+                  idempotency_key, request_sha256, created_at
+                ) VALUES (
+                  'source_class_example_v1', 'tenant_report', 'project_report',
+                  'example.com', 1, 'research_documentation', 'reference_documentation',
+                  'Example', 'reviewed', 'human_review', 'high', 'high',
+                  'primary_evidence', 'low', 'Human verified the publisher and page.',
+                  'https://example.com/about', NULL, NULL, NULL,
+                  'reviewer_1', '2026-08-08 12:30:00', NULL,
+                  'source-review-example-v1', :request_sha256,
+                  '2026-08-08 12:30:00'
+                )
+                """
+            ),
+            {"request_sha256": "d" * 64},
+        )
+
+    governed = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-governed-v3",
+        "user_report",
+        "trc_packet_governed",
+    )
+    exact_replay = repository.create_packet(
+        "tenant_report",
+        "report_real",
+        "report-packet-governed-replay-v3",
+        "user_report",
+        "trc_packet_governed_replay",
+    )
+
+    assert governed.packet_id != unclassified.packet_id
+    assert governed.content_sha256 != unclassified.content_sha256
+    assert governed.summary.source_host_count == 1
+    assert governed.summary.source_effective_classification_count == 1
+    assert governed.summary.source_authority_resolved_count == 1
+    assert governed.summary.source_authority_coverage_rate == 1.0
+    assert governed.summary.source_authority_summary_eligible is True
+    assert exact_replay.packet_id == governed.packet_id
+    assert exact_replay.idempotent_replay is True
+    assert repository.get_latest("tenant_report", "report_real").packet_id == governed.packet_id
+
+    with repository._engine.connect() as conn:
+        packet_count = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM airank_report_evidence_packets
+                WHERE tenant_id='tenant_report' AND report_id='report_real'
+                  AND schema_version='airank.report-evidence-packet.v3'
+                """
+            )
+        ).scalar_one()
+    assert packet_count == 2
 
 
 def test_mysql_report_packet_rejects_idempotency_key_reuse(tmp_path: Path) -> None:

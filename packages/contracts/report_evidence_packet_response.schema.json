@@ -23,7 +23,8 @@
         "schema_version": {
           "enum": [
             "airank.report-evidence-packet.v1",
-            "airank.report-evidence-packet.v2"
+            "airank.report-evidence-packet.v2",
+            "airank.report-evidence-packet.v3"
           ]
         },
         "status": { "const": "ready" },
@@ -39,7 +40,11 @@
           "type": "object",
           "required": [
             "sample_count", "citation_count", "fact_claim_count",
-            "fact_accuracy_review_count", "evidence_object_count",
+            "fact_accuracy_review_count", "source_host_count",
+            "source_effective_classification_count",
+            "source_authority_resolved_count",
+            "source_authority_coverage_rate",
+            "source_authority_summary_eligible", "evidence_object_count",
             "known_limitation_count"
           ],
           "additionalProperties": false,
@@ -48,6 +53,13 @@
             "citation_count": { "type": "integer", "minimum": 0 },
             "fact_claim_count": { "type": "integer", "minimum": 0 },
             "fact_accuracy_review_count": { "type": "integer", "minimum": 0 },
+            "source_host_count": { "type": "integer", "minimum": 0 },
+            "source_effective_classification_count": { "type": "integer", "minimum": 0 },
+            "source_authority_resolved_count": { "type": "integer", "minimum": 0 },
+            "source_authority_coverage_rate": {
+              "type": ["number", "null"], "minimum": 0, "maximum": 1
+            },
+            "source_authority_summary_eligible": { "type": "boolean" },
             "evidence_object_count": { "type": "integer", "minimum": 0 },
             "known_limitation_count": { "type": "integer", "minimum": 0 }
           }

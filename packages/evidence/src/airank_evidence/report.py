@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
 from typing import Any
 
+from .source_registry import normalize_source_host
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v2"
+
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v3"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
+SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 METRIC_FORMULAS: dict[str, str] = {
@@ -64,6 +67,211 @@ def _publishable_quality(metrics: dict[str, Any], key: str) -> dict[str, Any]:
     return quality
 
 
+def _parsed_datetime(value: Any, key: str) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value:
+        raise ReportEvidencePacketError(f"{key} is missing or invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise ReportEvidencePacketError(f"{key} is missing or invalid") from exc
+
+
+def _validate_source_governance(
+    citation_index: list[dict[str, Any]],
+    source_governance: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    if source_governance.get("policy_version") != SOURCE_GOVERNANCE_VERSION:
+        raise ReportEvidencePacketError("source_governance uses an unsupported policy")
+    evaluated_at = _parsed_datetime(
+        source_governance.get("evaluated_at"), "source_governance evaluated_at"
+    )
+    entries = source_governance.get("entries")
+    unresolved_citation_ids = source_governance.get("unresolved_citation_ids")
+    if not isinstance(entries, list) or not isinstance(unresolved_citation_ids, list):
+        raise ReportEvidencePacketError("source_governance index is missing")
+
+    citations_by_host: dict[str, set[str]] = {}
+    expected_unresolved: set[str] = set()
+    snapshots_by_host: dict[str, set[str]] = {}
+    for citation in citation_index:
+        citation_id = str(citation.get("citation_id") or "")
+        snapshot_id = str(citation.get("snapshot_id") or "")
+        if not citation_id:
+            raise ReportEvidencePacketError("citation_index contains a citation without an id")
+        try:
+            normalized_host = normalize_source_host(str(citation.get("host") or ""))
+        except ValueError:
+            expected_unresolved.add(citation_id)
+            continue
+        citations_by_host.setdefault(normalized_host, set()).add(citation_id)
+        snapshots_by_host.setdefault(normalized_host, set()).add(snapshot_id)
+
+    if set(str(item) for item in unresolved_citation_ids) != expected_unresolved:
+        raise ReportEvidencePacketError(
+            "source_governance unresolved citations do not match citation_index"
+        )
+
+    entry_hosts: set[str] = set()
+    classified_host_count = 0
+    effective_classified_host_count = 0
+    expired_classification_count = 0
+    unclassified_host_count = 0
+    unknown_authority_host_count = 0
+    authority_resolved_host_count = 0
+    primary_evidence_host_count = 0
+    prohibited_host_count = 0
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ReportEvidencePacketError("source_governance contains an invalid entry")
+        try:
+            normalized_host = normalize_source_host(str(entry.get("normalized_host") or ""))
+        except ValueError as exc:
+            raise ReportEvidencePacketError(
+                "source_governance contains an invalid normalized host"
+            ) from exc
+        if normalized_host in entry_hosts:
+            raise ReportEvidencePacketError("source_governance contains a duplicate host")
+        entry_hosts.add(normalized_host)
+        if set(str(item) for item in entry.get("citation_ids", [])) != citations_by_host.get(
+            normalized_host, set()
+        ):
+            raise ReportEvidencePacketError(
+                "source_governance citation ids do not match citation_index"
+            )
+        if set(str(item) for item in entry.get("snapshot_ids", [])) != snapshots_by_host.get(
+            normalized_host, set()
+        ):
+            raise ReportEvidencePacketError(
+                "source_governance snapshot ids do not match citation_index"
+            )
+
+        revision = entry.get("current_revision")
+        if revision is None:
+            if entry.get("classification_status") != "unclassified":
+                raise ReportEvidencePacketError(
+                    "source_governance unclassified entry has an invalid status"
+                )
+            unclassified_host_count += 1
+            continue
+        if not isinstance(revision, dict):
+            raise ReportEvidencePacketError(
+                "source_governance contains an invalid classification revision"
+            )
+        revision_sha256 = str(revision.get("revision_record_sha256") or "")
+        revision_record = {
+            key: value
+            for key, value in revision.items()
+            if key != "revision_record_sha256"
+        }
+        if (
+            not SHA256_RE.fullmatch(revision_sha256)
+            or canonical_json_sha256(revision_record) != revision_sha256
+        ):
+            raise ReportEvidencePacketError(
+                "source_governance contains an invalid revision hash"
+            )
+        if revision.get("normalized_host") != normalized_host:
+            raise ReportEvidencePacketError(
+                "source_governance revision host does not match its entry"
+            )
+        if entry.get("classification_status") != revision.get("classification_status"):
+            raise ReportEvidencePacketError(
+                "source_governance classification status does not match its revision"
+            )
+        if not SHA256_RE.fullmatch(str(revision.get("request_sha256") or "")):
+            raise ReportEvidencePacketError(
+                "source_governance contains an invalid request hash"
+            )
+        if not SHA256_RE.fullmatch(str(revision.get("evidence_note_sha256") or "")):
+            raise ReportEvidencePacketError(
+                "source_governance contains an invalid evidence note hash"
+            )
+        reviewed_at = _parsed_datetime(
+            revision.get("reviewed_at"), "source_governance reviewed_at"
+        )
+        if reviewed_at > evaluated_at:
+            raise ReportEvidencePacketError(
+                "source_governance includes a revision newer than its evaluation time"
+            )
+        valid_until_raw = revision.get("valid_until")
+        valid_until = (
+            _parsed_datetime(valid_until_raw, "source_governance valid_until")
+            if valid_until_raw
+            else None
+        )
+        expected_effective = valid_until is None or valid_until >= evaluated_at
+        if revision.get("effective") is not expected_effective:
+            raise ReportEvidencePacketError(
+                "source_governance revision effectiveness is inconsistent"
+            )
+
+        classified_host_count += 1
+        if expected_effective:
+            effective_classified_host_count += 1
+            if revision.get("authority_level") == "unknown":
+                unknown_authority_host_count += 1
+            else:
+                authority_resolved_host_count += 1
+            if revision.get("usage_policy") == "primary_evidence":
+                primary_evidence_host_count += 1
+            if revision.get("usage_policy") == "prohibited":
+                prohibited_host_count += 1
+        else:
+            expired_classification_count += 1
+
+    if entry_hosts != set(citations_by_host):
+        raise ReportEvidencePacketError(
+            "source_governance hosts do not match citation_index"
+        )
+
+    source_host_count = len(entry_hosts)
+    classification_complete = (
+        not expected_unresolved
+        and effective_classified_host_count == source_host_count
+    )
+    authority_summary_eligible = (
+        source_host_count > 0
+        and classification_complete
+        and unknown_authority_host_count == 0
+    )
+    authority_coverage_rate = (
+        round(authority_resolved_host_count / source_host_count, 6)
+        if source_host_count
+        else None
+    )
+    limitations: list[str] = []
+    if unclassified_host_count:
+        limitations.append("source_authority_unclassified")
+    if expired_classification_count:
+        limitations.append("source_classification_expired")
+    if expected_unresolved:
+        limitations.append("citation_host_unresolved")
+    if unknown_authority_host_count:
+        limitations.append("source_authority_unknown")
+    if prohibited_host_count:
+        limitations.append("source_usage_prohibited")
+    summary = {
+        "source_host_count": source_host_count,
+        "classified_host_count": classified_host_count,
+        "effective_classified_host_count": effective_classified_host_count,
+        "unclassified_host_count": unclassified_host_count,
+        "expired_classification_count": expired_classification_count,
+        "unresolved_citation_count": len(expected_unresolved),
+        "unknown_authority_host_count": unknown_authority_host_count,
+        "authority_resolved_host_count": authority_resolved_host_count,
+        "primary_evidence_host_count": primary_evidence_host_count,
+        "prohibited_host_count": prohibited_host_count,
+        "authority_coverage_rate": authority_coverage_rate,
+        "classification_complete": classification_complete,
+        "authority_summary_eligible": authority_summary_eligible,
+    }
+    return summary, limitations
+
+
 def build_report_evidence_packet(
     *,
     report_record: dict[str, Any],
@@ -71,6 +279,7 @@ def build_report_evidence_packet(
     citation_index: list[dict[str, Any]],
     fact_accuracy_index: list[dict[str, Any]],
     evidence_object_index: list[dict[str, Any]],
+    source_governance: dict[str, Any],
 ) -> ReportEvidencePacket:
     """Build a deterministic, immutable manifest without copying raw answer bodies."""
 
@@ -241,11 +450,21 @@ def build_report_evidence_packet(
         if not item.get("object_ref_id") or not SHA256_RE.fullmatch(str(item.get("sha256") or "")):
             raise ReportEvidencePacketError("evidence_object_index contains an invalid object hash")
 
+    source_governance_summary, source_governance_limitations = _validate_source_governance(
+        citation_index,
+        source_governance,
+    )
+
     source_record_sha256 = canonical_json_sha256(report_record)
-    packet_id = f"report_packet_{source_record_sha256[:20]}"
-    known_limitations = metrics.get("known_limitations")
-    if not isinstance(known_limitations, list):
-        known_limitations = []
+    report_known_limitations = metrics.get("known_limitations")
+    if not isinstance(report_known_limitations, list):
+        report_known_limitations = []
+    known_limitations = list(
+        dict.fromkeys(
+            [str(item) for item in report_known_limitations]
+            + source_governance_limitations
+        )
+    )
     risks = [
         {
             "code": "OBSERVATIONAL_ATTRIBUTION_ONLY",
@@ -266,10 +485,17 @@ def build_report_evidence_packet(
                 "statement": "See known_limitations; no missing metric is synthesized.",
             }
         )
+    if source_governance_limitations:
+        risks.append(
+            {
+                "code": "SOURCE_GOVERNANCE_LIMITATIONS",
+                "level": "high",
+                "statement": "Source authority or usage conclusions remain ineligible until the recorded source-governance limitations are resolved.",
+            }
+        )
 
-    manifest: dict[str, Any] = {
+    manifest_basis: dict[str, Any] = {
         "schema_version": REPORT_EVIDENCE_PACKET_VERSION,
-        "packet_id": packet_id,
         "canonicalization": "airank.sorted-key-utf8-json.v1",
         "report": {
             "report_id": report_record["report_id"],
@@ -310,6 +536,11 @@ def build_report_evidence_packet(
         "sample_index": sample_index,
         "citation_index": citation_index,
         "fact_accuracy_index": fact_accuracy_index,
+        "source_governance": {
+            **source_governance,
+            "summary": source_governance_summary,
+            "known_limitations": source_governance_limitations,
+        },
         "evidence_object_index": evidence_object_index,
         "counts": {
             "samples": len(sample_index),
@@ -318,9 +549,29 @@ def build_report_evidence_packet(
             "fact_accuracy_reviews": sum(
                 item.get("latest_review") is not None for item in fact_accuracy_index
             ),
+            "source_hosts": source_governance_summary["source_host_count"],
+            "source_effective_classifications": source_governance_summary[
+                "effective_classified_host_count"
+            ],
+            "source_authority_resolved": source_governance_summary[
+                "authority_resolved_host_count"
+            ],
+            "source_authority_coverage_rate": source_governance_summary[
+                "authority_coverage_rate"
+            ],
+            "source_authority_summary_eligible": source_governance_summary[
+                "authority_summary_eligible"
+            ],
             "evidence_objects": len(evidence_object_index),
             "known_limitations": len(known_limitations),
         },
+    }
+    packet_basis_sha256 = canonical_json_sha256(manifest_basis)
+    packet_id = f"report_packet_{packet_basis_sha256[:20]}"
+    manifest: dict[str, Any] = {
+        **manifest_basis,
+        "packet_id": packet_id,
+        "packet_basis_sha256": packet_basis_sha256,
     }
     canonical_bytes = canonical_json_bytes(manifest)
     return ReportEvidencePacket(

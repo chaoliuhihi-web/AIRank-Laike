@@ -46,7 +46,7 @@ def test_fact_accuracy_is_recomputed_into_quality_and_customer_evidence_packet()
     assert 'row["fact_accuracy"] = metrics.fact_accuracy' in retest
     assert 'row["fact_reviewed_claim_count"] = metrics.decisive_claim_count' in retest
     assert '"fact_accuracy": item.fact_accuracy' in quality
-    assert "airank.report-evidence-packet.v2" in report
+    assert "airank.report-evidence-packet.v3" in report
     assert '"fact_accuracy_index": fact_accuracy_index' in report
     assert 'f"fact_accuracy_index {metric_name} does not match metrics' in report
     assert "review_record_sha256" in repository
