@@ -32,8 +32,14 @@ def source_payload() -> dict:
     }
 
 
-def fact_payload(source_ids: list[str], fact_text: str = "AIRank 支持私有化部署。") -> dict:
-    return {
+def fact_payload(
+    source_ids: list[str],
+    fact_text: str = "AIRank 支持私有化部署。",
+    *,
+    subject_type: str = "general",
+    subject_ref_id: str | None = None,
+) -> dict:
+    payload = {
         "title": "部署能力",
         "fact_type": "product_service",
         "fact_text": fact_text,
@@ -41,7 +47,11 @@ def fact_payload(source_ids: list[str], fact_text: str = "AIRank 支持私有化
         "risk_level": "low",
         "disclosure": "public",
         "created_by": "operator_1",
+        "subject_type": subject_type,
     }
+    if subject_ref_id is not None:
+        payload["subject_ref_id"] = subject_ref_id
+    return payload
 
 
 def test_source_import_is_content_addressed_segmented_and_idempotent(client: TestClient) -> None:
@@ -415,6 +425,165 @@ def test_content_generation_uses_only_approved_exact_source_facts(client: TestCl
     )
     assert listed.status_code == 200
     assert listed.json()["data"] == [data]
+
+
+def test_fact_subject_binding_is_required_and_immutable(client: TestClient) -> None:
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    fact = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload(
+            [source["source_id"]],
+            subject_type="brand",
+            subject_ref_id="subject_airank",
+        ),
+    )
+    relabel = client.post(
+        f"/api/v1/projects/project_1/facts/{fact.json()['data']['fact_id']}/revisions",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload(
+            [source["source_id"]],
+            subject_type="competitor",
+            subject_ref_id="subject_peer",
+        ),
+    )
+
+    assert fact.status_code == 201
+    assert fact.json()["data"]["subject_type"] == "brand"
+    assert fact.json()["data"]["subject_ref_id"] == "subject_airank"
+    assert relabel.status_code == 409
+    assert relabel.json()["error"]["code"] == "FACT_SUBJECT_IMMUTABLE"
+
+
+def test_comparison_content_requires_complete_symmetric_exact_evidence(client: TestClient) -> None:
+    subjects = [
+        {"subject_id": "subject_airank", "display_name": "AIRank", "subject_type": "brand"},
+        {"subject_id": "subject_peer", "display_name": "竞品甲", "subject_type": "competitor"},
+    ]
+    dimensions = [{"dimension_id": f"d{index}", "label": f"核验维度 {index}"} for index in range(1, 11)]
+    cells = []
+    revision_ids = []
+    for subject in subjects:
+        for dimension in dimensions:
+            fact_text = f"{subject['display_name']} 在{dimension['label']}下的已核验事实。"
+            source = client.post(
+                "/api/v1/projects/project_1/knowledge-sources",
+                headers={"tenant-id": "tenant_1"},
+                json={
+                    "idempotency_key": f"comparison-{subject['subject_id']}-{dimension['dimension_id']}",
+                    "source_type": "official_document",
+                    "title": f"{subject['display_name']} {dimension['label']}来源",
+                    "content_text": fact_text,
+                    "authority_level": "official",
+                    "risk_level": "low",
+                },
+            ).json()["data"]
+            fact = client.post(
+                "/api/v1/projects/project_1/facts",
+                headers={"tenant-id": "tenant_1"},
+                json=fact_payload(
+                    [source["source_id"]],
+                    fact_text,
+                    subject_type=subject["subject_type"],
+                    subject_ref_id=subject["subject_id"],
+                ) | {"title": f"{subject['display_name']} {dimension['label']}"},
+            ).json()["data"]
+            approved = client.patch(
+                f"/api/v1/projects/project_1/fact-revisions/{fact['revision_id']}/review",
+                headers={"tenant-id": "tenant_1"},
+                json={"action": "approved", "reviewed_by": "reviewer_1"},
+            )
+            assert approved.status_code == 200
+            revision_ids.append(fact["revision_id"])
+            cells.append({"subject_id": subject["subject_id"], "dimension_id": dimension["dimension_id"], "fact_revision_ids": [fact["revision_id"]]})
+
+    generic = client.post(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={"asset_type": "comparison_page", "title": "绕过专用门禁", "direction": "只用一个事实", "fact_revision_ids": [revision_ids[0]], "created_by": "operator_1"},
+    )
+    generated = client.post(
+        "/api/v1/projects/project_1/comparison-content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={"title": "不要直接复制的比较标题", "direction": "保持公平", "target_subject_id": "subject_airank", "subjects": subjects, "dimensions": dimensions, "cells": cells, "created_by": "operator_1"},
+    )
+
+    assert generic.status_code == 409
+    assert generic.json()["error"]["code"] == "CONTENT_EVIDENCE_MISSING"
+    assert generated.status_code == 201
+    data = generated.json()["data"]
+    assert data["generation_mode"] == "evidence_bound_comparison"
+    assert data["skill_id"] == "intervention.comparison-builder"
+    assert data["skill_version"] == "1.0.0"
+    assert data["section_count"] == 10
+    assert len(data["fact_revision_ids"]) == 20
+    assert len(data["claim_assertion_ids"]) == 20
+    assert len(data["claim_support_ids"]) == 20
+    assert "不要直接复制的比较标题" not in data["body_md"]
+
+
+def test_explainer_content_requires_role_coverage_length_and_brand_restraint(client: TestClient) -> None:
+    roles = ["definition", "mechanism", "mechanism", "step", "step", "step", "criterion", "criterion", "misconception", "faq", "faq", "boundary"]
+    assignments = []
+    for index, role in enumerate(roles, start=1):
+        fact_text = f"第{index}条已审核说明：" + "该事实基于当前有效来源的精确原文边界，用于解释适用范围、执行条件与验证方式，不扩展为来源之外的承诺。" * 3
+        source = client.post(
+            "/api/v1/projects/project_1/knowledge-sources",
+            headers={"tenant-id": "tenant_1"},
+            json={
+                "idempotency_key": f"explainer-source-{index:02d}",
+                "source_type": "official_document",
+                "title": f"解释来源 {index}",
+                "content_text": fact_text,
+                "authority_level": "official",
+                "risk_level": "low",
+            },
+        ).json()["data"]
+        fact = client.post(
+            "/api/v1/projects/project_1/facts",
+            headers={"tenant-id": "tenant_1"},
+            json=fact_payload(
+                [source["source_id"]],
+                fact_text,
+                subject_type="brand",
+                subject_ref_id="subject_airank",
+            ) | {"title": f"解释证据 {index}"},
+        ).json()["data"]
+        assert client.patch(
+            f"/api/v1/projects/project_1/fact-revisions/{fact['revision_id']}/review",
+            headers={"tenant-id": "tenant_1"},
+            json={"action": "approved", "reviewed_by": "reviewer_1"},
+        ).status_code == 200
+        assignments.append({"fact_revision_id": fact["revision_id"], "content_role": role})
+
+    generated = client.post(
+        "/api/v1/projects/project_1/explainer-content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "title": "不进入正文的解释 brief",
+            "direction": "面向采购者完整解释",
+            "subject_id": "subject_airank",
+            "subject_type": "brand",
+            "display_name": "AIRank",
+            "brand_names": ["来客"],
+            "assignments": assignments,
+            "created_by": "operator_1",
+        },
+    )
+
+    assert generated.status_code == 201
+    data = generated.json()["data"]
+    assert data["generation_mode"] == "evidence_bound_explainer"
+    assert data["skill_id"] == "intervention.explainer-builder"
+    assert data["section_count"] == 7
+    assert len(data["fact_revision_ids"]) == 12
+    assert len(data["claim_assertion_ids"]) == 12
+    assert len(data["claim_support_ids"]) == 12
+    assert "不进入正文的解释 brief" not in data["body_md"]
 
 
 def test_review_snapshot_export_publication_and_retest_contract(client: TestClient) -> None:

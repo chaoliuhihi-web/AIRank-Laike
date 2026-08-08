@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 
 
-def test_admin_skill_registry_exposes_eight_partial_internal_skills() -> None:
+def test_admin_skill_registry_exposes_ten_partial_internal_skills() -> None:
     client = TestClient(app)
 
     response = client.get("/api/v1/admin/skills", headers={"X-AIRank-Trace-Id": "trc_skill_registry"})
@@ -13,7 +13,7 @@ def test_admin_skill_registry_exposes_eight_partial_internal_skills() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["meta"]["trace_id"] == "trc_skill_registry"
-    assert len(body["data"]["skills"]) == 8
+    assert len(body["data"]["skills"]) == 10
     assert {item["status"] for item in body["data"]["skills"]} == {"partial"}
     assert all(item["eval_cases"] for item in body["data"]["skills"])
     assert all(item["evaluation"]["local_eval_status"] == "passed" for item in body["data"]["skills"])
@@ -75,5 +75,5 @@ def test_admin_skill_promotion_ledger_is_hash_bound_and_does_not_auto_promote() 
         "implementation",
         "evaluation_engine",
     }
-    assert len(body["data"]["skills"]) == 8
+    assert len(body["data"]["skills"]) == 10
     assert {item["decision"] for item in body["data"]["skills"]} == {"retain_partial"}

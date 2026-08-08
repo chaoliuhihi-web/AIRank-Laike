@@ -196,6 +196,8 @@ export type FactRevision = {
   revision_id: string;
   title: string;
   fact_type: string;
+  subject_type: "general" | "brand" | "company" | "product" | "competitor" | "solution_type";
+  subject_ref_id: string | null;
   fact_text: string;
   content_sha256: string;
   revision_number: number;
@@ -551,7 +553,7 @@ export type GovernedContentAsset = {
   title: string;
   body_md: string;
   status: "draft" | "approved" | "rejected" | "changes_requested";
-  generation_mode: "approved_fact_template" | "evidence_bound_page_blueprint";
+  generation_mode: "approved_fact_template" | "evidence_bound_page_blueprint" | "evidence_bound_comparison" | "evidence_bound_explainer";
   skill_id: string | null;
   skill_version: string | null;
   blueprint_sha256: string | null;
@@ -567,6 +569,34 @@ export type GovernedContentCreateInput = {
   title: string;
   direction: string;
   factRevisionIds: string[];
+  createdBy: string;
+};
+
+export type ComparisonContentCreateInput = {
+  title: string;
+  direction: string;
+  targetSubjectId: string;
+  subjects: Array<{
+    subject_id: string;
+    display_name: string;
+    subject_type: "brand" | "company" | "product" | "competitor" | "solution_type";
+  }>;
+  dimensions: Array<{ dimension_id: string; label: string }>;
+  cells: Array<{ subject_id: string; dimension_id: string; fact_revision_ids: string[] }>;
+  createdBy: string;
+};
+
+export type ExplainerContentCreateInput = {
+  title: string;
+  direction: string;
+  subjectId: string;
+  subjectType: "brand" | "company" | "product" | "competitor" | "solution_type";
+  displayName: string;
+  brandNames: string[];
+  assignments: Array<{
+    fact_revision_id: string;
+    content_role: "definition" | "mechanism" | "step" | "criterion" | "misconception" | "faq" | "boundary";
+  }>;
   createdBy: string;
 };
 
@@ -1641,6 +1671,59 @@ export async function createGovernedContent(
   });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Content blueprint request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: GovernedContentAsset }).data;
+}
+
+export async function createComparisonContent(
+  projectId: string,
+  input: ComparisonContentCreateInput,
+): Promise<GovernedContentAsset> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/comparison-content-assets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_comparison_content_create"),
+    },
+    body: JSON.stringify({
+      title: input.title,
+      direction: input.direction,
+      target_subject_id: input.targetSubjectId,
+      subjects: input.subjects,
+      dimensions: input.dimensions,
+      cells: input.cells,
+      created_by: input.createdBy,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Comparison content request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: GovernedContentAsset }).data;
+}
+
+export async function createExplainerContent(
+  projectId: string,
+  input: ExplainerContentCreateInput,
+): Promise<GovernedContentAsset> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/explainer-content-assets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_explainer_content_create"),
+    },
+    body: JSON.stringify({
+      title: input.title,
+      direction: input.direction,
+      subject_id: input.subjectId,
+      subject_type: input.subjectType,
+      display_name: input.displayName,
+      brand_names: input.brandNames,
+      assignments: input.assignments,
+      created_by: input.createdBy,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Explainer content request failed with ${response.status}`));
   }
   return ((await response.json()) as { data: GovernedContentAsset }).data;
 }

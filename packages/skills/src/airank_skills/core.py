@@ -316,6 +316,14 @@ def page_blueprint(payload: dict[str, Any]) -> dict[str, Any]:
     direction = str(payload.get("direction") or "").strip()
     now = datetime.now(timezone.utc)
     missing_evidence = []
+    if asset_type == "comparison_page":
+        missing_evidence.append(
+            {
+                "fact_id": None,
+                "revision_id": None,
+                "reasons": ["comparison_builder_required"],
+            }
+        )
     if asset_type not in PAGE_BLUEPRINT_ASSET_TYPES:
         missing_evidence.append(
             {"fact_id": None, "revision_id": None, "reasons": ["asset_type_unsupported"]}
@@ -498,6 +506,471 @@ def page_blueprint(payload: dict[str, Any]) -> dict[str, Any]:
     return blueprint
 
 
+COMPARISON_BUILDER_VERSION = "1.0.0"
+COMPARISON_SUBJECT_TYPES = {"brand", "company", "product", "competitor", "solution_type"}
+
+EXPLAINER_BUILDER_VERSION = "1.0.0"
+EXPLAINER_ROLE_MINIMUMS = {
+    "definition": 1,
+    "mechanism": 2,
+    "step": 3,
+    "criterion": 2,
+    "misconception": 1,
+    "faq": 2,
+    "boundary": 1,
+}
+EXPLAINER_ROLE_LABELS = {
+    "definition": "定义与范围",
+    "mechanism": "工作机制",
+    "step": "实施步骤",
+    "criterion": "判断标准",
+    "misconception": "常见误区",
+    "faq": "常见问题",
+    "boundary": "适用边界",
+}
+
+
+def explainer_builder(payload: dict[str, Any]) -> dict[str, Any]:
+    requested_title = str(payload.get("title") or "").strip()
+    direction = str(payload.get("direction") or "").strip()
+    subject_id = str(payload.get("subject_id") or "").strip()
+    subject_type = str(payload.get("subject_type") or "").strip()
+    display_name = str(payload.get("display_name") or "").strip()
+    brand_names = [str(item).strip() for item in payload.get("brand_names", []) if str(item).strip()]
+    facts = [item for item in payload.get("facts", []) if isinstance(item, dict)]
+    now = datetime.now(timezone.utc)
+    missing_evidence: list[dict[str, Any]] = []
+    if not requested_title:
+        missing_evidence.append({"content_role": None, "fact_id": None, "reasons": ["title_missing"]})
+    if not subject_id or subject_type not in COMPARISON_SUBJECT_TYPES or not display_name:
+        missing_evidence.append({"content_role": None, "fact_id": None, "reasons": ["subject_definition_invalid"]})
+    normalized_brand_names = list(dict.fromkeys([display_name, *brand_names]))
+    facts_by_role: dict[str, list[dict[str, Any]]] = {role: [] for role in EXPLAINER_ROLE_MINIMUMS}
+    seen_revisions: set[str] = set()
+    for fact in facts:
+        content_role = str(fact.get("content_role") or "").strip()
+        revision_id = str(fact.get("revision_id") or "").strip()
+        reasons = _blueprint_missing_reasons(fact, now)
+        if content_role not in EXPLAINER_ROLE_MINIMUMS:
+            reasons.append("content_role_unsupported")
+        if (
+            str(fact.get("subject_ref_id") or "").strip() != subject_id
+            or str(fact.get("subject_type") or "").strip() != subject_type
+        ):
+            reasons.append("fact_subject_binding_mismatch")
+        if revision_id in seen_revisions:
+            reasons.append("fact_revision_reused_across_roles")
+        seen_revisions.add(revision_id)
+        if reasons:
+            missing_evidence.append(
+                {
+                    "content_role": content_role or None,
+                    "fact_id": fact.get("fact_id"),
+                    "revision_id": revision_id or None,
+                    "reasons": list(dict.fromkeys(reasons)),
+                }
+            )
+            continue
+        facts_by_role[content_role].append(fact)
+
+    role_coverage = {}
+    for role, minimum in EXPLAINER_ROLE_MINIMUMS.items():
+        actual = len(facts_by_role[role])
+        role_coverage[role] = {"required": minimum, "actual": actual, "complete": actual >= minimum}
+        if actual < minimum:
+            missing_evidence.append(
+                {"content_role": role, "fact_id": None, "reasons": ["role_evidence_minimum_not_met"]}
+            )
+
+    accepted_facts = [fact for role_facts in facts_by_role.values() for fact in role_facts]
+    supported_character_count = len(re.sub(r"\s+", "", "".join(str(fact.get("fact_text") or "") for fact in accepted_facts)))
+    if supported_character_count < 1400:
+        missing_evidence.append(
+            {"content_role": None, "fact_id": None, "reasons": ["minimum_1400_supported_characters_required"]}
+        )
+    brand_mention_count = sum(
+        str(fact.get("fact_text") or "").lower().count(name.lower())
+        for fact in accepted_facts
+        for name in normalized_brand_names
+        if name
+    )
+    if brand_mention_count > 3:
+        missing_evidence.append(
+            {"content_role": None, "fact_id": None, "reasons": ["brand_mention_limit_exceeded"]}
+        )
+
+    quality = {
+        "required_fact_count": sum(EXPLAINER_ROLE_MINIMUMS.values()),
+        "accepted_fact_count": sum(len(items) for items in facts_by_role.values()),
+        "supported_character_count": supported_character_count,
+        "minimum_supported_character_count": 1400,
+        "brand_mention_count": brand_mention_count,
+        "brand_mention_limit": 3,
+        "role_coverage": role_coverage,
+        "all_claims_evidence_bound": not missing_evidence,
+    }
+    if missing_evidence:
+        return {
+            "skill_id": "intervention.explainer-builder",
+            "skill_version": EXPLAINER_BUILDER_VERSION,
+            "status": "needs_evidence",
+            "asset_type": "explainer_page",
+            "title": requested_title,
+            "subject_id": subject_id,
+            "subject_type": subject_type,
+            "display_name": display_name,
+            "quality": quality,
+            "missing_evidence": missing_evidence,
+            "sections": [],
+            "claim_bindings": [],
+            "source_ledger": [],
+            "structured_data": None,
+            "body_md": "",
+        }
+
+    public_title = f"{display_name}｜证据解释指南"
+    sections: list[dict[str, Any]] = []
+    claim_bindings: list[dict[str, Any]] = []
+    source_ledger: list[dict[str, Any]] = []
+    for role in EXPLAINER_ROLE_MINIMUMS:
+        role_facts = facts_by_role[role]
+        lines: list[str] = []
+        for index, fact in enumerate(role_facts, start=1):
+            fact_text = str(fact["fact_text"]).strip()
+            evidence = next(item for item in fact["evidence"] if _exact_blueprint_evidence(item, fact_text))
+            binding = {
+                "claim_text": fact_text,
+                "claim_sha256": sha256_text(fact_text),
+                "fact_id": str(fact["fact_id"]),
+                "fact_revision_id": str(fact["revision_id"]),
+                "subject_id": subject_id,
+                "content_role": role,
+                "support_ids": sorted(str(item) for item in fact["support_ids"]),
+                "source_id": str(evidence["source_id"]),
+                "source_sha256": str(evidence["source_sha256"]),
+                "source_start": int(evidence["source_start"]),
+                "source_end": int(evidence["source_end"]),
+            }
+            claim_bindings.append(binding)
+            source_ledger.append(
+                {
+                    "source_id": binding["source_id"],
+                    "source_sha256": binding["source_sha256"],
+                    "source_start": binding["source_start"],
+                    "source_end": binding["source_end"],
+                    "fact_revision_id": binding["fact_revision_id"],
+                    "content_role": role,
+                }
+            )
+            prefix = f"### 步骤 {index}" if role == "step" else f"### 证据说明 {index}"
+            lines.extend([prefix, fact_text, f"`[FactRevision:{fact['revision_id']}]`"])
+        sections.append(
+            {
+                "section_id": f"role-{role}",
+                "section_type": role,
+                "heading": EXPLAINER_ROLE_LABELS[role],
+                "body_md": "\n\n".join(lines),
+                "fact_revision_ids": [str(item["revision_id"]) for item in role_facts],
+                "support_ids": sorted({str(support_id) for item in role_facts for support_id in item["support_ids"]}),
+            }
+        )
+
+    faq_facts = facts_by_role["faq"]
+    step_facts = facts_by_role["step"]
+    structured_data: dict[str, Any] = {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "HowTo",
+                "name": public_title,
+                "step": [
+                    {"@type": "HowToStep", "position": index, "text": str(fact["fact_text"]).strip()}
+                    for index, fact in enumerate(step_facts, start=1)
+                ],
+            },
+            {
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": str(fact.get("title") or f"证据问题 {index}"),
+                        "acceptedAnswer": {"@type": "Answer", "text": str(fact["fact_text"]).strip()},
+                    }
+                    for index, fact in enumerate(faq_facts, start=1)
+                ],
+            },
+        ],
+    }
+    body_lines = [
+        f"# {public_title}",
+        "",
+        "> 本指南只编排已审核、仍有效且有精确来源边界的事实。缺少证据的解释不会进入正文。",
+    ]
+    for section in sections:
+        body_lines.extend(["", f"## {section['heading']}", "", section["body_md"]])
+    explainer = {
+        "skill_id": "intervention.explainer-builder",
+        "skill_version": EXPLAINER_BUILDER_VERSION,
+        "status": "draft",
+        "asset_type": "explainer_page",
+        "title": public_title,
+        "subject_id": subject_id,
+        "subject_type": subject_type,
+        "display_name": display_name,
+        "editorial_brief_sha256": sha256_text(
+            json.dumps(
+                {"requested_title": requested_title, "direction": direction},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        ),
+        "quality": quality,
+        "missing_evidence": [],
+        "sections": sections,
+        "claim_bindings": claim_bindings,
+        "source_ledger": source_ledger,
+        "structured_data": structured_data,
+        "body_md": "\n".join(body_lines),
+    }
+    explainer["blueprint_sha256"] = sha256_text(
+        json.dumps(explainer, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+    return explainer
+
+
+def comparison_builder(payload: dict[str, Any]) -> dict[str, Any]:
+    requested_title = str(payload.get("title") or "").strip()
+    direction = str(payload.get("direction") or "").strip()
+    target_subject_id = str(payload.get("target_subject_id") or "").strip()
+    subjects = [item for item in payload.get("subjects", []) if isinstance(item, dict)]
+    dimensions = [item for item in payload.get("dimensions", []) if isinstance(item, dict)]
+    facts = [item for item in payload.get("facts", []) if isinstance(item, dict)]
+    now = datetime.now(timezone.utc)
+    missing_evidence: list[dict[str, Any]] = []
+
+    subject_by_id: dict[str, dict[str, Any]] = {}
+    for item in subjects:
+        subject_id = str(item.get("subject_id") or "").strip()
+        subject_type = str(item.get("subject_type") or "").strip()
+        display_name = str(item.get("display_name") or "").strip()
+        if not subject_id or subject_id in subject_by_id or not display_name or subject_type not in COMPARISON_SUBJECT_TYPES:
+            missing_evidence.append(
+                {
+                    "subject_id": subject_id or None,
+                    "dimension_id": None,
+                    "reasons": ["subject_definition_invalid_or_duplicate"],
+                }
+            )
+            continue
+        subject_by_id[subject_id] = {
+            "subject_id": subject_id,
+            "subject_type": subject_type,
+            "display_name": display_name,
+        }
+    if not 2 <= len(subject_by_id) <= 4:
+        missing_evidence.append(
+            {"subject_id": None, "dimension_id": None, "reasons": ["subject_count_must_be_2_to_4"]}
+        )
+    if target_subject_id not in subject_by_id:
+        missing_evidence.append(
+            {"subject_id": target_subject_id or None, "dimension_id": None, "reasons": ["target_subject_missing"]}
+        )
+
+    dimension_by_id: dict[str, dict[str, str]] = {}
+    for item in dimensions:
+        dimension_id = str(item.get("dimension_id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if not dimension_id or dimension_id in dimension_by_id or not label:
+            missing_evidence.append(
+                {
+                    "subject_id": None,
+                    "dimension_id": dimension_id or None,
+                    "reasons": ["dimension_definition_invalid_or_duplicate"],
+                }
+            )
+            continue
+        dimension_by_id[dimension_id] = {"dimension_id": dimension_id, "label": label}
+    if len(dimension_by_id) < 10:
+        missing_evidence.append(
+            {"subject_id": None, "dimension_id": None, "reasons": ["minimum_10_dimensions_required"]}
+        )
+    if not requested_title:
+        missing_evidence.append(
+            {"subject_id": None, "dimension_id": None, "reasons": ["title_missing"]}
+        )
+
+    facts_by_cell: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen_revisions: set[str] = set()
+    for fact in facts:
+        subject_id = str(fact.get("subject_id") or "").strip()
+        dimension_id = str(fact.get("dimension_id") or "").strip()
+        revision_id = str(fact.get("revision_id") or "").strip()
+        reasons = _blueprint_missing_reasons(fact, now)
+        declared_subject = subject_by_id.get(subject_id)
+        if declared_subject is None:
+            reasons.append("fact_subject_not_declared")
+        elif (
+            str(fact.get("subject_ref_id") or "").strip() != subject_id
+            or str(fact.get("subject_type") or "").strip() != declared_subject["subject_type"]
+        ):
+            reasons.append("fact_subject_binding_mismatch")
+        if dimension_id not in dimension_by_id:
+            reasons.append("fact_dimension_not_declared")
+        if revision_id in seen_revisions:
+            reasons.append("fact_revision_reused_across_cells")
+        seen_revisions.add(revision_id)
+        if reasons:
+            missing_evidence.append(
+                {
+                    "subject_id": subject_id or None,
+                    "dimension_id": dimension_id or None,
+                    "fact_id": fact.get("fact_id"),
+                    "revision_id": revision_id or None,
+                    "reasons": list(dict.fromkeys(reasons)),
+                }
+            )
+            continue
+        facts_by_cell.setdefault((subject_id, dimension_id), []).append(fact)
+
+    for subject_id in subject_by_id:
+        for dimension_id in dimension_by_id:
+            if not facts_by_cell.get((subject_id, dimension_id)):
+                missing_evidence.append(
+                    {
+                        "subject_id": subject_id,
+                        "dimension_id": dimension_id,
+                        "reasons": ["symmetric_evidence_cell_missing"],
+                    }
+                )
+
+    coverage_total = len(subject_by_id) * len(dimension_by_id)
+    coverage_complete = sum(bool(facts_by_cell.get((subject_id, dimension_id))) for subject_id in subject_by_id for dimension_id in dimension_by_id)
+    fairness = {
+        "same_scope": coverage_total > 0 and coverage_complete == coverage_total,
+        "subject_count": len(subject_by_id),
+        "dimension_count": len(dimension_by_id),
+        "required_cell_count": coverage_total,
+        "covered_cell_count": coverage_complete,
+        "coverage_rate": round(coverage_complete / coverage_total, 6) if coverage_total else 0.0,
+        "ranking_or_score_generated": False,
+    }
+    if missing_evidence:
+        return {
+            "skill_id": "intervention.comparison-builder",
+            "skill_version": COMPARISON_BUILDER_VERSION,
+            "status": "needs_evidence",
+            "asset_type": "comparison_page",
+            "title": requested_title,
+            "target_subject_id": target_subject_id,
+            "subjects": list(subject_by_id.values()),
+            "dimensions": list(dimension_by_id.values()),
+            "fairness": fairness,
+            "missing_evidence": missing_evidence,
+            "sections": [],
+            "claim_bindings": [],
+            "source_ledger": [],
+            "body_md": "",
+        }
+
+    ordered_subjects = list(subject_by_id.values())
+    public_title = "、".join(item["display_name"] for item in ordered_subjects) + "｜同维度证据对比"
+    claim_bindings: list[dict[str, Any]] = []
+    source_ledger: list[dict[str, Any]] = []
+    sections: list[dict[str, Any]] = []
+    for dimension in dimension_by_id.values():
+        section_facts: list[dict[str, Any]] = []
+        section_lines: list[str] = []
+        for subject in ordered_subjects:
+            cell_facts = facts_by_cell[(subject["subject_id"], dimension["dimension_id"])]
+            section_lines.append(f"### {subject['display_name']}")
+            for fact in cell_facts:
+                fact_text = str(fact["fact_text"]).strip()
+                evidence = next(item for item in fact["evidence"] if _exact_blueprint_evidence(item, fact_text))
+                binding = {
+                    "claim_text": fact_text,
+                    "claim_sha256": sha256_text(fact_text),
+                    "fact_id": str(fact["fact_id"]),
+                    "fact_revision_id": str(fact["revision_id"]),
+                    "subject_id": subject["subject_id"],
+                    "dimension_id": dimension["dimension_id"],
+                    "support_ids": sorted(str(item) for item in fact["support_ids"]),
+                    "source_id": str(evidence["source_id"]),
+                    "source_sha256": str(evidence["source_sha256"]),
+                    "source_start": int(evidence["source_start"]),
+                    "source_end": int(evidence["source_end"]),
+                }
+                claim_bindings.append(binding)
+                source_ledger.append(
+                    {
+                        "source_id": binding["source_id"],
+                        "source_sha256": binding["source_sha256"],
+                        "source_start": binding["source_start"],
+                        "source_end": binding["source_end"],
+                        "fact_revision_id": binding["fact_revision_id"],
+                        "subject_id": subject["subject_id"],
+                        "dimension_id": dimension["dimension_id"],
+                    }
+                )
+                section_lines.extend([fact_text, f"`[FactRevision:{fact['revision_id']}]`"])
+                section_facts.append(fact)
+        sections.append(
+            {
+                "section_id": f"dimension-{dimension['dimension_id']}",
+                "section_type": "comparison_dimension",
+                "heading": dimension["label"],
+                "body_md": "\n\n".join(section_lines),
+                "subject_ids": [item["subject_id"] for item in ordered_subjects],
+                "fact_revision_ids": [str(item["revision_id"]) for item in section_facts],
+                "support_ids": sorted({str(support_id) for item in section_facts for support_id in item["support_ids"]}),
+            }
+        )
+
+    body_lines = [
+        f"# {public_title}",
+        "",
+        "> 本报告按相同维度展示已审核、仍有效且具有精确来源边界的事实；不生成排名、分数或无证据优劣结论。",
+    ]
+    for section in sections:
+        body_lines.extend(["", f"## {section['heading']}", "", section["body_md"]])
+    body_lines.extend(
+        [
+            "",
+            "## 使用边界",
+            "",
+            "这些事实只能说明已核验范围内的差异。选型仍需结合预算、部署边界、服务范围和采购约束逐项复核。",
+        ]
+    )
+    comparison = {
+        "skill_id": "intervention.comparison-builder",
+        "skill_version": COMPARISON_BUILDER_VERSION,
+        "status": "draft",
+        "asset_type": "comparison_page",
+        "title": public_title,
+        "target_subject_id": target_subject_id,
+        "subjects": ordered_subjects,
+        "dimensions": list(dimension_by_id.values()),
+        "editorial_brief_sha256": sha256_text(
+            json.dumps(
+                {"requested_title": requested_title, "direction": direction},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        ),
+        "fairness": fairness,
+        "missing_evidence": [],
+        "sections": sections,
+        "claim_bindings": claim_bindings,
+        "source_ledger": source_ledger,
+        "body_md": "\n".join(body_lines),
+    }
+    comparison["blueprint_sha256"] = sha256_text(
+        json.dumps(comparison, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+    return comparison
+
+
 def retest_report(payload: dict[str, Any]) -> dict[str, Any]:
     baseline = payload.get("baseline", {})
     followup = payload.get("followup", {})
@@ -536,6 +1009,8 @@ SKILL_RUNNERS: dict[str, SkillRunner] = {
     "knowledge.fact-builder": fact_builder,
     "governance.claim-verifier": claim_verifier,
     "intervention.page-blueprint": page_blueprint,
+    "intervention.explainer-builder": explainer_builder,
+    "intervention.comparison-builder": comparison_builder,
     "delivery.retest-report": retest_report,
 }
 

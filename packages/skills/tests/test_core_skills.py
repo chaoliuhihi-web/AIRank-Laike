@@ -17,6 +17,8 @@ CORE_SKILL_IDS = {
     "knowledge.fact-builder",
     "governance.claim-verifier",
     "intervention.page-blueprint",
+    "intervention.explainer-builder",
+    "intervention.comparison-builder",
     "delivery.retest-report",
 }
 
@@ -242,6 +244,180 @@ def test_page_blueprint_requires_an_editorial_brief_title() -> None:
     assert any("title_missing" in item["reasons"] for item in output["missing_evidence"])
 
 
+def test_page_blueprint_forces_comparison_through_specialized_builder() -> None:
+    fact_text = "AIRank 支持私有化部署。"
+    output = run_skill(
+        "intervention.page-blueprint",
+        {
+            "asset_type": "comparison_page",
+            "title": "对比页",
+            "facts": [
+                {
+                    "fact_id": "fact_1",
+                    "revision_id": "revision_1",
+                    "fact_text": fact_text,
+                    "status": "approved",
+                    "eligible_for_generation": True,
+                    "support_ids": ["support_1"],
+                    "evidence": [{"source_id": "source_1", "source_sha256": "a" * 64, "source_start": 0, "source_end": len(fact_text), "quoted_text": fact_text}],
+                }
+            ],
+        },
+    )
+
+    assert output["status"] == "needs_evidence"
+    assert output["body_md"] == ""
+    assert any("comparison_builder_required" in item["reasons"] for item in output["missing_evidence"])
+
+
+def comparison_skill_input() -> dict[str, object]:
+    subjects = [
+        {"subject_id": "subject_airank", "display_name": "AIRank", "subject_type": "brand"},
+        {"subject_id": "subject_peer", "display_name": "竞品甲", "subject_type": "competitor"},
+    ]
+    dimensions = [
+        {"dimension_id": f"dimension_{index}", "label": f"核验维度 {index}"}
+        for index in range(1, 11)
+    ]
+    facts = []
+    for subject in subjects:
+        for dimension in dimensions:
+            fact_text = f"{subject['display_name']} 在{dimension['label']}下的已核验事实。"
+            revision_id = f"revision_{subject['subject_id']}_{dimension['dimension_id']}"
+            facts.append(
+                {
+                    "fact_id": f"fact_{subject['subject_id']}_{dimension['dimension_id']}",
+                    "revision_id": revision_id,
+                    "subject_id": subject["subject_id"],
+                    "subject_type": subject["subject_type"],
+                    "subject_ref_id": subject["subject_id"],
+                    "dimension_id": dimension["dimension_id"],
+                    "fact_text": fact_text,
+                    "status": "approved",
+                    "eligible_for_generation": True,
+                    "support_ids": [f"support_{revision_id}"],
+                    "evidence": [
+                        {
+                            "source_id": f"source_{revision_id}",
+                            "source_sha256": "c" * 64,
+                            "source_start": 5,
+                            "source_end": 5 + len(fact_text),
+                            "quoted_text": fact_text,
+                        }
+                    ],
+                }
+            )
+    return {
+        "title": "不得直接复制到正文的比较 brief",
+        "direction": "保持公平，不输出排名",
+        "target_subject_id": "subject_airank",
+        "subjects": subjects,
+        "dimensions": dimensions,
+        "facts": facts,
+    }
+
+
+def test_comparison_builder_requires_symmetric_subject_dimension_evidence() -> None:
+    payload = comparison_skill_input()
+    output = run_skill("intervention.comparison-builder", payload)
+
+    assert output["status"] == "draft"
+    assert output["skill_version"] == "1.0.0"
+    assert output["fairness"] == {
+        "same_scope": True,
+        "subject_count": 2,
+        "dimension_count": 10,
+        "required_cell_count": 20,
+        "covered_cell_count": 20,
+        "coverage_rate": 1.0,
+        "ranking_or_score_generated": False,
+    }
+    assert len(output["sections"]) == 10
+    assert len(output["claim_bindings"]) == 20
+    assert "不得直接复制到正文的比较 brief" not in output["body_md"]
+    assert "排名" in output["body_md"]
+    assert all(binding["subject_id"] and binding["dimension_id"] for binding in output["claim_bindings"])
+
+
+def test_comparison_builder_blocks_missing_cell_and_subject_relabeling() -> None:
+    payload = comparison_skill_input()
+    payload["facts"] = list(payload["facts"][:-1])
+    payload["facts"][0] = {**payload["facts"][0], "subject_ref_id": "subject_peer"}
+    output = run_skill("intervention.comparison-builder", payload)
+
+    assert output["status"] == "needs_evidence"
+    assert output["body_md"] == ""
+    reasons = {reason for item in output["missing_evidence"] for reason in item["reasons"]}
+    assert "fact_subject_binding_mismatch" in reasons
+    assert "symmetric_evidence_cell_missing" in reasons
+
+
+def explainer_skill_input() -> dict[str, object]:
+    roles = ["definition", "mechanism", "mechanism", "step", "step", "step", "criterion", "criterion", "misconception", "faq", "faq", "boundary"]
+    facts = []
+    for index, role in enumerate(roles, start=1):
+        fact_text = f"第{index}条已审核说明：" + "该事实基于当前有效来源的精确原文边界，用于解释适用范围、执行条件与验证方式，不扩展为来源之外的承诺。" * 3
+        facts.append(
+            {
+                "fact_id": f"fact_{index}",
+                "revision_id": f"revision_{index}",
+                "title": f"解释证据 {index}",
+                "subject_type": "brand",
+                "subject_ref_id": "subject_airank",
+                "content_role": role,
+                "fact_text": fact_text,
+                "status": "approved",
+                "eligible_for_generation": True,
+                "support_ids": [f"support_{index}"],
+                "evidence": [{"source_id": f"source_{index}", "source_sha256": "e" * 64, "source_start": 10, "source_end": 10 + len(fact_text), "quoted_text": fact_text}],
+            }
+        )
+    return {
+        "title": "不进入公开正文的解释 brief",
+        "direction": "面向采购者完整解释",
+        "subject_id": "subject_airank",
+        "subject_type": "brand",
+        "display_name": "AIRank",
+        "brand_names": ["AIRank", "来客"],
+        "facts": facts,
+    }
+
+
+def test_explainer_builder_enforces_role_length_and_exact_evidence_gates() -> None:
+    output = run_skill("intervention.explainer-builder", explainer_skill_input())
+
+    assert output["status"] == "draft"
+    assert output["skill_version"] == "1.0.0"
+    assert output["quality"]["accepted_fact_count"] == 12
+    assert output["quality"]["supported_character_count"] >= 1400
+    assert output["quality"]["brand_mention_count"] == 0
+    assert all(item["complete"] for item in output["quality"]["role_coverage"].values())
+    assert len(output["sections"]) == 7
+    assert len(output["claim_bindings"]) == 12
+    assert output["structured_data"]["@graph"][0]["@type"] == "HowTo"
+    assert output["structured_data"]["@graph"][1]["@type"] == "FAQPage"
+    assert "不进入公开正文的解释 brief" not in output["body_md"]
+
+
+def test_explainer_builder_blocks_brand_stuffing_without_generating_prose() -> None:
+    payload = explainer_skill_input()
+    facts = list(payload["facts"])
+    for index in range(4):
+        fact_text = f"AIRank {facts[index]['fact_text']}"
+        facts[index] = {
+            **facts[index],
+            "fact_text": fact_text,
+            "evidence": [{**facts[index]["evidence"][0], "source_end": 10 + len(fact_text), "quoted_text": fact_text}],
+        }
+    payload["facts"] = facts
+    output = run_skill("intervention.explainer-builder", payload)
+
+    assert output["status"] == "needs_evidence"
+    assert output["body_md"] == ""
+    assert output["quality"]["brand_mention_count"] == 4
+    assert any("brand_mention_limit_exceeded" in item["reasons"] for item in output["missing_evidence"])
+
+
 def test_retest_report_blocks_non_comparable_cohorts() -> None:
     output = run_skill(
         "delivery.retest-report",
@@ -268,8 +444,8 @@ def test_retest_report_blocks_non_comparable_cohorts() -> None:
 def test_every_core_skill_passes_contract_holdout_and_adversarial_suites() -> None:
     reports = evaluate_registry()
 
-    assert len(reports) == 8
-    assert sum(report.total_cases for report in reports) == 24
+    assert len(reports) == 10
+    assert sum(report.total_cases for report in reports) == 30
     assert all(report.local_eval_status == "passed" for report in reports)
     assert all(report.passed_cases == report.total_cases == 3 for report in reports)
     assert all(set(report.executed_suites) == {"contract", "holdout", "adversarial"} for report in reports)

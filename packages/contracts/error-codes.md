@@ -97,9 +97,13 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_REVISION_NOT_FOUND` | 404 | FactRevision 不存在 |
 | `FACT_CONFLICT_NOT_FOUND` | 404 | FactConflict 不存在 |
 | `FACT_CONFLICT_OPEN` | 409 | 事实存在未解决冲突 |
+| `FACT_SUBJECT_IMMUTABLE` | 409 | FactAtom 的主体绑定不可在修订时更换 |
+| `FACT_SUBJECT_BINDING_MISMATCH` | 409 | 事实主体与比较或解释任务声明的主体不一致 |
 | `FACT_SOURCE_STALE` | 409 | 事实来源已失效或过期 |
 | `KNOWLEDGE_SOURCE_NOT_FOUND` | 404 | KnowledgeSource 不存在 |
 | `CONTENT_EVIDENCE_MISSING` | 409 | 内容引用的事实证据缺失、冲突或失效 |
+| `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
+| `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |
 | `CONTENT_RISK_OVERRIDE_REQUIRED` | 409 | 高风险内容需要记录人工 override 原因 |
 | `PUBLISH_PACKAGE_NOT_FOUND` | 404 | 发布包不存在 |

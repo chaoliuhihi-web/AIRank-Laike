@@ -188,6 +188,54 @@ def quality_rubric_failures(skill_id: str, output: Mapping[str, Any]) -> list[st
                 break
         if not bindings:
             failures.append("rubric.exact_boundary: draft has no claim bindings")
+    elif skill_id == "intervention.comparison-builder" and output.get("status") == "draft":
+        fairness = output.get("fairness", {})
+        if (
+            fairness.get("same_scope") is not True
+            or fairness.get("coverage_rate") != 1.0
+            or fairness.get("dimension_count", 0) < 10
+            or fairness.get("ranking_or_score_generated") is not False
+        ):
+            failures.append("rubric.symmetric_scope: comparison is incomplete or ranked")
+        subject_ids = {item.get("subject_id") for item in output.get("subjects", [])}
+        dimension_ids = {item.get("dimension_id") for item in output.get("dimensions", [])}
+        covered_cells = {
+            (item.get("subject_id"), item.get("dimension_id"))
+            for item in output.get("claim_bindings", [])
+        }
+        required_cells = {(subject_id, dimension_id) for subject_id in subject_ids for dimension_id in dimension_ids}
+        if not required_cells or not required_cells.issubset(covered_cells):
+            failures.append("rubric.symmetric_scope: at least one comparison cell lacks a claim binding")
+        for binding in output.get("claim_bindings", []):
+            source_sha256 = str(binding.get("source_sha256") or "")
+            if (
+                len(source_sha256) != 64
+                or int(binding.get("source_start", -1)) < 0
+                or int(binding.get("source_end", -1)) <= int(binding.get("source_start", -1))
+            ):
+                failures.append("rubric.exact_boundary: comparison claim lacks exact source boundary")
+                break
+    elif skill_id == "intervention.explainer-builder" and output.get("status") == "draft":
+        quality = output.get("quality", {})
+        role_coverage = quality.get("role_coverage", {})
+        if not role_coverage or not all(item.get("complete") is True for item in role_coverage.values()):
+            failures.append("rubric.role_coverage: one or more evidence roles are incomplete")
+        if quality.get("accepted_fact_count", 0) < 12 or quality.get("supported_character_count", 0) < 1400:
+            failures.append("rubric.supported_length: explainer evidence volume is below the publishable minimum")
+        if quality.get("brand_mention_count", 0) > quality.get("brand_mention_limit", 3):
+            failures.append("rubric.brand_insertion: brand mention limit exceeded")
+        bindings = output.get("claim_bindings", [])
+        if len(bindings) < 12:
+            failures.append("rubric.exact_boundary: explainer has too few claim bindings")
+        for binding in bindings:
+            source_sha256 = str(binding.get("source_sha256") or "")
+            if (
+                len(source_sha256) != 64
+                or int(binding.get("source_start", -1)) < 0
+                or int(binding.get("source_end", -1)) <= int(binding.get("source_start", -1))
+            ):
+                failures.append("rubric.exact_boundary: explainer claim lacks exact source boundary")
+                break
     elif skill_id == "delivery.retest-report" and output.get("status") == "observed":
         conclusion = str(output.get("conclusion") or "")
         if not all(marker in conclusion for marker in ("观察", "可能", "不能据此证明因果")):

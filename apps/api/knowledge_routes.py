@@ -144,6 +144,8 @@ class FactProposalRequest(BaseModel):
 
     title: str = Field(min_length=1, max_length=255)
     fact_type: str = Field(default="brand_claim", min_length=1, max_length=64)
+    subject_type: Literal["general", "brand", "company", "product", "competitor", "solution_type"] = "general"
+    subject_ref_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     fact_text: str = Field(min_length=1, max_length=10000)
     source_ids: list[str] = Field(default_factory=list, max_length=50)
     risk_level: Literal["low", "medium", "high", "restricted"] = "medium"
@@ -159,6 +161,14 @@ class FactProposalRequest(BaseModel):
             raise ValueError("source_ids must contain unique values")
         return value
 
+    @model_validator(mode="after")
+    def subject_binding_must_be_complete(self) -> "FactProposalRequest":
+        if self.subject_type == "general" and self.subject_ref_id is not None:
+            raise ValueError("general facts cannot declare subject_ref_id")
+        if self.subject_type != "general" and not self.subject_ref_id:
+            raise ValueError("subject_ref_id is required for entity-bound facts")
+        return self
+
 
 class FactRevisionData(BaseModel):
     fact_id: str
@@ -167,6 +177,8 @@ class FactRevisionData(BaseModel):
     project_id: str
     title: str
     fact_type: str
+    subject_type: Literal["general", "brand", "company", "product", "competitor", "solution_type"] = "general"
+    subject_ref_id: Optional[str] = None
     fact_text: str
     content_sha256: str
     revision_number: int
@@ -302,6 +314,93 @@ class GovernedContentCreateRequest(BaseModel):
         return value
 
 
+class ComparisonSubjectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    subject_type: Literal["brand", "company", "product", "competitor", "solution_type"]
+
+
+class ComparisonDimensionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=128)
+
+
+class ComparisonCellRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_id: str = Field(min_length=1, max_length=128)
+    dimension_id: str = Field(min_length=1, max_length=64)
+    fact_revision_ids: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("fact_revision_ids")
+    @classmethod
+    def revision_ids_are_unique(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("fact_revision_ids must contain unique values")
+        return value
+
+
+class ComparisonContentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=255)
+    direction: str = Field(min_length=1, max_length=1000)
+    target_subject_id: str = Field(min_length=1, max_length=128)
+    subjects: list[ComparisonSubjectRequest] = Field(min_length=2, max_length=4)
+    dimensions: list[ComparisonDimensionRequest] = Field(min_length=10, max_length=30)
+    cells: list[ComparisonCellRequest] = Field(min_length=20, max_length=120)
+    created_by: str = Field(min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def matrix_definitions_are_unique(self) -> "ComparisonContentCreateRequest":
+        subject_ids = [item.subject_id for item in self.subjects]
+        dimension_ids = [item.dimension_id for item in self.dimensions]
+        cell_keys = [(item.subject_id, item.dimension_id) for item in self.cells]
+        revision_ids = [revision_id for item in self.cells for revision_id in item.fact_revision_ids]
+        if len(subject_ids) != len(set(subject_ids)):
+            raise ValueError("subjects must contain unique subject_id values")
+        if len(dimension_ids) != len(set(dimension_ids)):
+            raise ValueError("dimensions must contain unique dimension_id values")
+        if len(cell_keys) != len(set(cell_keys)):
+            raise ValueError("cells must contain unique subject/dimension pairs")
+        if len(revision_ids) != len(set(revision_ids)):
+            raise ValueError("a fact revision cannot be reused across comparison cells")
+        return self
+
+
+class ExplainerFactAssignmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact_revision_id: str = Field(min_length=1, max_length=64)
+    content_role: Literal["definition", "mechanism", "step", "criterion", "misconception", "faq", "boundary"]
+
+
+class ExplainerContentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=255)
+    direction: str = Field(min_length=1, max_length=1000)
+    subject_id: str = Field(min_length=1, max_length=128)
+    subject_type: Literal["brand", "company", "product", "competitor", "solution_type"]
+    display_name: str = Field(min_length=1, max_length=128)
+    brand_names: list[str] = Field(default_factory=list, max_length=10)
+    assignments: list[ExplainerFactAssignmentRequest] = Field(min_length=12, max_length=50)
+    created_by: str = Field(min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def revision_assignments_are_unique(self) -> "ExplainerContentCreateRequest":
+        revision_ids = [item.fact_revision_id for item in self.assignments]
+        if len(revision_ids) != len(set(revision_ids)):
+            raise ValueError("a fact revision cannot be reused across explainer roles")
+        if len(self.brand_names) != len(set(self.brand_names)):
+            raise ValueError("brand_names must contain unique values")
+        return self
+
+
 class GovernedContentData(BaseModel):
     asset_id: str
     tenant_id: str
@@ -310,7 +409,7 @@ class GovernedContentData(BaseModel):
     title: str
     body_md: str
     status: Literal["draft", "approved", "rejected", "changes_requested"]
-    generation_mode: Literal["approved_fact_template", "evidence_bound_page_blueprint"]
+    generation_mode: Literal["approved_fact_template", "evidence_bound_page_blueprint", "evidence_bound_comparison", "evidence_bound_explainer"]
     skill_id: Optional[str] = None
     skill_version: Optional[str] = None
     blueprint_sha256: Optional[str] = None
@@ -355,6 +454,61 @@ def _page_blueprint_or_error(payload: GovernedContentCreateRequest, facts: list[
     return blueprint
 
 
+def _comparison_blueprint_or_error(payload: ComparisonContentCreateRequest, facts: list[dict[str, Any]]) -> dict[str, Any]:
+    blueprint = run_skill(
+        "intervention.comparison-builder",
+        {
+            "title": payload.title,
+            "direction": payload.direction,
+            "target_subject_id": payload.target_subject_id,
+            "subjects": [item.model_dump() for item in payload.subjects],
+            "dimensions": [item.model_dump() for item in payload.dimensions],
+            "facts": facts,
+        },
+    )
+    if blueprint.get("status") != "draft" or not blueprint.get("body_md"):
+        raise StarletteHTTPException(
+            status_code=409,
+            detail={
+                "code": "COMPARISON_EVIDENCE_INCOMPLETE",
+                "details": {
+                    "reason": "comparison_builder_needs_evidence",
+                    "fairness": blueprint.get("fairness", {}),
+                    "missing_evidence": blueprint.get("missing_evidence", []),
+                },
+            },
+        )
+    return blueprint
+
+
+def _explainer_blueprint_or_error(payload: ExplainerContentCreateRequest, facts: list[dict[str, Any]]) -> dict[str, Any]:
+    blueprint = run_skill(
+        "intervention.explainer-builder",
+        {
+            "title": payload.title,
+            "direction": payload.direction,
+            "subject_id": payload.subject_id,
+            "subject_type": payload.subject_type,
+            "display_name": payload.display_name,
+            "brand_names": payload.brand_names,
+            "facts": facts,
+        },
+    )
+    if blueprint.get("status") != "draft" or not blueprint.get("body_md"):
+        raise StarletteHTTPException(
+            status_code=409,
+            detail={
+                "code": "EXPLAINER_EVIDENCE_INCOMPLETE",
+                "details": {
+                    "reason": "explainer_builder_needs_evidence",
+                    "quality": blueprint.get("quality", {}),
+                    "missing_evidence": blueprint.get("missing_evidence", []),
+                },
+            },
+        )
+    return blueprint
+
+
 class KnowledgeRepository(Protocol):
     def create_source(self, tenant_id: str, project_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData: ...
     def revise_source(self, tenant_id: str, project_id: str, source_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData: ...
@@ -368,6 +522,8 @@ class KnowledgeRepository(Protocol):
     def list_conflicts(self, tenant_id: str, project_id: str, status: Optional[str] = None) -> list[FactConflictData]: ...
     def resolve_conflict(self, tenant_id: str, project_id: str, conflict_id: str, payload: FactConflictResolveRequest) -> FactConflictData: ...
     def create_governed_content(self, tenant_id: str, project_id: str, payload: GovernedContentCreateRequest) -> GovernedContentData: ...
+    def create_comparison_content(self, tenant_id: str, project_id: str, payload: ComparisonContentCreateRequest) -> GovernedContentData: ...
+    def create_explainer_content(self, tenant_id: str, project_id: str, payload: ExplainerContentCreateRequest) -> GovernedContentData: ...
     def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]: ...
 
 
@@ -492,6 +648,8 @@ class InMemoryKnowledgeRepository:
             project_id=project_id,
             title=payload.title,
             fact_type=payload.fact_type,
+            subject_type=payload.subject_type,
+            subject_ref_id=payload.subject_ref_id,
             fact_text=payload.fact_text,
             content_sha256=sha256_text(payload.fact_text),
             revision_number=1,
@@ -513,6 +671,20 @@ class InMemoryKnowledgeRepository:
         current = [value for (item_tenant, _), value in self.facts.items() if item_tenant == tenant_id and value.project_id == project_id and value.fact_id == fact_id]
         if not current:
             raise _not_found("FACT_NOT_FOUND", {"fact_id": fact_id})
+        stable_subject = (current[0].subject_type, current[0].subject_ref_id)
+        requested_subject = (payload.subject_type, payload.subject_ref_id)
+        if requested_subject != stable_subject:
+            raise StarletteHTTPException(
+                status_code=409,
+                detail={
+                    "code": "FACT_SUBJECT_IMMUTABLE",
+                    "details": {
+                        "fact_id": fact_id,
+                        "subject_type": stable_subject[0],
+                        "subject_ref_id": stable_subject[1],
+                    },
+                },
+            )
         missing = [source_id for source_id in payload.source_ids if (tenant_id, source_id) not in self.sources]
         if missing:
             raise _not_found("KNOWLEDGE_SOURCE_NOT_FOUND", {"source_ids": missing})
@@ -524,6 +696,8 @@ class InMemoryKnowledgeRepository:
             project_id=project_id,
             title=payload.title,
             fact_type=payload.fact_type,
+            subject_type=payload.subject_type,
+            subject_ref_id=payload.subject_ref_id,
             fact_text=payload.fact_text,
             content_sha256=sha256_text(payload.fact_text),
             revision_number=max(value.revision_number for value in current) + 1,
@@ -772,6 +946,153 @@ class InMemoryKnowledgeRepository:
             self.claim_support_links[(tenant_id, support_id)] = assertion_id
         return data
 
+    def create_comparison_content(self, tenant_id: str, project_id: str, payload: ComparisonContentCreateRequest) -> GovernedContentData:
+        subject_by_id = {item.subject_id: item for item in payload.subjects}
+        support_rows: list[tuple[FactRevisionData, str, int, int, str, str]] = []
+        for cell in payload.cells:
+            for revision_id in cell.fact_revision_ids:
+                revision = self.facts.get((tenant_id, revision_id))
+                if revision is None or revision.project_id != project_id:
+                    raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_id": revision_id})
+                revision = self._effective_fact(revision, utc_now())
+                if not revision.eligible_for_generation or revision.status != "approved":
+                    raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": revision.eligibility_reason}})
+                declared_subject = subject_by_id.get(cell.subject_id)
+                if declared_subject is None or (revision.subject_type, revision.subject_ref_id) != (declared_subject.subject_type, cell.subject_id):
+                    raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SUBJECT_BINDING_MISMATCH", "details": {"revision_id": revision_id, "subject_id": cell.subject_id}})
+                for source_id in revision.source_ids:
+                    source_text = self.source_contents.get((tenant_id, source_id), "")
+                    source = self.sources.get((tenant_id, source_id))
+                    if source is None or sha256_text(source_text) != source.content_sha256:
+                        raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "source_content_integrity_failed", "source_id": source_id}})
+                    start = source_text.find(revision.fact_text)
+                    if start >= 0:
+                        support_rows.append((revision, source_id, start, start + len(revision.fact_text), cell.subject_id, cell.dimension_id))
+                        break
+                else:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "exact_source_boundary_missing"}})
+
+        created_at = utc_now()
+        asset_id = f"asset_{uuid4().hex[:12]}"
+        assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in support_rows]
+        support_ids = [f"support_{uuid4().hex[:12]}" for _ in support_rows]
+        blueprint = _comparison_blueprint_or_error(
+            payload,
+            [
+                {
+                    "fact_id": revision.fact_id,
+                    "revision_id": revision.revision_id,
+                    "subject_id": subject_id,
+                    "subject_type": revision.subject_type,
+                    "subject_ref_id": revision.subject_ref_id,
+                    "dimension_id": dimension_id,
+                    "fact_text": revision.fact_text,
+                    "status": revision.status,
+                    "eligible_for_generation": revision.eligible_for_generation,
+                    "valid_until": revision.valid_until.isoformat() if revision.valid_until else None,
+                    "conflict_status": "none",
+                    "support_ids": [support_id],
+                    "evidence": [{"source_id": source_id, "source_sha256": self.sources[(tenant_id, source_id)].content_sha256, "source_start": start, "source_end": end, "quoted_text": revision.fact_text}],
+                }
+                for (revision, source_id, start, end, subject_id, dimension_id), support_id in zip(support_rows, support_ids)
+            ],
+        )
+        revision_ids = [row[0].revision_id for row in support_rows]
+        data = GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type="comparison_page",
+            title=blueprint["title"],
+            body_md=blueprint["body_md"],
+            status="draft",
+            generation_mode="evidence_bound_comparison",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
+        self.content_assets[(tenant_id, asset_id)] = data
+        for assertion_id, support_id in zip(assertion_ids, support_ids):
+            self.claim_support_links[(tenant_id, support_id)] = assertion_id
+        return data
+
+    def create_explainer_content(self, tenant_id: str, project_id: str, payload: ExplainerContentCreateRequest) -> GovernedContentData:
+        support_rows: list[tuple[FactRevisionData, str, int, int, str]] = []
+        for assignment in payload.assignments:
+            revision = self.facts.get((tenant_id, assignment.fact_revision_id))
+            if revision is None or revision.project_id != project_id:
+                raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_id": assignment.fact_revision_id})
+            revision = self._effective_fact(revision, utc_now())
+            if not revision.eligible_for_generation or revision.status != "approved":
+                raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision.revision_id, "reason": revision.eligibility_reason}})
+            if (revision.subject_type, revision.subject_ref_id) != (payload.subject_type, payload.subject_id):
+                raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SUBJECT_BINDING_MISMATCH", "details": {"revision_id": revision.revision_id, "subject_id": payload.subject_id}})
+            for source_id in revision.source_ids:
+                source_text = self.source_contents.get((tenant_id, source_id), "")
+                source = self.sources.get((tenant_id, source_id))
+                if source is None or sha256_text(source_text) != source.content_sha256:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision.revision_id, "reason": "source_content_integrity_failed", "source_id": source_id}})
+                start = source_text.find(revision.fact_text)
+                if start >= 0:
+                    support_rows.append((revision, source_id, start, start + len(revision.fact_text), assignment.content_role))
+                    break
+            else:
+                raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision.revision_id, "reason": "exact_source_boundary_missing"}})
+
+        created_at = utc_now()
+        asset_id = f"asset_{uuid4().hex[:12]}"
+        assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in support_rows]
+        support_ids = [f"support_{uuid4().hex[:12]}" for _ in support_rows]
+        blueprint = _explainer_blueprint_or_error(
+            payload,
+            [
+                {
+                    "fact_id": revision.fact_id,
+                    "revision_id": revision.revision_id,
+                    "title": revision.title,
+                    "subject_type": revision.subject_type,
+                    "subject_ref_id": revision.subject_ref_id,
+                    "content_role": content_role,
+                    "fact_text": revision.fact_text,
+                    "status": revision.status,
+                    "eligible_for_generation": revision.eligible_for_generation,
+                    "valid_until": revision.valid_until.isoformat() if revision.valid_until else None,
+                    "conflict_status": "none",
+                    "support_ids": [support_id],
+                    "evidence": [{"source_id": source_id, "source_sha256": self.sources[(tenant_id, source_id)].content_sha256, "source_start": start, "source_end": end, "quoted_text": revision.fact_text}],
+                }
+                for (revision, source_id, start, end, content_role), support_id in zip(support_rows, support_ids)
+            ],
+        )
+        revision_ids = [row[0].revision_id for row in support_rows]
+        data = GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type="explainer_page",
+            title=blueprint["title"],
+            body_md=blueprint["body_md"],
+            status="draft",
+            generation_mode="evidence_bound_explainer",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
+        self.content_assets[(tenant_id, asset_id)] = data
+        for assertion_id, support_id in zip(assertion_ids, support_ids):
+            self.claim_support_links[(tenant_id, support_id)] = assertion_id
+        return data
+
     def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]:
         return sorted(
             [
@@ -967,7 +1288,7 @@ class MySQLKnowledgeRepository:
         else:
             reason = "human_review_required"
         return FactRevisionData(
-            fact_id=row["fact_id"], revision_id=row["revision_id"], tenant_id=row["tenant_id"], project_id=row["project_id"], title=row["title"], fact_type=row["fact_type"], fact_text=row["fact_text"], content_sha256=row["content_sha256"], revision_number=int(row["revision_number"]), status=row["revision_status"], source_ids=source_ids, risk_level=row["risk_level"], disclosure=row["disclosure"], created_by=row["created_by"], created_at=_as_utc(row["created_at"]), reviewed_by=row["reviewed_by"], reviewed_at=_optional_utc(row["reviewed_at"]), review_note=row["review_note"], valid_from=valid_from, valid_until=valid_until, eligible_for_generation=eligible, eligibility_reason=reason,
+            fact_id=row["fact_id"], revision_id=row["revision_id"], tenant_id=row["tenant_id"], project_id=row["project_id"], title=row["title"], fact_type=row["fact_type"], subject_type=row["subject_type"], subject_ref_id=row["subject_ref_id"], fact_text=row["fact_text"], content_sha256=row["content_sha256"], revision_number=int(row["revision_number"]), status=row["revision_status"], source_ids=source_ids, risk_level=row["risk_level"], disclosure=row["disclosure"], created_by=row["created_by"], created_at=_as_utc(row["created_at"]), reviewed_by=row["reviewed_by"], reviewed_at=_optional_utc(row["reviewed_at"]), review_note=row["review_note"], valid_from=valid_from, valid_until=valid_until, eligible_for_generation=eligible, eligibility_reason=reason,
         )
 
     def propose_fact(self, tenant_id: str, project_id: str, payload: FactProposalRequest) -> FactRevisionData:
@@ -984,15 +1305,15 @@ class MySQLKnowledgeRepository:
             content_sha256 = sha256_text(payload.fact_text)
             conn.execute(text("""
                 INSERT INTO airank_fact_atoms (
-                  id, tenant_id, project_id, fact_type, title, fact_text,
+                  id, tenant_id, project_id, fact_type, subject_type, subject_ref_id, title, fact_text,
                   current_revision_id, risk_level, valid_until, trust_level,
                   disclosure, status, owner_user_id, created_at, updated_at
                 ) VALUES (
-                  :id, :tenant_id, :project_id, :fact_type, :title, :fact_text,
+                  :id, :tenant_id, :project_id, :fact_type, :subject_type, :subject_ref_id, :title, :fact_text,
                   NULL, :risk_level, :valid_until, 'C', :disclosure, 'draft',
                   :created_by, :created_at, :created_at
                 )
-            """), {"id": fact_id, "tenant_id": tenant_id, "project_id": project_id, "fact_type": payload.fact_type, "title": payload.title, "fact_text": payload.fact_text, "risk_level": payload.risk_level, "valid_until": payload.valid_until, "disclosure": payload.disclosure, "created_by": payload.created_by, "created_at": now})
+            """), {"id": fact_id, "tenant_id": tenant_id, "project_id": project_id, "fact_type": payload.fact_type, "subject_type": payload.subject_type, "subject_ref_id": payload.subject_ref_id, "title": payload.title, "fact_text": payload.fact_text, "risk_level": payload.risk_level, "valid_until": payload.valid_until, "disclosure": payload.disclosure, "created_by": payload.created_by, "created_at": now})
             conn.execute(text("""
                 INSERT INTO airank_fact_revisions (
                   id, tenant_id, project_id, fact_atom_id, revision_number,
@@ -1004,15 +1325,27 @@ class MySQLKnowledgeRepository:
                   :valid_from, :valid_until, :created_by, :created_at
                 )
             """), {"id": revision_id, "tenant_id": tenant_id, "project_id": project_id, "fact_atom_id": fact_id, "fact_text": payload.fact_text, "content_sha256": content_sha256, "source_ids_json": json.dumps(payload.source_ids, ensure_ascii=False), "valid_from": payload.valid_from, "valid_until": payload.valid_until, "created_by": payload.created_by, "created_at": now})
-            row = {"fact_id": fact_id, "revision_id": revision_id, "tenant_id": tenant_id, "project_id": project_id, "title": payload.title, "fact_type": payload.fact_type, "fact_text": payload.fact_text, "content_sha256": content_sha256, "revision_number": 1, "revision_status": "proposed", "source_ids_json": payload.source_ids, "risk_level": payload.risk_level, "disclosure": payload.disclosure, "created_by": payload.created_by, "created_at": now, "reviewed_by": None, "reviewed_at": None, "review_note": None, "valid_from": payload.valid_from, "valid_until": payload.valid_until}
+            row = {"fact_id": fact_id, "revision_id": revision_id, "tenant_id": tenant_id, "project_id": project_id, "title": payload.title, "fact_type": payload.fact_type, "subject_type": payload.subject_type, "subject_ref_id": payload.subject_ref_id, "fact_text": payload.fact_text, "content_sha256": content_sha256, "revision_number": 1, "revision_status": "proposed", "source_ids_json": payload.source_ids, "risk_level": payload.risk_level, "disclosure": payload.disclosure, "created_by": payload.created_by, "created_at": now, "reviewed_by": None, "reviewed_at": None, "review_note": None, "valid_from": payload.valid_from, "valid_until": payload.valid_until}
         return self._fact_data(row)
 
     def revise_fact(self, tenant_id: str, project_id: str, fact_id: str, payload: FactProposalRequest) -> FactRevisionData:
         now = utc_now()
         with self.engine.begin() as conn:
-            fact = conn.execute(text("SELECT id FROM airank_fact_atoms WHERE tenant_id=:tenant_id AND project_id=:project_id AND id=:fact_id AND deleted_at IS NULL FOR UPDATE"), {"tenant_id": tenant_id, "project_id": project_id, "fact_id": fact_id}).first()
+            fact = conn.execute(text("SELECT id, subject_type, subject_ref_id FROM airank_fact_atoms WHERE tenant_id=:tenant_id AND project_id=:project_id AND id=:fact_id AND deleted_at IS NULL FOR UPDATE"), {"tenant_id": tenant_id, "project_id": project_id, "fact_id": fact_id}).mappings().first()
             if fact is None:
                 raise _not_found("FACT_NOT_FOUND", {"fact_id": fact_id})
+            if (fact["subject_type"], fact["subject_ref_id"]) != (payload.subject_type, payload.subject_ref_id):
+                raise StarletteHTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FACT_SUBJECT_IMMUTABLE",
+                        "details": {
+                            "fact_id": fact_id,
+                            "subject_type": fact["subject_type"],
+                            "subject_ref_id": fact["subject_ref_id"],
+                        },
+                    },
+                )
             if payload.source_ids:
                 source_query = text("SELECT COUNT(*) FROM airank_knowledge_sources WHERE tenant_id=:tenant_id AND project_id=:project_id AND status='active' AND id IN :source_ids").bindparams(bindparam("source_ids", expanding=True))
                 count = conn.execute(source_query, {"tenant_id": tenant_id, "project_id": project_id, "source_ids": payload.source_ids}).scalar_one()
@@ -1040,7 +1373,7 @@ class MySQLKnowledgeRepository:
         condition = "AND r.id=:revision_id" if revision_id else ""
         return conn.execute(text(f"""
             SELECT f.id AS fact_id, r.id AS revision_id, f.tenant_id, f.project_id,
-                   f.title, f.fact_type, r.fact_text, r.content_sha256,
+                   f.title, f.fact_type, f.subject_type, f.subject_ref_id, r.fact_text, r.content_sha256,
                    r.revision_number, r.status AS revision_status, r.source_ids_json,
                    f.risk_level, f.disclosure, r.created_by, r.created_at,
                    r.reviewed_by, r.reviewed_at, r.review_note, r.valid_from, r.valid_until,
@@ -1328,6 +1661,327 @@ class MySQLKnowledgeRepository:
             blueprint_sha256=blueprint["blueprint_sha256"],
             section_count=len(blueprint["sections"]),
             fact_revision_ids=payload.fact_revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
+
+    def create_comparison_content(self, tenant_id: str, project_id: str, payload: ComparisonContentCreateRequest) -> GovernedContentData:
+        created_at = utc_now()
+        subject_by_id = {item.subject_id: item for item in payload.subjects}
+        cell_by_revision = {
+            revision_id: cell
+            for cell in payload.cells
+            for revision_id in cell.fact_revision_ids
+        }
+        revision_ids = list(cell_by_revision)
+        with self.engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            revision_query = text("""
+                SELECT f.id AS fact_id, f.current_revision_id, f.title, f.fact_type,
+                       f.subject_type, f.subject_ref_id, f.disclosure, f.risk_level,
+                       r.id AS revision_id, r.fact_text, r.status, r.source_ids_json,
+                       r.valid_from, r.valid_until, r.reviewed_by,
+                       (SELECT COUNT(*) FROM airank_fact_conflicts c
+                        WHERE c.tenant_id=f.tenant_id AND c.fact_atom_id=f.id AND c.status='open') AS open_conflict_count
+                FROM airank_fact_revisions r JOIN airank_fact_atoms f ON f.id=r.fact_atom_id
+                WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id
+                  AND r.id IN :revision_ids
+            """).bindparams(bindparam("revision_ids", expanding=True))
+            rows = conn.execute(revision_query, {"tenant_id": tenant_id, "project_id": project_id, "revision_ids": revision_ids}).mappings().all()
+            by_id = {row["revision_id"]: row for row in rows}
+            if len(by_id) != len(revision_ids):
+                raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_ids": [item for item in revision_ids if item not in by_id]})
+
+            support_rows: list[dict[str, Any]] = []
+            for revision_id in revision_ids:
+                row = by_id[revision_id]
+                cell = cell_by_revision[revision_id]
+                declared_subject = subject_by_id.get(cell.subject_id)
+                if declared_subject is None or (row["subject_type"], row["subject_ref_id"]) != (declared_subject.subject_type, cell.subject_id):
+                    raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SUBJECT_BINDING_MISMATCH", "details": {"revision_id": revision_id, "subject_id": cell.subject_id}})
+                valid_until = _optional_utc(row["valid_until"])
+                invalid_reason = None
+                if row["status"] != "approved" or row["current_revision_id"] != row["revision_id"]:
+                    invalid_reason = "revision_not_current_approved"
+                elif int(row["open_conflict_count"]):
+                    invalid_reason = "open_conflict"
+                elif row["valid_from"] is not None and _as_utc(row["valid_from"]) > created_at:
+                    invalid_reason = "fact_not_yet_valid"
+                elif valid_until is not None and valid_until <= created_at:
+                    invalid_reason = "fact_expired"
+                elif row["disclosure"] not in {"public", "redacted"}:
+                    invalid_reason = "disclosure_not_publishable"
+                if invalid_reason:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": invalid_reason}})
+                source_ids = row["source_ids_json"] if isinstance(row["source_ids_json"], list) else json.loads(row["source_ids_json"] or "[]")
+                exact_support = None
+                for source_id in source_ids:
+                    source = conn.execute(text("""
+                        SELECT s.id, s.content_sha256, c.content_text
+                        FROM airank_knowledge_sources s
+                        JOIN airank_knowledge_source_contents c ON c.knowledge_source_id=s.id
+                        WHERE s.tenant_id=:tenant_id AND s.project_id=:project_id
+                          AND s.id=:source_id AND s.status='active'
+                          AND (s.valid_from IS NULL OR s.valid_from<=:now)
+                          AND (s.valid_until IS NULL OR s.valid_until>:now)
+                    """), {"tenant_id": tenant_id, "project_id": project_id, "source_id": source_id, "now": created_at}).mappings().first()
+                    if source is None:
+                        continue
+                    if sha256_text(source["content_text"]) != source["content_sha256"]:
+                        raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "source_content_integrity_failed", "source_id": source_id}})
+                    start = source["content_text"].find(row["fact_text"])
+                    if start >= 0:
+                        exact_support = {"revision": row, "source_id": source_id, "source_sha256": source["content_sha256"], "start": start, "end": start + len(row["fact_text"]), "subject_id": cell.subject_id, "dimension_id": cell.dimension_id}
+                        break
+                if exact_support is None:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "COMPARISON_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "exact_source_boundary_missing"}})
+                support_rows.append(exact_support)
+
+            asset_id = f"asset_{uuid4().hex[:12]}"
+            assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in support_rows]
+            support_ids = [f"support_{uuid4().hex[:12]}" for _ in support_rows]
+            blueprint = _comparison_blueprint_or_error(
+                payload,
+                [
+                    {
+                        "fact_id": item["revision"]["fact_id"],
+                        "revision_id": item["revision"]["revision_id"],
+                        "subject_id": item["subject_id"],
+                        "subject_type": item["revision"]["subject_type"],
+                        "subject_ref_id": item["revision"]["subject_ref_id"],
+                        "dimension_id": item["dimension_id"],
+                        "fact_text": item["revision"]["fact_text"],
+                        "status": item["revision"]["status"],
+                        "eligible_for_generation": True,
+                        "valid_until": _optional_utc(item["revision"]["valid_until"]).isoformat() if item["revision"]["valid_until"] is not None else None,
+                        "conflict_status": "none",
+                        "support_ids": [support_id],
+                        "evidence": [{"source_id": item["source_id"], "source_sha256": item["source_sha256"], "source_start": item["start"], "source_end": item["end"], "quoted_text": item["revision"]["fact_text"]}],
+                    }
+                    for item, support_id in zip(support_rows, support_ids)
+                ],
+            )
+            metadata = {
+                "generation_mode": "evidence_bound_comparison",
+                "fact_revision_ids": revision_ids,
+                "created_by": payload.created_by,
+                "skill_id": blueprint["skill_id"],
+                "skill_version": blueprint["skill_version"],
+                "blueprint_sha256": blueprint["blueprint_sha256"],
+                "sections": blueprint["sections"],
+                "claim_bindings": blueprint["claim_bindings"],
+                "source_ledger": blueprint["source_ledger"],
+                "fairness": blueprint["fairness"],
+                "subjects": blueprint["subjects"],
+                "dimensions": blueprint["dimensions"],
+                "target_subject_id": blueprint["target_subject_id"],
+                "editorial_brief_sha256": blueprint["editorial_brief_sha256"],
+            }
+            body_md = blueprint["body_md"]
+            conn.execute(text("""
+                INSERT INTO airank_content_assets (
+                  id, tenant_id, project_id, asset_type, title, body_md, content_sha256,
+                  status, fact_atom_ids, metadata_json, created_at, updated_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, 'comparison_page', :title, :body_md, :content_sha256,
+                  'draft', :fact_atom_ids, :metadata_json, :created_at, :created_at
+                )
+            """), {"id": asset_id, "tenant_id": tenant_id, "project_id": project_id, "title": blueprint["title"], "body_md": body_md, "content_sha256": sha256_text(body_md), "fact_atom_ids": json.dumps([item["revision"]["fact_id"] for item in support_rows], ensure_ascii=False), "metadata_json": json.dumps(metadata, ensure_ascii=False), "created_at": created_at})
+            for item, assertion_id, support_id in zip(support_rows, assertion_ids, support_ids):
+                row = item["revision"]
+                claim_metadata = {"fact_revision_id": row["revision_id"], "generation_mode": "evidence_bound_comparison", "blueprint_sha256": blueprint["blueprint_sha256"], "subject_id": item["subject_id"], "dimension_id": item["dimension_id"]}
+                conn.execute(text("""
+                    INSERT INTO airank_claim_assertions (
+                      id, tenant_id, project_id, asset_id, claim_text, claim_sha256,
+                      status, verified_by, verified_at, metadata_json, created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :asset_id, :claim_text, :claim_sha256,
+                      'verified', :verified_by, :verified_at, :metadata_json, :created_at, :created_at
+                    )
+                """), {"id": assertion_id, "tenant_id": tenant_id, "project_id": project_id, "asset_id": asset_id, "claim_text": row["fact_text"], "claim_sha256": sha256_text(row["fact_text"]), "verified_by": row["reviewed_by"] or payload.created_by, "verified_at": created_at, "metadata_json": json.dumps(claim_metadata, ensure_ascii=False), "created_at": created_at})
+                conn.execute(text("""
+                    INSERT INTO airank_claim_supports (
+                      id, tenant_id, project_id, assertion_id, fact_revision_id,
+                      knowledge_source_id, support_type, quoted_text, source_start,
+                      source_end, support_score, reviewed_by, reviewed_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :assertion_id, :fact_revision_id,
+                      :knowledge_source_id, 'supports', :quoted_text, :source_start,
+                      :source_end, 1.0, :reviewed_by, :reviewed_at, :created_at
+                    )
+                """), {"id": support_id, "tenant_id": tenant_id, "project_id": project_id, "assertion_id": assertion_id, "fact_revision_id": row["revision_id"], "knowledge_source_id": item["source_id"], "quoted_text": row["fact_text"], "source_start": item["start"], "source_end": item["end"], "reviewed_by": row["reviewed_by"] or payload.created_by, "reviewed_at": created_at, "created_at": created_at})
+        return GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type="comparison_page",
+            title=blueprint["title"],
+            body_md=body_md,
+            status="draft",
+            generation_mode="evidence_bound_comparison",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
+
+    def create_explainer_content(self, tenant_id: str, project_id: str, payload: ExplainerContentCreateRequest) -> GovernedContentData:
+        created_at = utc_now()
+        role_by_revision = {item.fact_revision_id: item.content_role for item in payload.assignments}
+        revision_ids = list(role_by_revision)
+        with self.engine.begin() as conn:
+            self._ensure_project(conn, tenant_id, project_id)
+            revision_query = text("""
+                SELECT f.id AS fact_id, f.current_revision_id, f.title, f.fact_type,
+                       f.subject_type, f.subject_ref_id, f.disclosure, f.risk_level,
+                       r.id AS revision_id, r.fact_text, r.status, r.source_ids_json,
+                       r.valid_from, r.valid_until, r.reviewed_by,
+                       (SELECT COUNT(*) FROM airank_fact_conflicts c
+                        WHERE c.tenant_id=f.tenant_id AND c.fact_atom_id=f.id AND c.status='open') AS open_conflict_count
+                FROM airank_fact_revisions r JOIN airank_fact_atoms f ON f.id=r.fact_atom_id
+                WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id
+                  AND r.id IN :revision_ids
+            """).bindparams(bindparam("revision_ids", expanding=True))
+            rows = conn.execute(revision_query, {"tenant_id": tenant_id, "project_id": project_id, "revision_ids": revision_ids}).mappings().all()
+            by_id = {row["revision_id"]: row for row in rows}
+            if len(by_id) != len(revision_ids):
+                raise _not_found("FACT_REVISION_NOT_FOUND", {"revision_ids": [item for item in revision_ids if item not in by_id]})
+
+            support_rows: list[dict[str, Any]] = []
+            for revision_id in revision_ids:
+                row = by_id[revision_id]
+                if (row["subject_type"], row["subject_ref_id"]) != (payload.subject_type, payload.subject_id):
+                    raise StarletteHTTPException(status_code=409, detail={"code": "FACT_SUBJECT_BINDING_MISMATCH", "details": {"revision_id": revision_id, "subject_id": payload.subject_id}})
+                valid_until = _optional_utc(row["valid_until"])
+                invalid_reason = None
+                if row["status"] != "approved" or row["current_revision_id"] != row["revision_id"]:
+                    invalid_reason = "revision_not_current_approved"
+                elif int(row["open_conflict_count"]):
+                    invalid_reason = "open_conflict"
+                elif row["valid_from"] is not None and _as_utc(row["valid_from"]) > created_at:
+                    invalid_reason = "fact_not_yet_valid"
+                elif valid_until is not None and valid_until <= created_at:
+                    invalid_reason = "fact_expired"
+                elif row["disclosure"] not in {"public", "redacted"}:
+                    invalid_reason = "disclosure_not_publishable"
+                if invalid_reason:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": invalid_reason}})
+                source_ids = row["source_ids_json"] if isinstance(row["source_ids_json"], list) else json.loads(row["source_ids_json"] or "[]")
+                exact_support = None
+                for source_id in source_ids:
+                    source = conn.execute(text("""
+                        SELECT s.id, s.content_sha256, c.content_text
+                        FROM airank_knowledge_sources s
+                        JOIN airank_knowledge_source_contents c ON c.knowledge_source_id=s.id
+                        WHERE s.tenant_id=:tenant_id AND s.project_id=:project_id
+                          AND s.id=:source_id AND s.status='active'
+                          AND (s.valid_from IS NULL OR s.valid_from<=:now)
+                          AND (s.valid_until IS NULL OR s.valid_until>:now)
+                    """), {"tenant_id": tenant_id, "project_id": project_id, "source_id": source_id, "now": created_at}).mappings().first()
+                    if source is None:
+                        continue
+                    if sha256_text(source["content_text"]) != source["content_sha256"]:
+                        raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "source_content_integrity_failed", "source_id": source_id}})
+                    start = source["content_text"].find(row["fact_text"])
+                    if start >= 0:
+                        exact_support = {"revision": row, "source_id": source_id, "source_sha256": source["content_sha256"], "start": start, "end": start + len(row["fact_text"]), "content_role": role_by_revision[revision_id]}
+                        break
+                if exact_support is None:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "EXPLAINER_EVIDENCE_INCOMPLETE", "details": {"revision_id": revision_id, "reason": "exact_source_boundary_missing"}})
+                support_rows.append(exact_support)
+
+            asset_id = f"asset_{uuid4().hex[:12]}"
+            assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in support_rows]
+            support_ids = [f"support_{uuid4().hex[:12]}" for _ in support_rows]
+            blueprint = _explainer_blueprint_or_error(
+                payload,
+                [
+                    {
+                        "fact_id": item["revision"]["fact_id"],
+                        "revision_id": item["revision"]["revision_id"],
+                        "title": item["revision"]["title"],
+                        "subject_type": item["revision"]["subject_type"],
+                        "subject_ref_id": item["revision"]["subject_ref_id"],
+                        "content_role": item["content_role"],
+                        "fact_text": item["revision"]["fact_text"],
+                        "status": item["revision"]["status"],
+                        "eligible_for_generation": True,
+                        "valid_until": _optional_utc(item["revision"]["valid_until"]).isoformat() if item["revision"]["valid_until"] is not None else None,
+                        "conflict_status": "none",
+                        "support_ids": [support_id],
+                        "evidence": [{"source_id": item["source_id"], "source_sha256": item["source_sha256"], "source_start": item["start"], "source_end": item["end"], "quoted_text": item["revision"]["fact_text"]}],
+                    }
+                    for item, support_id in zip(support_rows, support_ids)
+                ],
+            )
+            metadata = {
+                "generation_mode": "evidence_bound_explainer",
+                "fact_revision_ids": revision_ids,
+                "created_by": payload.created_by,
+                "skill_id": blueprint["skill_id"],
+                "skill_version": blueprint["skill_version"],
+                "blueprint_sha256": blueprint["blueprint_sha256"],
+                "sections": blueprint["sections"],
+                "claim_bindings": blueprint["claim_bindings"],
+                "source_ledger": blueprint["source_ledger"],
+                "quality": blueprint["quality"],
+                "structured_data": blueprint["structured_data"],
+                "subject_id": blueprint["subject_id"],
+                "subject_type": blueprint["subject_type"],
+                "editorial_brief_sha256": blueprint["editorial_brief_sha256"],
+            }
+            body_md = blueprint["body_md"]
+            conn.execute(text("""
+                INSERT INTO airank_content_assets (
+                  id, tenant_id, project_id, asset_type, title, body_md, content_sha256,
+                  status, fact_atom_ids, metadata_json, created_at, updated_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, 'explainer_page', :title, :body_md, :content_sha256,
+                  'draft', :fact_atom_ids, :metadata_json, :created_at, :created_at
+                )
+            """), {"id": asset_id, "tenant_id": tenant_id, "project_id": project_id, "title": blueprint["title"], "body_md": body_md, "content_sha256": sha256_text(body_md), "fact_atom_ids": json.dumps([item["revision"]["fact_id"] for item in support_rows], ensure_ascii=False), "metadata_json": json.dumps(metadata, ensure_ascii=False), "created_at": created_at})
+            for item, assertion_id, support_id in zip(support_rows, assertion_ids, support_ids):
+                row = item["revision"]
+                claim_metadata = {"fact_revision_id": row["revision_id"], "generation_mode": "evidence_bound_explainer", "blueprint_sha256": blueprint["blueprint_sha256"], "subject_id": payload.subject_id, "content_role": item["content_role"]}
+                conn.execute(text("""
+                    INSERT INTO airank_claim_assertions (
+                      id, tenant_id, project_id, asset_id, claim_text, claim_sha256,
+                      status, verified_by, verified_at, metadata_json, created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :asset_id, :claim_text, :claim_sha256,
+                      'verified', :verified_by, :verified_at, :metadata_json, :created_at, :created_at
+                    )
+                """), {"id": assertion_id, "tenant_id": tenant_id, "project_id": project_id, "asset_id": asset_id, "claim_text": row["fact_text"], "claim_sha256": sha256_text(row["fact_text"]), "verified_by": row["reviewed_by"] or payload.created_by, "verified_at": created_at, "metadata_json": json.dumps(claim_metadata, ensure_ascii=False), "created_at": created_at})
+                conn.execute(text("""
+                    INSERT INTO airank_claim_supports (
+                      id, tenant_id, project_id, assertion_id, fact_revision_id,
+                      knowledge_source_id, support_type, quoted_text, source_start,
+                      source_end, support_score, reviewed_by, reviewed_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :assertion_id, :fact_revision_id,
+                      :knowledge_source_id, 'supports', :quoted_text, :source_start,
+                      :source_end, 1.0, :reviewed_by, :reviewed_at, :created_at
+                    )
+                """), {"id": support_id, "tenant_id": tenant_id, "project_id": project_id, "assertion_id": assertion_id, "fact_revision_id": row["revision_id"], "knowledge_source_id": item["source_id"], "quoted_text": row["fact_text"], "source_start": item["start"], "source_end": item["end"], "reviewed_by": row["reviewed_by"] or payload.created_by, "reviewed_at": created_at, "created_at": created_at})
+        return GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type="explainer_page",
+            title=blueprint["title"],
+            body_md=body_md,
+            status="draft",
+            generation_mode="evidence_bound_explainer",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=revision_ids,
             claim_assertion_ids=assertion_ids,
             claim_support_ids=support_ids,
             created_at=created_at,
@@ -1694,6 +2348,18 @@ def resolve_fact_conflict(project_id: str, conflict_id: str, payload: FactConfli
 def create_governed_content(project_id: str, payload: GovernedContentCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> GovernedContentResponse:
     trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
     return GovernedContentResponse(data=KNOWLEDGE_REPOSITORY.create_governed_content(tenant_id, project_id, trusted_payload), meta=response_meta(trace_id))
+
+
+@router.post("/projects/{project_id}/comparison-content-assets", response_model=GovernedContentResponse, status_code=201)
+def create_comparison_content(project_id: str, payload: ComparisonContentCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> GovernedContentResponse:
+    trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
+    return GovernedContentResponse(data=KNOWLEDGE_REPOSITORY.create_comparison_content(tenant_id, project_id, trusted_payload), meta=response_meta(trace_id))
+
+
+@router.post("/projects/{project_id}/explainer-content-assets", response_model=GovernedContentResponse, status_code=201)
+def create_explainer_content(project_id: str, payload: ExplainerContentCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> GovernedContentResponse:
+    trusted_payload = payload.model_copy(update={"created_by": trusted_review_actor(payload.created_by, authenticated_actor)})
+    return GovernedContentResponse(data=KNOWLEDGE_REPOSITORY.create_explainer_content(tenant_id, project_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.get("/projects/{project_id}/content-assets", response_model=GovernedContentListResponse)

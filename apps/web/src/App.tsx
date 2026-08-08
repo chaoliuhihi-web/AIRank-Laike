@@ -68,6 +68,8 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createComparisonContent,
+  createExplainerContent,
   createGovernedContent,
   createCitationClaim,
   createCitationSourceCapture,
@@ -219,12 +221,32 @@ const governedAssetTypes: Array<{ value: GovernedContentCreateInput["assetType"]
   { value: "fact_page", label: "企业事实页" },
   { value: "product_page", label: "产品与服务页" },
   { value: "faq", label: "FAQ 页面" },
-  { value: "comparison_page", label: "竞品比较页" },
   { value: "case_page", label: "案例页" },
   { value: "research_page", label: "数据与研究页" },
   { value: "json_ld", label: "JSON-LD" },
   { value: "llms_txt", label: "llms.txt" },
 ];
+const comparisonDimensions = [
+  { dimension_id: "deployment", label: "部署方式" },
+  { dimension_id: "core_capability", label: "核心能力边界" },
+  { dimension_id: "data_security", label: "数据安全" },
+  { dimension_id: "evidence_traceability", label: "证据可追溯性" },
+  { dimension_id: "provider_coverage", label: "平台覆盖" },
+  { dimension_id: "workflow", label: "业务工作流" },
+  { dimension_id: "permissions_audit", label: "权限与审计" },
+  { dimension_id: "integration", label: "系统集成" },
+  { dimension_id: "delivery_operation", label: "交付与运营" },
+  { dimension_id: "limitations", label: "限制与适用边界" },
+] as const;
+const explainerRoles = [
+  { value: "definition", label: "定义与范围", minimum: 1 },
+  { value: "mechanism", label: "工作机制", minimum: 2 },
+  { value: "step", label: "实施步骤", minimum: 3 },
+  { value: "criterion", label: "判断标准", minimum: 2 },
+  { value: "misconception", label: "常见误区", minimum: 1 },
+  { value: "faq", label: "常见问题", minimum: 2 },
+  { value: "boundary", label: "适用边界", minimum: 1 },
+] as const;
 const reportCardIcons: LucideIcon[] = [CalendarDays, NotebookTabs, Crown, FileChartColumn];
 const qualityLimitationLabels: Record<string, string> = {
   valid_samples_have_no_provider_citations: "有效样本没有 Provider 原生引用",
@@ -1791,6 +1813,7 @@ function FactsPage() {
               <div><dt>创建时间</dt><dd>{formatDateTime(item.created_at)}</dd></div>
             </dl>
             <div className="fact-tags">
+              <Badge tone={item.subject_type === "general" ? "muted" : "primary"}>{item.subject_type === "general" ? "通用事实" : `${item.subject_type} · ${item.subject_ref_id}`}</Badge>
               <Badge tone={item.disclosure === "public" ? "success" : "warning"}>{item.disclosure}</Badge>
               <Badge tone={item.eligible_for_generation ? "success" : "muted"}>{item.eligible_for_generation ? "可用于内容" : item.eligibility_reason}</Badge>
               <Badge tone={item.risk_level === "high" || item.risk_level === "restricted" ? "danger" : "primary"}>风险 {item.risk_level}</Badge>
@@ -3174,6 +3197,21 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [assetTitle, setAssetTitle] = useState("企业事实证据页");
   const [editorialDirection, setEditorialDirection] = useState("面向企业采购与技术评审，只陈述已审核事实。");
   const [selectedFactRevisionIds, setSelectedFactRevisionIds] = useState<string[]>([]);
+  const [creatingComparison, setCreatingComparison] = useState(false);
+  const [comparisonTitle, setComparisonTitle] = useState("同维度证据对比");
+  const [comparisonDirection, setComparisonDirection] = useState("面向企业采购评审，公平呈现相同维度下的已审核事实，不输出排名。");
+  const [targetSubjectId, setTargetSubjectId] = useState("");
+  const [targetDisplayName, setTargetDisplayName] = useState("");
+  const [peerSubjectId, setPeerSubjectId] = useState("");
+  const [peerDisplayName, setPeerDisplayName] = useState("");
+  const [comparisonAssignments, setComparisonAssignments] = useState<Record<string, string>>({});
+  const [creatingExplainer, setCreatingExplainer] = useState(false);
+  const [explainerTitle, setExplainerTitle] = useState("证据解释指南");
+  const [explainerDirection, setExplainerDirection] = useState("面向采购者解释定义、机制、步骤、标准、误区、FAQ 与适用边界。");
+  const [explainerSubjectId, setExplainerSubjectId] = useState("");
+  const [explainerDisplayName, setExplainerDisplayName] = useState("");
+  const [explainerBrandAliases, setExplainerBrandAliases] = useState("");
+  const [explainerAssignments, setExplainerAssignments] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!project.id) {
@@ -3192,6 +3230,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setFacts(nextFacts);
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
         setSelectedFactRevisionIds((current) => current.filter((revisionId) => eligibleIds.has(revisionId)));
+        const entityFacts = nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation && fact.subject_ref_id);
+        const defaultTarget = entityFacts.find((fact) => fact.subject_type !== "competitor")?.subject_ref_id ?? "";
+        const defaultPeer = entityFacts.find((fact) => fact.subject_type === "competitor" && fact.subject_ref_id !== defaultTarget)?.subject_ref_id ?? "";
+        setTargetSubjectId((current) => current || defaultTarget);
+        setPeerSubjectId((current) => current || defaultPeer);
+        setTargetDisplayName((current) => current || defaultTarget);
+        setPeerDisplayName((current) => current || defaultPeer);
+        setExplainerSubjectId((current) => current || defaultTarget);
+        setExplainerDisplayName((current) => current || defaultTarget);
+        setComparisonAssignments((current) => Object.fromEntries(Object.entries(current).filter(([revisionId]) => eligibleIds.has(revisionId))));
+        setExplainerAssignments((current) => Object.fromEntries(Object.entries(current).filter(([revisionId]) => eligibleIds.has(revisionId))));
         setLoadError(null);
       })
       .catch((error) => {
@@ -3205,6 +3254,26 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   }, [project.id]);
 
   const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
+  const subjectOptions = Array.from(new globalThis.Map<string, { subjectId: string; subjectType: FactRevision["subject_type"] }>(
+    eligibleFacts
+      .filter((fact) => fact.subject_ref_id && fact.subject_type !== "general")
+      .map((fact) => [fact.subject_ref_id as string, { subjectId: fact.subject_ref_id as string, subjectType: fact.subject_type }]),
+  ).values());
+  const comparisonFacts = eligibleFacts.filter((fact) => fact.subject_ref_id === targetSubjectId || fact.subject_ref_id === peerSubjectId);
+  const comparisonCoveredCellCount = new Set(
+    comparisonFacts
+      .filter((fact) => comparisonAssignments[fact.revision_id])
+      .map((fact) => `${fact.subject_ref_id}:${comparisonAssignments[fact.revision_id]}`),
+  ).size;
+  const explainerFacts = eligibleFacts.filter((fact) => fact.subject_ref_id === explainerSubjectId);
+  const explainerRoleCounts = Object.fromEntries(explainerRoles.map((role) => [
+    role.value,
+    explainerFacts.filter((fact) => explainerAssignments[fact.revision_id] === role.value).length,
+  ])) as Record<(typeof explainerRoles)[number]["value"], number>;
+  const explainerSupportedCharacterCount = explainerFacts
+    .filter((fact) => explainerAssignments[fact.revision_id])
+    .reduce((total, fact) => total + fact.fact_text.replace(/\s+/g, "").length, 0);
+  const explainerRoleCoverageComplete = explainerRoles.every((role) => explainerRoleCounts[role.value] >= role.minimum);
 
   const toggleBlueprintFact = (revisionId: string) => {
     setSelectedFactRevisionIds((current) => current.includes(revisionId)
@@ -3243,6 +3312,103 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       notify({ title: "页面蓝图未生成", desc: error instanceof Error ? error.message : "内容生成接口不可用", tone: "danger" });
     } finally {
       setCreatingBlueprint(false);
+    }
+  };
+
+  const submitComparison = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor) {
+      notify({ title: "无法生成证据对比", desc: "缺少项目或可信操作者身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    if (!targetSubjectId || !peerSubjectId || targetSubjectId === peerSubjectId || !targetDisplayName.trim() || !peerDisplayName.trim()) {
+      notify({ title: "对比主体不完整", desc: "请选择两个不同的事实主体，并填写用于公开展示的主体名称。", tone: "warning" });
+      return;
+    }
+    const targetType = subjectOptions.find((item) => item.subjectId === targetSubjectId)?.subjectType;
+    const peerType = subjectOptions.find((item) => item.subjectId === peerSubjectId)?.subjectType;
+    if (!targetType || !peerType || targetType === "general" || peerType === "general") {
+      notify({ title: "主体绑定无效", desc: "对比只能使用已绑定品牌、公司、产品、竞品或方案类型的事实。", tone: "warning" });
+      return;
+    }
+    const cells = [targetSubjectId, peerSubjectId].flatMap((subjectId) => comparisonDimensions.map((dimension) => ({
+      subject_id: subjectId,
+      dimension_id: dimension.dimension_id,
+      fact_revision_ids: comparisonFacts
+        .filter((fact) => fact.subject_ref_id === subjectId && comparisonAssignments[fact.revision_id] === dimension.dimension_id)
+        .map((fact) => fact.revision_id),
+    })));
+    const missingCells = cells.filter((cell) => cell.fact_revision_ids.length === 0);
+    if (missingCells.length > 0) {
+      notify({ title: "对称证据矩阵未补齐", desc: `仍有 ${missingCells.length} 个“主体 × 维度”单元缺少审核事实；系统不会用空白或推断补齐。`, tone: "warning" });
+      return;
+    }
+    setCreatingComparison(true);
+    try {
+      const created = await createComparisonContent(project.id, {
+        title: comparisonTitle.trim(),
+        direction: comparisonDirection.trim(),
+        targetSubjectId,
+        subjects: [
+          { subject_id: targetSubjectId, display_name: targetDisplayName.trim(), subject_type: targetType },
+          { subject_id: peerSubjectId, display_name: peerDisplayName.trim(), subject_type: peerType },
+        ],
+        dimensions: [...comparisonDimensions],
+        cells,
+        createdBy: actor,
+      });
+      setContentAssets((current) => [created, ...current]);
+      setComparisonAssignments({});
+      notify({ title: "公平证据对比已生成", desc: `${created.section_count} 个相同维度、${created.claim_support_ids.length} 条精确证据；未生成排名或无证据优劣结论。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "证据对比未生成", desc: error instanceof Error ? error.message : "对比内容接口不可用", tone: "danger" });
+    } finally {
+      setCreatingComparison(false);
+    }
+  };
+
+  const submitExplainer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor) {
+      notify({ title: "无法生成解释指南", desc: "缺少项目或可信操作者身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    const subjectType = subjectOptions.find((item) => item.subjectId === explainerSubjectId)?.subjectType;
+    if (!subjectType || subjectType === "general" || !explainerDisplayName.trim()) {
+      notify({ title: "解释主体不完整", desc: "请选择已绑定事实主体，并填写公开名称。", tone: "warning" });
+      return;
+    }
+    if (!explainerRoleCoverageComplete || explainerSupportedCharacterCount < 1400) {
+      notify({ title: "解释证据尚未达到门禁", desc: `七类角色必须全部达标，且已选事实需达到 1400 个非空白字符；当前 ${explainerSupportedCharacterCount}。`, tone: "warning" });
+      return;
+    }
+    const assignments = explainerFacts
+      .filter((fact) => explainerAssignments[fact.revision_id])
+      .map((fact) => ({
+        fact_revision_id: fact.revision_id,
+        content_role: explainerAssignments[fact.revision_id] as (typeof explainerRoles)[number]["value"],
+      }));
+    setCreatingExplainer(true);
+    try {
+      const created = await createExplainerContent(project.id, {
+        title: explainerTitle.trim(),
+        direction: explainerDirection.trim(),
+        subjectId: explainerSubjectId,
+        subjectType,
+        displayName: explainerDisplayName.trim(),
+        brandNames: explainerBrandAliases.split(/[，,\n]/).map((item) => item.trim()).filter(Boolean),
+        assignments,
+        createdBy: actor,
+      });
+      setContentAssets((current) => [created, ...current]);
+      setExplainerAssignments({});
+      notify({ title: "证据解释指南已生成", desc: `${created.section_count} 类结构、${created.claim_support_ids.length} 条精确证据；品牌露出、篇幅和角色覆盖均已通过门禁。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "解释指南未生成", desc: error instanceof Error ? error.message : "解释内容接口不可用", tone: "danger" });
+    } finally {
+      setCreatingExplainer(false);
     }
   };
 
@@ -3291,6 +3457,76 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <div className="content-blueprint-actions">
             <span>{eligibleFacts.length} 条可用 / {facts.length} 条事实；已选 {selectedFactRevisionIds.length} 条</span>
             <button className="airank-console-primary-button" type="submit" disabled={creatingBlueprint || eligibleFacts.length === 0}>{creatingBlueprint ? "生成中…" : "生成证据绑定蓝图"}</button>
+          </div>
+        </form>
+      </Panel>
+      <Panel title="公平证据对比 · 专用门禁">
+        <form className="content-blueprint-form" onSubmit={(event) => void submitComparison(event)}>
+          <div className="content-blueprint-wide knowledge-search-policy">
+            <Badge tone="primary">same-scope</Badge>
+            <span>两个主体必须使用相同 10 个维度，每个单元都绑定审核事实和精确原文；缺一项则整页不生成，不输出排名或市场份额推断。</span>
+          </div>
+          <label>目标主体<select value={targetSubjectId} onChange={(event) => { setTargetSubjectId(event.target.value); setTargetDisplayName(event.target.value); setComparisonAssignments({}); }}><option value="">请选择已绑定主体</option>{subjectOptions.map((option) => <option value={option.subjectId} key={`target-${option.subjectId}`}>{option.subjectId} · {option.subjectType}</option>)}</select></label>
+          <label>目标公开名称<input value={targetDisplayName} onChange={(event) => setTargetDisplayName(event.target.value)} maxLength={128} placeholder="例如：AIRank" /></label>
+          <label>对比主体<select value={peerSubjectId} onChange={(event) => { setPeerSubjectId(event.target.value); setPeerDisplayName(event.target.value); setComparisonAssignments({}); }}><option value="">请选择另一个主体</option>{subjectOptions.map((option) => <option value={option.subjectId} key={`peer-${option.subjectId}`}>{option.subjectId} · {option.subjectType}</option>)}</select></label>
+          <label>对比公开名称<input value={peerDisplayName} onChange={(event) => setPeerDisplayName(event.target.value)} maxLength={128} placeholder="例如：竞品甲" /></label>
+          <label>对比 brief<input value={comparisonTitle} onChange={(event) => setComparisonTitle(event.target.value)} maxLength={255} /><small>只进入 brief hash；公开标题由主体名称确定性生成。</small></label>
+          <label>公平说明<input value={comparisonDirection} onChange={(event) => setComparisonDirection(event.target.value)} maxLength={1000} /><small>不直接复制进正文，不允许作为事实。</small></label>
+          <div className="content-blueprint-wide fact-tags">
+            {comparisonDimensions.map((dimension) => <Badge tone="muted" key={dimension.dimension_id}>{dimension.label}</Badge>)}
+          </div>
+          <fieldset className="content-blueprint-facts">
+            <legend>把主体事实分配到相同维度</legend>
+            {comparisonFacts.length === 0 ? (
+              <DataStateCard title="没有可用于对比的主体事实" desc="事实必须先绑定 subject_type 与 subject_ref_id，并完成来源、审核、有效期和冲突门禁。" tone="warning" />
+            ) : comparisonFacts.map((fact) => (
+              <label className="content-blueprint-fact comparison-evidence-row" key={`comparison-${fact.revision_id}`}>
+                <span><strong>{fact.subject_ref_id} · {fact.title}</strong><small>{fact.fact_text}</small><code>{fact.revision_id}</code></span>
+                <select aria-label={`为 ${fact.title} 选择对比维度`} value={comparisonAssignments[fact.revision_id] ?? ""} onChange={(event) => setComparisonAssignments((current) => ({ ...current, [fact.revision_id]: event.target.value }))}>
+                  <option value="">不用于本次对比</option>
+                  {comparisonDimensions.map((dimension) => <option value={dimension.dimension_id} key={dimension.dimension_id}>{dimension.label}</option>)}
+                </select>
+              </label>
+            ))}
+          </fieldset>
+          <div className="content-blueprint-actions">
+            <span>证据矩阵 {comparisonCoveredCellCount} / 20 个单元已覆盖</span>
+            <button className="airank-console-primary-button" type="submit" disabled={creatingComparison || comparisonCoveredCellCount < 20}>{creatingComparison ? "生成中…" : "生成公平证据对比"}</button>
+          </div>
+        </form>
+      </Panel>
+      <Panel title="长篇证据解释 · 专用门禁">
+        <form className="content-blueprint-form" onSubmit={(event) => void submitExplainer(event)}>
+          <div className="content-blueprint-wide knowledge-search-policy">
+            <Badge tone="primary">evidence-heavy</Badge>
+            <span>必须覆盖 7 类内容角色、至少 12 条审核事实和 1400 个有证据字符；正文中的品牌及别名总露出超过 3 次会被服务端拒绝。</span>
+          </div>
+          <label>解释主体<select value={explainerSubjectId} onChange={(event) => { setExplainerSubjectId(event.target.value); setExplainerDisplayName(event.target.value); setExplainerAssignments({}); }}><option value="">请选择已绑定主体</option>{subjectOptions.map((option) => <option value={option.subjectId} key={`explainer-${option.subjectId}`}>{option.subjectId} · {option.subjectType}</option>)}</select></label>
+          <label>主体公开名称<input value={explainerDisplayName} onChange={(event) => setExplainerDisplayName(event.target.value)} maxLength={128} placeholder="例如：AIRank" /></label>
+          <label>解释 brief<input value={explainerTitle} onChange={(event) => setExplainerTitle(event.target.value)} maxLength={255} /><small>只进入 brief hash；不会复制成公开主张。</small></label>
+          <label>品牌别名<input value={explainerBrandAliases} onChange={(event) => setExplainerBrandAliases(event.target.value)} maxLength={512} placeholder="多个别名用逗号分隔" /><small>用于品牌露出计数，不用于自动插入品牌。</small></label>
+          <label className="content-blueprint-wide">编辑方向<textarea rows={2} value={explainerDirection} onChange={(event) => setExplainerDirection(event.target.value)} maxLength={1000} /></label>
+          <div className="content-blueprint-wide fact-tags">
+            {explainerRoles.map((role) => <Badge tone={explainerRoleCounts[role.value] >= role.minimum ? "success" : "warning"} key={role.value}>{role.label} {explainerRoleCounts[role.value]}/{role.minimum}</Badge>)}
+            <Badge tone={explainerSupportedCharacterCount >= 1400 ? "success" : "warning"}>证据字符 {explainerSupportedCharacterCount}/1400</Badge>
+          </div>
+          <fieldset className="content-blueprint-facts">
+            <legend>把主体事实分配到解释角色</legend>
+            {explainerFacts.length === 0 ? (
+              <DataStateCard title="没有可用于解释的主体事实" desc="先补齐同一主体的审核事实与精确来源边界；系统不会为凑篇幅重复事实或扩写无证据段落。" tone="warning" />
+            ) : explainerFacts.map((fact) => (
+              <label className="content-blueprint-fact comparison-evidence-row" key={`explainer-fact-${fact.revision_id}`}>
+                <span><strong>{fact.title}</strong><small>{fact.fact_text}</small><code>{fact.revision_id}</code></span>
+                <select aria-label={`为 ${fact.title} 选择解释角色`} value={explainerAssignments[fact.revision_id] ?? ""} onChange={(event) => setExplainerAssignments((current) => ({ ...current, [fact.revision_id]: event.target.value }))}>
+                  <option value="">不用于本次解释</option>
+                  {explainerRoles.map((role) => <option value={role.value} key={role.value}>{role.label} · 至少 {role.minimum}</option>)}
+                </select>
+              </label>
+            ))}
+          </fieldset>
+          <div className="content-blueprint-actions">
+            <span>{explainerRoleCoverageComplete ? "角色覆盖已完成" : "角色覆盖未完成"} · {explainerSupportedCharacterCount} 个证据字符</span>
+            <button className="airank-console-primary-button" type="submit" disabled={creatingExplainer || !explainerRoleCoverageComplete || explainerSupportedCharacterCount < 1400}>{creatingExplainer ? "生成中…" : "生成证据解释指南"}</button>
           </div>
         </form>
       </Panel>

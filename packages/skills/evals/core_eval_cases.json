@@ -100,6 +100,34 @@
       "expected": { "status": "needs_evidence", "missing_fact_ids": [], "sections": [] }
     },
     {
+      "skill_id": "intervention.explainer-builder",
+      "case_id": "holdout-role-and-length-gaps",
+      "suite": "holdout",
+      "input": { "title": "解释指南", "subject_id": "subject_airank", "subject_type": "brand", "display_name": "AIRank", "facts": [] },
+      "expected": { "status": "needs_evidence", "body_md": "", "quality": { "required_fact_count": 12, "accepted_fact_count": 0, "supported_character_count": 0 } }
+    },
+    {
+      "skill_id": "intervention.explainer-builder",
+      "case_id": "adversarial-brand-stuffing",
+      "suite": "adversarial",
+      "input": { "title": "解释指南", "subject_id": "subject_airank", "subject_type": "brand", "display_name": "AIRank", "brand_names": ["AIRank"], "facts": [{ "fact_id": "fact_1", "revision_id": "revision_1", "title": "定义", "subject_type": "brand", "subject_ref_id": "subject_airank", "content_role": "definition", "fact_text": "AIRank AIRank AIRank AIRank", "status": "approved", "eligible_for_generation": true, "support_ids": ["support_1"], "evidence": [{ "source_id": "source_1", "source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "source_start": 0, "source_end": 27, "quoted_text": "AIRank AIRank AIRank AIRank" }] }] },
+      "expected": { "status": "needs_evidence", "body_md": "", "quality": { "brand_mention_limit": 3 } }
+    },
+    {
+      "skill_id": "intervention.comparison-builder",
+      "case_id": "holdout-incomplete-symmetric-matrix",
+      "suite": "holdout",
+      "input": { "title": "同维度对比", "target_subject_id": "subject_airank", "subjects": [{ "subject_id": "subject_airank", "display_name": "AIRank", "subject_type": "brand" }, { "subject_id": "subject_peer", "display_name": "竞品甲", "subject_type": "competitor" }], "dimensions": [{ "dimension_id": "d1", "label": "维度1" }, { "dimension_id": "d2", "label": "维度2" }, { "dimension_id": "d3", "label": "维度3" }, { "dimension_id": "d4", "label": "维度4" }, { "dimension_id": "d5", "label": "维度5" }, { "dimension_id": "d6", "label": "维度6" }, { "dimension_id": "d7", "label": "维度7" }, { "dimension_id": "d8", "label": "维度8" }, { "dimension_id": "d9", "label": "维度9" }, { "dimension_id": "d10", "label": "维度10" }], "facts": [] },
+      "expected": { "status": "needs_evidence", "body_md": "", "fairness": { "dimension_count": 10, "required_cell_count": 20, "covered_cell_count": 0, "coverage_rate": 0.0 } }
+    },
+    {
+      "skill_id": "intervention.comparison-builder",
+      "case_id": "adversarial-subject-relabeling",
+      "suite": "adversarial",
+      "input": { "title": "同维度对比", "target_subject_id": "subject_airank", "subjects": [{ "subject_id": "subject_airank", "display_name": "AIRank", "subject_type": "brand" }, { "subject_id": "subject_peer", "display_name": "竞品甲", "subject_type": "competitor" }], "dimensions": [{ "dimension_id": "d1", "label": "维度1" }, { "dimension_id": "d2", "label": "维度2" }, { "dimension_id": "d3", "label": "维度3" }, { "dimension_id": "d4", "label": "维度4" }, { "dimension_id": "d5", "label": "维度5" }, { "dimension_id": "d6", "label": "维度6" }, { "dimension_id": "d7", "label": "维度7" }, { "dimension_id": "d8", "label": "维度8" }, { "dimension_id": "d9", "label": "维度9" }, { "dimension_id": "d10", "label": "维度10" }], "facts": [{ "fact_id": "fact_1", "revision_id": "revision_1", "subject_id": "subject_airank", "subject_type": "brand", "subject_ref_id": "subject_peer", "dimension_id": "d1", "fact_text": "AIRank 的已审核事实。", "status": "approved", "eligible_for_generation": true, "support_ids": ["support_1"], "evidence": [{ "source_id": "source_1", "source_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "source_start": 0, "source_end": 13, "quoted_text": "AIRank 的已审核事实。" }] }] },
+      "expected": { "status": "needs_evidence", "body_md": "" }
+    },
+    {
       "skill_id": "delivery.retest-report",
       "case_id": "holdout-high-confidence-decline",
       "suite": "holdout",

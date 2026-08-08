@@ -27,6 +27,15 @@ class Disclosure(str, Enum):
     PENDING_APPROVAL = "pending_approval"
 
 
+class FactSubjectType(str, Enum):
+    GENERAL = "general"
+    BRAND = "brand"
+    COMPANY = "company"
+    PRODUCT = "product"
+    COMPETITOR = "competitor"
+    SOLUTION_TYPE = "solution_type"
+
+
 @dataclass(frozen=True)
 class FactSourceRef:
     id: str
@@ -50,6 +59,8 @@ class FactAtom:
     fact_type: str
     title: str
     fact_text: str
+    subject_type: FactSubjectType = FactSubjectType.GENERAL
+    subject_ref_id: str | None = None
     status: FactAtomStatus = FactAtomStatus.DRAFT
     trust_level: TrustLevel = TrustLevel.C
     disclosure: Disclosure = Disclosure.PENDING_APPROVAL
@@ -58,6 +69,10 @@ class FactAtom:
     reviewed_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        if self.subject_type == FactSubjectType.GENERAL and self.subject_ref_id is not None:
+            raise ValueError("general FactAtom cannot declare subject_ref_id")
+        if self.subject_type != FactSubjectType.GENERAL and not self.subject_ref_id:
+            raise ValueError("entity-bound FactAtom requires subject_ref_id")
         if self.status == FactAtomStatus.CONFIRMED and not has_traceable_sources(self.sources):
             raise ValueError("confirmed FactAtom must include a citation, object ref, or source URL")
 

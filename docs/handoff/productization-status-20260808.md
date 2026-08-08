@@ -18,8 +18,8 @@
 8. 增加可重算指标：有效样本率、提及率、明确推荐率、Top1/3/5、条件 Top3、稳定性、引用召回、引用支持、事实声明覆盖率和完整覆盖后的事实准确率；缺声明、缺裁决或只有证据不足时保持明确限制状态。
 9. 无真实证据时，Console/资产包/报告返回明确空状态；不生成演示数字、完成度、报告、事实或发布包。
 10. 新增 Alembic 迁移并在临时 MySQL 空库真实执行通过；临时库验收后已删除。
-11. 建立 `packages/skills` 内部 Skill Registry；首批 8 个 Skill 均包含版本、分类、输入输出 schema、依赖、Provider 要求、证据等级、事实/失败政策、rubric、eval case、状态和可执行 entrypoint。
-12. 新增内部 Admin Skill API，可查看 manifest 并执行版本化 eval；8 个 Skill 当前全部为 `partial`，不会被前端或销售口径宣称为 ready。
+11. 建立 `packages/skills` 内部 Skill Registry；当前 10 个 Skill 均包含版本、分类、输入输出 schema、依赖、Provider 要求、证据等级、事实/失败政策、rubric、eval case、状态和可执行 entrypoint。
+12. 新增内部 Admin Skill API，可查看 manifest 并执行版本化 eval；10 个 Skill 当前全部为 `partial`，不会被前端或销售口径宣称为 ready。
 13. 建立 KnowledgeSource、FactRevision、FactConflict、ClaimAssertion、ClaimSupport 和不可变 EvidenceSnapshot；事实必须有来源、有效期和人工审核后才能支持内容 Claim，开放冲突会阻断核验。
 14. 新增事实治理 Alembic 迁移并在临时 MySQL 空库真实执行；验证 29 张 AIRank 表、5 张新治理表与 3 个 FactAtom 版本字段后删除临时库。
 15. 建立 AIRank Python Provider Gateway：四平台 manifest、官方 host allowlist、模型生命周期、L1/L2/L3、重试/退避、熔断、QPS/并发、配额预留、request ID、原生引用和 usage precision。
@@ -48,7 +48,7 @@
 38. 浏览器截图不再把临时 `file://` 路径当成长期证据：新增内容寻址的 filesystem/S3/MinIO ObjectStorage，写入后校验 SHA-256 与大小，数据库只保存不可变 URI、对象键、驱动和 hash；存储失败会使对应采样任务明确失败，不进入有效样本。
 39. 证据对象新增租户隔离的鉴权读取 API；每次读取重新校验 SHA-256 与字节数，控制台通过带 Bearer token 的 Blob 请求展示截图，底层存储错误只返回受控错误码。真实 MinIO 已完成写入、逐字节读取和删除探测，临时对象与测试桶均已清理。
 40. 上线门禁新增生产对象存储和运行时检查：`AIRANK_ENV=production` 必须使用 S3/MinIO 与 TLS，禁止 `AIRANK_S3_ALLOW_HTTP=true`；Python 必须为 3.11+，Node 必须满足 20.19+ 或 22.12+。CI 已切换 Python 3.11，部署样例已移除会覆盖生产配置的重复 `local` 设置。
-41. 核心 8 Skill 新增独立评测语料：每项均执行 contract、holdout、adversarial 三套用例，共 24/24 通过；评测同时修复空事实仍生成页面、否定事实子串误支持、无关“第一名”误绑定品牌和非法复测比例四类可信度缺陷。
+41. 核心 10 Skill 已有独立评测语料：每项均执行 contract、holdout、adversarial 三套用例，共 30/30 通过；评测继续覆盖空事实、否定子串、无关排名、非法复测比例，并新增浅层比较、主体重标、角色缺口和品牌堆砌门禁。
 42. 新增内容寻址的 Promotion Evidence Ledger，绑定 registry、评测语料、核心实现、评测引擎和证据清单 SHA-256。当前 8 项本地评测全部通过，但因真实队列、人工标注 benchmark、Provider 引用 benchmark 等外部证据未逐项绑定，可晋级数仍为 0，全部诚实保留 `partial`。
 43. 新增内部 Skill 控制台，真实展示 Skill 版本、3/3 评测、套件、晋级 blocker 与 ledger hash；管理员 API 要求 Yudao `airank:skill:admin` 权限，认证中间件覆盖客户端伪造 permission header。浏览器桌面和 390px 移动验收通过，移动宽表仅在自身容器滚动，无页面级溢出或 console error。
 44. 新增项目级知识治理 API：开放冲突可按状态查询，1—365 天观察窗实时派生来源过期、来源即将到期、已批准事实过期、已批准事实即将到期与开放冲突；告警不会自动修改原始来源、事实或冲突状态。
@@ -100,13 +100,14 @@
 90. 深度吸收 `geo-citation-lab` 来源类型治理并重建为 AIRank 自有 Source Registry：只聚合项目 Citation 中实际出现的精确 DNS host，不按父域、名称或模型猜测；未知来源保持 `unclassified`。人工复核以追加版本保存分类、主体、置信度、权威度、用途、风险、证据、有效期、可信审核人和 supersedes 链，旧 Citation 与历史版本不可变。`20260808_0020` 已在真实 MySQL 升级；定向测试覆盖 v1/v2、过期乐观锁、旧版幂等回放不篡改当前版本和审计事件。证据中心隔离浏览器验收从未分类操作到 v2，桌面/390px 无页面级横向溢出、console `0 error / 0 warning`，14 行 QA 数据随后精确清理为 0。公开 CN-GEO 字典批量导入、双人复核 benchmark 和到期运营队列仍为 `partial`。
 91. Source Registry 已闭合到客户交付：客户包升级为 `airank.report-evidence-packet.v3`，精确保存每条 Citation 对应 host、snapshot、当前分类修订及 hash，未分类、过期、未知权威、禁止用途与无法解析 host 分别进入限制项；治理覆盖不完整时可交付观测事实，但不得生成整体来源权威性结论。`20260808_0021` 解除同一报告/schema 的单版本限制，改为按内容 hash 去重的不可变历史；来源复核或到期状态变化会生成新包，完全相同证据仍幂等复用。下载前验证对象存在与完整性；缺失对象只允许以相同 canonical bytes/原 SHA-256 恢复并新增审计，内容被篡改则返回完整性冲突。真实 MySQL 和浏览器以 6 个样本、6 条引用、2 个来源（1 个有效、1 个过期）及 2 条无 host 引用验证，界面明确显示“1/2，有效覆盖不完整”，桌面/390px 无页面级溢出且 console `0 error / 0 warning`；55 行隔离 QA 数据清理为 0。
 92. 四平台同轮 API 重复采样门禁已闭合：在同一已确认 blind 问题、同一 Prompt 版本和 API 采集面下，千问、豆包、Kimi、DeepSeek 各执行 3 次独立会话，最终 12/12 Task、AnswerSnapshot、EvidenceSnapshot、Provider request audit、成功 attempt 和 usage event 全部存在，12 个 Provider request ID 与 12 个 session 均唯一有效；12 条回答均正常未提及测试品牌并全部计入分母。`airank.measurement-quality.v4` 的 24/24 检查通过，API surface 的 12/12 证据完整，报告可在该证据范围内发布。Kimi K3 适配器按官方契约改为 `max_completion_tokens=4096`、省略固定 temperature、`reasoning_effort=low`；3 次均 `finish_reason=stop` 且正文、reasoning、request ID 和 exact usage 完整。HTTP 成功但正文为空时，现在保留上游原始响应、request ID、usage、终止原因、时长和请求契约作为不可变失败证据，并把已产生的 usage 写入成本账本。`20260808_0022` 同时版本化保存 manifest 默认请求参数与 route 实际请求契约；版本 ID 包含单向配置指纹，凭证轮换或请求参数变化会追加新版本而不覆盖历史关联。12 条真实请求审计均可按配置指纹关联 manifest；54 张租户表和 687 个工作区文件的凭证模式扫描均为 0 命中。该门禁不代表 Consumer Web/App、Provider 原生引用、事实准确率或品牌增长已经通过；已在会话暴露的 Kimi 密钥生产前仍必须轮换，DeepSeek `v3.2` 仍受计划下架迁移门禁约束。
-93. `intervention.page-blueprint` 升级为 `1.1.0` 并接入真实内容工作台：FAQ、事实页、产品页、案例页、研究页、比较页、JSON-LD 和 `llms.txt` 只接受当前已批准、可生成、无开放冲突且能定位 source hash/精确原文边界的 FactRevision；缺证据时返回 `needs_evidence` 且不生成正文。输出保存 sections、逐 Claim 的 FactRevision/ClaimSupport/来源边界、结构化数据、编辑 brief hash 和蓝图 hash；请求标题和编辑方向不进入正文或数据库明文，公开标题由已审核事实元数据确定性生成。来源正文 hash 不匹配、活动脚本/iframe、逐主张支持不完整或正文 hash 变化都会失败关闭；发布快照升级为 `airank.publish-snapshot.v2`，固定蓝图 hash 与 Skill 版本。真实 HTTP/MySQL 隔离租户已跑通来源→事实→批准→FAQ 蓝图→可信审核→不可变导出，客户端伪造审核人被认证身份覆盖，验收后 0 行残留。专用 Explainer、对称 Comparison、完整 Schema benchmark 和客户外部 CMS 回执仍为 `partial`。
+93. `intervention.page-blueprint` 升级为 `1.1.0` 并接入真实内容工作台：FAQ、事实页、产品页、案例页、研究页、JSON-LD 和 `llms.txt` 只接受当前已批准、可生成、无开放冲突且能定位 source hash/精确原文边界的 FactRevision；缺证据时返回 `needs_evidence` 且不生成正文。通用模板不再允许 `comparison_page` 绕过专用门禁。输出保存 sections、逐 Claim 的 FactRevision/ClaimSupport/来源边界、结构化数据、编辑 brief hash 和蓝图 hash；请求标题和编辑方向不进入正文或数据库明文，公开标题由已审核事实元数据确定性生成。来源正文 hash 不匹配、活动脚本/iframe、逐主张支持不完整或正文 hash 变化都会失败关闭；发布快照 `airank.publish-snapshot.v2` 固定蓝图 hash 与 Skill 版本。
+94. 深度吸收 `yao-geo-comparison-builder` 与 `yao-geo-explainer-builder` 并重建为 AIRank 自有专用 Skill。Alembic `20260808_0023` 在 FactAtom 固化不可变 `subject_type/subject_ref_id`，修订换主体返回冲突。`intervention.comparison-builder@1.0.0` 要求 2–4 主体共享至少 10 个维度且所有主体维度单元 100% 有审核精确证据，不生成排名、分数或无证据优劣；当前真实 UI 先闭合 2 主体×10 维度。`intervention.explainer-builder@1.0.0` 要求定义/机制/步骤/标准/误区/FAQ/边界七类角色达到 1/2/3/2/1/2/1，至少 12 条事实、1400 个证据字符且品牌/别名露出不超过 3 次，并生成同证据的 HowTo/FAQPage。两条真实 MySQL 链路均完成事实审核、逐 Claim/Support 持久化、内容审校和 v2 导出快照；真实客户公平性/内容质量 benchmark、3–4 主体 UI、外部 CMS 回执和完整 Schema 校验仍为 `partial`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：Python 3.9.6 与干净 Python 3.11.15 环境均为 `389 passed, 27 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
-- `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
+- `python3 -m pytest -q`：Python 3.9.6 与干净 Python 3.11.15 环境均为 `398 passed, 28 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
 - 浏览器：`/login -> /console` 登录通过；13 个控制台路由在 1491×1055 桌面和 390×844 移动端共 26 项检查全部通过，无横向溢出、认证丢失或显式接口失败。证据中心已下钻到一条真实豆包样本，原始回答、双 SHA-256、EvidenceSnapshot、session、证据等级和真实 request ID 均可见；该次较早浏览器批次的任务中心保留了 Kimi 未安全注入时的 3 条失败，后续 12/12 API 批次由数据库与 API 门禁重新验收，不篡改这段历史证据。
@@ -119,9 +120,10 @@
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260808_0022`；62 张 AIRank 表校验通过；新增可按配置指纹追溯的 Provider manifest 请求默认值和 route 实际请求契约，并继续校验同一报告的内容寻址不可变证据包历史、Source Registry 分类修订、事实准确率裁决、Provider 路由控制与变更事件、来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest、请求 route 审计、引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt。
-- 本地真实 MySQL integration：`25 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增 v3 来源治理包、多版本历史、对象恢复/防篡改、Provider 请求契约、凭证轮换不覆盖历史版本，以及空回答失败的 request ID/时长/attempt/4108-token 用量账本回归，并继续覆盖事实声明/裁决、当前事实失效、事实指标重算、packet/hash/可信操作者绑定下载回执、路由控制热更新、失败 ScanRun、来源页抓取、Provider 跨 Worker 容量竞争/TTL 回收、引用、页面审计、问题治理、Publisher、扫描 attempt 与复测链。独立 release-gate 数据库已从 `0019` 真实升级至 `0022` 并确认两列存在。
-- 页面蓝图真实 HTTP/MySQL 验收：隔离租户创建官方来源和已审核 FactRevision，生成 `intervention.page-blueprint@1.1.0` FAQ（4 个结构段、1 条 Claim、1 条 ClaimSupport），人工审核通过后导出 `airank.publish-snapshot.v2`；source/content/blueprint hash、精确字符边界、可信审核人和 Skill 版本全部可追溯。请求标题未直接公开，编辑方向与请求标题明文均未进入数据库；验收租户清理后 62 张表合计 0 行残留。
+- MySQL：Alembic `20260808_0023`；62 张 AIRank 表校验通过；FactAtom 新增受数据库 CHECK 与索引约束的主体类型/主体引用，继续覆盖可按配置指纹追溯的 Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、路由控制、来源页 capture、容量租约、引用复核、页面审计、观察 provenance、PII 和扫描 attempt。
+- 本地真实 MySQL integration：`26 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增 FactAtom 主体绑定、对称 Comparison、证据密集 Explainer 的审核与发布快照回归，并继续覆盖 v3 来源治理包、多版本历史、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、事实声明/裁决、packet/hash、路由控制、失败 ScanRun、来源页抓取、容量竞争/TTL、引用、页面审计、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已从 `0022` 升级至 `0023` 并验证数据库 CHECK 与主体索引。
+- 页面干预真实 MySQL 验收：通用 FAQ 蓝图继续通过来源→事实→批准→审核→`airank.publish-snapshot.v2`；专用比较使用 2 主体×10 维度生成 20 条 Claim/Support，专用解释使用七类角色/12 条事实/1400+ 证据字符生成 12 条 Claim/Support，两者均通过内容审校和不可变导出。所有测试租户都在 finally 清理，避免把验收事实冒充客户数据。
+- 专用内容真实 HTTP/MySQL 验收：独立 3.11 API 进程和隔离租户通过登录、项目、32 个来源/主体事实、逐事实审核、Comparison/Explainer 创建、内容审校与 export 发布包；客户端伪造的创建人/审核人均被认证会话 `http-qa` 覆盖。结果为 Comparison 10 段/20 Claim/20 Support、Explainer 7 段/12 Claim/12 Support，两个发布包均为 `packaged`；验收后 62 张租户表合计 0 行残留。
 - 报表中心浏览器复验：真实项目当前没有合格报告时显示“尚无客户报告”，不生成趋势或增长数字；“生成老板报告”被明确门禁阻断并提示不会伪造任务成功。1024px 桌面视口无页面级横向溢出，console `0 error / 0 warning`。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
@@ -136,7 +138,7 @@
 4. 在已完成的来源页抓取、对象存证和精确边界基础上，补待复核队列、claim 细粒度框选、双人复核一致性与人工标注 benchmark；单人真实复核闭环已经通过，但不能替代生产质量抽检。
 5. 在已完成数据库分布式容量租约与优先级多上游路由基础上，补动态择优、管理 API、长时崩溃恢复和负载压测；配额耗尽与幂等冲突继续禁止通过备用路由绕过。
 6. 补客户来源自动同步 worker、局部重嵌入和混合检索；不可变人工来源修订、旧事实失效和当前有效原文检索已完成，但不能把 `lexical_only` 包装成语义检索。
-7. 把通用页面蓝图继续拆成专用 Explainer 与同口径 Comparison Skill，补完整 Schema.org benchmark 和页面审计缺口自动编排；当前 8 类产物共享证据门禁，但比较页还不能在缺少竞品对称证据时安全发布。
+7. 为已完成的专用 Explainer/Comparison 补真实客户内容质量与公平性 benchmark、3–4 主体工作台、完整 Schema.org validator、页面审计缺口自动编排和外部 CMS 模板；本地代码与真实 MySQL 闭环不等于客户内容已经通过人工质量基准。
 8. 使用客户授权的 WordPress/HTTP 测试站点完成一次真实外部回执、截图、更新和撤回验收；适配器、attempt 消费与重试恢复已实现，但无外部账号时保持 `partial`。
 9. 按 Promotion Evidence Ledger 的 blocker 清单补真实队列、人工标注、Provider 引用和真实时间流逝后的 T+7/T+14/T+30 artifact；自动调度器已通过合成到期时间的真实 MySQL 验证，但不能冒充客户观察证据。每项必须提交仓库内可校验路径与 SHA-256 后才能晋级 `ready`。
 10. 以已通过的四平台真实重复样本继续从新建品牌跑到客户报告，在生产 HTTPS S3/MinIO 环境复验对象读写与截图展示，并完成带数据的浏览器 E2E 和完整上线门禁后，才允许声明商业可用。

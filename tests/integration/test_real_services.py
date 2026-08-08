@@ -39,6 +39,12 @@ from apps.api.delivery_routes import (
     PublishPackageCreateRequest,
 )
 from apps.api.knowledge_routes import (
+    ComparisonCellRequest,
+    ComparisonContentCreateRequest,
+    ComparisonDimensionRequest,
+    ComparisonSubjectRequest,
+    ExplainerContentCreateRequest,
+    ExplainerFactAssignmentRequest,
     FactConflictCreateRequest,
     FactConflictResolveRequest,
     FactProposalRequest,
@@ -92,7 +98,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0022"
+EXPECTED_ALEMBIC_HEAD = "20260808_0023"
 
 
 def require_real_flag(flag: str) -> None:
@@ -2953,6 +2959,179 @@ def test_real_mysql_knowledge_governance_derives_expiry_and_conflict_queue() -> 
         assert search.returned_count == 1
         assert search.results[0].source_id == source_revision.source_id
         assert search.results[0].text == "AIRank 提供可追溯的多平台 GEO 测量和审计日志。"
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_comparison_and_explainer_assets_reach_reviewed_publish_snapshots() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_specialized_content_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    knowledge_repo = MySQLKnowledgeRepository(database_url())
+    delivery_repo = MySQLDeliveryRepository(database_url())
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-specialized-content.example.com",
+                brand_name_hint="AIRank Specialized Content",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        subjects = [
+            ComparisonSubjectRequest(subject_id="subject_airank", display_name="AIRank", subject_type="brand"),
+            ComparisonSubjectRequest(subject_id="subject_peer", display_name="竞品甲", subject_type="competitor"),
+        ]
+        dimensions = [
+            ComparisonDimensionRequest(dimension_id=f"d{index}", label=f"核验维度 {index}")
+            for index in range(1, 11)
+        ]
+        cells: list[ComparisonCellRequest] = []
+        for subject in subjects:
+            for dimension in dimensions:
+                fact_text = f"{subject.display_name} 在{dimension.label}下的已核验事实。"
+                source = knowledge_repo.create_source(
+                    tenant_id,
+                    project.project_id,
+                    KnowledgeSourceCreateRequest(
+                        idempotency_key=f"comparison-{subject.subject_id}-{dimension.dimension_id}",
+                        source_type="official_document",
+                        title=f"{subject.display_name} {dimension.label}来源",
+                        content_text=fact_text,
+                        authority_level="official",
+                        risk_level="low",
+                    ),
+                )
+                fact = knowledge_repo.propose_fact(
+                    tenant_id,
+                    project.project_id,
+                    FactProposalRequest(
+                        title=f"{subject.display_name} {dimension.label}",
+                        fact_text=fact_text,
+                        source_ids=[source.source_id],
+                        subject_type=subject.subject_type,
+                        subject_ref_id=subject.subject_id,
+                        risk_level="low",
+                        disclosure="public",
+                        created_by="integration-test",
+                    ),
+                )
+                knowledge_repo.review_revision(
+                    tenant_id,
+                    project.project_id,
+                    fact.revision_id,
+                    FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+                )
+                cells.append(ComparisonCellRequest(subject_id=subject.subject_id, dimension_id=dimension.dimension_id, fact_revision_ids=[fact.revision_id]))
+
+        comparison = knowledge_repo.create_comparison_content(
+            tenant_id,
+            project.project_id,
+            ComparisonContentCreateRequest(
+                title="只进入 brief hash 的对比要求",
+                direction="使用同一维度且不输出排名",
+                target_subject_id="subject_airank",
+                subjects=subjects,
+                dimensions=dimensions,
+                cells=cells,
+                created_by="integration-test",
+            ),
+        )
+        comparison_review = delivery_repo.review_content(
+            tenant_id,
+            comparison.asset_id,
+            ContentReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        comparison_package = delivery_repo.create_package(
+            tenant_id,
+            comparison.asset_id,
+            PublishPackageCreateRequest(channel="export", idempotency_key="comparison-export-it", requested_by="integration-test"),
+        )
+
+        roles = ["definition", "mechanism", "mechanism", "step", "step", "step", "criterion", "criterion", "misconception", "faq", "faq", "boundary"]
+        assignments: list[ExplainerFactAssignmentRequest] = []
+        for index, role in enumerate(roles, start=1):
+            fact_text = f"第{index}条已审核说明：" + "该事实基于当前有效来源的精确原文边界，用于解释适用范围、执行条件与验证方式，不扩展为来源之外的承诺。" * 3
+            source = knowledge_repo.create_source(
+                tenant_id,
+                project.project_id,
+                KnowledgeSourceCreateRequest(
+                    idempotency_key=f"explainer-source-{index:02d}",
+                    source_type="official_document",
+                    title=f"解释来源 {index}",
+                    content_text=fact_text,
+                    authority_level="official",
+                    risk_level="low",
+                ),
+            )
+            fact = knowledge_repo.propose_fact(
+                tenant_id,
+                project.project_id,
+                FactProposalRequest(
+                    title=f"解释证据 {index}",
+                    fact_text=fact_text,
+                    source_ids=[source.source_id],
+                    subject_type="brand",
+                    subject_ref_id="subject_airank",
+                    risk_level="low",
+                    disclosure="public",
+                    created_by="integration-test",
+                ),
+            )
+            knowledge_repo.review_revision(
+                tenant_id,
+                project.project_id,
+                fact.revision_id,
+                FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+            )
+            assignments.append(ExplainerFactAssignmentRequest(fact_revision_id=fact.revision_id, content_role=role))
+
+        explainer = knowledge_repo.create_explainer_content(
+            tenant_id,
+            project.project_id,
+            ExplainerContentCreateRequest(
+                title="只进入 brief hash 的解释要求",
+                direction="覆盖七类解释证据",
+                subject_id="subject_airank",
+                subject_type="brand",
+                display_name="AIRank",
+                brand_names=["来客"],
+                assignments=assignments,
+                created_by="integration-test",
+            ),
+        )
+        explainer_review = delivery_repo.review_content(
+            tenant_id,
+            explainer.asset_id,
+            ContentReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        explainer_package = delivery_repo.create_package(
+            tenant_id,
+            explainer.asset_id,
+            PublishPackageCreateRequest(channel="export", idempotency_key="explainer-export-it", requested_by="integration-test"),
+        )
+
+        with engine.begin() as conn:
+            comparison_manifest = conn.execute(text("SELECT manifest_json FROM airank_publish_snapshots WHERE tenant_id=:tenant_id AND id=:snapshot_id"), {"tenant_id": tenant_id, "snapshot_id": comparison_package.snapshot_id}).scalar_one()
+            explainer_manifest = conn.execute(text("SELECT manifest_json FROM airank_publish_snapshots WHERE tenant_id=:tenant_id AND id=:snapshot_id"), {"tenant_id": tenant_id, "snapshot_id": explainer_package.snapshot_id}).scalar_one()
+        if isinstance(comparison_manifest, str):
+            comparison_manifest = json.loads(comparison_manifest)
+        if isinstance(explainer_manifest, str):
+            explainer_manifest = json.loads(explainer_manifest)
+
+        assert comparison.skill_id == "intervention.comparison-builder"
+        assert comparison.section_count == 10
+        assert len(comparison.claim_support_ids) == 20
+        assert comparison_review.fact_check_status == "passed"
+        assert comparison_package.status == "packaged"
+        assert comparison_manifest["generation_skill"] == {"skill_id": "intervention.comparison-builder", "version": "1.0.0"}
+        assert explainer.skill_id == "intervention.explainer-builder"
+        assert explainer.section_count == 7
+        assert len(explainer.claim_support_ids) == 12
+        assert explainer_review.fact_check_status == "passed"
+        assert explainer_package.status == "packaged"
+        assert explainer_manifest["generation_skill"] == {"skill_id": "intervention.explainer-builder", "version": "1.0.0"}
     finally:
         cleanup_tenant(engine, tenant_id)
 

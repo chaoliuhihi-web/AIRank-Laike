@@ -1439,6 +1439,17 @@ button:disabled {
   border-bottom: 0;
 }
 
+.comparison-evidence-row {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: center;
+  cursor: default;
+}
+
+.comparison-evidence-row select {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
 .content-blueprint-fact input {
   width: 16px;
   height: 16px;
@@ -3774,6 +3785,10 @@ button:disabled {
   .content-blueprint-actions > button,
   .fact-review-actions > button {
     width: 100%;
+  }
+
+  .comparison-evidence-row {
+    grid-template-columns: 1fr;
   }
 
   .knowledge-source-form-actions,
