@@ -989,3 +989,23 @@ Limitations and blockers:
 Decision:
 
 - AIRank can safely prepare large Provider source sets for governed review without N+1 loading or false support claims. The overall product remains commercial `NO-GO` until the external production, Consumer, human-quality and longitudinal-observation gates pass.
+
+## 2026-08-08 Exact Citation Claim Binding Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Citation review no longer offers whole-answer registration as its only path. A reviewer may select text directly inside the immutable answer; the browser maps that DOM Range to exact answer offsets and rejects selections outside the answer. Pasted text must occur exactly once or the reviewer must use direct selection.
+- After registration, the source-review workbench exposes an explicit current-Claim selector. Every source-segment `supports`, `contradicts` or `insufficient` decision resolves that selected ID instead of silently using the first Claim in the response array.
+- Real browser/MySQL acceptance created two Claims at boundaries 0–29 and 29–54, selected the second Claim, captured one real source page and submitted a production `insufficient` primary decision. Direct database verification proved the review case referenced the second Claim, retained the trusted session reviewer and remained `awaiting_secondary`.
+- Desktop 1543px and mobile 390x844 had no page-level horizontal overflow and the browser console reported zero warnings/errors. The isolated tenant was deleted from 17 tables (20 rows), its project count returned to zero, and two temporary object files were deleted.
+
+Limitations and blockers:
+
+- This verifies precise Claim selection and evidence binding, not reviewer agreement or Citation Support. The customer benchmark remains 0/20 and no single primary decision enters a customer metric.
+- Bulk Claim navigation, reviewer assignment/SLAs, Consumer Web/App L3 and production infrastructure remain incomplete.
+
+Decision:
+
+- AIRank no longer risks applying a source decision to the first or whole-answer Claim by UI default. Commercial status remains `NO-GO` until independent reviewer quality and external production gates pass.

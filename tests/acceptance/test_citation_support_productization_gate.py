@@ -112,4 +112,8 @@ def test_frontend_never_equates_selected_citations_with_support() -> None:
     assert "批量准备来源正文" in app
     assert "抓取成功只代表页面已存证，不代表来源支持回答" in app
     assert "const detail = await fetchCitationSourceCapture(captureId);" in app
+    assert "使用上方选中文本" in app
+    assert "当前来源片段要核验的断言" in app
+    assert "claims.find((item) => item.claim_id === citationClaimId)" in app
+    assert "登记整段回答为待核验断言" not in app
     assert "selected.snapshot_id, controller.signal" in app

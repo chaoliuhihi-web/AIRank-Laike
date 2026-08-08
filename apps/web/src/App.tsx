@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
@@ -2097,6 +2097,7 @@ const EVIDENCE_CITATION_INITIAL_LIMIT = 20;
 
 function EvidencePage() {
   const { project } = useConsoleOverview();
+  const answerTextRef = useRef<HTMLDivElement>(null);
   const [runs, setRuns] = useState<ScanRun[]>([]);
   const [samples, setSamples] = useState<AnswerSample[]>([]);
   const [sampleSummary, setSampleSummary] = useState({
@@ -2118,6 +2119,9 @@ function EvidencePage() {
   const [objectPreviewError, setObjectPreviewError] = useState<string | null>(null);
   const [citationSupport, setCitationSupport] = useState<CitationSupportBundle | null>(null);
   const [citationSupportError, setCitationSupportError] = useState<string | null>(null);
+  const [citationClaimText, setCitationClaimText] = useState("");
+  const [citationClaimId, setCitationClaimId] = useState("");
+  const [citationClaimBoundary, setCitationClaimBoundary] = useState<{ start: number; end: number } | null>(null);
   const [citationCaptures, setCitationCaptures] = useState<Record<string, CitationSourceCapture[]>>({});
   const [citationBatch, setCitationBatch] = useState<CitationCaptureBatch | null>(null);
   const [citationAction, setCitationAction] = useState<string | null>(null);
@@ -2267,6 +2271,9 @@ function EvidencePage() {
   useEffect(() => {
     setShowAllCitations(false);
     setCitationBatch(null);
+    setCitationClaimText("");
+    setCitationClaimId("");
+    setCitationClaimBoundary(null);
   }, [selected?.snapshot_id]);
 
   useEffect(() => {
@@ -2309,6 +2316,7 @@ function EvidencePage() {
     fetchCitationSupport(selected.snapshot_id, controller.signal)
       .then((data) => {
         setCitationSupport(data);
+        setCitationClaimId((current) => data.claims.some((claim) => claim.claim_id === current) ? current : data.claims[0]?.claim_id || "");
         setCitationSupportError(null);
       })
       .catch((error) => {
@@ -2412,7 +2420,9 @@ function EvidencePage() {
   };
   const refreshCitationSupport = async () => {
     if (!selected?.snapshot_id) return;
-    setCitationSupport(await fetchCitationSupport(selected.snapshot_id));
+    const bundle = await fetchCitationSupport(selected.snapshot_id);
+    setCitationSupport(bundle);
+    setCitationClaimId((current) => bundle.claims.some((claim) => claim.claim_id === current) ? current : bundle.claims[0]?.claim_id || "");
   };
   const refreshFactAccuracy = async () => {
     if (!selected?.snapshot_id) return;
@@ -2428,12 +2438,66 @@ function EvidencePage() {
     if (!project.id || !selectedRunId) return;
     setQuality(await fetchMeasurementQuality(project.id, selectedRunId));
   };
-  const registerFullAnswerClaim = async () => {
-    if (!selected || selected.sample_status !== "valid" || !selected.answer_text.trim()) return;
+  const useSelectedAnswerText = () => {
+    if (!selected || !answerTextRef.current) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      setCitationActionError("请先在上方不可变回答中选中一段完整、可独立核验的原句。");
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const answerElement = answerTextRef.current;
+    if (
+      !answerElement.contains(range.startContainer)
+      || !answerElement.contains(range.endContainer)
+    ) {
+      setCitationActionError("所选文本必须完整位于上方不可变回答内。");
+      return;
+    }
+    const prefix = document.createRange();
+    prefix.selectNodeContents(answerElement);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    const start = prefix.toString().length;
+    const claimText = range.toString();
+    const end = start + claimText.length;
+    if (!claimText.trim() || selected.answer_text.slice(start, end) !== claimText) {
+      setCitationActionError("无法把当前选择映射到不可变回答边界，请重新选择完整原句。");
+      return;
+    }
+    setCitationClaimText(claimText);
+    setCitationClaimBoundary({ start, end });
+    setCitationActionError(null);
+  };
+  const registerCitationClaim = async () => {
+    if (!selected || selected.sample_status !== "valid") return;
+    const claimText = citationClaimText.trim();
+    let answerStart = -1;
+    let answerEnd = -1;
+    if (
+      citationClaimBoundary
+      && selected.answer_text.slice(citationClaimBoundary.start, citationClaimBoundary.end) === citationClaimText
+    ) {
+      answerStart = citationClaimBoundary.start;
+      answerEnd = citationClaimBoundary.end;
+    } else {
+      answerStart = selected.answer_text.indexOf(claimText);
+      answerEnd = answerStart + claimText.length;
+      if (claimText && selected.answer_text.indexOf(claimText, answerEnd) >= 0) {
+        setCitationActionError("该原句在回答中出现多次，请直接在上方回答中选取精确文本。");
+        return;
+      }
+    }
+    if (!claimText || answerStart < 0 || answerEnd <= answerStart) {
+      setCitationActionError("请从上方回答选取，或粘贴回答中原样存在的一条完整断言。");
+      return;
+    }
     setCitationAction("claim");
     setCitationActionError(null);
     try {
-      await createCitationClaim(selected.snapshot_id, 0, selected.answer_text.length);
+      const claim = await createCitationClaim(selected.snapshot_id, answerStart, answerEnd);
+      setCitationClaimId(claim.claim_id);
+      setCitationClaimText("");
+      setCitationClaimBoundary(null);
       await refreshCitationSupport();
     } catch (error) {
       setCitationActionError(error instanceof Error ? error.message : "回答断言登记失败");
@@ -2583,9 +2647,9 @@ function EvidencePage() {
     segment: CitationSourceCapture["segments"][number],
     supportLabel: "supports" | "contradicts" | "insufficient",
   ) => {
-    const claim = citationSupport?.claims[0];
+    const claim = citationSupport?.claims.find((item) => item.claim_id === citationClaimId);
     if (!claim || !capture.content_sha256 || !capture.raw_object_ref_id) {
-      setCitationActionError("请先登记回答断言，并等待来源抓取完成后再复核。");
+      setCitationActionError("请先登记并选择具体回答断言，再等待来源抓取完成后复核。");
       return;
     }
     setCitationAction(`review:${citationId}:${supportLabel}`);
@@ -2916,7 +2980,7 @@ function EvidencePage() {
         <section className="evidence-detail-grid">
           <Panel title={selected.sample_status === "valid" ? "不可变原始回答" : "不可变失败证据"}>
             {selected.sample_status === "valid"
-              ? <div className="evidence-answer">{selected.answer_text}</div>
+              ? <div className="evidence-answer evidence-answer--selectable" ref={answerTextRef}>{selected.answer_text}</div>
               : <DataStateCard title="该任务没有有效回答" desc="系统保留了不可变失败快照、请求元数据和可用的阻塞截图；该样本不会被误算为品牌未提及。" tone={selected.sample_status === "blocked" ? "warning" : "danger"} />}
             <dl className="evidence-metadata">
               <div><dt>回答 SHA-256</dt><dd>{selected.answer_sha256 || "不适用（失败/阻塞样本）"}</dd></div>
@@ -3183,17 +3247,27 @@ function EvidencePage() {
                     tone="warning"
                   />
                 )}
-                {selected.sample_status === "valid" && citationSupport.claims.length === 0 && (
-                  <button className="primary-button citation-claim-button" type="button" disabled={citationAction === "claim"} onClick={() => void registerFullAnswerClaim()}>
-                    {citationAction === "claim" ? "登记中" : "登记整段回答为待核验断言"}
-                  </button>
+                {selected.sample_status === "valid" && (
+                  <div className="citation-claim-form">
+                    <label>回答中的待核验断言原句<textarea rows={3} value={citationClaimText} onChange={(event) => { setCitationClaimText(event.target.value); setCitationClaimBoundary(null); }} placeholder="在上方回答中选中一条完整断言，或粘贴唯一原句" /></label>
+                    <div className="citation-claim-actions">
+                      <button className="table-action" type="button" onClick={useSelectedAnswerText}>使用上方选中文本</button>
+                      <button className="primary-button citation-claim-button" type="button" disabled={citationAction === "claim" || !citationClaimText.trim()} onClick={() => void registerCitationClaim()}>
+                        {citationAction === "claim" ? "登记中" : "按精确回答边界登记"}
+                      </button>
+                    </div>
+                    <small>{citationClaimBoundary ? `已映射回答边界 ${citationClaimBoundary.start}–${citationClaimBoundary.end}` : "粘贴文本必须在回答中唯一；直接选择可保留精确位置。"}</small>
+                  </div>
                 )}
                 {citationSupport.claims.length > 0 && (
-                  <ol className="evidence-citations citation-claims">
-                    {citationSupport.claims.map((claim) => (
-                      <li key={claim.claim_id}><strong>{claim.claim_text}</strong><span>回答边界 {claim.answer_start}–{claim.answer_end} · {claim.extraction_method}</span></li>
-                    ))}
-                  </ol>
+                  <>
+                    <label className="citation-claim-selector">当前来源片段要核验的断言<select value={citationClaimId} onChange={(event) => setCitationClaimId(event.target.value)}>{citationSupport.claims.map((claim) => <option value={claim.claim_id} key={claim.claim_id}>{claim.claim_text.slice(0, 80)} · {claim.answer_start}–{claim.answer_end}</option>)}</select><small>下方每个“支持/矛盾/不足”决定只绑定这里明确选择的一条断言。</small></label>
+                    <ol className="evidence-citations citation-claims">
+                      {citationSupport.claims.map((claim) => (
+                        <li key={claim.claim_id} className={claim.claim_id === citationClaimId ? "is-selected" : undefined}><strong>{claim.claim_text}</strong><span>回答边界 {claim.answer_start}–{claim.answer_end} · {claim.extraction_method}</span></li>
+                      ))}
+                    </ol>
+                  </>
                 )}
               </>
             )}
