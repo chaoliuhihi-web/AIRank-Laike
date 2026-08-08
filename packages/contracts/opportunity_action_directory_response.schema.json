@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_directory_response.schema.json",
+  "title": "Opportunity Action Directory Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "contract_version", "bindings", "recent_sync_runs", "configured_team_count", "verified_team_count", "known_limitations"],
+      "properties": {
+        "project_id": { "type": "string" },
+        "contract_version": { "const": "airank.opportunity-action-directory-sync.v1" },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding" }
+        },
+        "recent_sync_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/run" }
+        },
+        "configured_team_count": { "type": "integer", "minimum": 0 },
+        "verified_team_count": { "type": "integer", "minimum": 0 },
+        "known_limitations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string" },
+        "request_id": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "syncState": { "enum": ["not_configured", "pending", "verified", "stale", "failed"] },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_id", "team_id", "team_name", "external_source", "external_group_id", "status", "sync_enabled", "sync_interval_minutes", "default_priority", "default_max_active_actions", "default_receives_escalations", "last_sync_state", "last_sync_run_id", "last_synced_at", "next_sync_at", "last_error_code", "version", "updated_at"],
+      "properties": {
+        "binding_id": { "type": "string" },
+        "team_id": { "type": "string" },
+        "team_name": { "type": "string" },
+        "external_source": { "const": "yudao" },
+        "external_group_id": { "type": "string" },
+        "status": { "enum": ["active", "disabled"] },
+        "sync_enabled": { "type": "boolean" },
+        "sync_interval_minutes": { "type": "integer", "minimum": 15 },
+        "default_priority": { "type": "integer", "minimum": 1 },
+        "default_max_active_actions": { "type": "integer", "minimum": 1 },
+        "default_receives_escalations": { "type": "boolean" },
+        "last_sync_state": { "$ref": "#/$defs/syncState" },
+        "last_sync_run_id": { "type": ["string", "null"] },
+        "last_synced_at": { "type": ["string", "null"], "format": "date-time" },
+        "next_sync_at": { "type": ["string", "null"], "format": "date-time" },
+        "last_error_code": { "type": ["string", "null"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "binding_id", "binding_version", "team_id", "external_group_id", "status", "endpoint_host", "response_sha256", "discovered_member_count", "active_member_count", "created_member_count", "updated_member_count", "unchanged_member_count", "disabled_member_count", "manual_conflict_count", "error_code", "retryable", "started_at", "finished_at", "idempotent_replay"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "binding_id": { "type": "string" },
+        "binding_version": { "type": "integer", "minimum": 1 },
+        "team_id": { "type": "string" },
+        "external_group_id": { "type": "string" },
+        "status": { "enum": ["running", "succeeded", "failed"] },
+        "endpoint_host": { "type": ["string", "null"] },
+        "response_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "discovered_member_count": { "type": "integer", "minimum": 0 },
+        "active_member_count": { "type": "integer", "minimum": 0 },
+        "created_member_count": { "type": "integer", "minimum": 0 },
+        "updated_member_count": { "type": "integer", "minimum": 0 },
+        "unchanged_member_count": { "type": "integer", "minimum": 0 },
+        "disabled_member_count": { "type": "integer", "minimum": 0 },
+        "manual_conflict_count": { "type": "integer", "minimum": 0 },
+        "error_code": { "type": ["string", "null"] },
+        "retryable": { "type": "boolean" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": ["string", "null"], "format": "date-time" },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    }
+  }
+}

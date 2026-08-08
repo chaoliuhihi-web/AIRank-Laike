@@ -106,6 +106,7 @@ import {
   fetchFactAcquisitionTasks,
   fetchOpportunityActions,
   fetchOpportunityActionRouting,
+  fetchOpportunityActionDirectory,
   fetchOpportunityExecutionPortfolio,
   fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
@@ -162,6 +163,8 @@ import {
   updateKnowledgeSyncPolicy,
   upsertOpportunityActionMember,
   putOpportunityActionRoute,
+  putOpportunityActionDirectoryBinding,
+  runOpportunityActionDirectorySync,
   putOpportunityExecutionPlan,
   waiveOpportunityDependency,
   verifyOpportunityActionNotObserved,
@@ -191,6 +194,7 @@ import {
   type OpportunityAction,
   type OpportunityActionList,
   type OpportunityActionRouting,
+  type OpportunityActionDirectory,
   type OpportunityDependency,
   type OpportunityExecutionPortfolio,
   type OpportunitySourceKind,
@@ -4492,6 +4496,15 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     known_limitations: ["yudao_action_team_sync_not_configured"],
     idempotent_replay: false,
   });
+  const [opportunityDirectory, setOpportunityDirectory] = useState<OpportunityActionDirectory>({
+    project_id: "",
+    contract_version: "airank.opportunity-action-directory-sync.v1",
+    bindings: [],
+    recent_sync_runs: [],
+    configured_team_count: 0,
+    verified_team_count: 0,
+    known_limitations: ["yudao_action_team_sync_not_configured"],
+  });
   const [opportunityPlanning, setOpportunityPlanning] = useState<OpportunityExecutionPortfolio>({
     project_id: "",
     contract_version: "airank.opportunity-execution-plan.v1",
@@ -4549,6 +4562,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setOpportunities({ project_id: "", contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
       setOpportunityActions({ project_id: "", contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
       setOpportunityRouting({ project_id: "", contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
+      setOpportunityDirectory({ project_id: "", contract_version: "airank.opportunity-action-directory-sync.v1", bindings: [], recent_sync_runs: [], configured_team_count: 0, verified_team_count: 0, known_limitations: ["yudao_action_team_sync_not_configured"] });
       setOpportunityPlanning({ project_id: "", contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
       return;
     }
@@ -4563,9 +4577,10 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchOpportunities(project.id, controller.signal),
       fetchOpportunityActions(project.id, controller.signal),
       fetchOpportunityActionRouting(project.id, controller.signal),
+      fetchOpportunityActionDirectory(project.id, controller.signal),
       fetchOpportunityExecutionPortfolio(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityPlanning]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityDirectory, nextOpportunityPlanning]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
@@ -4575,6 +4590,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunities(nextOpportunities);
         setOpportunityActions(nextOpportunityActions);
         setOpportunityRouting(nextOpportunityRouting);
+        setOpportunityDirectory(nextOpportunityDirectory);
         setOpportunityPlanning(nextOpportunityPlanning);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
@@ -4604,6 +4620,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunities({ project_id: project.id, contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
         setOpportunityActions({ project_id: project.id, contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
         setOpportunityRouting({ project_id: project.id, contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
+        setOpportunityDirectory({ project_id: project.id, contract_version: "airank.opportunity-action-directory-sync.v1", bindings: [], recent_sync_runs: [], configured_team_count: 0, verified_team_count: 0, known_limitations: ["directory_state_unavailable"] });
         setOpportunityPlanning({ project_id: project.id, contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
@@ -4809,6 +4826,68 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       notify({ title: "机会来源路由已保存", desc: "领取时将重新核验团队成员资格与容量；配置任一路由后不再回退到无限制领取。", tone: "success" });
     } catch (error) {
       notify({ title: "机会来源路由未保存", desc: error instanceof Error ? error.message : "团队为空、停用或路由版本已变化。", tone: "danger" });
+    } finally {
+      setRoutingMutationKey(null);
+    }
+  };
+
+  const submitOpportunityDirectoryBinding = async (
+    teamId: string,
+    externalGroupId: string,
+    expectedVersion?: number,
+  ) => {
+    if (!project.id) return;
+    setRoutingMutationKey(`directory-binding:${teamId}`);
+    try {
+      const directory = await putOpportunityActionDirectoryBinding(
+        project.id,
+        teamId,
+        externalGroupId,
+        expectedVersion,
+      );
+      const routing = await fetchOpportunityActionRouting(project.id);
+      setOpportunityDirectory(directory);
+      setOpportunityRouting(routing);
+      notify({
+        title: "Yudao 成员目录已绑定",
+        desc: "绑定处于 pending；只有真实同步成功后，外部成员才会标记为已核验。凭证未进入请求或数据库。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "成员目录未绑定", desc: error instanceof Error ? error.message : "请确认管理员权限、部门 ID 与绑定版本。", tone: "danger" });
+    } finally {
+      setRoutingMutationKey(null);
+    }
+  };
+
+  const submitOpportunityDirectoryRun = async (teamId: string) => {
+    if (!project.id) return;
+    setRoutingMutationKey(`directory-run:${teamId}`);
+    try {
+      const directory = await runOpportunityActionDirectorySync(project.id, teamId);
+      const routing = await fetchOpportunityActionRouting(project.id);
+      setOpportunityDirectory(directory);
+      setOpportunityRouting(routing);
+      const run = directory.recent_sync_runs.find((item) => item.team_id === teamId);
+      notify({
+        title: "交付成员目录真实同步完成",
+        desc: run
+          ? `有效外部成员 ${run.active_member_count}，新增 ${run.created_member_count}，更新 ${run.updated_member_count}，手工身份冲突 ${run.manual_conflict_count}。`
+          : "同步已完成，请查看同步运行证据。",
+        tone: "success",
+      });
+    } catch (error) {
+      try {
+        const [directory, routing] = await Promise.all([
+          fetchOpportunityActionDirectory(project.id),
+          fetchOpportunityActionRouting(project.id),
+        ]);
+        setOpportunityDirectory(directory);
+        setOpportunityRouting(routing);
+      } catch {
+        // Preserve the original, more actionable synchronization error.
+      }
+      notify({ title: "交付成员目录同步失败", desc: error instanceof Error ? error.message : "运行失败已留痕，团队保持失败关闭状态。", tone: "danger" });
     } finally {
       setRoutingMutationKey(null);
     }
@@ -5122,6 +5201,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         data={opportunities}
         actionData={opportunityActions}
         routingData={opportunityRouting}
+        directoryData={opportunityDirectory}
         planningData={opportunityPlanning}
         currentUserId={getStoredAuthSession()?.user.userId ?? ""}
         deriving={derivingOpportunities}
@@ -5135,6 +5215,8 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         onCreateTeam={(name) => void submitOpportunityTeamCreate(name)}
         onJoinTeam={(teamId) => void submitOpportunityTeamJoin(teamId)}
         onPutRoute={(sourceKind, teamId) => void submitOpportunityRoute(sourceKind, teamId)}
+        onSaveDirectoryBinding={(teamId, externalGroupId, expectedVersion) => void submitOpportunityDirectoryBinding(teamId, externalGroupId, expectedVersion)}
+        onRunDirectorySync={(teamId) => void submitOpportunityDirectoryRun(teamId)}
         onSavePlan={(action, effortHours, budgetAmount, assumptions, expectedVersion) => void submitOpportunityPlan(action, effortHours, budgetAmount, assumptions, expectedVersion)}
         onAddDependency={(action, prerequisiteActionId, rationale) => void submitOpportunityDependency(action, prerequisiteActionId, rationale)}
         onWaiveDependency={(dependency, waiverReason) => void submitOpportunityDependencyWaiver(dependency, waiverReason)}

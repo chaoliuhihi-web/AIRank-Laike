@@ -10,6 +10,7 @@ from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
 
 from .knowledge_sync import MySQLKnowledgeSyncScheduler
 from .opportunity_action_escalation import MySQLOpportunityActionEscalationScheduler
+from .opportunity_directory_sync import MySQLOpportunityDirectorySyncScheduler
 from .retest import MySQLRetestScheduler
 from .review_escalation import MySQLReviewEscalationScheduler
 from .reviewer_directory_sync import MySQLReviewerDirectorySyncScheduler
@@ -107,6 +108,12 @@ def main() -> int:
         project_id=project_id,
         scheduler_id=scheduler_id,
     )
+    opportunity_directory_scheduler = MySQLOpportunityDirectorySyncScheduler(
+        database_url,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id=scheduler_id,
+    )
     if args.dry_run:
         retest_preview = scheduler.preview().to_record()
         knowledge_preview = (
@@ -129,6 +136,11 @@ def main() -> int:
             if window_id
             else reviewer_directory_scheduler.preview().to_record()
         )
+        opportunity_directory_preview = (
+            {"skipped": "window_id scope only"}
+            if window_id
+            else opportunity_directory_scheduler.preview().to_record()
+        )
         print(
             json.dumps(
                 {
@@ -144,6 +156,7 @@ def main() -> int:
                     "review_escalation": review_escalation_preview,
                     "opportunity_action_escalation": opportunity_action_escalation_preview,
                     "reviewer_directory_sync": reviewer_directory_preview,
+                    "opportunity_directory_sync": opportunity_directory_preview,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -192,6 +205,11 @@ def main() -> int:
             if window_id
             else reviewer_directory_scheduler.dispatch_due(limit=args.limit)
         )
+        opportunity_directory_dispatched = (
+            []
+            if window_id
+            else opportunity_directory_scheduler.dispatch_due(limit=args.limit)
+        )
         print(
             json.dumps(
                 {
@@ -209,6 +227,9 @@ def main() -> int:
                     ],
                     "reviewer_directory_sync_dispatched": [
                         item.to_record() for item in reviewer_directory_dispatched
+                    ],
+                    "opportunity_directory_sync_dispatched": [
+                        item.to_record() for item in opportunity_directory_dispatched
                     ],
                 },
                 ensure_ascii=False,

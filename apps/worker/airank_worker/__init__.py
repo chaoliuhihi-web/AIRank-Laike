@@ -15,6 +15,12 @@ from .publisher import (
     PublisherReceipt,
     run_next_publish_job,
 )
+from .opportunity_directory_sync import (
+    OpportunityDirectorySyncOutcome,
+    OpportunityDirectorySyncWorkerError,
+    build_opportunity_directory_sync_repository,
+    run_next_opportunity_directory_sync_job,
+)
 from .scan import ScanDispatchResult, ScanWorkerError, run_next_real_scan_job
 from .reviewer_directory_sync import (
     ReviewerDirectorySyncOutcome,
@@ -38,10 +44,14 @@ __all__ = [
     "MySQLJobLeaseStore",
     "MySQLKnowledgeSyncExecutionRepository",
     "MySQLPublishExecutionRepository",
+    "OpportunityDirectorySyncOutcome",
+    "OpportunityDirectorySyncWorkerError",
     "PublisherError",
     "PublisherGateway",
     "PublisherReceipt",
     "run_next_publish_job",
+    "build_opportunity_directory_sync_repository",
+    "run_next_opportunity_directory_sync_job",
     "build_knowledge_sync_service",
     "run_next_knowledge_sync_job",
     "ReviewerDirectorySyncOutcome",

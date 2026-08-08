@@ -96,6 +96,15 @@ from apps.api.reviewer_routing_routes import (
     ReviewerTeamCreateRequest,
     ReviewerTeamMemberUpsertRequest,
 )
+from apps.api.opportunity_routing_routes import (
+    MySQLOpportunityActionRoutingRepository,
+    OpportunityActionMemberUpsertRequest,
+    OpportunityActionTeamCreateRequest,
+)
+from apps.api.opportunity_directory_routes import (
+    MySQLOpportunityActionDirectoryRepository,
+    OpportunityActionDirectoryBindingPutRequest,
+)
 from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
 from airank_domain.measurement import sha256_text
 from airank_score.quality import build_measurement_quality_report
@@ -129,6 +138,7 @@ from airank_worker import (  # noqa: E402
     run_next_real_scan_job,
     run_next_publish_job,
     run_next_reviewer_directory_sync_job,
+    run_next_opportunity_directory_sync_job,
     MySQLReviewNotificationRepository,
     ReviewNotificationConfig,
     ReviewNotificationWebhookClient,
@@ -137,6 +147,7 @@ from airank_worker import (  # noqa: E402
 from airank_scheduler import (  # noqa: E402
     MySQLReviewEscalationScheduler,
     MySQLReviewerDirectorySyncScheduler,
+    MySQLOpportunityDirectorySyncScheduler,
 )
 from airank_xinghe_adapter import (  # noqa: E402
     CapabilityProbe,
@@ -148,7 +159,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0036"
+EXPECTED_ALEMBIC_HEAD = "20260809_0037"
 
 
 def require_real_flag(flag: str) -> None:
@@ -214,7 +225,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 89
+        assert table_count == 91
         for table_name in (
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
@@ -236,6 +247,8 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             "airank_opportunity_action_plans",
             "airank_opportunity_action_dependencies",
             "airank_opportunity_action_plan_events",
+            "airank_opportunity_action_team_sync_bindings",
+            "airank_opportunity_action_team_sync_runs",
         ):
             assert conn.execute(
                 text(
@@ -4988,6 +5001,162 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             for row in assignment_rows
         )
         assert {"claimed", "heartbeat", "released", "completed"} <= set(assignment_events)
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_opportunity_directory_scheduler_worker_chain() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_opportunity_directory_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    routing_repo = MySQLOpportunityActionRoutingRepository(database_url())
+    directory_repo = MySQLOpportunityActionDirectoryRepository(database_url())
+
+    class FakeActionDirectoryClient:
+        @staticmethod
+        def fetch_department(department_id: str) -> YudaoReviewerDirectorySnapshot:
+            assert department_id == "42"
+            return YudaoReviewerDirectorySnapshot(
+                department_id="42",
+                department_name="Opportunity delivery",
+                members=(
+                    YudaoReviewer(
+                        user_id="directory-owner",
+                        username="directory.owner",
+                        display_name="Directory Owner",
+                        department_id="42",
+                        enabled=True,
+                    ),
+                    YudaoReviewer(
+                        user_id="manual-owner",
+                        username="manual.owner",
+                        display_name="External Manual Owner",
+                        department_id="42",
+                        enabled=True,
+                    ),
+                ),
+                response_sha256="e" * 64,
+                endpoint_host="yudao.integration.invalid",
+            )
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://opportunity-directory.example.com",
+                brand_name_hint="Opportunity Directory Integration",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        routing = routing_repo.create_team(
+            tenant_id,
+            project.project_id,
+            OpportunityActionTeamCreateRequest(name="Opportunity delivery"),
+            "opportunity-directory-team",
+            "opportunity-admin",
+        )
+        team_id = routing.teams[0].team_id
+        routing_repo.upsert_member(
+            tenant_id,
+            project.project_id,
+            team_id,
+            "manual-owner",
+            OpportunityActionMemberUpsertRequest(
+                display_name="Manual Owner",
+                priority=80,
+                max_active_actions=3,
+            ),
+            "opportunity-admin",
+        )
+        pending = directory_repo.put_binding(
+            tenant_id,
+            project.project_id,
+            team_id,
+            OpportunityActionDirectoryBindingPutRequest(
+                external_group_id="42",
+                sync_interval_minutes=60,
+                default_max_active_actions=2,
+            ),
+            "opportunity-admin",
+            "trace-opportunity-directory-binding",
+        )
+        binding = pending.bindings[0]
+        assert binding.last_sync_state == "pending"
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE airank_opportunity_action_team_sync_bindings "
+                    "SET next_sync_at=:due_at WHERE tenant_id=:tenant_id AND id=:binding_id"
+                ),
+                {
+                    "due_at": datetime.now(timezone.utc) - timedelta(seconds=1),
+                    "tenant_id": tenant_id,
+                    "binding_id": binding.binding_id,
+                },
+            )
+
+        scheduler = MySQLOpportunityDirectorySyncScheduler(
+            database_url(),
+            tenant_id=tenant_id,
+            project_id=project.project_id,
+            scheduler_id="integration-opportunity-directory-scheduler",
+        )
+        assert scheduler.preview().due_binding_count == 1
+        dispatched = scheduler.dispatch_due(limit=10)
+        assert len(dispatched) == 1
+        outcome = run_next_opportunity_directory_sync_job(
+            MySQLJobLeaseStore(
+                database_url(),
+                tenant_id=tenant_id,
+                project_id=project.project_id,
+                job_id=dispatched[0].job_id,
+            ),
+            directory_repo,
+            FakeActionDirectoryClient(),  # type: ignore[arg-type]
+            worker_id="integration-opportunity-directory-worker",
+        )
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        assert outcome.created_member_count == 1
+        assert outcome.manual_conflict_count == 1
+        state = directory_repo.get_state(tenant_id, project.project_id)
+        assert state.verified_team_count == 1
+        assert state.recent_sync_runs[0].run_id == outcome.run_id
+        routing = routing_repo.get_routing(tenant_id, project.project_id)
+        team = routing.teams[0]
+        assert team.external_sync_state == "verified"
+        members = {member.user_id: member for member in team.members}
+        assert members["manual-owner"].display_name == "Manual Owner"
+        assert members["manual-owner"].membership_source == "manual"
+        assert members["manual-owner"].external_membership_verified is False
+        assert members["directory-owner"].membership_source == "yudao"
+        assert members["directory-owner"].external_membership_verified is True
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM airank_async_jobs "
+                    "WHERE tenant_id=:tenant_id AND id=:job_id "
+                    "AND job_type='opportunity.directory.sync' AND status='succeeded'"
+                ),
+                {"tenant_id": tenant_id, "job_id": dispatched[0].job_id},
+            ).scalar_one() == 1
+            event_types = set(
+                conn.execute(
+                    text(
+                        "SELECT event_type FROM airank_audit_events "
+                        "WHERE tenant_id=:tenant_id AND entity_type IN ("
+                        "'opportunity_action_team_sync_binding', "
+                        "'opportunity_action_team_sync_run')"
+                    ),
+                    {"tenant_id": tenant_id},
+                ).scalars()
+            )
+        assert {
+            "opportunity_action.directory_binding_saved",
+            "opportunity_action.directory_sync_dispatched",
+            "opportunity_action.directory_sync_succeeded",
+        } <= event_types
     finally:
         cleanup_tenant(engine, tenant_id)
 

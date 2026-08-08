@@ -10,6 +10,11 @@ from .opportunity_action_escalation import (
     OpportunityActionEscalationPreview,
     OpportunityActionEscalationRecord,
 )
+from .opportunity_directory_sync import (
+    MySQLOpportunityDirectorySyncScheduler,
+    OpportunityDirectorySyncDispatchRecord,
+    OpportunityDirectorySyncQueuePreview,
+)
 from .retest import MySQLRetestScheduler, RetestDispatchRecord, RetestQueuePreview
 from .review_escalation import (
     MySQLReviewEscalationScheduler,
@@ -27,6 +32,7 @@ __all__ = [
     "KnowledgeSyncQueuePreview",
     "MySQLKnowledgeSyncScheduler",
     "MySQLOpportunityActionEscalationScheduler",
+    "MySQLOpportunityDirectorySyncScheduler",
     "MySQLReviewEscalationScheduler",
     "MySQLReviewerDirectorySyncScheduler",
     "MySQLRetestScheduler",
@@ -34,6 +40,8 @@ __all__ = [
     "ReviewEscalationQueuePreview",
     "OpportunityActionEscalationPreview",
     "OpportunityActionEscalationRecord",
+    "OpportunityDirectorySyncDispatchRecord",
+    "OpportunityDirectorySyncQueuePreview",
     "ReviewerDirectorySyncDispatchRecord",
     "ReviewerDirectorySyncQueuePreview",
     "RetestDispatchRecord",

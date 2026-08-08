@@ -1,6 +1,7 @@
 import type {
   InterventionOpportunity,
   OpportunityAction,
+  OpportunityActionDirectory,
   OpportunityActionList,
   OpportunityActionRouting,
   OpportunityDependency,
@@ -68,6 +69,7 @@ export function OpportunityBoard({
   data,
   actionData,
   routingData,
+  directoryData,
   planningData,
   currentUserId,
   deriving,
@@ -81,6 +83,8 @@ export function OpportunityBoard({
   onCreateTeam,
   onJoinTeam,
   onPutRoute,
+  onSaveDirectoryBinding,
+  onRunDirectorySync,
   onSavePlan,
   onAddDependency,
   onWaiveDependency,
@@ -89,6 +93,7 @@ export function OpportunityBoard({
   data: OpportunityList;
   actionData: OpportunityActionList;
   routingData: OpportunityActionRouting;
+  directoryData: OpportunityActionDirectory;
   planningData: OpportunityExecutionPortfolio;
   currentUserId: string;
   deriving: boolean;
@@ -102,6 +107,8 @@ export function OpportunityBoard({
   onCreateTeam: (name: string) => void;
   onJoinTeam: (teamId: string) => void;
   onPutRoute: (sourceKind: OpportunitySourceKind, teamId: string) => void;
+  onSaveDirectoryBinding: (teamId: string, externalGroupId: string, expectedVersion?: number) => void;
+  onRunDirectorySync: (teamId: string) => void;
   onSavePlan: (action: OpportunityAction, effortHours: string, budgetAmount: string, assumptions: string, expectedVersion?: number) => void;
   onAddDependency: (action: OpportunityAction, prerequisiteActionId: string, rationale: string) => void;
   onWaiveDependency: (dependency: OpportunityDependency, waiverReason: string) => void;
@@ -116,6 +123,13 @@ export function OpportunityBoard({
       .filter((team) => team.members.some((member) => member.user_id === currentUserId && member.status === "active"))
       .map((team) => team.team_id),
   );
+  const directoryBindingsByTeam = new Map(
+    directoryData.bindings.map((binding) => [binding.team_id, binding]),
+  );
+  const latestDirectoryRunsByTeam = new Map<string, OpportunityActionDirectory["recent_sync_runs"][number]>();
+  directoryData.recent_sync_runs.forEach((run) => {
+    if (!latestDirectoryRunsByTeam.has(run.team_id)) latestDirectoryRunsByTeam.set(run.team_id, run);
+  });
   return (
     <section className="opportunity-board" data-testid="cross-domain-opportunity-board">
       <header className="opportunity-board-header">
@@ -241,7 +255,10 @@ export function OpportunityBoard({
           <p className="opportunity-routing-empty">尚未配置团队；当前保持显式 unrestricted_legacy，仅用于兼容，不代表生产路由完成。</p>
         ) : (
           <div className="opportunity-routing-teams">
-            {routingData.teams.map((team) => (
+            {routingData.teams.map((team) => {
+              const directoryBinding = directoryBindingsByTeam.get(team.team_id);
+              const latestDirectoryRun = latestDirectoryRunsByTeam.get(team.team_id);
+              return (
               <article key={team.team_id}>
                 <div><strong>{team.name}</strong><span>{team.member_count} 名成员 · {team.external_sync_state}</span></div>
                 <div className="opportunity-routing-members">
@@ -257,8 +274,49 @@ export function OpportunityBoard({
                     {routingMutationKey === `member:${team.team_id}` ? "加入中…" : "将当前账号加入团队"}
                   </button>
                 )}
+                <div className="opportunity-directory-card" data-state={directoryBinding?.last_sync_state ?? "not_configured"}>
+                  <div>
+                    <strong>Yudao 交付成员目录</strong>
+                    <span>
+                      {directoryBinding
+                        ? `${directoryBinding.last_sync_state} · 部门 ${directoryBinding.external_group_id} · v${directoryBinding.version}`
+                        : "尚未绑定；凭证仅从服务端运行环境读取"}
+                    </span>
+                  </div>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const form = new FormData(event.currentTarget);
+                      const groupId = String(form.get("external_group_id") || "").trim();
+                      if (groupId) onSaveDirectoryBinding(team.team_id, groupId, directoryBinding?.version);
+                    }}
+                  >
+                    <label>
+                      Yudao 部门 ID
+                      <input name="external_group_id" minLength={1} maxLength={128} required defaultValue={directoryBinding?.external_group_id ?? ""} placeholder="例如 42" />
+                    </label>
+                    <button type="submit" disabled={routingMutationKey === `directory-binding:${team.team_id}`}>
+                      {routingMutationKey === `directory-binding:${team.team_id}` ? "保存中…" : directoryBinding ? "更新目录绑定" : "绑定成员目录"}
+                    </button>
+                    {directoryBinding && (
+                      <button type="button" disabled={routingMutationKey === `directory-run:${team.team_id}`} onClick={() => onRunDirectorySync(team.team_id)}>
+                        {routingMutationKey === `directory-run:${team.team_id}` ? "同步中…" : "立即真实同步"}
+                      </button>
+                    )}
+                  </form>
+                  {latestDirectoryRun && (
+                    <div className="opportunity-directory-run">
+                      <span>{latestDirectoryRun.status} · 发现 {latestDirectoryRun.discovered_member_count} · 有效外部成员 {latestDirectoryRun.active_member_count}</span>
+                      <span>新增 {latestDirectoryRun.created_member_count} · 更新 {latestDirectoryRun.updated_member_count} · 未变化 {latestDirectoryRun.unchanged_member_count} · 停用 {latestDirectoryRun.disabled_member_count}</span>
+                      <span>手工身份冲突 {latestDirectoryRun.manual_conflict_count}{latestDirectoryRun.error_code ? ` · ${latestDirectoryRun.error_code}` : ""}</span>
+                      {latestDirectoryRun.response_sha256 && <code title={latestDirectoryRun.response_sha256}>{shortHash(latestDirectoryRun.response_sha256)}</code>}
+                    </div>
+                  )}
+                  <small>手工成员永不被同步覆盖或标记为外部已核验；目录失败会保留失败运行并将团队标成 failed。</small>
+                </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
         {routingData.teams.length > 0 && (

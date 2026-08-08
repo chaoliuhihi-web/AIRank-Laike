@@ -909,6 +909,24 @@ class MySQLOpportunityActionRoutingRepository:
         configured = bool(routes)
         ready = configured and not missing and all(item.routing_ready for item in routes)
         mode = "unrestricted_legacy" if not configured else "team_routed" if ready else "blocked"
+        active_members = [
+            item
+            for team_members in members_by_team.values()
+            for item in team_members
+            if item.status == "active"
+        ]
+        active_teams = [item for item in teams if item.status == "active"]
+        known_limitations: list[str] = []
+        if any(not item.external_membership_verified for item in active_members):
+            known_limitations.append("manual_membership_not_externally_verified")
+        yudao_teams = [item for item in active_teams if item.external_source == "yudao"]
+        if not yudao_teams:
+            known_limitations.append("yudao_action_team_sync_not_configured")
+        elif any(item.external_sync_state != "verified" for item in yudao_teams):
+            known_limitations.append("yudao_action_team_sync_not_verified")
+        known_limitations.append(
+            "external_notification_delivery_requires_customer_webhook"
+        )
         return OpportunityActionRoutingData(
             project_id=project_id,
             contract_version=ROUTING_CONTRACT_VERSION,
@@ -916,11 +934,7 @@ class MySQLOpportunityActionRoutingRepository:
             teams=teams,
             routes=routes,
             missing_source_kinds=missing,
-            known_limitations=[
-                "manual_membership_not_externally_verified",
-                "yudao_action_team_sync_not_configured",
-                "external_notification_delivery_requires_customer_webhook",
-            ],
+            known_limitations=known_limitations,
             idempotent_replay=idempotent_replay,
         )
 

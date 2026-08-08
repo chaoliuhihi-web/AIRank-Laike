@@ -37,6 +37,11 @@ from .page_audit import (
     run_next_page_audit_job,
 )
 from .scan import ScanWorkerError, run_next_real_scan_job
+from .opportunity_directory_sync import (
+    OpportunityDirectorySyncWorkerError,
+    build_opportunity_directory_sync_repository,
+    run_next_opportunity_directory_sync_job,
+)
 from .reviewer_directory_sync import (
     ReviewerDirectorySyncWorkerError,
     build_reviewer_directory_sync_repository,
@@ -59,6 +64,7 @@ JOB_TYPE_FILTERS: dict[str, set[str]] = {
         "citation.capture",
         "knowledge.source.sync",
         "reviewer.directory.sync",
+        "opportunity.directory.sync",
     },
     "publish": {"publish.package"},
     "scan": {"scan.provider"},
@@ -66,6 +72,7 @@ JOB_TYPE_FILTERS: dict[str, set[str]] = {
     "citation-capture": {"citation.capture"},
     "knowledge-sync": {"knowledge.source.sync"},
     "reviewer-directory-sync": {"reviewer.directory.sync"},
+    "opportunity-directory-sync": {"opportunity.directory.sync"},
     "review-notification": {"__outbox_review_notification__"},
 }
 
@@ -146,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--job-type",
-        choices=("all", "publish", "scan", "page-audit", "citation-capture", "knowledge-sync", "reviewer-directory-sync", "review-notification"),
+        choices=("all", "publish", "scan", "page-audit", "citation-capture", "knowledge-sync", "reviewer-directory-sync", "opportunity-directory-sync", "review-notification"),
         default="all",
         help="limit this process to one governed job family",
     )
@@ -208,6 +215,9 @@ def main() -> int:
     knowledge_sync_repository = MySQLKnowledgeSyncExecutionRepository(database_url)
     knowledge_sync_service = build_knowledge_sync_service()
     reviewer_directory_repository = build_reviewer_directory_sync_repository(database_url)
+    opportunity_directory_repository = build_opportunity_directory_sync_repository(
+        database_url
+    )
     reviewer_directory_client = YudaoReviewerDirectoryClient()
     review_notification_repository = MySQLReviewNotificationRepository(
         database_url,
@@ -244,6 +254,7 @@ def main() -> int:
         citation_capture_result = None
         knowledge_sync_result = None
         reviewer_directory_sync_result = None
+        opportunity_directory_sync_result = None
         review_notification_result = None
         try:
             if args.job_type in {"all", "publish"}:
@@ -312,6 +323,24 @@ def main() -> int:
                 and citation_capture_result is None
                 and knowledge_sync_result is None
                 and reviewer_directory_sync_result is None
+                and args.job_type in {"all", "opportunity-directory-sync"}
+            ):
+                opportunity_directory_sync_result = (
+                    run_next_opportunity_directory_sync_job(
+                        store,
+                        opportunity_directory_repository,
+                        reviewer_directory_client,
+                        worker_id=worker_id,
+                    )
+                )
+            if (
+                receipt is None
+                and scan_result is None
+                and page_audit_result is None
+                and citation_capture_result is None
+                and knowledge_sync_result is None
+                and reviewer_directory_sync_result is None
+                and opportunity_directory_sync_result is None
                 and args.job_type in {"all", "review-notification"}
                 and review_notification_client.config.configured
             ):
@@ -398,6 +427,19 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
+        except OpportunityDirectorySyncWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         except ReviewNotificationError as exc:
             processed_count += 1
             failed_count += 1
@@ -446,6 +488,13 @@ def main() -> int:
                 print(json.dumps(knowledge_sync_result.to_record(), ensure_ascii=False))
             elif reviewer_directory_sync_result is not None:
                 print(json.dumps(reviewer_directory_sync_result.to_record(), ensure_ascii=False))
+            elif opportunity_directory_sync_result is not None:
+                print(
+                    json.dumps(
+                        opportunity_directory_sync_result.to_record(),
+                        ensure_ascii=False,
+                    )
+                )
             elif review_notification_result is not None:
                 print(json.dumps(review_notification_result.to_record(), ensure_ascii=False))
             handled = any(
@@ -457,6 +506,7 @@ def main() -> int:
                     citation_capture_result,
                     knowledge_sync_result,
                     reviewer_directory_sync_result,
+                    opportunity_directory_sync_result,
                     review_notification_result,
                 )
             )

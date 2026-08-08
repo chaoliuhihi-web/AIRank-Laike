@@ -373,6 +373,60 @@ export type OpportunityActionRouting = {
   idempotent_replay: boolean;
 };
 
+export type OpportunityActionDirectoryBinding = {
+  binding_id: string;
+  team_id: string;
+  team_name: string;
+  external_source: "yudao";
+  external_group_id: string;
+  status: "active" | "disabled";
+  sync_enabled: boolean;
+  sync_interval_minutes: number;
+  default_priority: number;
+  default_max_active_actions: number;
+  default_receives_escalations: boolean;
+  last_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
+  last_sync_run_id: string | null;
+  last_synced_at: string | null;
+  next_sync_at: string | null;
+  last_error_code: string | null;
+  version: number;
+  updated_at: string;
+};
+
+export type OpportunityActionDirectoryRun = {
+  run_id: string;
+  binding_id: string;
+  binding_version: number;
+  team_id: string;
+  external_group_id: string;
+  status: "running" | "succeeded" | "failed";
+  endpoint_host: string | null;
+  response_sha256: string | null;
+  discovered_member_count: number;
+  active_member_count: number;
+  created_member_count: number;
+  updated_member_count: number;
+  unchanged_member_count: number;
+  disabled_member_count: number;
+  manual_conflict_count: number;
+  error_code: string | null;
+  retryable: boolean;
+  started_at: string;
+  finished_at: string | null;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityActionDirectory = {
+  project_id: string;
+  contract_version: "airank.opportunity-action-directory-sync.v1";
+  bindings: OpportunityActionDirectoryBinding[];
+  recent_sync_runs: OpportunityActionDirectoryRun[];
+  configured_team_count: number;
+  verified_team_count: number;
+  known_limitations: string[];
+};
+
 export type OpportunityDependency = {
   dependency_id: string;
   action_id: string;
@@ -2159,6 +2213,62 @@ export async function createOpportunityActionTeam(projectId: string, name: strin
   );
   if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action team creation failed with ${response.status}`));
   return ((await response.json()) as { data: OpportunityActionRouting }).data;
+}
+
+export async function fetchOpportunityActionDirectory(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<OpportunityActionDirectory> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-directory-sync`,
+    { signal, headers: buildApiHeaders("trc_web_opportunity_action_directory") },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity directory fetch failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionDirectory }).data;
+}
+
+export async function putOpportunityActionDirectoryBinding(
+  projectId: string,
+  teamId: string,
+  externalGroupId: string,
+  expectedVersion?: number,
+): Promise<OpportunityActionDirectory> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-teams/${encodeURIComponent(teamId)}/sync-binding`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_action_directory_binding") },
+      body: JSON.stringify({
+        external_group_id: externalGroupId,
+        sync_enabled: true,
+        sync_interval_minutes: 60,
+        default_priority: 100,
+        default_max_active_actions: 5,
+        default_receives_escalations: true,
+        ...(expectedVersion ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity directory binding failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionDirectory }).data;
+}
+
+export async function runOpportunityActionDirectorySync(
+  projectId: string,
+  teamId: string,
+): Promise<OpportunityActionDirectory> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-teams/${encodeURIComponent(teamId)}/sync-runs`,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": `opportunity-directory-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_action_directory_run"),
+      },
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity directory synchronization failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionDirectory }).data;
 }
 
 export async function upsertOpportunityActionMember(

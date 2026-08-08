@@ -1,12 +1,13 @@
 # AIRank Scheduler
 
-The scheduler handles five durable workflows:
+The scheduler handles six durable workflows:
 
 - turns due `T+7/T+14/T+30` observation windows into new `ScanRun` tasks;
 - queues due knowledge-source synchronization jobs; and
 - persists reviewer-SLA overdue events to `airank_outbox_events`; and
 - persists opportunity-action SLA overdue events to `airank_outbox_events`; and
 - queues due Yudao reviewer-directory bindings as `reviewer.directory.sync` jobs.
+- queues due Yudao opportunity-team bindings as `opportunity.directory.sync` jobs.
 
 Retest dispatch clones the baseline tasks' frozen prompt/request contract,
 creates fresh sessions, and lets the normal governed Worker collect evidence.
@@ -36,6 +37,11 @@ Reviewer-directory scheduling stores only binding IDs, versions, roles and the
 external department ID. Service credentials remain in Worker process secrets.
 The Worker rechecks the binding version before the Yudao call, so configuration
 changes after dispatch fail closed instead of syncing the wrong group.
+
+Opportunity-team directory scheduling uses a separate customer contract from
+reviewer roles. It freezes only binding/team/group IDs and version, never a
+credential or member list. The Worker may mutate only Yudao-sourced memberships;
+manual members remain unverified and immutable to directory synchronization.
 
 When reviewer routing is configured, the same transaction resolves a durable
 route snapshot into the event: team ID, route version, eligible escalation

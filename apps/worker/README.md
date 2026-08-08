@@ -17,6 +17,7 @@ AIRank 异步任务。
 - **retest** — 复测
 - **report** — 高管报告生成
 - **reviewer.directory.sync** — 从服务端配置的 Yudao 部门增量同步审核成员，不保存目录凭证
+- **opportunity.directory.sync** — 按冻结绑定版本增量同步机会交付团队成员；只改动 Yudao 来源成员，手工成员永不被外部同步覆盖
 - **review-notification** — 消费审核 SLA Outbox，通过安全 HTTPS Webhook 发送并保存不可变渠道回执
 
 任务失败必须有结构化原因，不能长期停留在 `queued`。
