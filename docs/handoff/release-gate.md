@@ -657,7 +657,7 @@ Passed:
 - Chinese slider-verification text is classified as CAPTCHA evidence instead of a model answer. Failure evidence retains the original-response hash, immutable screenshot reference and verified conversation-isolation metadata.
 - A real Qianwen Web submission reached an isolated new conversation and then produced a slider challenge. The durable MySQL path stored ScanRun `failed`, Task `SCAN_PROVIDER_BLOCKED`, Sample `blocked`, immutable screenshot/hash and a v4 non-publishable quality report. Validation data was removed afterward.
 - Production release checks now require explicit Yudao auth, `AIRANK_ENV=production`, S3/MinIO and encrypted object-storage transport. Local defaults no longer pass those individual checks.
-- Full regression: `319 passed, 22 skipped`; real MySQL integration: `20 passed, 2 skipped`; Web build passed using Node 24.14.0.
+- Full regression: `321 passed, 22 skipped`; real MySQL integration: `20 passed, 2 skipped`; Web build passed using Node 24.14.0.
 
 Blocking conditions:
 

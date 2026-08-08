@@ -1,17 +1,17 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T10:04:40+08:00
+Generated: 2026-08-08T10:31:37+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
 | --- | --- | --- |
-| working tree | PASS | `git status --short --branch` |
+| working tree | BLOCKED | `git status --short --branch` |
 | origin main ref | BLOCKED | `git rev-parse HEAD && git ls-remote origin refs/heads/main` |
 | gitee main ref | BLOCKED | `git rev-parse HEAD && git ls-remote gitee refs/heads/main` |
-| diff check | PASS | `git diff --check` |
+| diff check | BLOCKED | `git diff --check` |
 | tracked runtime artifacts | PASS | `git ls-files | rg "node_modules|dist|\\.runtime|\\.env|\\.sqlite|tsbuildinfo"` |
-| API authentication configuration | PASS | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
-| production object storage configuration | PASS | `validate AIRANK_ENV and S3/MinIO transport configuration` |
+| API authentication configuration | BLOCKED | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
+| production object storage configuration | BLOCKED | `validate AIRANK_ENV and S3/MinIO transport configuration` |
 | runtime versions | PASS | `validate Python and Node production runtime versions` |
 | contract tests | PASS | `python3 -m pytest tests/contracts -q` |
 | crawler lite tests | PASS | `python3 -m pytest packages/crawler-lite/tests -q` |
@@ -28,14 +28,44 @@ Result: BLOCKED
 | alembic offline sql | PASS | `cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql` |
 | alembic real mysql | PASS | `cd apps/api && python3 -m alembic upgrade head` |
 | capability probe | BLOCKED | `CapabilityProbe(ProbeConfig.from_env()).run()` |
-| browser provider readiness | BLOCKED | `probe_provider_readiness(DEFAULT_PROVIDER_SCOPE)` |
 
 ## working tree
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 ## codex/evidence-productization
+ M apps/api/provider_scan.py
+ M docs/handoff/productization-status-20260808.md
+ M docs/handoff/release-gate.md
+ M docs/handoff/release-readiness-current.md
+ M scripts/release_readiness.py
+ M tests/acceptance/test_release_readiness_gate.py
+ M tests/contracts/test_provider_scan_contract.py
+?? apps/api/__pycache__/
+?? apps/api/alembic/__pycache__/
+?? apps/api/alembic/versions/__pycache__/
+?? apps/worker/airank_worker/__pycache__/
+?? apps/worker/tests/__pycache__/
+?? packages/crawler-lite/src/airank_crawler_lite/__pycache__/
+?? packages/crawler-lite/tests/__pycache__/
+?? packages/domain/src/airank_domain/__pycache__/
+?? packages/evidence/src/airank_evidence/__pycache__/
+?? packages/evidence/tests/__pycache__/
+?? packages/outbound-security/src/airank_outbound_security/__pycache__/
+?? packages/outbound-security/tests/__pycache__/
+?? packages/provider-gateway/src/airank_provider_gateway/__pycache__/
+?? packages/provider-gateway/tests/__pycache__/
+?? packages/score/src/airank_score/__pycache__/
+?? packages/score/tests/__pycache__/
+?? packages/skills/src/airank_skills/__pycache__/
+?? packages/xinghe-adapter/src/airank_xinghe_adapter/__pycache__/
+?? packages/xinghe-adapter/tests/__pycache__/
+?? scripts/__pycache__/
+?? tests/__pycache__/
+?? tests/acceptance/__pycache__/
+?? tests/contracts/__pycache__/
+?? tests/integration/__pycache__/
 ```
 
 ## origin main ref
@@ -43,7 +73,7 @@ Status: PASS
 Status: BLOCKED
 
 ```text
-local HEAD 5135ab4c4d4699e58e591d020df6164136f761ee does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD 8ba1fe50ea8ebf334756a4680cd110615de37468 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## gitee main ref
@@ -51,15 +81,38 @@ local HEAD 5135ab4c4d4699e58e591d020df6164136f761ee does not match origin main 4
 Status: BLOCKED
 
 ```text
-local HEAD 5135ab4c4d4699e58e591d020df6164136f761ee does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD 8ba1fe50ea8ebf334756a4680cd110615de37468 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## diff check
 
-Status: PASS
+Status: BLOCKED
 
 ```text
-<empty>
+docs/handoff/release-readiness-current.md:272: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:276: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:286: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:292: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:294: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:299: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:310: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:313: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:315: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:331: trailing whitespace.
++
+docs/handoff/release-readiness-current.md:384: trailing whitespace.
++.runtime/py312/lib/python3.12/site-packages/sqlalchemy/engine/base.py:1969:
+docs/handoff/release-readiness-current.md:385: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ```
 
 ## tracked runtime artifacts
@@ -72,23 +125,26 @@ Status: PASS
 
 ## API authentication configuration
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 {
-  "AIRANK_API_AUTH_ENFORCEMENT": "required",
-  "AIRANK_AUTH_MODE": "yudao",
+  "AIRANK_API_AUTH_ENFORCEMENT": "",
+  "AIRANK_AUTH_MODE": "",
   "required": {
     "AIRANK_API_AUTH_ENFORCEMENT": "required",
     "AIRANK_AUTH_MODE": "yudao"
   },
-  "blockers": []
+  "blockers": [
+    "AIRANK_API_AUTH_ENFORCEMENT=<empty>",
+    "AIRANK_AUTH_MODE=<empty>"
+  ]
 }
 ```
 
 ## production object storage configuration
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 {
@@ -96,7 +152,10 @@ Status: PASS
   "AIRANK_OBJECT_STORAGE_DRIVER": "local",
   "endpoint_scheme": "provider-default",
   "allow_http": false,
-  "blockers": []
+  "blockers": [
+    "AIRANK_ENV=local; release requires production",
+    "AIRANK_OBJECT_STORAGE_DRIVER=local; production requires s3/minio"
+  ]
 }
 ```
 
@@ -121,9 +180,18 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 51%]
-...................................................................      [100%]
-139 passed in 1.27s
+........................................................................ [ 49%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+=============================== warnings summary ===============================
+tests/contracts/test_console_action_api_contract.py: 1 warning
+tests/contracts/test_report_api_contract.py: 1 warning
+tests/contracts/test_scan_run_api_contract.py: 25 warnings
+  /Users/bruce/Developer/work/AIRank-productization/.runtime/py312/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+145 passed, 27 warnings in 0.93s
 ```
 
 ## crawler lite tests
@@ -132,7 +200,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.01s
+6 passed in 0.02s
 ```
 
 ## acceptance tests
@@ -140,8 +208,8 @@ Status: PASS
 Status: PASS
 
 ```text
-...................................................                      [100%]
-51 passed in 0.58s
+.....................................................                    [100%]
+53 passed in 0.47s
 ```
 
 ## worker tests
@@ -150,7 +218,13 @@ Status: PASS
 
 ```text
 .........................                                                [100%]
-25 passed in 0.12s
+=============================== warnings summary ===============================
+tests/test_async_job_lease.py: 73 warnings
+  /Users/bruce/Developer/work/AIRank-productization/.runtime/py312/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+25 passed, 73 warnings in 0.11s
 ```
 
 ## score tests
@@ -158,8 +232,8 @@ Status: PASS
 Status: PASS
 
 ```text
-............                                                             [100%]
-12 passed in 0.03s
+..............                                                           [100%]
+14 passed in 0.03s
 ```
 
 ## evidence tests
@@ -177,7 +251,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.02s
+23 passed in 0.01s
 ```
 
 ## provider gateway tests
@@ -186,7 +260,7 @@ Status: PASS
 
 ```text
 ...................                                                      [100%]
-19 passed in 0.03s
+19 passed in 0.02s
 ```
 
 ## core skill evaluation
@@ -222,7 +296,7 @@ computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
 dist/assets/index-C5thYdsS.css   59.90 kB │ gzip:  10.22 kB
 dist/assets/index-r9Lfqui9.js   329.40 kB │ gzip: 100.74 kB
-✓ built in 738ms
+✓ built in 733ms
 ```
 
 ## real integration tests
@@ -230,8 +304,8 @@ dist/assets/index-r9Lfqui9.js   329.40 kB │ gzip: 100.74 kB
 Status: PASS
 
 ```text
-....s...............s                                                    [100%]
-19 passed, 2 skipped in 1.88s
+....s................s                                                   [100%]
+20 passed, 2 skipped in 2.41s
 ```
 
 ## alembic offline sql
@@ -277,35 +351,31 @@ Status: BLOCKED
 [
   {
     "capability": "yudao_auth",
-    "status": "dev_only",
+    "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": true,
     "endpoint": null,
-    "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev auth fallback",
-    "fallback": "apps/api dev auth",
-    "metadata": {
-      "auth_mode": "dev"
-    }
+    "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
+    "fallback": null,
+    "metadata": {}
   },
   {
     "capability": "yudao_tenant_user",
-    "status": "dev_only",
+    "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": true,
     "endpoint": null,
-    "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context",
-    "fallback": "apps/api dev tenant context",
-    "metadata": {
-      "auth_mode": "dev"
-    }
+    "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
+    "fallback": null,
+    "metadata": {}
   },
   {
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -320,7 +390,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -331,7 +401,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -342,7 +412,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -353,7 +423,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -364,7 +434,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:04:00.796696+00:00",
+    "checked_at": "2026-08-08T02:31:37.235990+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -374,78 +444,13 @@ Status: BLOCKED
 ]
 
 Blockers:
-- yudao_auth=dev_only (AIRANK_AUTH_MODE=dev; using dev auth fallback)
-- yudao_tenant_user=dev_only (AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context)
+- yudao_auth=blocked (YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured)
+- yudao_tenant_user=blocked (tenant/user probe requires yudao permission info endpoint)
 - object_storage=dev_only
 - xinghe_crawler_gateway=dev_only (external endpoint is not configured)
 - xinghe_kb_service=dev_only (external endpoint is not configured)
 - xinghe_creator_marketing=dev_only (external endpoint is not configured)
 - xinghe_workflow_runner=dev_only (external endpoint is not configured)
 - xinghe_hermes=dev_only (external endpoint is not configured)
-```
-
-## browser provider readiness
-
-Status: BLOCKED
-
-```text
-{
-  "mode": "browser",
-  "minimum_success_count": 4,
-  "providers": [
-    {
-      "provider": "doubao",
-      "label": "豆包",
-      "status": "blocked",
-      "url": "https://www.doubao.com/chat/",
-      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
-      "headless": true,
-      "blocker_code": "login_required",
-      "reason": "login or human verification is visible",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/46/46c4a03dffa00139a923baf8a1db940f3178d0b7b37fcd9825f2accdd44832fa.png"
-    },
-    {
-      "provider": "qianwen",
-      "label": "千问",
-      "status": "ready",
-      "url": "https://www.qianwen.com/?ch=tongyi_redirect",
-      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/qianwen",
-      "headless": true,
-      "blocker_code": null,
-      "reason": null,
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/32/3255a8b54b0307cef13282682fb58c0e4785a43821fe659417b57d6f3f10ba0b.png"
-    },
-    {
-      "provider": "kimi",
-      "label": "Kimi",
-      "status": "blocked",
-      "url": "https://www.kimi.com/",
-      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
-      "headless": true,
-      "blocker_code": "login_required",
-      "reason": "login or human verification is visible",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/d0/d039e64f9b92c8167fff220577e44d0a410f950e0737b2d4a8f40f129799158c.png"
-    },
-    {
-      "provider": "deepseek",
-      "label": "DeepSeek",
-      "status": "blocked",
-      "url": "https://chat.deepseek.com/sign_in",
-      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
-      "headless": true,
-      "blocker_code": "captcha_required",
-      "reason": "login or human verification is visible",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/a8/a8f704784e32df3399b2b655b24c7620e1a5655d884c57a80a7efe4d9a45c295.png"
-    }
-  ]
-}
-
-Warnings:
-- doubao=blocked (login or human verification is visible)
-- kimi=blocked (login or human verification is visible)
-- deepseek=blocked (login or human verification is visible)
-
-Blockers:
-- browser_provider_ready=1/4
 ```
 

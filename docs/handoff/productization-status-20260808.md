@@ -92,7 +92,7 @@
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `.runtime/py312/bin/python -m pytest -q`：`319 passed, 22 skipped`；其中新增的真实 MySQL 失败批次审计用例在普通套件中按开关跳过，跳过项不计为通过。
+- `.runtime/py312/bin/python -m pytest -q`：`321 passed, 22 skipped`；其中新增的真实 MySQL 失败批次审计用例在普通套件中按开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
