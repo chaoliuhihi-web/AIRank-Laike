@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T09:07:05+08:00
+Generated: 2026-08-08T09:39:08+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -12,7 +12,7 @@ Result: BLOCKED
 | tracked runtime artifacts | PASS | `git ls-files | rg "node_modules|dist|\\.runtime|\\.env|\\.sqlite|tsbuildinfo"` |
 | API authentication configuration | PASS | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
 | production object storage configuration | PASS | `validate AIRANK_ENV and S3/MinIO transport configuration` |
-| runtime versions | PASS | `validate Python and Node production runtime versions` |
+| runtime versions | BLOCKED | `validate Python and Node production runtime versions` |
 | contract tests | PASS | `python3 -m pytest tests/contracts -q` |
 | crawler lite tests | PASS | `python3 -m pytest packages/crawler-lite/tests -q` |
 | acceptance tests | PASS | `python3 -m pytest tests/acceptance -q` |
@@ -27,6 +27,7 @@ Result: BLOCKED
 | alembic offline sql | PASS | `cd apps/api && python3 -m alembic upgrade head --sql >/tmp/airank_release_alembic.sql` |
 | alembic real mysql | PASS | `cd apps/api && python3 -m alembic upgrade head` |
 | capability probe | BLOCKED | `CapabilityProbe(ProbeConfig.from_env()).run()` |
+| browser provider readiness | BLOCKED | `probe_provider_readiness(DEFAULT_PROVIDER_SCOPE)` |
 
 ## working tree
 
@@ -41,7 +42,7 @@ Status: PASS
 Status: BLOCKED
 
 ```text
-local HEAD a9a49acf8d35d197a0d1f3c128580e7d9b2c9cd5 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD adf6d89d32a94c54d0016fadfe2c6dfb00dd4e34 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## gitee main ref
@@ -49,7 +50,7 @@ local HEAD a9a49acf8d35d197a0d1f3c128580e7d9b2c9cd5 does not match origin main 4
 Status: BLOCKED
 
 ```text
-local HEAD a9a49acf8d35d197a0d1f3c128580e7d9b2c9cd5 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD adf6d89d32a94c54d0016fadfe2c6dfb00dd4e34 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## diff check
@@ -100,17 +101,19 @@ Status: PASS
 
 ## runtime versions
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 {
   "python": "3.12.13",
-  "node": "v24.14.0",
+  "node": "v20.18.2",
   "required": {
     "python": "3.11+",
     "node": "20.19+ or 22.12+"
   },
-  "blockers": []
+  "blockers": [
+    "Node v20.18.2; Vite requires 20.19+ or 22.12+"
+  ]
 }
 ```
 
@@ -119,9 +122,9 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 53%]
-...............................................................          [100%]
-135 passed in 1.39s
+........................................................................ [ 51%]
+...................................................................      [100%]
+139 passed in 1.40s
 ```
 
 ## crawler lite tests
@@ -129,8 +132,8 @@ Status: PASS
 Status: PASS
 
 ```text
-....                                                                     [100%]
-4 passed in 0.01s
+......                                                                   [100%]
+6 passed in 0.02s
 ```
 
 ## acceptance tests
@@ -138,8 +141,8 @@ Status: PASS
 Status: PASS
 
 ```text
-..................................................                       [100%]
-50 passed in 0.53s
+...................................................                      [100%]
+51 passed in 0.54s
 ```
 
 ## worker tests
@@ -147,8 +150,8 @@ Status: PASS
 Status: PASS
 
 ```text
-......................                                                   [100%]
-22 passed in 0.11s
+.........................                                                [100%]
+25 passed in 0.13s
 ```
 
 ## score tests
@@ -166,7 +169,7 @@ Status: PASS
 
 ```text
 .....................                                                    [100%]
-21 passed in 0.03s
+21 passed in 0.04s
 ```
 
 ## outbound security tests
@@ -175,7 +178,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.01s
+23 passed in 0.02s
 ```
 
 ## core skill evaluation
@@ -208,10 +211,11 @@ transforming...
 ✓ 1689 modules transformed.
 rendering chunks...
 computing gzip size...
-dist/index.html                   0.48 kB │ gzip:  0.33 kB
-dist/assets/index-8FF_uVFU.css   58.84 kB │ gzip: 10.04 kB
-dist/assets/index-D8ALO2sA.js   322.53 kB │ gzip: 99.09 kB
-✓ built in 721ms
+dist/index.html                   0.48 kB │ gzip:   0.33 kB
+dist/assets/index-C5thYdsS.css   59.90 kB │ gzip:  10.22 kB
+dist/assets/index-DKghTugq.js   329.17 kB │ gzip: 100.68 kB
+✓ built in 840ms
+You are using Node.js 20.18.2. Vite requires Node.js version 20.19+ or 22.12+. Please upgrade your Node.js version.
 ```
 
 ## real integration tests
@@ -219,8 +223,8 @@ dist/assets/index-D8ALO2sA.js   322.53 kB │ gzip: 99.09 kB
 Status: PASS
 
 ```text
-...s..............s                                                      [100%]
-17 passed, 2 skipped in 1.87s
+....s..............s                                                     [100%]
+18 passed, 2 skipped in 2.01s
 ```
 
 ## alembic offline sql
@@ -244,6 +248,7 @@ INFO  [alembic.runtime.migration] Running upgrade 20260808_0009 -> 20260808_0010
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0010 -> 20260808_0011, add immutable scan task attempt ledger
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0011 -> 20260808_0012, add immutable page extractability audit runs and findings
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0012 -> 20260808_0013, add answer claims and append-only citation support reviews
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0013 -> 20260808_0014, add immutable citation source captures and exact source boundaries
 ```
 
 ## alembic real mysql
@@ -265,7 +270,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "dev_only",
     "source": "yudao",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev auth fallback",
@@ -278,7 +283,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "dev_only",
     "source": "yudao",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context",
@@ -291,7 +296,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -306,7 +311,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -317,7 +322,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -328,7 +333,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -339,7 +344,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -350,7 +355,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:07:05.884654+00:00",
+    "checked_at": "2026-08-08T01:39:04.735541+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -359,16 +364,88 @@ Status: BLOCKED
   }
 ]
 
-Warnings:
+Blockers:
+- yudao_auth=dev_only (AIRANK_AUTH_MODE=dev; using dev auth fallback)
+- yudao_tenant_user=dev_only (AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context)
+- object_storage=dev_only
 - xinghe_crawler_gateway=dev_only (external endpoint is not configured)
 - xinghe_kb_service=dev_only (external endpoint is not configured)
 - xinghe_creator_marketing=dev_only (external endpoint is not configured)
 - xinghe_workflow_runner=dev_only (external endpoint is not configured)
 - xinghe_hermes=dev_only (external endpoint is not configured)
+```
+
+## browser provider readiness
+
+Status: BLOCKED
+
+```text
+{
+  "mode": "browser",
+  "minimum_success_count": 4,
+  "providers": [
+    {
+      "provider": "doubao",
+      "label": "豆包",
+      "status": "blocked",
+      "url": "https://www.doubao.com/chat/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
+      "headless": true,
+      "blocker_code": "network_error",
+      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
+      "screenshot_path": null
+    },
+    {
+      "provider": "qianwen",
+      "label": "千问",
+      "status": "blocked",
+      "url": "https://www.tongyi.com/qianwen/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/qianwen",
+      "headless": true,
+      "blocker_code": "network_error",
+      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
+      "screenshot_path": null
+    },
+    {
+      "provider": "kimi",
+      "label": "Kimi",
+      "status": "blocked",
+      "url": "https://www.kimi.com/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
+      "headless": true,
+      "blocker_code": "network_error",
+      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
+      "screenshot_path": null
+    },
+    {
+      "provider": "deepseek",
+      "label": "DeepSeek",
+      "status": "blocked",
+      "url": "https://chat.deepseek.com/",
+      "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
+      "headless": true,
+      "blocker_code": "network_error",
+      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
+      "screenshot_path": null
+    }
+  ]
+}
+
+Warnings:
+- doubao=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or)
+- qianwen=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or)
+- kimi=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or)
+- deepseek=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
+╔════════════════════════════════════════════════════════════╗
+║ Looks like Playwright was just installed or)
 
 Blockers:
-- yudao_auth=dev_only (AIRANK_AUTH_MODE=dev; using dev auth fallback)
-- yudao_tenant_user=dev_only (AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context)
-- object_storage=dev_only
+- browser_provider_ready=0/4
 ```
 
