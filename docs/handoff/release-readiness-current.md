@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T11:37:29+08:00
+Generated: 2026-08-08T12:18:25+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -12,7 +12,7 @@ Result: BLOCKED
 | tracked runtime artifacts | PASS | `git ls-files | rg "node_modules|dist|\\.runtime|\\.env|\\.sqlite|tsbuildinfo"` |
 | API authentication configuration | BLOCKED | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
 | production object storage configuration | BLOCKED | `validate AIRANK_ENV and S3/MinIO transport configuration` |
-| runtime versions | PASS | `validate Python and Node production runtime versions` |
+| runtime versions | BLOCKED | `validate Python and Node production runtime versions` |
 | contract tests | PASS | `python3 -m pytest tests/contracts -q` |
 | crawler lite tests | PASS | `python3 -m pytest packages/crawler-lite/tests -q` |
 | acceptance tests | PASS | `python3 -m pytest tests/acceptance -q` |
@@ -43,7 +43,7 @@ Status: PASS
 Status: PASS
 
 ```text
-9a3e8a3ea52015b3d8a19b7d21e5c48f69ab6c0f
+d8571e9444cbc85ba81abc5dc601ba047e67a22a
 ```
 
 ## gitee main ref
@@ -51,7 +51,7 @@ Status: PASS
 Status: PASS
 
 ```text
-9a3e8a3ea52015b3d8a19b7d21e5c48f69ab6c0f
+d8571e9444cbc85ba81abc5dc601ba047e67a22a
 ```
 
 ## diff check
@@ -108,17 +108,20 @@ Status: BLOCKED
 
 ## runtime versions
 
-Status: PASS
+Status: BLOCKED
 
 ```text
 {
-  "python": "3.12.13",
-  "node": "v24.14.0",
+  "python": "3.9.6",
+  "node": "v20.18.2",
   "required": {
     "python": "3.11+",
     "node": "20.19+ or 22.12+"
   },
-  "blockers": []
+  "blockers": [
+    "Python 3.9.6; production requires 3.11+",
+    "Node v20.18.2; Vite requires 20.19+ or 22.12+"
+  ]
 }
 ```
 
@@ -127,18 +130,10 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 48%]
-........................................................................ [ 96%]
-.....                                                                    [100%]
-=============================== warnings summary ===============================
-tests/contracts/test_console_action_api_contract.py: 1 warning
-tests/contracts/test_report_api_contract.py: 1 warning
-tests/contracts/test_scan_run_api_contract.py: 25 warnings
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/py312/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
-    cursor.execute(statement, parameters)
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-149 passed, 27 warnings in 1.20s
+........................................................................ [ 46%]
+........................................................................ [ 93%]
+..........                                                               [100%]
+154 passed in 1.33s
 ```
 
 ## crawler lite tests
@@ -147,7 +142,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.02s
+6 passed in 0.01s
 ```
 
 ## acceptance tests
@@ -155,8 +150,8 @@ Status: PASS
 Status: PASS
 
 ```text
-.....................................................                    [100%]
-53 passed in 0.49s
+.......................................................                  [100%]
+55 passed in 0.53s
 ```
 
 ## worker tests
@@ -165,13 +160,7 @@ Status: PASS
 
 ```text
 .........................                                                [100%]
-=============================== warnings summary ===============================
-tests/test_async_job_lease.py: 73 warnings
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/py312/lib/python3.12/site-packages/sqlalchemy/engine/default.py:952: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
-    cursor.execute(statement, parameters)
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-25 passed, 73 warnings in 0.12s
+25 passed in 0.12s
 ```
 
 ## score tests
@@ -180,7 +169,7 @@ Status: PASS
 
 ```text
 ..............                                                           [100%]
-14 passed in 0.04s
+14 passed in 0.03s
 ```
 
 ## evidence tests
@@ -188,8 +177,8 @@ Status: PASS
 Status: PASS
 
 ```text
-.....................                                                    [100%]
-21 passed in 0.04s
+..........................                                               [100%]
+26 passed in 0.03s
 ```
 
 ## outbound security tests
@@ -207,7 +196,7 @@ Status: PASS
 
 ```text
 .....................                                                    [100%]
-21 passed in 0.03s
+21 passed in 0.02s
 ```
 
 ## core skill evaluation
@@ -224,7 +213,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.03s
+6 passed in 0.02s
 ```
 
 ## web build
@@ -241,9 +230,10 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
-dist/assets/index-BUK3C0Yi.css   61.24 kB │ gzip:  10.40 kB
-dist/assets/index-DCwI5OZU.js   334.90 kB │ gzip: 102.24 kB
-✓ built in 671ms
+dist/assets/index-DTFXFyYY.css   61.45 kB │ gzip:  10.43 kB
+dist/assets/index-Ct5Ko-Tf.js   336.26 kB │ gzip: 102.60 kB
+✓ built in 878ms
+You are using Node.js 20.18.2. Vite requires Node.js version 20.19+ or 22.12+. Please upgrade your Node.js version.
 ```
 
 ## real integration tests
@@ -251,8 +241,8 @@ dist/assets/index-DCwI5OZU.js   334.90 kB │ gzip: 102.24 kB
 Status: PASS
 
 ```text
-....s.................s                                                  [100%]
-21 passed, 2 skipped in 2.43s
+....s..................s                                                 [100%]
+22 passed, 2 skipped in 2.08s
 ```
 
 ## alembic offline sql
@@ -280,6 +270,7 @@ INFO  [alembic.runtime.migration] Running upgrade 20260808_0013 -> 20260808_0014
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0014 -> 20260808_0015, add distributed provider QPS tokens and concurrency leases
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0015 -> 20260808_0016, add immutable provider route manifests and route request audit
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0016 -> 20260808_0017, add audited provider route control overrides
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0017 -> 20260808_0018, add immutable customer report evidence packets
 ```
 
 ## alembic real mysql
@@ -301,7 +292,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -312,7 +303,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -323,7 +314,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -338,7 +329,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -349,7 +340,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -360,7 +351,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -371,7 +362,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -382,7 +373,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T03:36:32.196278+00:00",
+    "checked_at": "2026-08-08T04:17:25.511362+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -391,17 +382,15 @@ Status: BLOCKED
   }
 ]
 
-Warnings:
+Blockers:
+- yudao_auth=blocked (YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured)
+- yudao_tenant_user=blocked (tenant/user probe requires yudao permission info endpoint)
+- object_storage=dev_only
 - xinghe_crawler_gateway=dev_only (external endpoint is not configured)
 - xinghe_kb_service=dev_only (external endpoint is not configured)
 - xinghe_creator_marketing=dev_only (external endpoint is not configured)
 - xinghe_workflow_runner=dev_only (external endpoint is not configured)
 - xinghe_hermes=dev_only (external endpoint is not configured)
-
-Blockers:
-- yudao_auth=blocked (YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured)
-- yudao_tenant_user=blocked (tenant/user probe requires yudao permission info endpoint)
-- object_storage=dev_only
 ```
 
 ## browser provider readiness
@@ -424,7 +413,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/f6/f6ff01c801466d988c48135af76e8ef1420e5fe2776a8ebead4a0130b02f6c2d.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/df/dfb05c249f88748e0e821219cb09344e90621dfb7f42f2d7fe60c4973eae5380.png"
     },
     {
       "provider": "qianwen",
@@ -437,7 +426,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/7c/7cb93ee2bb3c682ff255106d976d4a127e868fc73f20261b413cf4663b3b2ecf.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/3e/3eb9303d8739aa832b91db42c163554c99bc919d8968cae6b7bc7c5e43315b80.png"
     },
     {
       "provider": "kimi",
@@ -450,7 +439,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/d7/d768bf968c41e9e5d7ef4671d56117d35f61bccc24ffb8d125c069d7d01979f7.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/b7/b7bac2fe4ebfb9bdd5112b37c6238f6a8ed8256ce30280abb976f8b782c97d88.png"
     },
     {
       "provider": "deepseek",
@@ -463,7 +452,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/f1/f112f232a416d7eb66e76aa269f6462227772cb3e18bf32fc166ec63e8fdc2fc.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/01/01fbb3c0ad3623006270fe42b605c66db509f397fdfc332d7435342b4adb9d5a.png"
     }
   ]
 }
