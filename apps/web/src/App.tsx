@@ -85,6 +85,7 @@ import {
   createPageAudit,
   downloadReportEvidencePacket,
   deriveEvidenceGaps,
+  deriveOpportunities,
   fetchQuestionObservationBatches,
   fetchAnswerSample,
   fetchAnswerSamples,
@@ -99,6 +100,7 @@ import {
   fetchEvidenceObject,
   fetchEvidenceGaps,
   fetchFactAcquisitionTasks,
+  fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
   fetchEvidenceReviewEscalations,
@@ -173,6 +175,7 @@ import {
   type EvidenceIntegrityAudit,
   type EvidenceGapList,
   type FactAcquisitionTaskList,
+  type OpportunityList,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -200,6 +203,7 @@ import {
   type SourceRegistryEntry,
 } from "./console/api";
 import type { Tone } from "./console/data";
+import { OpportunityBoard } from "./console/OpportunityBoard";
 
 const blockedNextActions = [
   { title: "检查 Provider 健康", level: "上线阻断", desc: "确认计划使用的平台已通过对应 API 或消费端采集器的真实探测。", cta: "查看体检状态" },
@@ -4442,6 +4446,16 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     in_review_count: 0,
     resolved_count: 0,
   });
+  const [opportunities, setOpportunities] = useState<OpportunityList>({
+    project_id: "",
+    contract_version: "airank.intervention-opportunity.v1",
+    policy_version: "airank.cross-domain-opportunity-policy.v1",
+    latest_derivation_run: null,
+    state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 },
+    source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 },
+    opportunities: [],
+  });
+  const [derivingOpportunities, setDerivingOpportunities] = useState(false);
   const [creatingFactTaskGapId, setCreatingFactTaskGapId] = useState<string | null>(null);
   const [bindingFactTaskId, setBindingFactTaskId] = useState<string | null>(null);
   const [taskFactSelections, setTaskFactSelections] = useState<Record<string, string>>({});
@@ -4476,6 +4490,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setScanRuns([]);
       setEvidenceGaps({ project_id: "", contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
       setFactAcquisitionTasks({ project_id: "", contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
+      setOpportunities({ project_id: "", contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
       return;
     }
     const controller = new AbortController();
@@ -4486,14 +4501,16 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchScanRuns(project.id, controller.signal),
       fetchEvidenceGaps(project.id, controller.signal),
       fetchFactAcquisitionTasks(project.id, controller.signal),
+      fetchOpportunities(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
         setScanRuns(nextRuns);
         setEvidenceGaps(nextGaps);
         setFactAcquisitionTasks(nextFactTasks);
+        setOpportunities(nextOpportunities);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4519,6 +4536,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setScanRuns([]);
         setEvidenceGaps({ project_id: project.id, contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
         setFactAcquisitionTasks({ project_id: project.id, contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
+        setOpportunities({ project_id: project.id, contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4575,6 +4593,29 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
     } finally {
       setDerivingGaps(false);
+    }
+  };
+
+  const submitOpportunityDerivation = async () => {
+    if (!project.id) return;
+    setDerivingOpportunities(true);
+    try {
+      const result = await deriveOpportunities(project.id);
+      const next = await fetchOpportunities(project.id);
+      setOpportunities(next);
+      notify({
+        title: result.idempotent_replay ? "机会快照已复用" : "跨域机会快照已冻结",
+        desc: `当前观察到 ${result.opportunity_count} 项：新增 ${result.new_count}、持续 ${result.persisting_count}、本轮未再观察到 ${result.cleared_count}。后者不会自动标成已解决。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({
+        title: "机会快照未生成",
+        desc: error instanceof Error ? error.message : "当前项目没有可验证的缺口、引用、事实或页面审计证据。",
+        tone: "danger",
+      });
+    } finally {
+      setDerivingOpportunities(false);
     }
   };
 
@@ -4800,6 +4841,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
       {loadError && <DataStateCard title="内容资产读取失败" desc={loadError} tone="danger" />}
+      <OpportunityBoard data={opportunities} deriving={derivingOpportunities} onDerive={() => void submitOpportunityDerivation()} onNavigate={onNavigate} />
       <Panel title="真实扫描 → 证据缺口">
         <form className="content-blueprint-form" data-testid="evidence-gap-derive-form" onSubmit={(event) => void submitEvidenceGapDerivation(event)}>
           <div className="content-blueprint-wide knowledge-search-policy">

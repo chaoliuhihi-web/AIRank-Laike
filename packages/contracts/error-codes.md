@@ -137,6 +137,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_ACQUISITION_EVIDENCE_INVALID` | 409 | 补证来源不存在、失效、过期或未达到官方/已核验第三方权威门槛 |
 | `FACT_ACQUISITION_TASK_VERSION_CONFLICT` | 409 | 补证任务版本已变化，客户端必须重新读取后提交 |
 | `FACT_ACQUISITION_TASK_FINAL` | 409 | 补证任务已经解决，禁止覆盖不可变完成状态 |
+| `OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED` | 409 | 当前项目没有满足不可变性与质量门禁的跨域来源证据，禁止推导干预机会 |
+| `OPPORTUNITY_DERIVATION_NOT_FOUND` | 404 | 干预机会推导运行不存在或不属于当前租户/项目 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

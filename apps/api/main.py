@@ -135,6 +135,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "FACT_ACQUISITION_EVIDENCE_INVALID": (409, "Fact acquisition evidence is invalid or ineligible"),
     "FACT_ACQUISITION_TASK_VERSION_CONFLICT": (409, "Fact acquisition task version is stale"),
     "FACT_ACQUISITION_TASK_FINAL": (409, "Fact acquisition task is already resolved"),
+    "OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED": (409, "No governed source evidence is available for opportunity derivation"),
+    "OPPORTUNITY_DERIVATION_NOT_FOUND": (404, "Opportunity derivation run was not found"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -6043,3 +6045,10 @@ except ImportError:  # pragma: no cover
     from fact_acquisition_routes import router as fact_acquisition_router  # type: ignore[no-redef]
 
 app.include_router(fact_acquisition_router)
+
+try:
+    from .opportunity_routes import router as opportunity_router
+except ImportError:  # pragma: no cover
+    from opportunity_routes import router as opportunity_router  # type: ignore[no-redef]
+
+app.include_router(opportunity_router)

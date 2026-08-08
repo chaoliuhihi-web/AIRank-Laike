@@ -5,6 +5,312 @@ body,
   margin: 0;
 }
 
+.opportunity-board {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 20px;
+  border: 1px solid #ddd7f6;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fbfaff 0%, #f5f8ff 100%);
+  box-shadow: 0 12px 30px rgb(58 45 116 / 6%);
+}
+
+.opportunity-board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.opportunity-board-header h3 {
+  margin: 4px 0 6px;
+  color: var(--console-text-strong);
+  font: 850 20px / 28px var(--console-font-family);
+}
+
+.opportunity-board-header p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 600 13px / 21px var(--console-font-family);
+}
+
+.opportunity-eyebrow {
+  color: var(--console-primary);
+  font: 750 11px / 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+}
+
+.opportunity-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.opportunity-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 13px 15px;
+  border-right: 1px solid var(--console-border);
+}
+
+.opportunity-summary > div:last-child {
+  border-right: 0;
+}
+
+.opportunity-summary span {
+  color: var(--console-text-muted);
+  font: 650 11px / 16px var(--console-font-family);
+}
+
+.opportunity-summary strong {
+  color: var(--console-text-strong);
+  font: 850 20px / 24px var(--console-font-family);
+}
+
+.opportunity-proof-line,
+.opportunity-source-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--console-text-muted);
+  font: 650 12px / 18px var(--console-font-family);
+}
+
+.opportunity-proof-line code,
+.opportunity-card-proof code,
+.opportunity-card-action code {
+  color: #54438d;
+  font: 650 11px / 17px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.opportunity-source-strip span {
+  padding: 6px 9px;
+  border: 1px solid #ddd7f6;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.opportunity-source-strip strong {
+  color: var(--console-primary);
+}
+
+.opportunity-cleared-note,
+.opportunity-empty {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid #efdfb7;
+  border-radius: 9px;
+  background: #fffaf0;
+  color: #765719;
+  font: 650 12px / 19px var(--console-font-family);
+}
+
+.opportunity-empty {
+  display: grid;
+  gap: 3px;
+}
+
+.opportunity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.opportunity-card {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) minmax(180px, 230px);
+  gap: 16px;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--console-border);
+  border-left: 4px solid #8f7ae8;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.opportunity-card[data-kind="fact_governance"] {
+  border-left-color: #d85842;
+}
+
+.opportunity-card[data-kind="citation_support"] {
+  border-left-color: #d29a2e;
+}
+
+.opportunity-card[data-kind="page_extractability"] {
+  border-left-color: #3285b9;
+}
+
+.opportunity-card-score {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 14px 8px;
+  background: #f7f4ff;
+  text-align: center;
+}
+
+.opportunity-card-score strong {
+  color: var(--console-primary);
+  font: 900 27px / 30px var(--console-font-family);
+}
+
+.opportunity-card-score span,
+.opportunity-card-score small {
+  color: var(--console-text-muted);
+  font: 700 10px / 15px var(--console-font-family);
+}
+
+.opportunity-card-content {
+  min-width: 0;
+  padding: 14px 0;
+}
+
+.opportunity-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.opportunity-card-tags span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f1eff8;
+  color: #5f557a;
+  font: 750 10px / 15px var(--console-font-family);
+}
+
+.opportunity-card-tags span[data-state="ready_for_action"] {
+  background: #e9f8ef;
+  color: #247346;
+}
+
+.opportunity-card-tags span[data-state="blocked_evidence"] {
+  background: #fff3df;
+  color: #8a5d12;
+}
+
+.opportunity-card h4 {
+  margin: 8px 0 4px;
+  color: var(--console-text-strong);
+  font: 800 15px / 22px var(--console-font-family);
+}
+
+.opportunity-card p {
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 600 12px / 19px var(--console-font-family);
+}
+
+.opportunity-factor-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin: 10px 0 0;
+}
+
+.opportunity-factor-grid div {
+  display: flex;
+  gap: 5px;
+}
+
+.opportunity-factor-grid dt,
+.opportunity-factor-grid dd {
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 650 11px / 16px var(--console-font-family);
+}
+
+.opportunity-factor-grid dd {
+  color: var(--console-text-strong);
+  font-weight: 800;
+}
+
+.opportunity-card-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 9px;
+  color: var(--console-text-muted);
+  font: 650 11px / 17px var(--console-font-family);
+}
+
+.opportunity-card-action {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px;
+  border-left: 1px solid var(--console-border);
+  background: #fcfcfe;
+}
+
+.opportunity-card-action small {
+  color: var(--console-text-muted);
+  font: 700 10px / 15px var(--console-font-family);
+}
+
+.opportunity-card-action button {
+  min-height: 36px;
+  border: 1px solid #cec4f2;
+  border-radius: 8px;
+  background: #f7f4ff;
+  color: var(--console-primary);
+  cursor: pointer;
+  font: 750 12px / 18px var(--console-font-family);
+}
+
+@media (max-width: 760px) {
+  .opportunity-board {
+    padding: 15px;
+  }
+
+  .opportunity-board-header {
+    display: grid;
+  }
+
+  .opportunity-board-header .airank-console-primary-button {
+    width: 100%;
+  }
+
+  .opportunity-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opportunity-summary > div {
+    border-bottom: 1px solid var(--console-border);
+  }
+
+  .opportunity-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .opportunity-summary > div:last-child {
+    grid-column: 1 / -1;
+    border-bottom: 0;
+  }
+
+  .opportunity-card {
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .opportunity-card-content {
+    padding-right: 12px;
+  }
+
+  .opportunity-card-action {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--console-border);
+    border-left: 0;
+  }
+}
+
 body {
   background: var(--console-page-bg);
 }

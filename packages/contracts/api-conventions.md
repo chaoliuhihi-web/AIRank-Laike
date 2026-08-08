@@ -192,6 +192,15 @@ POST /api/v1/projects/{project_id}/fact-acquisition-tasks/{task_id}/evidence-bin
 
 补证任务使用 `airank.fact-acquisition-task.v1`。只有绑定 `airank.evidence-gap.v2`、质量报告 hash 和证据基础 hash 的缺口才能创建任务；历史缺口或已经拥有事实证据的缺口必须失败关闭。每次状态变化写入带前序 hash 的追加事件。待审 FactRevision 只能把任务推进到 `in_review`；只有当前有效、人工审核通过、无开放冲突、可公开且其 KnowledgeSource 为 `official` 或 `verified_third_party` 的事实，才能把任务和缺口推进到 `ready_for_intervention`。任务完成不等同于内容生成、发布或模型推荐。
 
+### 跨域干预机会
+
+```text
+GET  /api/v1/projects/{project_id}/opportunities
+POST /api/v1/projects/{project_id}/opportunities/derive
+```
+
+机会接口使用 `airank.intervention-opportunity.v1` 和 `airank.cross-domain-opportunity-policy.v1`。每次推导从当前可核验的品牌可见度缺口、引用支持复核、事实治理记录与最新页面审计结果生成完整不可变快照，保存来源基础 hash、逐项证据 hash、逐项快照 hash 和前序运行。`priority_score` 只等于严重度、证据强度和紧迫度三个公开因子的加总，不是推荐率、品牌分或增长预测。相邻运行中的 `cleared` 只表示本轮未再观察到，不会自动把问题标为已解决；页面规则必须由同 URL 的更新审计证据证明已不再失败。品牌内容动作只有在对应 `airank.evidence-gap.v2` 已通过事实补证门禁后才可标记 `content_action_ready`。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：
@@ -203,6 +212,7 @@ POST /api/v1/projects/{project_id}/fact-acquisition-tasks/{task_id}/evidence-bin
 - 创建独立证据复核任务
 - 生成报告证据包
 - 从质量通过的扫描推导证据缺口
+- 从受治理来源证据推导跨域干预机会快照
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
 

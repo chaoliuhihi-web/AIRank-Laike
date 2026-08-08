@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/intervention_opportunity.schema.json",
+  "title": "AIRank Immutable Intervention Opportunity Snapshot",
+  "$ref": "#/$defs/opportunity",
+  "$defs": {
+    "opportunity": {
+      "type": "object",
+      "required": ["snapshot_id", "opportunity_id", "project_id", "derivation_run_id", "contract_version", "policy_version", "source_kind", "source_ref_type", "source_ref_id", "issue_code", "source_evidence_sha256", "evidence_level", "state", "intervention_gate", "severity", "priority_score", "score_factors", "source_refs", "title", "description", "recommended_action", "observed_at", "snapshot_sha256", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": { "type": "string", "pattern": "^opportunity_snapshot_[0-9a-f]{20}$" },
+        "opportunity_id": { "type": "string", "pattern": "^opportunity_[0-9a-f]{20}$" },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "derivation_run_id": { "type": "string", "pattern": "^opportunity_run_[0-9a-f]{20}$" },
+        "contract_version": { "const": "airank.intervention-opportunity.v1" },
+        "policy_version": { "const": "airank.cross-domain-opportunity-policy.v1" },
+        "source_kind": { "type": "string", "enum": ["brand_visibility", "citation_support", "fact_governance", "page_extractability"] },
+        "source_ref_type": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "source_ref_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "issue_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "evidence_level": { "type": "string", "enum": ["quality_gated_repeated_samples", "independently_reviewed_source_page", "immutable_governance_record", "content_hashed_page_audit", "immutable_claim_citation_basis"] },
+        "state": { "type": "string", "enum": ["blocked_evidence", "ready_for_action", "monitor"] },
+        "intervention_gate": { "type": "string", "enum": ["evidence_blocked", "verification_required", "content_action_ready", "research_action_ready", "governance_action_only", "technical_action_ready"] },
+        "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+        "priority_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "score_factors": { "$ref": "#/$defs/score_factors" },
+        "source_refs": { "$ref": "#/$defs/source_refs" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "description": { "type": "string", "minLength": 1 },
+        "recommended_action": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "snapshot_sha256": { "$ref": "#/$defs/sha256" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "score_factors": {
+      "type": "object",
+      "required": ["severity_points", "evidence_points", "urgency_points", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "severity_points": { "type": "integer", "minimum": 0, "maximum": 40 },
+        "evidence_points": { "type": "integer", "minimum": 0, "maximum": 35 },
+        "urgency_points": { "type": "integer", "minimum": 0, "maximum": 25 },
+        "total": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "source_refs": {
+      "type": "object",
+      "required": ["gap_ids", "answer_snapshot_ids", "evidence_snapshot_ids", "citation_ids", "citation_review_ids", "knowledge_source_ids", "fact_revision_ids", "fact_conflict_ids", "page_audit_run_ids", "page_audit_finding_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "gap_ids": { "$ref": "#/$defs/id_list" },
+        "answer_snapshot_ids": { "$ref": "#/$defs/id_list" },
+        "evidence_snapshot_ids": { "$ref": "#/$defs/id_list" },
+        "citation_ids": { "$ref": "#/$defs/id_list" },
+        "citation_review_ids": { "$ref": "#/$defs/id_list" },
+        "knowledge_source_ids": { "$ref": "#/$defs/id_list" },
+        "fact_revision_ids": { "$ref": "#/$defs/id_list" },
+        "fact_conflict_ids": { "$ref": "#/$defs/id_list" },
+        "page_audit_run_ids": { "$ref": "#/$defs/id_list" },
+        "page_audit_finding_ids": { "$ref": "#/$defs/id_list" }
+      }
+    },
+    "id_list": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

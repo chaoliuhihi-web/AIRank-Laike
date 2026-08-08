@@ -186,6 +186,82 @@ export type FactAcquisitionTaskList = {
   resolved_count: number;
 };
 
+export type OpportunitySourceKind = "brand_visibility" | "citation_support" | "fact_governance" | "page_extractability";
+
+export type InterventionOpportunity = {
+  snapshot_id: string;
+  opportunity_id: string;
+  project_id: string;
+  derivation_run_id: string;
+  contract_version: "airank.intervention-opportunity.v1";
+  policy_version: "airank.cross-domain-opportunity-policy.v1";
+  source_kind: OpportunitySourceKind;
+  source_ref_type: string;
+  source_ref_id: string;
+  issue_code: string;
+  source_evidence_sha256: string;
+  evidence_level: "quality_gated_repeated_samples" | "independently_reviewed_source_page" | "immutable_governance_record" | "content_hashed_page_audit" | "immutable_claim_citation_basis";
+  state: "blocked_evidence" | "ready_for_action" | "monitor";
+  intervention_gate: "evidence_blocked" | "verification_required" | "content_action_ready" | "research_action_ready" | "governance_action_only" | "technical_action_ready";
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  priority_score: number;
+  score_factors: {
+    severity_points: number;
+    evidence_points: number;
+    urgency_points: number;
+    total: number;
+  };
+  source_refs: {
+    gap_ids: string[];
+    answer_snapshot_ids: string[];
+    evidence_snapshot_ids: string[];
+    citation_ids: string[];
+    citation_review_ids: string[];
+    knowledge_source_ids: string[];
+    fact_revision_ids: string[];
+    fact_conflict_ids: string[];
+    page_audit_run_ids: string[];
+    page_audit_finding_ids: string[];
+  };
+  title: string;
+  description: string;
+  recommended_action: string;
+  observed_at: string;
+  snapshot_sha256: string;
+  created_at: string;
+};
+
+export type OpportunityDerivation = {
+  derivation_run_id: string;
+  project_id: string;
+  contract_version: "airank.intervention-opportunity.v1";
+  policy_version: "airank.cross-domain-opportunity-policy.v1";
+  source_basis_sha256: string;
+  evaluated_at: string;
+  knowledge_window_days: number;
+  previous_run_id: string | null;
+  source_counts: Record<OpportunitySourceKind, number>;
+  opportunity_count: number;
+  new_count: number;
+  persisting_count: number;
+  cleared_count: number;
+  cleared_opportunity_ids: string[];
+  opportunities: InterventionOpportunity[];
+  created_by: string;
+  created_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityList = {
+  project_id: string;
+  contract_version: "airank.intervention-opportunity.v1";
+  policy_version: "airank.cross-domain-opportunity-policy.v1";
+  latest_derivation_run: OpportunityDerivation | null;
+  state_counts: Record<"blocked_evidence" | "ready_for_action" | "monitor", number>;
+  source_counts: Record<OpportunitySourceKind, number>;
+  opportunities: InterventionOpportunity[];
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -1762,6 +1838,37 @@ export async function bindFactAcquisitionEvidence(
     throw new Error(await readErrorMessage(response, `Fact acquisition evidence binding failed with ${response.status}`));
   }
   return ((await response.json()) as { data: FactAcquisitionTask }).data;
+}
+
+export function fetchOpportunities(projectId: string, signal?: AbortSignal): Promise<OpportunityList> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunities`,
+    "trc_web_opportunities",
+    signal,
+  );
+}
+
+export async function deriveOpportunities(projectId: string): Promise<OpportunityDerivation> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) {
+    throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  }
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunities/derive`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_derive"),
+      },
+      body: JSON.stringify({ requested_by: actor, knowledge_window_days: 30 }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Opportunity derivation failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: OpportunityDerivation }).data;
 }
 
 export async function fetchReports(projectId: string, signal?: AbortSignal): Promise<ReportList> {
