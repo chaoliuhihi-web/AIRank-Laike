@@ -880,6 +880,9 @@ class ProviderRouteStatus(BaseModel):
     route_id: str
     endpoint_host: str
     model: str
+    request_kind: Literal[
+        "chat_completions", "chat_completions_search", "responses_web_search"
+    ]
     configured: bool
     enabled: bool
     base_priority: int
@@ -3830,6 +3833,9 @@ def complete_mysql_real_brand_scan(
                             {
                                 "search_requested": result.raw_metadata.get("search_requested"),
                                 "search_used": result.raw_metadata.get("search_used"),
+                                "search_evidence": result.raw_metadata.get("search_evidence"),
+                                "citation_parser_version": result.raw_metadata.get("citation_parser_version"),
+                                "native_citation_count": result.raw_metadata.get("native_citation_count"),
                                 "source_extraction": result.raw_metadata.get("source_extraction"),
                                 "route_id": result.raw_metadata.get("route_id"),
                                 "request_contract": result.raw_metadata.get("request_contract"),
@@ -3902,6 +3908,10 @@ def complete_mysql_real_brand_scan(
                             {
                                 "extraction": result.raw_metadata.get("source_extraction", "unknown"),
                                 "provider": result.provider,
+                                "parser_version": result.raw_metadata.get("citation_parser_version"),
+                                "native_type": citation.get("native_type"),
+                                "source_path": citation.get("source_path"),
+                                "source_id": citation.get("source_id"),
                             },
                             ensure_ascii=False,
                         ),

@@ -29,6 +29,7 @@ def route_record() -> dict[str, object]:
         "route_id": "qianwen:default",
         "endpoint_host": "dashscope.aliyuncs.com",
         "model": "qwen-test",
+        "request_kind": "responses_web_search",
         "configured": True,
         "enabled": True,
         "base_priority": 0,

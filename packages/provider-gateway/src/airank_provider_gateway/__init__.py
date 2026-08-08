@@ -1,5 +1,7 @@
 """AIRank provider gateway contracts and runtime."""
 
+from .adapters import NATIVE_CITATION_PARSER_VERSION, SEARCH_EVIDENCE_VERSION
+
 from .gateway import (
     CircuitBreaker,
     CircuitBreakerContract,
@@ -41,6 +43,7 @@ __all__ = [
     "InMemoryQuotaLedger",
     "NoopProviderCapacityLedger",
     "NoopProviderRoutePolicy",
+    "NATIVE_CITATION_PARSER_VERSION",
     "PROVIDER_ALIASES",
     "PROVIDER_MANIFESTS",
     "ProbeLevel",
@@ -62,6 +65,7 @@ __all__ = [
     "QuotaLedgerContract",
     "QuotaReservation",
     "ResolvedProviderRoute",
+    "SEARCH_EVIDENCE_VERSION",
     "UsagePrecision",
     "UrllibProviderTransport",
     "canonical_provider",

@@ -248,12 +248,22 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
                 evidence_grade="provider_api_with_web_search",
                 web_search_requested=True,
                 web_search_used=True,
-                citations=(ProviderCitation(url="https://example.com/a", title="来源 A"),),
+                citations=(
+                    ProviderCitation(
+                        url="https://example.com/a",
+                        title="来源 A",
+                        native_type="web_search_call_source",
+                        source_path="/output/0/action/sources/0",
+                        source_id="source_a",
+                    ),
+                ),
                 usage=ProviderUsage(total_tokens=10, precision=UsagePrecision.EXACT),
                 raw_response={"id": "request_real_1"},
                 endpoint_host="dashscope.example.com",
                 configuration_fingerprint="a" * 64,
                 route_id="qianwen-primary",
+                search_evidence="airank.provider-search-evidence.v1:explicit_tool_call",
+                citation_parser_version="airank.provider-native-citation.v2",
             )
 
     monkeypatch.setattr("apps.api.provider_scan.get_api_gateway", lambda: FakeGateway())
@@ -272,9 +282,15 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     assert result.external_trace_id == "request_real_1"
     assert result.brand_mentioned is True
     assert result.native_citations[0]["url"] == "https://example.com/a"
+    assert result.native_citations[0]["native_type"] == "web_search_call_source"
+    assert result.native_citations[0]["source_path"] == "/output/0/action/sources/0"
+    assert result.native_citations[0]["source_id"] == "source_a"
     assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
     assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}
     assert result.raw_metadata["route_id"] == "qianwen-primary"
+    assert result.raw_metadata["search_evidence"].endswith(":explicit_tool_call")
+    assert result.raw_metadata["citation_parser_version"] == "airank.provider-native-citation.v2"
+    assert result.raw_metadata["native_citation_count"] == 1
 
 
 def test_api_provider_empty_answer_preserves_upstream_response_metadata(

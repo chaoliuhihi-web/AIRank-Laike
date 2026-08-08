@@ -1,0 +1,186 @@
+{
+  "schema_version": "airank.provider-native-citation-benchmark.v1",
+  "cases": [
+    {
+      "case_id": "qianwen_chat_search_info",
+      "search_requested": true,
+      "response": {
+        "choices": [{"message": {"content": "回答"}}],
+        "search_info": {
+          "search_results": [
+            {
+              "index": 1,
+              "url": "https://example.com/qwen-source",
+              "title": "千问来源",
+              "snippet": "可核验片段"
+            }
+          ]
+        }
+      },
+      "expected_search_used": true,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:explicit_search_info",
+      "expected_citations": [
+        {
+          "url": "https://example.com/qwen-source",
+          "native_type": "search_info_result",
+          "source_path": "/search_info/search_results/0",
+          "source_id": "1"
+        }
+      ]
+    },
+    {
+      "case_id": "responses_action_sources",
+      "search_requested": true,
+      "response": {
+        "output": [
+          {
+            "type": "web_search_call",
+            "action": {
+              "sources": [
+                {
+                  "id": "source_a",
+                  "url": "https://example.org/action-source",
+                  "title": "Responses 来源"
+                }
+              ]
+            }
+          },
+          {
+            "type": "message",
+            "content": [{"type": "output_text", "text": "回答"}]
+          }
+        ]
+      },
+      "expected_search_used": true,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:explicit_tool_call",
+      "expected_citations": [
+        {
+          "url": "https://example.org/action-source",
+          "native_type": "web_search_call_source",
+          "source_path": "/output/0/action/sources/0",
+          "source_id": "source_a"
+        }
+      ]
+    },
+    {
+      "case_id": "responses_url_annotation",
+      "search_requested": true,
+      "response": {
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "回答",
+                "annotations": [
+                  {
+                    "type": "url_citation",
+                    "url": "https://example.net/annotation",
+                    "title": "角标来源"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "usage": {"x_tools": {"web_search": {"count": 1}}}
+      },
+      "expected_search_used": true,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:explicit_tool_usage",
+      "expected_citations": [
+        {
+          "url": "https://example.net/annotation",
+          "native_type": "url_citation_annotation",
+          "source_path": "/output/0/content/0/annotations/0",
+          "source_id": null
+        }
+      ]
+    },
+    {
+      "case_id": "chat_message_annotation",
+      "search_requested": true,
+      "response": {
+        "choices": [
+          {
+            "message": {
+              "content": "回答",
+              "annotations": [
+                {
+                  "type": "url_citation",
+                  "url_citation": {
+                    "url": "https://example.edu/chat-annotation",
+                    "title": "Chat 角标"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "search_info": {}
+      },
+      "expected_search_used": true,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:explicit_search_info",
+      "expected_citations": [
+        {
+          "url": "https://example.edu/chat-annotation",
+          "native_type": "url_citation_annotation",
+          "source_path": "/choices/0/message/annotations/0/url_citation",
+          "source_id": null
+        }
+      ]
+    },
+    {
+      "case_id": "unrelated_urls_are_not_citations",
+      "search_requested": true,
+      "response": {
+        "choices": [{"message": {"content": "正文中出现 https://not-a-native.example"}}],
+        "debug": {
+          "references": [
+            {
+              "url": "https://not-a-native.example/debug",
+              "title": "调试 URL"
+            }
+          ]
+        },
+        "usage": {"plugins": {"file_search": {"count": 1}}}
+      },
+      "expected_search_used": null,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:requested_unverifiable",
+      "expected_citations": []
+    },
+    {
+      "case_id": "not_requested_is_explicitly_false",
+      "search_requested": false,
+      "response": {
+        "choices": [{"message": {"content": "普通回答"}}]
+      },
+      "expected_search_used": false,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:not_requested",
+      "expected_citations": []
+    },
+    {
+      "case_id": "invalid_and_duplicate_urls_fail_closed",
+      "search_requested": true,
+      "response": {
+        "search_info": {
+          "sources": [
+            {"url": "javascript:alert(1)", "title": "非法"},
+            {"url": "https://example.com/unique", "title": "第一条"},
+            {"url": "https://example.com/unique", "title": "重复"}
+          ]
+        }
+      },
+      "expected_search_used": true,
+      "expected_search_evidence": "airank.provider-search-evidence.v1:explicit_search_info",
+      "expected_citations": [
+        {
+          "url": "https://example.com/unique",
+          "native_type": "search_info_source",
+          "source_path": "/search_info/sources/1",
+          "source_id": null
+        }
+      ]
+    }
+  ]
+}

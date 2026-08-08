@@ -11,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, text
 
 from airank_provider_gateway import (
+    NATIVE_CITATION_PARSER_VERSION,
     ProbeResult,
     ProviderCapacityLease,
     ProviderGatewayError,
@@ -53,7 +54,7 @@ class MySQLProviderOperations:
                 settings = routes[0].settings
                 max_tokens_field = (
                     "max_output_tokens"
-                    if manifest.request_kind == "responses_web_search"
+                    if settings.request_kind == "responses_web_search"
                     else manifest.max_tokens_field
                 )
                 fingerprint = settings.configuration_fingerprint(
@@ -67,6 +68,8 @@ class MySQLProviderOperations:
                     "endpoint_host": settings.endpoint_host,
                     "model": settings.model,
                     "request_defaults": {
+                        "request_kind": settings.request_kind,
+                        "citation_parser_version": NATIVE_CITATION_PARSER_VERSION,
                         "max_tokens": settings.max_tokens,
                         "max_tokens_field": max_tokens_field,
                         "temperature": settings.temperature,
@@ -153,6 +156,11 @@ class MySQLProviderOperations:
                     },
                 )
                 for route in routes:
+                    route_max_tokens_field = (
+                        "max_output_tokens"
+                        if route.settings.request_kind == "responses_web_search"
+                        else manifest.max_tokens_field
+                    )
                     route_fingerprint = route.settings.configuration_fingerprint(
                         manifest.provider, route.route_id
                     )
@@ -163,8 +171,10 @@ class MySQLProviderOperations:
                         "endpoint_host": route.settings.endpoint_host,
                         "model": route.settings.model,
                         "request_contract": {
+                            "request_kind": route.settings.request_kind,
+                            "citation_parser_version": NATIVE_CITATION_PARSER_VERSION,
                             "max_tokens": route.settings.max_tokens,
-                            "max_tokens_field": max_tokens_field,
+                            "max_tokens_field": route_max_tokens_field,
                             "temperature": route.settings.temperature,
                             "reasoning_effort": route.settings.reasoning_effort,
                         },
@@ -322,6 +332,7 @@ class MySQLProviderOperations:
                     "route_id": route.route_id,
                     "endpoint_host": route.settings.endpoint_host,
                     "model": route.settings.model,
+                    "request_kind": route.settings.request_kind,
                     "configured": route.settings.configured,
                     "enabled": bool(control["enabled"]) if control else True,
                     "base_priority": route.priority,

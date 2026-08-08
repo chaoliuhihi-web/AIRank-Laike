@@ -944,3 +944,26 @@ Limitations and blockers:
 Decision:
 
 - AIRank now has a customer-readable, offline-rebuildable evidence deliverable rather than a machine-only JSON download. It remains commercial `NO-GO` until external production, Consumer, human-quality, signing and longitudinal-observation gates pass.
+
+## 2026-08-08 Provider-Native Citation v2 Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- `airank.provider-native-citation.v2` uses an explicit Provider-structure allowlist. Qianwen `search_info`, Responses `web_search_call.action.sources`, message/content annotations and explicit top-level citation structures are accepted; URLs found only in answer text, debug fields or unrelated nested payloads are rejected.
+- Each accepted Citation retains its Provider-native type, exact raw-response JSON path and optional native source ID. `airank.provider-search-evidence.v1` separately distinguishes not requested, explicit tool execution, explicit usage, explicit no-search and requested-but-unverifiable states.
+- Route request kind is now part of manifest/configuration fingerprint, route status, effective request contract and sample/request audit metadata. The supported public values are `chat_completions`, `chat_completions_search` and `responses_web_search`; invalid route values fail closed.
+- A versioned seven-case benchmark covers Qianwen search info, Responses action sources, response/chat annotations, unrelated URL rejection, search-not-requested state, invalid URL rejection and deterministic deduplication. All 7/7 cases pass and the release-readiness runner executes the benchmark.
+- A real Qianwen `responses_web_search` batch used one confirmed blind Prompt and three isolated sessions. All 3/3 samples were valid, all three normal not-mentioned answers stayed in the denominator, and the immutable Citation counts were 135, 90 and 135. Each sample retained a unique Provider request ID, parser version, explicit-tool-call search evidence and exact source paths. `airank.measurement-quality.v4` was publishable with 100% citation recall in this declared API scope.
+- The Evidence Center renders the first 20 citations by default, can expand the complete 135-source list, and exposes request kind, search evidence, parser version and raw source path. Desktop 1543px and mobile 390x844 had no page-level horizontal overflow; the console reported zero warnings/errors.
+
+Limitations and blockers:
+
+- Provider selection is not Citation support. No source-page/claim independent human review was completed for this batch, so support rate and fact accuracy remain unevaluated.
+- This real native-citation proof currently covers Qianwen Responses only. Doubao, Kimi and DeepSeek still need official-structure fixtures and real repeated source-bearing samples before their native citation capability can be promoted.
+- API evidence does not satisfy Consumer Web/App evidence. Consumer L3 remains blocked by login/captcha, and production Yudao, HTTPS object storage, customer publishing credentials, real reviewer benchmark, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 evidence remain open.
+
+Decision:
+
+- AIRank can now prove where a Qianwen API Citation came from without scanning arbitrary URLs or claiming that source supports the answer. The capability remains `partial`, and AIRank remains commercial `NO-GO`.

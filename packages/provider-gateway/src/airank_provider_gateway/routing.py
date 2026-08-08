@@ -7,7 +7,7 @@ import re
 from typing import Mapping
 
 from .models import ProviderGatewayError, ProviderManifest
-from .runtime import ProviderSettings
+from .runtime import PROVIDER_REQUEST_KINDS, ProviderSettings
 
 
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
@@ -22,6 +22,7 @@ _ALLOWED_ROUTE_FIELDS = {
     "max_tokens",
     "temperature",
     "reasoning_effort",
+    "request_kind",
 }
 
 
@@ -89,11 +90,15 @@ def resolve_provider_routes(
         reasoning_effort = item.get("reasoning_effort", default_settings.reasoning_effort)
         if reasoning_effort is not None:
             reasoning_effort = str(reasoning_effort).strip().lower()
+        request_kind = str(
+            item.get("request_kind", default_settings.request_kind)
+        ).strip().lower()
         if (
             not -10_000 <= priority <= 10_000
             or not 1 <= max_tokens <= 32_768
             or (temperature is not None and not 0 <= temperature <= 2)
             or reasoning_effort not in {None, "low", "high", "max"}
+            or request_kind not in PROVIDER_REQUEST_KINDS
         ):
             raise _invalid_routes(manifest)
         routes.append(
@@ -108,6 +113,7 @@ def resolve_provider_routes(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    request_kind=request_kind,
                     allowed_endpoint_hosts=default_settings.allowed_endpoint_hosts,
                     allow_custom_endpoint=default_settings.allow_custom_endpoint,
                 ),

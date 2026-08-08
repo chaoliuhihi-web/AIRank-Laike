@@ -474,6 +474,11 @@ def release_checks(
             "python3 -m pytest packages/provider-gateway/tests -q",
             remove_database_urls=True,
         ),
+        command_check(
+            "provider citation benchmark",
+            "python3 scripts/evaluate_provider_citations.py",
+            remove_database_urls=True,
+        ),
         command_check("core skill evaluation", "python3 scripts/evaluate_core_skills.py", remove_database_urls=True),
         command_check(
             "xinghe adapter tests",

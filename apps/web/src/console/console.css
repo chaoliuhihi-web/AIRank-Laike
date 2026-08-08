@@ -1914,6 +1914,10 @@ button:disabled {
   padding: 12px 0;
 }
 
+.citation-list-toggle {
+  margin-top: 12px;
+}
+
 .citation-capture-toolbar,
 .citation-review-actions {
   display: flex;

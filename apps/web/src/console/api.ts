@@ -983,6 +983,7 @@ export type ProviderRouteStatus = {
   route_id: string;
   endpoint_host: string;
   model: string;
+  request_kind: "chat_completions" | "chat_completions_search" | "responses_web_search";
   configured: boolean;
   enabled: boolean;
   base_priority: number;

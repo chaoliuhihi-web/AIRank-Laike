@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Mapping
 
 import pytest
@@ -13,10 +14,12 @@ from airank_provider_gateway import (
     ProviderCapacityLease,
     ProviderGateway,
     ProviderGatewayError,
+    ProviderSettings,
     ProviderRequestContext,
     ResolvedProviderRoute,
     UsagePrecision,
     canonical_provider,
+    get_manifest,
 )
 
 
@@ -268,12 +271,18 @@ def test_qianwen_generation_preserves_request_id_search_evidence_citation_and_us
     assert result.evidence_grade == "provider_api_with_web_search"
     assert result.web_search_used is True
     assert result.citations[0].url == "https://example.com/source"
+    assert result.citations[0].native_type == "search_info_source"
+    assert result.citations[0].source_path == "/search_info/sources/0"
+    assert result.search_evidence.endswith(":explicit_search_info")
     assert result.usage.total_tokens == 20
     assert result.usage.precision == UsagePrecision.EXACT
     assert transport.calls[0]["payload"]["enable_search"] is True
     assert "Authorization" not in audits[0]
     assert audits[0]["request_id_present"] is True
     assert audits[0]["request_contract"] == {
+        "request_kind": "chat_completions_search",
+        "citation_parser_version": "airank.provider-native-citation.v2",
+        "search_evidence_version": "airank.provider-search-evidence.v1",
         "max_tokens": 4096,
         "max_tokens_field": "max_tokens",
         "temperature": 0.2,
@@ -352,11 +361,17 @@ def test_kimi_k3_uses_official_reasoning_and_completion_contract() -> None:
     assert "temperature" not in transport.calls[0]["payload"]
     assert transport.calls[0]["payload"]["reasoning_effort"] == "low"
     assert result.request_contract == {
+        "request_kind": "chat_completions",
+        "citation_parser_version": "airank.provider-native-citation.v2",
+        "search_evidence_version": "airank.provider-search-evidence.v1",
         "max_tokens": 4096,
         "max_tokens_field": "max_completion_tokens",
         "temperature": None,
         "reasoning_effort": "low",
     }
+    assert result.web_search_requested is False
+    assert result.web_search_used is False
+    assert result.search_evidence.endswith(":not_requested")
     default_fingerprint = gateway.settings("kimi").configuration_fingerprint("kimi")
     overridden = ProviderGateway(
         env={**env, "KIMI_REASONING_EFFORT": "high"},
@@ -390,6 +405,9 @@ def test_empty_provider_response_preserves_upstream_failure_evidence() -> None:
     assert error.usage is not None
     assert error.usage.total_tokens == 4106
     assert error.request_contract == {
+        "request_kind": "chat_completions_search",
+        "citation_parser_version": "airank.provider-native-citation.v2",
+        "search_evidence_version": "airank.provider-search-evidence.v1",
         "max_tokens": 4096,
         "max_tokens_field": "max_tokens",
         "temperature": 0.2,
@@ -433,9 +451,114 @@ def test_doubao_falls_back_without_search_when_account_has_not_opened_tool() -> 
     assert transport.calls[0]["payload"]["tools"] == [{"type": "web_search"}]
     assert "tools" not in transport.calls[1]["payload"]
     assert result.answer_text == "无联网回答"
-    assert result.web_search_requested is True
+    assert result.web_search_requested is False
     assert result.web_search_used is False
     assert result.evidence_grade == "provider_api_search_not_used"
+    assert result.search_evidence.endswith(":not_requested")
+
+
+def test_qianwen_responses_route_extracts_only_native_action_sources() -> None:
+    env = qianwen_env()
+    env.update(
+        {
+            "QIANWEN_API_URL": "https://dashscope.example.test/v1/responses",
+            "QIANWEN_REQUEST_KIND": "responses_web_search",
+        }
+    )
+    transport = FakeTransport(
+        [
+            HttpResponse(
+                status=200,
+                headers={"x-request-id": "req_qwen_responses"},
+                data={
+                    "id": "req_qwen_responses",
+                    "output": [
+                        {
+                            "type": "web_search_call",
+                            "action": {
+                                "sources": [
+                                    {
+                                        "id": "source_1",
+                                        "url": "https://official.example/source",
+                                        "title": "官方来源",
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "type": "message",
+                            "content": [
+                                {"type": "output_text", "text": "联网回答"}
+                            ],
+                        },
+                    ],
+                    "debug": {
+                        "references": [
+                            {"url": "https://must-not-count.example/debug"}
+                        ]
+                    },
+                },
+            )
+        ]
+    )
+
+    result = ProviderGateway(env=env, transport=transport).generate(
+        "qianwen", "查询最新资料"
+    )
+
+    assert transport.calls[0]["payload"]["tools"] == [{"type": "web_search"}]
+    assert transport.calls[0]["payload"]["max_output_tokens"] == 4096
+    assert "messages" not in transport.calls[0]["payload"]
+    assert result.web_search_requested is True
+    assert result.web_search_used is True
+    assert result.search_evidence.endswith(":explicit_tool_call")
+    assert [citation.url for citation in result.citations] == [
+        "https://official.example/source"
+    ]
+    assert result.citations[0].source_path == "/output/0/action/sources/0"
+    assert result.citations[0].source_id == "source_1"
+    assert result.request_contract["request_kind"] == "responses_web_search"
+
+
+def test_route_request_kind_is_validated_and_changes_configuration_fingerprint() -> None:
+    chat_gateway = ProviderGateway(env=qianwen_env(), transport=FakeTransport([]))
+    responses_env = {
+        **qianwen_env(),
+        "QIANWEN_REQUEST_KIND": "responses_web_search",
+        "QIANWEN_API_URL": "https://dashscope.example.test/v1/responses",
+    }
+    responses_gateway = ProviderGateway(env=responses_env, transport=FakeTransport([]))
+
+    assert chat_gateway.settings("qianwen").request_kind == "chat_completions_search"
+    assert responses_gateway.settings("qianwen").request_kind == "responses_web_search"
+    assert (
+        chat_gateway.settings("qianwen").configuration_fingerprint("qianwen")
+        != responses_gateway.settings("qianwen").configuration_fingerprint("qianwen")
+    )
+
+    invalid = qianwen_env()
+    invalid["QIANWEN_ROUTES_JSON"] = """[
+      {"route_id":"invalid","request_kind":"unknown_protocol"}
+    ]"""
+    with pytest.raises(ProviderGatewayError) as caught:
+        ProviderGateway(env=invalid, transport=FakeTransport([])).generate(
+            "qianwen", "测试"
+        )
+    assert caught.value.code == "PROVIDER_ROUTE_CONFIG_INVALID"
+
+    invalid_env = qianwen_env()
+    invalid_env["QIANWEN_REQUEST_KIND"] = "unknown_protocol"
+    with pytest.raises(ProviderGatewayError) as env_caught:
+        ProviderGateway(env=invalid_env, transport=FakeTransport([])).settings("qianwen")
+    assert env_caught.value.code == "PROVIDER_REQUEST_KIND_INVALID"
+
+
+def test_legacy_openai_chat_manifest_kind_normalizes_to_public_contract() -> None:
+    manifest = replace(get_manifest("qianwen"), request_kind="openai_chat")
+
+    settings = ProviderSettings.from_env(manifest, {"QIANWEN_API_KEY": "test-key"})
+
+    assert settings.request_kind == "chat_completions"
 
 
 def test_retryable_failure_retries_and_circuit_opens() -> None:

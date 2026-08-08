@@ -33,8 +33,9 @@ The gateway exposes:
 - process-shared MySQL token-bucket QPS and concurrency leases, isolated by
   Provider configuration fingerprint, with atomic cross-worker acquisition and
   TTL recovery after worker crashes;
-- request IDs, web-search state, native citations, exact/estimated usage
-  provenance, selected route IDs, and route-scoped safe configuration
+- request IDs, versioned web-search evidence, Provider-native citations with
+  exact raw-response paths, exact/estimated usage provenance, selected route
+  IDs, and route-scoped safe configuration
   fingerprints.
 
 Route failover is deliberately narrow. Network, upstream, route authentication,
@@ -48,6 +49,23 @@ charge the same task concurrently. Provider secrets remain process-only and
 are represented in the database solely by a one-way configuration fingerprint.
 Capacity cleanup failures do not turn an already successful upstream response
 into a retry; the stale lease is recovered by TTL instead.
+
+Each route declares one public `request_kind`: `chat_completions`,
+`chat_completions_search`, or `responses_web_search`. The request kind
+participates in the configuration fingerprint and is persisted with the
+effective request contract. Qianwen can therefore use the Responses Web Search
+contract without presenting it as an ordinary chat-completions call. The legacy
+manifest value `openai_chat` is normalized to `chat_completions`; unknown
+explicit environment or route values fail closed.
+
+Citation parsing uses `airank.provider-native-citation.v2`. It only accepts
+declared Provider-native structures such as Qianwen `search_info`, Responses
+`web_search_call.action.sources`, message/content annotations, or explicit
+top-level citations. Each accepted citation retains its native type, exact JSON
+path, and native source ID. URLs found only in answer text, debug fields, or
+unrelated nested payloads are ignored. Search use is separately classified by
+`airank.provider-search-evidence.v1`; requesting search is not treated as proof
+that a search tool actually ran.
 
 Operational routes are managed through `GET /api/v1/admin/provider-routes`
 and `PUT /api/v1/admin/provider-routes/{provider}/{route_id}` with the trusted

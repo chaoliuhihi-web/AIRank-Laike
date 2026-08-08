@@ -14,6 +14,20 @@ from urllib.request import Request, urlopen
 from .models import ProviderGatewayError, ProviderManifest
 
 
+PROVIDER_REQUEST_KINDS = frozenset(
+    {"chat_completions", "chat_completions_search", "responses_web_search"}
+)
+LEGACY_PROVIDER_REQUEST_KIND_ALIASES = {
+    "openai_chat": "chat_completions",
+}
+
+
+def normalize_provider_request_kind(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    normalized = LEGACY_PROVIDER_REQUEST_KIND_ALIASES.get(normalized, normalized)
+    return normalized if normalized in PROVIDER_REQUEST_KINDS else None
+
+
 @dataclass(frozen=True)
 class ProviderSettings:
     endpoint: str
@@ -23,6 +37,7 @@ class ProviderSettings:
     max_tokens: int
     temperature: float | None
     reasoning_effort: str | None
+    request_kind: str
     allowed_endpoint_hosts: tuple[str, ...]
     allow_custom_endpoint: bool
 
@@ -61,6 +76,15 @@ class ProviderSettings:
         )
         if reasoning_effort not in {None, "low", "high", "max"}:
             reasoning_effort = manifest.reasoning_effort_default
+        request_kind = normalize_provider_request_kind(
+            values.get(f"{provider_prefix}_REQUEST_KIND") or manifest.request_kind
+        )
+        if request_kind is None:
+            raise ProviderGatewayError(
+                manifest.provider,
+                "PROVIDER_REQUEST_KIND_INVALID",
+                "provider request kind is invalid",
+            )
         return cls(
             endpoint=str(values.get(manifest.endpoint_env) or manifest.endpoint_default).strip(),
             api_key=str(values.get(manifest.key_env) or "").strip(),
@@ -70,6 +94,7 @@ class ProviderSettings:
             max_tokens=max_tokens,
             temperature=temperature,
             reasoning_effort=reasoning_effort,
+            request_kind=request_kind,
             allowed_endpoint_hosts=manifest.allowed_endpoint_hosts,
             allow_custom_endpoint=str(
                 values.get("AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS") or "false"
@@ -100,7 +125,7 @@ class ProviderSettings:
 
     def configuration_fingerprint(self, provider: str, route_id: str = "default") -> str:
         payload = {
-            "contract": "airank.provider-config.v3",
+            "contract": "airank.provider-config.v4",
             "provider": provider,
             "route_id": route_id,
             "endpoint": self.endpoint,
@@ -110,6 +135,7 @@ class ProviderSettings:
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "reasoning_effort": self.reasoning_effort,
+            "request_kind": self.request_kind,
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

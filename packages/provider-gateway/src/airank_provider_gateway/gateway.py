@@ -11,7 +11,13 @@ import time
 from typing import Any, Callable, Iterator, Mapping, Protocol
 from uuid import uuid4
 
-from .adapters import build_request, parse_response
+from .adapters import (
+    NATIVE_CITATION_PARSER_VERSION,
+    SEARCH_EVIDENCE_VERSION,
+    build_request,
+    parse_response,
+    request_uses_web_search,
+)
 from .manifests import PROVIDER_MANIFESTS, canonical_provider, get_manifest
 from .models import (
     HealthState,
@@ -379,6 +385,7 @@ class ProviderGateway:
             settings.max_tokens,
             settings.temperature,
             settings.reasoning_effort,
+            request_kind=settings.request_kind,
         )
         limiter = self._limiters.setdefault(canonical, self._build_limiter(canonical))
         last_error: ProviderGatewayError | None = None
@@ -400,7 +407,14 @@ class ProviderGateway:
                                 headers,
                                 request_payload,
                             )
-                            answer, request_id, citations, search_used, usage = parse_response(
+                            (
+                                answer,
+                                request_id,
+                                citations,
+                                search_used,
+                                search_evidence,
+                                usage,
+                            ) = parse_response(
                                 response.data,
                                 response.headers,
                                 search_requested=search_requested_for_call,
@@ -430,7 +444,7 @@ class ProviderGateway:
                                 duration_ms=max(0, round((time.monotonic() - started) * 1000)),
                                 attempt_count=attempt,
                                 evidence_grade=self._evidence_grade(manifest, search_used),
-                                web_search_requested=manifest.capabilities.web_search,
+                                web_search_requested=search_requested_for_call,
                                 web_search_used=search_used,
                                 citations=citations,
                                 usage=usage,
@@ -439,6 +453,8 @@ class ProviderGateway:
                                 configuration_fingerprint=configuration_fingerprint,
                                 route_id=route.route_id,
                                 request_contract=self._request_contract(manifest, settings),
+                                search_evidence=search_evidence,
+                                citation_parser_version=NATIVE_CITATION_PARSER_VERSION,
                             )
                             self._audit(result, "success")
                             return result
@@ -489,6 +505,10 @@ class ProviderGateway:
         headers: Mapping[str, str],
         request_payload: Mapping[str, Any],
     ) -> tuple[HttpResponse, bool]:
+        search_requested = request_uses_web_search(
+            settings.request_kind,
+            request_payload,
+        )
         try:
             return (
                 self.transport.request(
@@ -498,11 +518,11 @@ class ProviderGateway:
                     payload=request_payload,
                     timeout_seconds=self.timeout_seconds,
                 ),
-                manifest.capabilities.web_search,
+                search_requested,
             )
         except ProviderGatewayError as exc:
             tool_unavailable = (
-                manifest.request_kind == "responses_web_search"
+                settings.request_kind == "responses_web_search"
                 and exc.provider_code == "ToolNotOpen"
             )
             if not tool_unavailable:
@@ -515,6 +535,7 @@ class ProviderGateway:
                 settings.temperature,
                 settings.reasoning_effort,
                 include_web_search=False,
+                request_kind=settings.request_kind,
             )
             return (
                 self.transport.request(
@@ -677,10 +698,13 @@ class ProviderGateway:
     ) -> Mapping[str, Any]:
         max_tokens_field = (
             "max_output_tokens"
-            if manifest.request_kind == "responses_web_search"
+            if settings.request_kind == "responses_web_search"
             else manifest.max_tokens_field
         )
         return {
+            "request_kind": settings.request_kind,
+            "citation_parser_version": NATIVE_CITATION_PARSER_VERSION,
+            "search_evidence_version": SEARCH_EVIDENCE_VERSION,
             "max_tokens": settings.max_tokens,
             "max_tokens_field": max_tokens_field,
             "temperature": settings.temperature,
@@ -758,6 +782,8 @@ class ProviderGateway:
                 "evidence_grade": result.evidence_grade,
                 "usage_precision": result.usage.precision.value,
                 "request_contract": dict(result.request_contract),
+                "search_evidence": result.search_evidence,
+                "citation_parser_version": result.citation_parser_version,
                 "outcome": outcome,
                 "configuration_fingerprint": result.configuration_fingerprint,
             }

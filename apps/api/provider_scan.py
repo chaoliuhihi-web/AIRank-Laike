@@ -352,6 +352,9 @@ def call_api_provider_for_brand_rank(
             "title": citation.title or "",
             "host": urlparse(citation.url).netloc.lower(),
             "cited_text": citation.cited_text or "",
+            "native_type": citation.native_type,
+            "source_path": citation.source_path or "",
+            "source_id": citation.source_id or "",
         }
         for citation in api_result.citations
     ]
@@ -381,6 +384,9 @@ def call_api_provider_for_brand_rank(
             "model_name": api_result.model,
             "search_requested": api_result.web_search_requested,
             "search_used": api_result.web_search_used,
+            "search_evidence": api_result.search_evidence,
+            "citation_parser_version": api_result.citation_parser_version,
+            "native_citation_count": len(native_citations),
             "provider_request_id": api_result.request_id,
             "requested_at": api_result.requested_at.isoformat(),
             "completed_at": api_result.completed_at.isoformat(),

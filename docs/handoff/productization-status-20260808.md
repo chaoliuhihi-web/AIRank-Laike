@@ -109,11 +109,12 @@
 99. 修复“源证据未篡改但报告自报数字可以漂移”的交付漏洞：`airank.evidence-integrity.v2` 保留全部 v1 源证据校验，并从真实 ScanTask 行重算每个 ScanRun 的 `task_count`；Retest 报告则重新加载基线/对比任务、EvidenceSnapshot、Provider 请求审计、引用及最终 production 复核状态，重建两侧 v4 质量报告、对比指标、报告 SHA-256/status、ObservationWindow 结果与 RetestRun 摘要。任一差异形成可下钻的 `scan_run_metrics` 或 `report_derived_state` blocking finding，未知报告类型显式阻断。报告包升级为 `airank.report-evidence-packet.v6`；测试不再塞入任意 64 位 hash 和手工指标，而使用 2 个 run × 3 次独立 API 样本生成真实派生状态，并验证篡改报告结论和 `task_count=99` 后返回 `REPORT_EVIDENCE_INTEGRITY_BLOCKED`。真实 MySQL 项目浏览器巡检为 39/39、0 blocker；桌面与 390×844 移动视口均无页面级溢出，console `0 error / 0 warning`。当前只覆盖 ScanRun 与 Retest 报告重建，更广泛派生实体、大项目分片、人工 benchmark、Consumer Web/App 和生产基础设施仍保持 `partial/blocked`。
 100. 深度吸收 `haidian` 的离线评审包和正式空白评分表方法，升级 `airank.report-evidence-packet.v7`：客户对象从单 JSON 改为固定成员、固定顺序、固定时间戳、无压缩差异的确定性 ZIP，内含 canonical manifest、可打印 HTML、五维权重但评分/审核人/意见/决定全部留空的 CSV、使用边界 README 与逐文件 SHA256SUMS。manifest 新增完整 source_record，使离线工具可调用生产构建器重算质量、指标、来源、事实复核、packet basis、所有成员和整包；校验必须使用 API/下载回执 `content_sha256` 外部锚点，缺锚点、整包篡改、成员 hash 漂移、重复 JSON key、非标准数值、Zip Bomb 超限或重建不一致均失败，不把包内自洽冒充数字签名。隔离真实 MySQL 项目通过浏览器生成 6 样本/6 引用 ZIP：v2 巡检 15/15、0 blocker，生成 201、对象下载 200、回执 201；实际对象 CLI 返回 `verified`。报表中心与包内 HTML 在 1440 和 390×844 均无页面级横向溢出，console `0 error / 0 warning`。PDF/Word、Ed25519/企业签章和独立托管验证页仍为 `partial`。
 101. 上线门禁的 GitHub/Gitee 主分支同步检查增加有界传输重试：每个远端最多 3 次、线性退避，瞬时 SSH banner/网络错误恢复后记录成功发生在哪次；持续失败仍完整保存每次错误并保持 `BLOCKED`，不会把远端不可达误判成已同步。两条测试分别锁定“首轮失败后恢复”和“重试耗尽失败关闭”。
+102. 深度吸收 `geo-citation-lab` 的来源选择/支持分层和 `yao-geo-skills` 的证据契约，将 Provider 引用入口升级为 `airank.provider-native-citation.v2`：只认千问 `search_info`、Responses `web_search_call.action.sources`、Provider annotation 和显式顶层 citations，逐条保留 native type、精确 JSON path 和 source id；回答正文、debug、reference 或任意嵌套 URL 不再误计。`airank.provider-search-evidence.v1` 把搜索“请求了”和“实际运行了”分开。7 个版本化 contract/holdout/adversarial case 全部通过；真实千问 `responses_web_search` 以同一 blind Prompt 完成 3 个全新会话，3/3 有效、3/3 正常未提及并计入分母，原生引用分别为 135/90/135 条，质量 v4 `publishable=true`、引用召回率 100%。证据中心默认只渲染前 20 条，可展开完整引用，并显示请求类型、联网判据、解析器和原生路径；1543px/390×844 无页面级溢出，console `0 error / 0 warning`。引用支持、事实准确率、其他三平台原生引用和 Consumer Web/App 仍保持 `partial/blocked`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `438 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `444 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.13.1` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -125,6 +126,7 @@
 - 终端证据浏览器复验：真实 MySQL `airank.measurement-quality.v2` 返回唯一阻断 `consumer_screenshots_complete`，同时证明 `consumer_source_panels_inspected` 和无来源状态一致性通过。证据中心展示 Web 样本 1、有效 1、证据完整 0、截图 0、来源面板明确无 1、阻断 1；样本下钻可见原始回答、双 hash、外部会话 ID 与“界面未呈现（已检查）”。390px 有效视口无页面级横向溢出，console `0 error / 0 warning`；截图为 `/tmp/airank-surface-evidence-mobile.png`。
 - 真实四平台 API 采样：最终同轮 12/12 个任务成功、0 失败、0 阻塞；DeepSeek/豆包/Kimi/千问各 3 次独立会话，12 条正常未提及全部计入分母。证据等级分布为 API 无联网 3 条、未使用联网 3 条、联网状态未验证 6 条，不把 API 证据包装成 Web/App 证据。
 - 四平台 v4 质量门禁：12 个回答/原始响应 hash、12 个 EvidenceSnapshot、12 个真实 request ID、12 条成功请求审计、12 个成功 attempt 和 12 条 exact usage event 齐全；24/24 检查通过、`publishable=true`、API evidence complete 12/12。已知限制仍为无 Provider 引用、引用支持度未评测、事实声明未登记和事实准确率未评测。
+- 千问原生引用重复采样：新 `responses_web_search` 路由以 3 个独立 session 完成 3/3 真实样本，原生来源数量为 135/90/135；每条 Citation 都能下钻到 `web_search_call_source` 和精确 `/output/.../action/sources/...` 路径，联网判据为显式工具调用。3 条正常未提及全部保留；v4 质量门禁通过，但引用支持度和事实准确率因尚未完成来源正文与人工审核而继续显示“未评测”。
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
@@ -142,7 +144,7 @@
 
 ## 下一实施顺序
 
-1. 保持四平台 API 重复门禁持续回归，并补 Provider 原生引用 benchmark、Kimi 凭证轮换与 DeepSeek 新型号迁移；当前 12/12 结果只证明这一个盲测 cohort 的 API 证据链，不外推为 Consumer 或增长结论。
+1. 保持四平台 API 重复门禁和 7/7 Provider 原生引用 benchmark 持续回归，将千问已验证的原生来源契约扩展到豆包、Kimi、DeepSeek 的官方可用搜索结构，并完成 Kimi 凭证轮换与 DeepSeek 新型号迁移；当前结果不外推为 Consumer、引用支持或增长结论。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
 4. 为已完成的盲态双人复核队列补真实客户人工标注集、claim 细粒度框选与运营抽检；当前 0/20 benchmark 和不可估计 kappa 必须保持阻断，不能用工程测试样本替代客户审核质量。

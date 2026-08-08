@@ -17,13 +17,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["provider", "label", "route_id", "endpoint_host", "model", "configured", "enabled", "base_priority", "effective_priority", "control_version", "configuration_fingerprint", "request_count_24h", "success_count_24h", "failure_count_24h"],
+            "required": ["provider", "label", "route_id", "endpoint_host", "model", "request_kind", "configured", "enabled", "base_priority", "effective_priority", "control_version", "configuration_fingerprint", "request_count_24h", "success_count_24h", "failure_count_24h"],
             "properties": {
               "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
               "label": { "type": "string", "minLength": 1 },
               "route_id": { "type": "string", "minLength": 1 },
               "endpoint_host": { "type": "string" },
               "model": { "type": "string", "minLength": 1 },
+              "request_kind": { "type": "string", "enum": ["chat_completions", "chat_completions_search", "responses_web_search"] },
               "configured": { "type": "boolean" },
               "enabled": { "type": "boolean" },
               "base_priority": { "type": "integer" },

@@ -80,6 +80,9 @@ class ProviderCitation:
     url: str
     title: str | None = None
     cited_text: str | None = None
+    native_type: str = "provider_source"
+    source_path: str | None = None
+    source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,8 @@ class ProviderResult:
     configuration_fingerprint: str
     route_id: str = "default"
     request_contract: Mapping[str, Any] = field(default_factory=dict)
+    search_evidence: str = "unrecorded"
+    citation_parser_version: str = "unrecorded"
 
 
 @dataclass(frozen=True)

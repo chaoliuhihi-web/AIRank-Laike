@@ -2090,6 +2090,8 @@ function FactsPage() {
   );
 }
 
+const EVIDENCE_CITATION_INITIAL_LIMIT = 20;
+
 function EvidencePage() {
   const { project } = useConsoleOverview();
   const [runs, setRuns] = useState<ScanRun[]>([]);
@@ -2102,6 +2104,7 @@ function EvidencePage() {
     limit: 200,
   });
   const [selected, setSelected] = useState<AnswerSampleDetail | null>(null);
+  const [showAllCitations, setShowAllCitations] = useState(false);
   const [quality, setQuality] = useState<MeasurementQualityReport | null>(null);
   const [qualityError, setQualityError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2256,6 +2259,10 @@ function EvidencePage() {
       });
     return () => controller.abort();
   }, [project.id, selectedRunId]);
+
+  useEffect(() => {
+    setShowAllCitations(false);
+  }, [selected?.snapshot_id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2647,6 +2654,30 @@ function EvidencePage() {
     && typeof selectedProviderRequest.route_id === "string"
       ? selectedProviderRequest.route_id
       : null;
+  const selectedSearchEvidence = selectedProviderRequest
+    && typeof selectedProviderRequest === "object"
+    && "search_evidence" in selectedProviderRequest
+    && typeof selectedProviderRequest.search_evidence === "string"
+      ? selectedProviderRequest.search_evidence
+      : null;
+  const selectedCitationParserVersion = selectedProviderRequest
+    && typeof selectedProviderRequest === "object"
+    && "citation_parser_version" in selectedProviderRequest
+    && typeof selectedProviderRequest.citation_parser_version === "string"
+      ? selectedProviderRequest.citation_parser_version
+      : null;
+  const selectedRequestContract = selectedProviderRequest
+    && typeof selectedProviderRequest === "object"
+    && "request_contract" in selectedProviderRequest
+    && selectedProviderRequest.request_contract
+    && typeof selectedProviderRequest.request_contract === "object"
+      ? selectedProviderRequest.request_contract
+      : null;
+  const selectedRequestKind = selectedRequestContract
+    && "request_kind" in selectedRequestContract
+    && typeof selectedRequestContract.request_kind === "string"
+      ? selectedRequestContract.request_kind
+      : null;
 
   return (
     <>
@@ -2962,12 +2993,19 @@ function EvidencePage() {
           <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>
             {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc={selected.sample_status === "valid" ? "无引用是有效证据状态，不补造来源。" : "任务未产生有效回答，不把空引用误写成有效证据结论。"} tone="warning" /> : (
               <ol className="evidence-citations">
-                {selected.citations.map((citation) => {
+                {(showAllCitations
+                  ? selected.citations
+                  : selected.citations.slice(0, EVIDENCE_CITATION_INITIAL_LIMIT)
+                ).map((citation) => {
                   const capture = citationCaptures[citation.citation_id]?.[0];
                   return (
                     <li key={citation.citation_id} className="citation-evidence-item">
                       <a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a>
                       <span>{citation.cited_text || "Provider 未返回引用原文"}</span>
+                      <small>
+                        原生结构 {typeof citation.metadata.native_type === "string" ? citation.metadata.native_type : "未记录"}
+                        {typeof citation.metadata.source_path === "string" && citation.metadata.source_path ? ` · ${citation.metadata.source_path}` : ""}
+                      </small>
                       <div className="citation-capture-toolbar">
                         <Badge tone={capture?.status === "completed" ? "success" : capture?.status === "blocked" || capture?.status === "failed" ? "danger" : "warning"}>
                           {capture ? `来源抓取 ${capture.status}` : "来源页未抓取"}
@@ -3014,6 +3052,13 @@ function EvidencePage() {
                 })}
               </ol>
             )}
+            {selected.citations.length > EVIDENCE_CITATION_INITIAL_LIMIT && (
+              <button className="outline-button citation-list-toggle" type="button" onClick={() => setShowAllCitations((current) => !current)}>
+                {showAllCitations
+                  ? `收起到前 ${EVIDENCE_CITATION_INITIAL_LIMIT} 条`
+                  : `展开全部 ${selected.citations.length} 条引用`}
+              </button>
+            )}
             <div className="citation-support-separator" />
             <strong>引用选择 ≠ 引用支持</strong>
             {citationActionError && <DataStateCard title="引用证据操作失败" desc={citationActionError} tone="danger" />}
@@ -3054,6 +3099,9 @@ function EvidencePage() {
           <Panel title="采集与对象证据">
             <dl className="evidence-metadata">
               <div><dt>联网状态</dt><dd>{selected.search_enabled === null ? "未记录" : selected.search_enabled ? "已联网" : "未联网"}</dd></div>
+              <div><dt>请求类型</dt><dd>{selectedRequestKind || "历史样本未记录"}</dd></div>
+              <div><dt>联网判据</dt><dd>{selectedSearchEvidence || "未记录"}</dd></div>
+              <div><dt>引用解析器</dt><dd>{selectedCitationParserVersion || "未记录"}</dd></div>
               <div><dt>外部请求 ID</dt><dd>{selected.external_trace_id || "未返回"}</dd></div>
               <div><dt>截图对象</dt><dd>{selected.screenshot.object_ref_id || "未采集"}</dd></div>
               <div><dt>来源面板状态</dt><dd>{selectedSourcePanelStatus ? sourcePanelStatusLabels[selectedSourcePanelStatus] ?? selectedSourcePanelStatus : "未记录"}</dd></div>
@@ -4628,7 +4676,7 @@ function SettingsPage() {
                     <tr key={key}>
                       <td>
                         <strong>{route.label} · {route.route_id}</strong>
-                        <small>{route.model} · {route.endpoint_host}</small>
+                        <small>{route.model} · {route.endpoint_host} · {route.request_kind}</small>
                         <small>fp {route.configuration_fingerprint.slice(0, 12)}… · v{route.control_version}</small>
                       </td>
                       <td>
