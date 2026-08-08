@@ -130,8 +130,8 @@ def tracked_runtime_artifact_check() -> Check:
 
 def api_auth_configuration_check(env: Mapping[str, str] | None = None) -> Check:
     source = os.environ if env is None else env
-    enforcement = source.get("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
-    auth_mode = source.get("AIRANK_AUTH_MODE", "yudao").strip().lower()
+    enforcement = source.get("AIRANK_API_AUTH_ENFORCEMENT", "").strip().lower()
+    auth_mode = source.get("AIRANK_AUTH_MODE", "").strip().lower()
     blockers: list[str] = []
     if enforcement != "required":
         blockers.append(f"AIRANK_API_AUTH_ENFORCEMENT={enforcement or '<empty>'}")
@@ -165,11 +165,13 @@ def production_object_storage_configuration_check(env: Mapping[str, str] | None 
     endpoint = source.get("AIRANK_S3_ENDPOINT_URL", "").strip()
     allow_http = source.get("AIRANK_S3_ALLOW_HTTP", "false").strip().lower() in {"1", "true", "yes", "on"}
     blockers: list[str] = []
-    if runtime_env == "production" and driver not in {"s3", "minio"}:
+    if runtime_env != "production":
+        blockers.append(f"AIRANK_ENV={runtime_env or '<empty>'}; release requires production")
+    if driver not in {"s3", "minio"}:
         blockers.append(f"AIRANK_OBJECT_STORAGE_DRIVER={driver or '<empty>'}; production requires s3/minio")
-    if runtime_env == "production" and endpoint.startswith("http://"):
+    if endpoint.startswith("http://"):
         blockers.append("AIRANK_S3_ENDPOINT_URL uses plaintext HTTP in production")
-    if runtime_env == "production" and allow_http:
+    if allow_http:
         blockers.append("AIRANK_S3_ALLOW_HTTP=true is forbidden in production")
     return Check(
         "production object storage configuration",
@@ -338,14 +340,14 @@ def browser_provider_blockers(
 
 
 def browser_provider_readiness_check() -> Check:
-    command = "probe_provider_readiness(DEFAULT_PROVIDER_SCOPE)"
+    command = "probe_provider_generation_readiness(DEFAULT_PROVIDER_SCOPE)"
     try:
         from apps.api.main import DEFAULT_PROVIDER_SCOPE, minimum_provider_success_count  # noqa: PLC0415
-        from apps.api.provider_scan import probe_provider_readiness, provider_execution_mode  # noqa: PLC0415
+        from apps.api.provider_scan import probe_provider_generation_readiness, provider_execution_mode  # noqa: PLC0415
 
         mode = provider_execution_mode()
         minimum_success_count = minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE)
-        records = [asdict(probe_provider_readiness(provider)) for provider in DEFAULT_PROVIDER_SCOPE]
+        records = [asdict(probe_provider_generation_readiness(provider)) for provider in DEFAULT_PROVIDER_SCOPE]
     except Exception as exc:  # pragma: no cover - defensive release-gate output
         return Check("browser provider readiness", "BLOCKED", command, repr(exc))
 

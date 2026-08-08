@@ -11,7 +11,7 @@
       "additionalProperties": false,
       "required": ["contract_version", "run_id", "status", "publishable", "data_sha256", "report_sha256", "metrics", "checks", "surface_evidence", "known_limitations"],
       "properties": {
-        "contract_version": { "const": "airank.measurement-quality.v3" },
+        "contract_version": { "const": "airank.measurement-quality.v4" },
         "run_id": { "type": "string", "minLength": 1 },
         "status": { "type": "string", "enum": ["pass", "blocked"] },
         "publishable": { "type": "boolean" },
@@ -20,7 +20,7 @@
         "metrics": { "type": "object" },
         "checks": {
           "type": "array",
-          "minItems": 21,
+          "minItems": 24,
           "items": {
             "type": "object",
             "additionalProperties": false,

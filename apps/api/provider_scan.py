@@ -57,6 +57,9 @@ LOGIN_BLOCK_PATTERNS = (
     "log in",
     "验证码",
     "验证你是真人",
+    "完成验证",
+    "拖动下方滑块",
+    "通过验证",
     "verify you are human",
     "captcha",
 )
@@ -162,6 +165,7 @@ class BrowserProbeError(RuntimeError):
         page_url: str,
         page_title: str,
         trace_id: str,
+        conversation_isolation: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = re.sub(r";?\s*screenshot=.*$", "", reason).strip()
@@ -170,6 +174,7 @@ class BrowserProbeError(RuntimeError):
         self.page_url = page_url
         self.page_title = page_title
         self.trace_id = trace_id
+        self.conversation_isolation = dict(conversation_isolation or {})
 
 
 def classify_provider_call_failure(error: ProviderCallError) -> tuple[str, bool]:
@@ -502,6 +507,7 @@ def call_provider_for_brand_rank(
                 "browser_trace_id": exc.trace_id,
                 "screenshot_path": exc.screenshot_path,
                 "screenshot_sha256": exc.screenshot_sha256,
+                "conversation_isolation": exc.conversation_isolation,
                 "source_panel_status": "not_inspected",
             },
         ) from exc
@@ -512,6 +518,26 @@ def call_provider_for_brand_rank(
     except RuntimeError as exc:
         raise ProviderCallError(provider, str(exc)[:1000]) from exc
 
+    browser_public_metadata = {
+        **config.public_metadata(),
+        "capture_url": browser_result["page_url"],
+        "capture_title": browser_result["title"],
+        "screenshot_path": browser_result["screenshot_path"],
+        "screenshot_sha256": browser_result.get("screenshot_sha256", ""),
+        "source_panel_status": browser_result.get("source_panel_status", "not_inspected"),
+        "source_panel_screenshot_path": browser_result.get("source_panel_screenshot_path", ""),
+        "source_panel_screenshot_sha256": browser_result.get("source_panel_screenshot_sha256", ""),
+        "source_panel_capture_mode": browser_result.get("source_panel_capture_mode", "not_inspected"),
+        "conversation_isolation": browser_result.get("conversation_isolation", {}),
+        "capture_mode": "consumer_browser",
+        "collector_surface": "web",
+        "evidence_level": "consumer_web",
+        "cohort_type": normalized_cohort.value,
+        "session_id": isolated_session_id,
+        "prompt_version_id": prompt_version_id,
+        "prompt_sha256": sha256_text(prompt),
+        "source_extraction": "visible_anchor_text_match",
+    }
     parsed = parse_provider_answer(
         browser_result["answer_text"],
         brand_name,
@@ -521,7 +547,13 @@ def call_provider_for_brand_rank(
         product_names=product_names,
     )
     if looks_login_blocked(browser_result["answer_text"]):
-        raise ProviderCallError(provider, "web page returned login or human verification text instead of an answer")
+        raise ProviderCallError(
+            provider,
+            "web page returned login or human verification text instead of an answer",
+            error_code="CAPTCHA_REQUIRED",
+            retryable=False,
+            public_metadata=browser_public_metadata,
+        )
     return ProviderScanResult(
         provider=provider,
         provider_label=config.label,
@@ -536,25 +568,9 @@ def call_provider_for_brand_rank(
         external_trace_id=browser_result["trace_id"],
         native_citations=browser_result.get("source_links", []),
         raw_metadata={
-            **config.public_metadata(),
-            "capture_url": browser_result["page_url"],
-            "capture_title": browser_result["title"],
-            "screenshot_path": browser_result["screenshot_path"],
-            "screenshot_sha256": browser_result.get("screenshot_sha256", ""),
-            "source_panel_status": browser_result.get("source_panel_status", "not_inspected"),
-            "source_panel_screenshot_path": browser_result.get("source_panel_screenshot_path", ""),
-            "source_panel_screenshot_sha256": browser_result.get("source_panel_screenshot_sha256", ""),
-            "source_panel_capture_mode": browser_result.get("source_panel_capture_mode", "not_inspected"),
+            **browser_public_metadata,
             "answer_parse_mode": parsed["parse_mode"],
-            "capture_mode": "consumer_browser",
-            "collector_surface": "web",
-            "evidence_level": "consumer_web",
-            "cohort_type": normalized_cohort.value,
-            "session_id": isolated_session_id,
-            "prompt_version_id": prompt_version_id,
-            "prompt_sha256": sha256_text(prompt),
             "answer_sha256": sha256_text(parsed["answer_text"]),
-            "source_extraction": "visible_anchor_text_match",
         },
     )
 
@@ -612,6 +628,78 @@ def probe_provider_readiness(provider: str) -> ProviderReadinessResult:
         )
 
 
+def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResult:
+    """Run an L3 consumer probe that submits a prompt and requires an answer."""
+
+    if provider_execution_mode() == "api":
+        return probe_api_provider_readiness(provider)
+    config = browser_provider_config(provider)
+    try:
+        with provider_lock(provider):
+            result = run_browser_probe(
+                config,
+                "这是服务可用性探测。请用不少于一百字的中文说明人工智能回答为什么需要保留原始证据，不要引用本提示词。",
+            )
+        if len(result["answer_text"].strip()) < 80:
+            raise RuntimeError("consumer generation probe returned an answer shorter than 80 characters")
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="ready",
+            url=result["page_url"],
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            blocker_code=None,
+            reason="L3 consumer generation probe returned a substantive answer",
+            screenshot_path=result["screenshot_path"],
+        )
+    except BrowserProbeError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=exc.page_url or config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            blocker_code=classify_blocker_reason(exc.reason),
+            reason=exc.reason[:300],
+            screenshot_path=exc.screenshot_path,
+        )
+    except PlaywrightTimeoutError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            blocker_code="timeout",
+            reason=f"browser timeout: {str(exc)[:300]}",
+        )
+    except PlaywrightError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            blocker_code="network_error",
+            reason=f"browser automation failed: {str(exc)[:300]}",
+        )
+    except RuntimeError as exc:
+        return ProviderReadinessResult(
+            provider=provider,
+            label=config.label,
+            status="blocked",
+            url=config.url,
+            profile_dir=str(config.profile_dir),
+            headless=config.headless,
+            blocker_code=classify_blocker_reason(str(exc)),
+            reason=str(exc)[:300],
+        )
+
+
 def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadinessResult:
     with sync_playwright() as playwright:
         context = launch_provider_context(playwright, config)
@@ -631,7 +719,7 @@ def run_browser_readiness_probe(config: BrowserProviderConfig) -> ProviderReadin
         finally:
             context.close()
 
-    if looks_login_blocked(body_text):
+    if looks_login_blocked(body_text) and not prompt_input_found:
         return ProviderReadinessResult(
             provider=config.provider,
             label=config.label,
@@ -708,7 +796,8 @@ def build_brand_rank_prompt(
 
 def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeout_seconds
-    trace_id = f"browser:{config.provider}:{int(time.time())}"
+    trace_id = f"browser:{config.provider}:{uuid4().hex}"
+    conversation_isolation: dict[str, Any] = {}
     with sync_playwright() as playwright:
         context = launch_provider_context(playwright, config)
         page = context.pages[0] if context.pages else context.new_page()
@@ -720,6 +809,7 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, A
             except PlaywrightTimeoutError:
                 pass
 
+            conversation_isolation = begin_fresh_conversation(page)
             before_text = normalized_body_text(page)
             if looks_login_blocked(before_text) and not find_prompt_input(page):
                 raise RuntimeError(f"{config.label} web page requires login or human verification")
@@ -751,6 +841,7 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, A
                 "source_panel_capture_mode": (
                     "whole_page_visible_source_links" if source_links else "visible_page_inspected_no_sources"
                 ),
+                "conversation_isolation": conversation_isolation,
             }
         except (PlaywrightTimeoutError, PlaywrightError, RuntimeError) as exc:
             screenshot_path, screenshot_sha256 = save_page_screenshot(page, config.provider)
@@ -767,6 +858,7 @@ def run_browser_probe(config: BrowserProviderConfig, prompt: str) -> dict[str, A
                 page_url=page_url,
                 page_title=page_title,
                 trace_id=trace_id,
+                conversation_isolation=conversation_isolation,
             ) from exc
         finally:
             context.close()
@@ -793,6 +885,48 @@ def find_prompt_input(page: Any) -> Any | None:
             except PlaywrightError:
                 continue
     return None
+
+
+def begin_fresh_conversation(page: Any) -> dict[str, Any]:
+    """Fail closed unless the consumer UI confirms a new conversation."""
+
+    selectors = (
+        "button:has-text('新建对话')",
+        "button:has-text('新对话')",
+        "button:has-text('开启新对话')",
+        "a:has-text('新建对话')",
+        "a:has-text('新对话')",
+        "button:has-text('New chat')",
+        "a:has-text('New chat')",
+        "[aria-label*='新建对话']",
+        "[aria-label*='新对话']",
+        "[aria-label*='New chat']",
+        "[title*='新建对话']",
+        "[title*='New chat']",
+    )
+    for selector in selectors:
+        locator = page.locator(selector)
+        count = min(locator.count(), 5)
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if candidate.is_visible() and candidate.is_enabled():
+                    before_url = page.url
+                    candidate.click()
+                    page.wait_for_timeout(300)
+                    if find_prompt_input(page) is None:
+                        continue
+                    return {
+                        "verified": True,
+                        "method": "new_conversation_control",
+                        "before_url": before_url,
+                        "after_url": page.url,
+                    }
+            except PlaywrightError:
+                continue
+    raise RuntimeError(
+        "fresh conversation could not be verified; consumer sample was blocked"
+    )
 
 
 def is_login_input(locator: Any) -> bool:
@@ -870,7 +1004,7 @@ def wait_for_answer_text(page: Any, before_text: str, prompt: str, deadline: flo
         if len(delta) > len(best_text):
             best_text = delta
             last_changed_at = time.monotonic()
-        if looks_login_blocked(current_text) and len(best_text) < 40:
+        if looks_login_blocked(current_text) and len(best_text) < 40 and find_prompt_input(page) is None:
             raise RuntimeError("web page requires login or human verification")
         if best_text and looks_login_blocked(best_text):
             raise RuntimeError("web page returned login or human verification text instead of an answer")
@@ -966,7 +1100,15 @@ def looks_login_blocked(text: str) -> bool:
 
 def classify_login_blocker(text: str) -> str:
     lowered = text.lower()
-    captcha_markers = ("验证码", "验证你是真人", "verify you are human", "captcha")
+    captcha_markers = (
+        "验证码",
+        "验证你是真人",
+        "完成验证",
+        "拖动下方滑块",
+        "通过验证",
+        "verify you are human",
+        "captcha",
+    )
     if any(marker in lowered for marker in captcha_markers):
         return "captcha_required"
     return "login_required"
@@ -979,7 +1121,17 @@ def classify_blocker_reason(reason: str) -> str:
     if "prompt input" in lowered:
         return "prompt_input_missing"
     if any(marker in lowered for marker in ("login", "sign_in", "sign in", "human verification", "captcha", "验证码")):
-        if any(marker in lowered for marker in ("human verification", "captcha", "验证码")):
+        if any(
+            marker in lowered
+            for marker in (
+                "human verification",
+                "captcha",
+                "验证码",
+                "完成验证",
+                "拖动下方滑块",
+                "通过验证",
+            )
+        ):
             return "captcha_required"
         return "login_required"
     if any(marker in lowered for marker in ("net::", "network", "browser automation")):

@@ -15,7 +15,7 @@ from airank_domain.measurement import (
 from .measurement import CohortMetrics, calculate_cohort_metrics
 
 
-QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v3"
+QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,7 @@ class SampleEvidenceManifest:
     screenshot_ref_id: str | None = None
     screenshot_sha256: str | None = None
     screenshot_immutable: bool = False
+    conversation_isolation_verified: bool = False
     source_panel_status: SourcePanelStatus = "not_applicable"
     source_panel_ref_id: str | None = None
     source_panel_sha256: str | None = None
@@ -115,6 +116,7 @@ def build_measurement_quality_report(
     samples: Iterable[MeasurementSample],
     signatures: Sequence[str],
     evidence_manifests: Iterable[SampleEvidenceManifest] = (),
+    run_status: str = "completed",
     minimum_valid_sample_rate: float = 0.8,
     minimum_independent_repetitions: int = 3,
 ) -> MeasurementQualityReport:
@@ -128,6 +130,13 @@ def build_measurement_quality_report(
     def add_check(code: str, passed: bool, actual: Any, expected: str, detail: str) -> None:
         checks.append(QualityCheck(code, "pass" if passed else "blocked", actual, expected, detail))
 
+    add_check(
+        "run_status_publishable",
+        run_status == "completed",
+        run_status,
+        "= completed",
+        "失败批次可以生成审计报告，但不得作为可交付测量结果发布。",
+    )
     add_check("samples_present", bool(sample_list), len(sample_list), "> 0", "报告必须来自至少一个真实任务样本。")
     add_check(
         "signature_count_matches",
@@ -316,6 +325,17 @@ def build_measurement_quality_report(
         for sample, manifest in valid_pairs
         if sample.context.surface in {CollectorSurface.WEB, CollectorSurface.APP}
     ]
+    missing_conversation_isolation = sum(
+        manifest is None or not manifest.conversation_isolation_verified
+        for _sample, manifest in consumer_pairs
+    )
+    add_check(
+        "consumer_conversation_isolation_verified",
+        missing_conversation_isolation == 0,
+        missing_conversation_isolation,
+        "= 0 unverified",
+        "Consumer Web/App 有效样本必须由采集器确认进入全新会话，不能只依赖不同的本地 session ID。",
+    )
     missing_consumer_screenshot = sum(
         manifest is None
         or not manifest.screenshot_ref_id
@@ -454,6 +474,7 @@ def build_measurement_quality_report(
     data_payload = {
         "contract_version": QUALITY_CONTRACT_VERSION,
         "run_id": run_id,
+        "run_status": run_status,
         "signatures": signature_list,
         "samples": [
             {
@@ -476,6 +497,7 @@ def build_measurement_quality_report(
     report_payload = {
         "contract_version": QUALITY_CONTRACT_VERSION,
         "run_id": run_id,
+        "run_status": run_status,
         "publishable": publishable,
         "data_sha256": data_sha256,
         "metrics": metrics.to_record(),
@@ -509,6 +531,7 @@ def _surface_evidence_complete(sample: MeasurementSample, manifest: SampleEviden
     if sample.context.surface in {CollectorSurface.WEB, CollectorSurface.APP}:
         screenshot_complete = bool(
             manifest.external_trace_id
+            and manifest.conversation_isolation_verified
             and manifest.screenshot_ref_id
             and _is_sha256(manifest.screenshot_sha256)
             and manifest.screenshot_immutable

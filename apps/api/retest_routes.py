@@ -123,6 +123,7 @@ class RunEvidence:
     samples: tuple[MeasurementSample, ...]
     signature: tuple[str, ...]
     evidence_manifests: tuple[SampleEvidenceManifest, ...] = ()
+    run_status: str = "completed"
 
 
 class RetestRepository(Protocol):
@@ -159,6 +160,7 @@ class InMemoryRetestRepository:
             samples=evidence.samples,
             signatures=evidence.signature,
             evidence_manifests=evidence.evidence_manifests,
+            run_status=evidence.run_status,
         ).to_record()
 
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
@@ -186,12 +188,14 @@ class InMemoryRetestRepository:
                 samples=baseline.samples,
                 signatures=baseline.signature,
                 evidence_manifests=baseline.evidence_manifests,
+                run_status=baseline.run_status,
             ),
             compare_quality=build_measurement_quality_report(
                 run_id=payload.compare_run_id,
                 samples=compare.samples,
                 signatures=compare.signature,
                 evidence_manifests=compare.evidence_manifests,
+                run_status=compare.run_status,
             ),
             baseline_signature=baseline.signature,
             compare_signature=compare.signature,
@@ -225,6 +229,7 @@ class MySQLRetestRepository:
             samples=evidence.samples,
             signatures=evidence.signature,
             evidence_manifests=evidence.evidence_manifests,
+            run_status=evidence.run_status,
         ).to_record()
 
     def complete_window(self, tenant_id: str, window_id: str, payload: CompleteRetestRequest) -> RetestComparisonData:
@@ -258,12 +263,14 @@ class MySQLRetestRepository:
                     samples=baseline.samples,
                     signatures=baseline.signature,
                     evidence_manifests=baseline.evidence_manifests,
+                    run_status=baseline.run_status,
                 ),
                 compare_quality=build_measurement_quality_report(
                     run_id=payload.compare_run_id,
                     samples=compare.samples,
                     signatures=compare.signature,
                     evidence_manifests=compare.evidence_manifests,
+                    run_status=compare.run_status,
                 ),
                 baseline_signature=baseline.signature,
                 compare_signature=compare.signature,
@@ -304,12 +311,15 @@ class MySQLRetestRepository:
 
     def _load_run(self, conn: Any, tenant_id: str, project_id: str, run_id: str) -> RunEvidence:
         run = conn.execute(text("""
-            SELECT id FROM airank_scan_runs
+            SELECT id, status FROM airank_scan_runs
             WHERE tenant_id=:tenant_id AND project_id=:project_id
-              AND id=:run_id AND status='completed' AND deleted_at IS NULL
+              AND id=:run_id AND status IN ('completed', 'failed') AND deleted_at IS NULL
         """), {"tenant_id": tenant_id, "project_id": project_id, "run_id": run_id}).first()
         if run is None:
-            raise _conflict("RETEST_COMPARE_RUN_REQUIRED", {"run_id": run_id, "required_status": "completed"})
+            raise _conflict(
+                "RETEST_COMPARE_RUN_REQUIRED",
+                {"run_id": run_id, "required_status": "completed_or_failed"},
+            )
         rows = conn.execute(text("""
             SELECT t.id AS task_id, t.question_id, t.provider, t.cohort_type,
                    t.prompt_version_id, t.sample_index, t.session_id,
@@ -352,6 +362,7 @@ class MySQLRetestRepository:
             samples=samples,
             signature=signature,
             evidence_manifests=evidence_manifests,
+            run_status=str(run.status),
         )
 
 
@@ -427,6 +438,7 @@ def _sample_evidence_manifest(row: dict[str, Any]) -> SampleEvidenceManifest:
     if source_panel_status not in {"captured", "not_present", "not_inspected", "not_applicable"}:
         source_panel_status = "not_inspected" if surface in {CollectorSurface.WEB, CollectorSurface.APP} else "not_applicable"
     app_metadata = provider_request.get("app_capture_metadata")
+    conversation_isolation = provider_request.get("conversation_isolation")
     import_source_sha256 = provider_request.get("import_source_sha256")
     return SampleEvidenceManifest(
         sample_id=row.get("sample_id") or row["task_id"],
@@ -443,6 +455,10 @@ def _sample_evidence_manifest(row: dict[str, Any]) -> SampleEvidenceManifest:
         screenshot_sha256=row.get("screenshot_sha256"),
         screenshot_immutable=bool(
             isinstance(screenshot_metadata, dict) and screenshot_metadata.get("immutable") is True
+        ),
+        conversation_isolation_verified=bool(
+            isinstance(conversation_isolation, dict)
+            and conversation_isolation.get("verified") is True
         ),
         source_panel_status=source_panel_status,
         source_panel_ref_id=row.get("source_panel_ref_id"),

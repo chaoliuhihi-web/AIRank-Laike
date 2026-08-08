@@ -72,7 +72,7 @@ class ProbeConfig:
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ProbeConfig":
         source = env or os.environ
         return cls(
-            auth_mode=source.get("AIRANK_AUTH_MODE", "dev"),
+            auth_mode=source.get("AIRANK_AUTH_MODE", "yudao"),
             yudao_base_url=empty_to_none(source.get("YUDAO_BASE_URL")),
             yudao_permission_info_url=empty_to_none(source.get("YUDAO_PERMISSION_INFO_URL")),
             yudao_model_resolve_url=empty_to_none(source.get("YUDAO_MODEL_RESOLVE_URL")),

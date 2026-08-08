@@ -391,7 +391,7 @@ export type CitationSourceCapture = {
 };
 
 export type MeasurementQualityReport = {
-  contract_version: "airank.measurement-quality.v3";
+  contract_version: "airank.measurement-quality.v4";
   run_id: string;
   status: "pass" | "blocked";
   publishable: boolean;
