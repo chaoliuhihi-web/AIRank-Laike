@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-09T01:25:22+08:00
+Generated: 2026-08-09T02:15:19+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -45,7 +45,7 @@ Status: PASS
 Status: PASS
 
 ```text
-1e0426ef04c596d5823075bd0ee91bcbc5258faa
+f70ceeb6a380cb146e1e2bdefcf7a70b2c3c52d5
 ```
 
 ## gitee main ref
@@ -53,7 +53,7 @@ Status: PASS
 Status: PASS
 
 ```text
-1e0426ef04c596d5823075bd0ee91bcbc5258faa
+f70ceeb6a380cb146e1e2bdefcf7a70b2c3c52d5
 ```
 
 ## diff check
@@ -129,16 +129,10 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 37%]
-........................................................................ [ 75%]
-..............................................                           [100%]
-=============================== warnings summary ===============================
-.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-190 passed, 1 warning in 2.07s
+........................................................................ [ 36%]
+........................................................................ [ 73%]
+...................................................                      [100%]
+195 passed in 2.23s
 ```
 
 ## crawler lite tests
@@ -155,15 +149,9 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 93%]
-.....                                                                    [100%]
-=============================== warnings summary ===============================
-.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-77 passed, 1 warning in 0.70s
+........................................................................ [ 92%]
+......                                                                   [100%]
+78 passed in 0.76s
 ```
 
 ## scheduler tests
@@ -171,8 +159,8 @@ Status: PASS
 Status: PASS
 
 ```text
-..........                                                               [100%]
-10 passed in 0.31s
+............                                                             [100%]
+12 passed in 0.33s
 ```
 
 ## worker tests
@@ -181,7 +169,7 @@ Status: PASS
 
 ```text
 ...................................                                      [100%]
-35 passed in 0.16s
+35 passed in 0.15s
 ```
 
 ## score tests
@@ -259,9 +247,9 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
-dist/assets/index-BIVa7g-w.css   75.10 kB │ gzip:  12.26 kB
-dist/assets/index-CkbeT40k.js   418.51 kB │ gzip: 123.69 kB
-✓ built in 773ms
+dist/assets/index-De6VfAPq.css   76.44 kB │ gzip:  12.39 kB
+dist/assets/index-Bzpme_A6.js   427.39 kB │ gzip: 125.75 kB
+✓ built in 757ms
 ```
 
 ## real integration tests
@@ -270,13 +258,7 @@ Status: PASS
 
 ```text
 ......s...................s...                                           [100%]
-=============================== warnings summary ===============================
-.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-28 passed, 2 skipped, 1 warning in 4.48s
+28 passed, 2 skipped in 5.07s
 ```
 
 ## alembic offline sql
@@ -314,6 +296,7 @@ INFO  [alembic.runtime.migration] Running upgrade 20260808_0023 -> 20260808_0024
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0024 -> 20260808_0025, add independent evidence review cases and agreement gates
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0025 -> 20260808_0026, add immutable project evidence integrity audits
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0026 -> 20260809_0027, add persistent evidence review assignments and SLA events
+INFO  [alembic.runtime.migration] Running upgrade 20260809_0027 -> 20260809_0028, add project reviewer teams, memberships, and role routing
 ```
 
 ## alembic real mysql
@@ -335,7 +318,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -346,7 +329,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -357,7 +340,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -372,7 +355,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -383,7 +366,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -394,7 +377,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -405,7 +388,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -416,7 +399,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T17:24:28.483757+00:00",
+    "checked_at": "2026-08-08T18:14:20.412594+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -456,7 +439,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/62/62352ec7288e608aeb5c41d9cc534e3896aeedd1ab20c61aae388510d6cc41d3.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/d2/d2688f54493013cd8d8db3cfc5a6e5d5e2a6fabccb84d29270c9bfbdd6d167b5.png"
     },
     {
       "provider": "qianwen",
@@ -469,7 +452,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/c1/c12f5462f8c02b678a041c5568f6520b5468818f9dd5e9d4597400e1147f09d3.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/5c/5c409f2f003e95d1d0599b429f58eb90ede5b5032623cd03c7086316eb8066bd.png"
     },
     {
       "provider": "kimi",
@@ -482,7 +465,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/4c/4c9962f171ee980880338a1fb8bdbb5b10caf17e0f9625b4827a6cfc3c071b3f.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/f4/f4e91a0fcc0140ddae0cfd7ff759b5b8ff0c9237abfe5fec816182922d6e5bf1.png"
     },
     {
       "provider": "deepseek",
@@ -495,7 +478,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/e9/e99cd3634995a1255d8928fd8033006cf624c833d705830e770bd8c95a8fab33.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/c6/c65d1b5f74984e91e136f89284696621c3826762e2ad0230ddd2a2a4abb7887f.png"
     }
   ]
 }

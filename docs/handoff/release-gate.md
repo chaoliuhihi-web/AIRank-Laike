@@ -1117,6 +1117,7 @@ Decision:
 - SLA escalation persists the resolved team, route version, eligible-recipient count and external-sync state in the same Outbox transaction. Member user IDs and assignee identity are absent; `external_delivery_verified` remains false.
 - Real MySQL verified a non-member receives zero actionable cases and a 403 claim denial, members retain unique concurrent ownership, and the escalation route resolves two recipients. Contract/acceptance/scheduler suites and the full default suite pass.
 - Real browser acceptance created one team, secondary/adjudicator memberships and both routes through the public API. Desktop and 390×844 mobile views showed `team_routed`, two ready routes, no page overflow and console `0 error / 0 warning`. All QA rows and their audit events were then deleted from the demo project.
+- The clean `f70ceeb` strict gate passed both remote `main` refs, Python 3.11.15, Node 24.14.0, 195 contract, 6 crawler-lite, 78 acceptance, 12 scheduler, 35 worker, 48 evidence, 23 outbound-security and 26 Provider Gateway tests, 7/7 citation parser cases, 30/30 core Skill cases, the production Web build, real MySQL `28 passed, 2 skipped`, offline SQL and real Alembic `0028`.
 
 ### Still blocked
 
