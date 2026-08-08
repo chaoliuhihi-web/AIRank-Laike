@@ -763,6 +763,19 @@ export type PublishPackage = {
   created_at: string;
 };
 
+export type PublishPackageCreateInput = {
+  assetId: string;
+  channel: "export" | "wordpress" | "http";
+  targetEndpoint?: string;
+};
+
+export type PublicationEvidenceInput = {
+  publishedUrl: string;
+  baselineRunId: string;
+  screenshotRefId?: string;
+  screenshotSha256?: string;
+};
+
 export type PublishAttempt = {
   attempt_id: string;
   package_id: string;
@@ -1850,6 +1863,53 @@ export async function reviewBuyerQuestion(
 
 export function fetchPublishPackages(projectId: string, signal?: AbortSignal): Promise<PublishPackage[]> {
   return fetchData(`/api/v1/projects/${projectId}/publish-packages`, "trc_web_publish", signal);
+}
+
+export async function createPublishPackage(input: PublishPackageCreateInput): Promise<PublishPackage> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/content-assets/${encodeURIComponent(input.assetId)}/publish-packages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_publish_create") },
+      body: JSON.stringify({
+        channel: input.channel,
+        idempotency_key: `publish-${input.assetId}-${input.channel}-${randomPart}`,
+        requested_by: session?.user.userId ?? "console_operator",
+        target_endpoint: input.targetEndpoint || null,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Publish package request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: PublishPackage }).data;
+}
+
+export async function recordPublicationEvidence(
+  packageId: string,
+  input: PublicationEvidenceInput,
+): Promise<PublishPackage> {
+  const session = getStoredAuthSession();
+  const response = await fetch(
+    `/api/v1/publish-packages/${encodeURIComponent(packageId)}/publication-evidence`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_publication_evidence") },
+      body: JSON.stringify({
+        published_url: input.publishedUrl,
+        baseline_run_id: input.baselineRunId,
+        recorded_by: session?.user.userId ?? "console_operator",
+        screenshot_ref_id: input.screenshotRefId || null,
+        screenshot_sha256: input.screenshotSha256 || null,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Publication evidence request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: PublishPackage }).data;
 }
 
 export function fetchPublishAttempts(packageId: string, signal?: AbortSignal): Promise<PublishAttempt[]> {

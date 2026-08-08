@@ -649,6 +649,16 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
         f"/api/v1/publish-packages/{package.json()['data']['package_id']}/attempts",
         headers={"tenant-id": "tenant_1"},
     )
+    invalid_screenshot_pair = client.post(
+        f"/api/v1/publish-packages/{package.json()['data']['package_id']}/publication-evidence",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "published_url": "https://airank.example/evidence/deploy",
+            "baseline_run_id": "run_baseline_1",
+            "recorded_by": "operator_1",
+            "screenshot_ref_id": "object_publication_1",
+        },
+    )
     published = client.post(
         f"/api/v1/publish-packages/{package.json()['data']['package_id']}/publication-evidence",
         headers={"tenant-id": "tenant_1"},
@@ -675,6 +685,7 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
     assert [item["package_id"] for item in packages.json()["data"]] == [package.json()["data"]["package_id"]]
     assert attempts.status_code == 200
     assert attempts.json()["data"] == []
+    assert invalid_screenshot_pair.status_code == 422
     assert published.json()["data"]["status"] == "published"
 
 

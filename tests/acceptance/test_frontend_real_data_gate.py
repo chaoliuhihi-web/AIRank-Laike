@@ -33,6 +33,8 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
         "fetchMeasurementQuality",
         "fetchPublishPackages",
         "fetchPublishAttempts",
+        "createPublishPackage",
+        "recordPublicationEvidence",
         "fetchRetestWindows",
         "fetchReports",
     ):
@@ -62,6 +64,11 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "技术可提取性分不等于品牌推荐率" in app_source
     assert "引用选择 ≠ 引用支持" in app_source
     assert "人工核对 + 不可变来源页面" in app_source
+    assert "创建不可变发布包" in app_source
+    assert "登记真实发布证据" in app_source
+    assert "客户站点凭证只允许由 Worker 安全注入" in app_source
+    assert "published_url" in api_source
+    assert "baseline_run_id" in api_source
     route_source = (ROOT / "apps" / "web" / "src" / "console" / "routes" / "console-routes.ts").read_text(encoding="utf-8")
     assert 'path: "/console/page-audit"' in route_source
     assert 'label: "官网可提取性"' in route_source

@@ -36,6 +36,7 @@ from apps.api.provider_scan import ProviderCallError, ProviderScanResult, Provid
 from apps.api.delivery_routes import (
     ContentReviewRequest,
     MySQLDeliveryRepository,
+    PublishEvidenceRequest,
     PublishPackageCreateRequest,
 )
 from apps.api.knowledge_routes import (
@@ -3568,6 +3569,125 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
             ).mappings().all()
         assert [row["status"] for row in stale_attempts] == ["failed", "succeeded"]
         assert stale_attempts[0]["error_code"] == "PUBLISH_ATTEMPT_ABANDONED"
+
+        screenshot_bytes = b"immutable publication screenshot"
+        screenshot_sha256 = hashlib.sha256(screenshot_bytes).hexdigest()
+        baseline_run_id = f"run_publish_baseline_{uuid4().hex[:8]}"
+        manual_run_id = f"run_publish_manual_{uuid4().hex[:8]}"
+        screenshot_ref_id = f"object_publish_{uuid4().hex[:8]}"
+        completed_at = datetime.now(timezone.utc)
+        with engine.begin() as conn:
+            for run_id, run_type in ((baseline_run_id, "baseline"), (manual_run_id, "manual")):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_scan_runs (
+                          id, tenant_id, project_id, name, run_type, status,
+                          finished_at, created_by, created_at, updated_at
+                        ) VALUES (
+                          :id, :tenant_id, :project_id, :name, :run_type, 'completed',
+                          :finished_at, 'integration-test', :created_at, :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "name": f"publication {run_type}",
+                        "run_type": run_type,
+                        "finished_at": completed_at,
+                        "created_at": completed_at,
+                    },
+                )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_object_refs (
+                      id, tenant_id, project_id, object_type, object_uri,
+                      content_type, byte_size, sha256, metadata_json, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'publication_screenshot', :object_uri,
+                      'image/png', :byte_size, :sha256, JSON_OBJECT('immutable', TRUE), :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": screenshot_ref_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "object_uri": f"memory://publication/{screenshot_ref_id}.png",
+                    "byte_size": len(screenshot_bytes),
+                    "sha256": screenshot_sha256,
+                    "created_at": completed_at,
+                },
+            )
+
+        with pytest.raises(StarletteHTTPException) as non_baseline:
+            delivery_repo.mark_published(
+                tenant_id,
+                package.package_id,
+                PublishEvidenceRequest(
+                    published_url=receipt.published_url,
+                    baseline_run_id=manual_run_id,
+                    recorded_by="integration-reviewer",
+                ),
+            )
+        assert non_baseline.value.detail["code"] == "RETEST_BASELINE_REQUIRED"
+
+        with pytest.raises(StarletteHTTPException) as mismatched_screenshot:
+            delivery_repo.mark_published(
+                tenant_id,
+                package.package_id,
+                PublishEvidenceRequest(
+                    published_url=receipt.published_url,
+                    baseline_run_id=baseline_run_id,
+                    recorded_by="integration-reviewer",
+                    screenshot_ref_id=screenshot_ref_id,
+                    screenshot_sha256="0" * 64,
+                ),
+            )
+        assert mismatched_screenshot.value.detail["code"] == "PUBLICATION_SCREENSHOT_EVIDENCE_INVALID"
+
+        published = delivery_repo.mark_published(
+            tenant_id,
+            package.package_id,
+            PublishEvidenceRequest(
+                published_url=receipt.published_url,
+                baseline_run_id=baseline_run_id,
+                recorded_by="integration-reviewer",
+                screenshot_ref_id=screenshot_ref_id,
+                screenshot_sha256=screenshot_sha256,
+            ),
+        )
+        assert published.status == "published"
+        with engine.connect() as conn:
+            observation_windows = conn.execute(
+                text(
+                    """
+                    SELECT window_label, baseline_run_id, status
+                    FROM airank_retest_observation_windows
+                    WHERE tenant_id=:tenant_id AND package_id=:package_id
+                    ORDER BY due_at, window_label
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package.package_id},
+            ).mappings().all()
+            published_metadata = conn.execute(
+                text(
+                    """
+                    SELECT metadata_json FROM airank_publish_packages
+                    WHERE tenant_id=:tenant_id AND id=:package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": package.package_id},
+            ).scalar_one()
+        if isinstance(published_metadata, str):
+            published_metadata = json.loads(published_metadata)
+        assert {row["window_label"] for row in observation_windows} == {"T0", "T+7", "T+14", "T+30"}
+        assert all(row["baseline_run_id"] == baseline_run_id for row in observation_windows)
+        assert published_metadata["publication_evidence"]["screenshot_ref_id"] == screenshot_ref_id
+        assert published_metadata["publication_evidence"]["screenshot_sha256"] == screenshot_sha256
     finally:
         cleanup_tenant(engine, tenant_id)
 

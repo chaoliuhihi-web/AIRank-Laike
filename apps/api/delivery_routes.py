@@ -177,6 +177,12 @@ class PublishEvidenceRequest(BaseModel):
             raise ValueError("published_url must be an absolute http(s) URL")
         return value
 
+    @model_validator(mode="after")
+    def screenshot_reference_requires_hash(self) -> "PublishEvidenceRequest":
+        if bool(self.screenshot_ref_id) != bool(self.screenshot_sha256):
+            raise ValueError("screenshot_ref_id and screenshot_sha256 must be provided together")
+        return self
+
 
 class PublishExportData(BaseModel):
     package_id: str
@@ -501,10 +507,38 @@ class MySQLDeliveryRepository:
             baseline = conn.execute(text("""
                 SELECT id FROM airank_scan_runs
                 WHERE tenant_id=:tenant_id AND project_id=:project_id
-                  AND id=:baseline_run_id AND status='completed' AND deleted_at IS NULL
+                  AND id=:baseline_run_id AND run_type='baseline'
+                  AND status='completed' AND deleted_at IS NULL
             """), {"tenant_id": tenant_id, "project_id": row["project_id"], "baseline_run_id": payload.baseline_run_id}).first()
             if baseline is None:
-                raise StarletteHTTPException(status_code=409, detail={"code": "RETEST_BASELINE_REQUIRED", "details": {"baseline_run_id": payload.baseline_run_id, "required_status": "completed"}})
+                raise StarletteHTTPException(status_code=409, detail={"code": "RETEST_BASELINE_REQUIRED", "details": {"baseline_run_id": payload.baseline_run_id, "required_run_type": "baseline", "required_status": "completed"}})
+            if payload.screenshot_ref_id and payload.screenshot_sha256:
+                screenshot = conn.execute(
+                    text(
+                        """
+                        SELECT id FROM airank_object_refs
+                        WHERE tenant_id=:tenant_id AND project_id=:project_id
+                          AND id=:screenshot_ref_id AND sha256=:screenshot_sha256
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": row["project_id"],
+                        "screenshot_ref_id": payload.screenshot_ref_id,
+                        "screenshot_sha256": payload.screenshot_sha256,
+                    },
+                ).first()
+                if screenshot is None:
+                    raise StarletteHTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "PUBLICATION_SCREENSHOT_EVIDENCE_INVALID",
+                            "details": {
+                                "screenshot_ref_id": payload.screenshot_ref_id,
+                                "reason": "tenant_project_or_sha256_mismatch",
+                            },
+                        },
+                    )
             metadata = row["metadata_json"] if isinstance(row["metadata_json"], dict) else json.loads(row["metadata_json"] or "{}")
             metadata["publication_evidence"] = {"recorded_by": payload.recorded_by, "baseline_run_id": payload.baseline_run_id, "screenshot_ref_id": payload.screenshot_ref_id, "screenshot_sha256": payload.screenshot_sha256, "recorded_at": published_at.isoformat()}
             conn.execute(text("UPDATE airank_publish_packages SET status='published', published_url=:published_url, published_at=:published_at, retest_due_at=:retest_due_at, metadata_json=:metadata_json, updated_at=:published_at WHERE tenant_id=:tenant_id AND id=:package_id"), {"published_url": payload.published_url, "published_at": published_at, "retest_due_at": published_at + timedelta(days=7), "metadata_json": json.dumps(metadata, ensure_ascii=False), "tenant_id": tenant_id, "package_id": package_id})

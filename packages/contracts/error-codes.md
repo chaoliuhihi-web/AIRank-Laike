@@ -107,6 +107,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |
 | `CONTENT_RISK_OVERRIDE_REQUIRED` | 409 | 高风险内容需要记录人工 override 原因 |
 | `PUBLISH_PACKAGE_NOT_FOUND` | 404 | 发布包不存在 |
+| `PUBLICATION_SCREENSHOT_EVIDENCE_INVALID` | 409 | 发布截图对象不属于当前租户/项目，或客户端提交的 SHA-256 与不可变对象不一致 |
 | `RETEST_WINDOW_NOT_FOUND` | 404 | 复测观察窗口不存在 |
 | `RETEST_BASELINE_REQUIRED` | 409 | 缺少同项目且已完成的 T0 基线扫描 |
 | `RETEST_COMPARE_RUN_REQUIRED` | 409 | 缺少同项目且已完成的复测扫描 |

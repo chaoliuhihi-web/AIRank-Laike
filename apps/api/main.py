@@ -126,6 +126,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
     "CONTENT_RISK_OVERRIDE_REQUIRED": (409, "High-risk content requires an audited override"),
     "PUBLISH_PACKAGE_NOT_FOUND": (404, "Publish package not found"),
+    "PUBLICATION_SCREENSHOT_EVIDENCE_INVALID": (409, "Publication screenshot evidence does not match the immutable object"),
     "RETEST_WINDOW_NOT_FOUND": (404, "Retest observation window not found"),
     "RETEST_BASELINE_REQUIRED": (409, "A completed baseline run is required"),
     "RETEST_COMPARE_RUN_REQUIRED": (409, "A completed comparable scan run is required"),

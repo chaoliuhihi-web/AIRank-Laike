@@ -68,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createPublishPackage,
   createComparisonContent,
   createExplainerContent,
   createGovernedContent,
@@ -112,6 +113,7 @@ import {
   loginToAirank,
   importQuestionObservations,
   recordConsoleAction,
+  recordPublicationEvidence,
   reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
@@ -150,6 +152,7 @@ import {
   type QuestionMapResult,
   type QuestionObservationBatch,
   type PublishPackage,
+  type PublishPackageCreateInput,
   type ReportItem,
   type ReportList,
   type RetestWindow,
@@ -3615,7 +3618,19 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
   const { notify, openPanel } = useActionFeedback();
   const [packages, setPackages] = useState<PublishPackage[]>([]);
   const [windows, setWindows] = useState<RetestWindow[]>([]);
+  const [contentAssets, setContentAssets] = useState<GovernedContentAsset[]>([]);
+  const [scanRuns, setScanRuns] = useState<ScanRun[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState("");
+  const [publishChannel, setPublishChannel] = useState<PublishPackageCreateInput["channel"]>("export");
+  const [targetEndpoint, setTargetEndpoint] = useState("");
+  const [creatingPackage, setCreatingPackage] = useState(false);
+  const [selectedPackageId, setSelectedPackageId] = useState("");
+  const [publishedUrl, setPublishedUrl] = useState("");
+  const [baselineRunId, setBaselineRunId] = useState("");
+  const [screenshotRefId, setScreenshotRefId] = useState("");
+  const [screenshotSha256, setScreenshotSha256] = useState("");
+  const [recordingEvidence, setRecordingEvidence] = useState(false);
 
   useEffect(() => {
     if (!project.id) return;
@@ -3623,10 +3638,21 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
     Promise.all([
       fetchPublishPackages(project.id, controller.signal),
       fetchRetestWindows(project.id, controller.signal),
+      fetchContentAssets(project.id, controller.signal),
+      fetchScanRuns(project.id, controller.signal),
     ])
-      .then(([nextPackages, nextWindows]) => {
+      .then(([nextPackages, nextWindows, nextAssets, nextRuns]) => {
         setPackages(nextPackages);
         setWindows(nextWindows);
+        setContentAssets(nextAssets);
+        setScanRuns(nextRuns);
+        const firstApprovedAsset = nextAssets.find((item) => item.status === "approved");
+        const firstUnpublishedPackage = nextPackages.find((item) => item.status !== "published");
+        const firstCompletedBaseline = nextRuns.find((item) => item.status === "completed" && item.run_type === "baseline");
+        setSelectedAssetId((current) => current || firstApprovedAsset?.asset_id || "");
+        setSelectedPackageId((current) => current || firstUnpublishedPackage?.package_id || "");
+        setPublishedUrl((current) => current || firstUnpublishedPackage?.published_url || "");
+        setBaselineRunId((current) => current || firstCompletedBaseline?.run_id || "");
         setLoadError(null);
       })
       .catch((error) => {
@@ -3635,6 +3661,83 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       });
     return () => controller.abort();
   }, [project.id]);
+
+  const approvedAssets = contentAssets.filter((item) => item.status === "approved");
+  const evidenceCandidates = packages.filter((item) => item.status !== "published");
+  const completedBaselines = scanRuns.filter((item) => item.status === "completed" && item.run_type === "baseline");
+
+  const submitPublishPackage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAssetId) {
+      notify({ title: "没有可发布内容", desc: "请先让内容资产通过事实核验和风险审核。", tone: "warning" });
+      return;
+    }
+    const endpoint = targetEndpoint.trim();
+    if (publishChannel !== "export" && !endpoint) {
+      notify({ title: "缺少目标端点", desc: "WordPress / HTTP 发布必须填写客户授权的 HTTPS 端点。", tone: "warning" });
+      return;
+    }
+    setCreatingPackage(true);
+    try {
+      const created = await createPublishPackage({
+        assetId: selectedAssetId,
+        channel: publishChannel,
+        targetEndpoint: publishChannel === "export" ? undefined : endpoint,
+      });
+      setPackages((current) => [created, ...current.filter((item) => item.package_id !== created.package_id)]);
+      setSelectedPackageId(created.package_id);
+      setPublishedUrl(created.published_url || "");
+      notify({
+        title: publishChannel === "export" ? "不可变导出包已创建" : "外部发布任务已入队",
+        desc: publishChannel === "export"
+          ? `快照 ${created.snapshot_id} 已绑定审核结果与内容 hash。`
+          : "Worker 将使用服务端安全注入的客户凭证执行；前端不会接收或保存站点密钥。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "发布包未创建", desc: error instanceof Error ? error.message : "发布接口不可用", tone: "danger" });
+    } finally {
+      setCreatingPackage(false);
+    }
+  };
+
+  const submitPublicationEvidence = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const screenshotRef = screenshotRefId.trim();
+    const screenshotHash = screenshotSha256.trim().toLowerCase();
+    if (!selectedPackageId || !publishedUrl.trim() || !baselineRunId) {
+      notify({ title: "发布证据不完整", desc: "必须选择发布包、填写真实发布 URL，并绑定已完成的 T0 基线。", tone: "warning" });
+      return;
+    }
+    if ((screenshotRef && !screenshotHash) || (!screenshotRef && screenshotHash)) {
+      notify({ title: "截图证据不完整", desc: "截图对象引用与 SHA-256 必须同时填写，或者同时留空。", tone: "warning" });
+      return;
+    }
+    if (screenshotHash && !/^[0-9a-f]{64}$/.test(screenshotHash)) {
+      notify({ title: "截图哈希格式错误", desc: "SHA-256 必须是 64 位十六进制字符串。", tone: "warning" });
+      return;
+    }
+    setRecordingEvidence(true);
+    try {
+      const updated = await recordPublicationEvidence(selectedPackageId, {
+        publishedUrl: publishedUrl.trim(),
+        baselineRunId,
+        screenshotRefId: screenshotRef || undefined,
+        screenshotSha256: screenshotHash || undefined,
+      });
+      setPackages((current) => current.map((item) => item.package_id === updated.package_id ? updated : item));
+      setWindows(await fetchRetestWindows(project.id));
+      setSelectedPackageId("");
+      setPublishedUrl("");
+      setScreenshotRefId("");
+      setScreenshotSha256("");
+      notify({ title: "真实发布证据已登记", desc: "系统已创建 T0、T+7、T+14、T+30 观察窗口；后续只做审慎归因。", tone: "success" });
+    } catch (error) {
+      notify({ title: "发布证据未登记", desc: error instanceof Error ? error.message : "发布证据接口不可用", tone: "danger" });
+    } finally {
+      setRecordingEvidence(false);
+    }
+  };
 
   return (
     <>
@@ -3653,6 +3756,82 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
         <MiniStat label="待处理/失败" value={String(packages.filter((item) => ["queued", "publishing", "failed"].includes(item.status)).length)} icon={SearchCheck} />
         <MiniStat label="复测窗口" value={String(windows.length)} icon={RotateCw} />
       </section>
+      <Panel title="创建不可变发布包">
+        <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitPublishPackage(event)}>
+          <label>
+            已审核内容
+            <select value={selectedAssetId} onChange={(event) => setSelectedAssetId(event.target.value)}>
+              <option value="">请选择已通过审校的内容</option>
+              {approvedAssets.map((asset) => <option value={asset.asset_id} key={asset.asset_id}>{asset.title} · {asset.asset_type}</option>)}
+            </select>
+            <small>只有当前正文 hash 对应的事实核验和人工审核均通过，服务端才会创建快照。</small>
+          </label>
+          <label>
+            发布渠道
+            <select value={publishChannel} onChange={(event) => setPublishChannel(event.target.value as PublishPackageCreateInput["channel"])}>
+              <option value="export">导出发布包</option>
+              <option value="wordpress">WordPress</option>
+              <option value="http">通用 HTTP</option>
+            </select>
+            <small>export 可立即交付；外部渠道只有拿到真实回执后才会从 partial 晋级。</small>
+          </label>
+          {publishChannel !== "export" ? (
+            <label className="content-blueprint-wide">
+              客户授权 HTTPS 端点
+              <input type="url" required value={targetEndpoint} onChange={(event) => setTargetEndpoint(event.target.value)} maxLength={2048} placeholder={publishChannel === "wordpress" ? "https://customer.example/wp-json/wp/v2/posts" : "https://customer.example/api/publish"} />
+              <small>客户站点凭证只允许由 Worker 安全注入；不得写入浏览器、发布快照、日志或 Git。</small>
+            </label>
+          ) : null}
+          <div className="content-blueprint-actions">
+            <span>{approvedAssets.length} 个已审核内容可发布；系统会冻结正文、审核记录、Skill 版本与证据绑定。</span>
+            <button className="airank-console-primary-button" type="submit" disabled={creatingPackage || !selectedAssetId}>{creatingPackage ? "创建中…" : publishChannel === "export" ? "创建导出包" : "创建并入队"}</button>
+          </div>
+        </form>
+      </Panel>
+      <Panel title="登记真实发布证据">
+        <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitPublicationEvidence(event)}>
+          <label>
+            待登记发布包
+            <select
+              value={selectedPackageId}
+              onChange={(event) => {
+                const packageId = event.target.value;
+                setSelectedPackageId(packageId);
+                setPublishedUrl(packages.find((item) => item.package_id === packageId)?.published_url || "");
+              }}
+            >
+              <option value="">请选择尚未完成证据登记的发布包</option>
+              {evidenceCandidates.map((item) => <option value={item.package_id} key={item.package_id}>{item.package_id} · {item.channel} · {item.status}</option>)}
+            </select>
+            <small>外部 Worker 的 delivered 回执仍需人工确认页面可访问，不能自动当作已发布。</small>
+          </label>
+          <label>
+            T0 基线
+            <select value={baselineRunId} onChange={(event) => setBaselineRunId(event.target.value)}>
+              <option value="">请选择已完成基线</option>
+              {completedBaselines.map((run) => <option value={run.run_id} key={run.run_id}>{run.name || run.run_id} · {run.run_type} · {formatDateTime(run.finished_at || run.updated_at)}</option>)}
+            </select>
+            <small>登记后复测会冻结该基线的 Prompt、Provider、Cohort、采集面和模型口径。</small>
+          </label>
+          <label className="content-blueprint-wide">
+            真实发布 URL
+            <input type="url" required value={publishedUrl} onChange={(event) => setPublishedUrl(event.target.value)} maxLength={2048} placeholder="https://customer.example/evidence/page" />
+            <small>这里只登记实际可访问地址，不接受计划 URL、媒体名单或未落地渠道。</small>
+          </label>
+          <label>
+            截图对象引用（可选）
+            <input value={screenshotRefId} onChange={(event) => setScreenshotRefId(event.target.value)} maxLength={64} placeholder="evidence_object_…" />
+          </label>
+          <label>
+            截图 SHA-256（可选）
+            <input value={screenshotSha256} onChange={(event) => setScreenshotSha256(event.target.value)} maxLength={64} placeholder="64 位十六进制哈希" />
+          </label>
+          <div className="content-blueprint-actions">
+            <span>{completedBaselines.length} 个已完成运行可作为基线；缺少真实 URL 或有效基线时服务端拒绝建立观察窗口。</span>
+            <button className="airank-console-primary-button" type="submit" disabled={recordingEvidence || !selectedPackageId || !baselineRunId}>{recordingEvidence ? "登记中…" : "登记证据并建立复测"}</button>
+          </div>
+        </form>
+      </Panel>
       {loadError && <DataStateCard title="发布中心读取失败" desc={loadError} tone="danger" />}
       {!loadError && packages.length === 0 && <DataStateCard title="尚无发布包" desc="内容必须通过事实核验和风险审核后，才能生成不可变发布快照。" tone="warning" />}
       <Panel title="不可变发布包">
