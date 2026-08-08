@@ -830,3 +830,26 @@ Limitations and blockers:
 Decision:
 
 - The four-platform same-cohort API repetition gap is closed within its declared evidence scope. AIRank remains commercial `NO-GO` until Consumer and production delivery gates pass.
+
+## 2026-08-08 Governed Knowledge Source Synchronization Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Customer-authorized public HTTP(S) sources can now opt into a governed synchronization policy. The scheduler creates durable, tenant-scoped jobs and runs; the worker uses DNS-pinned outbound fetching, immutable raw/visible-text objects and SHA-256 verification.
+- A changed source creates a new immutable KnowledgeSource revision, marks the prior revision `stale` and makes facts that depend on the old source ineligible. An unchanged source records the check without fabricating a new revision.
+- Active runs reject duplicate manual triggers. Run idempotency is scoped by tenant, project and policy. Transient network/storage failures use bounded 5s/10s retry delays and become terminal after attempt three while preserving the same run history.
+- The Facts console can enable, change, pause and re-enable a policy, trigger an immediate check, and inspect status, current revision, timestamps, hashes and object evidence. The UI explicitly limits the function to customer-authorized sources and does not perform unauthorized site discovery.
+- Real browser/MySQL acceptance imported `https://example.com/`, produced one `changed` v2 revision, then one `unchanged` check without v3. Desktop 1024px had no page-level horizontal overflow and the console reported zero warnings/errors. All isolated QA rows were deleted, and the two temporary evidence files were moved to a recoverable temporary directory.
+- The fresh Python 3.11 regression passed `408 passed, 29 skipped`; the strict split gate passed 174 contract, 64 acceptance, 7 scheduler, 35 worker and all package suites. Real MySQL integration passed `27 passed, 2 skipped`; Web build, npm high-severity audit, Alembic offline SQL and real MySQL head `0024` passed. The absorption matrix remains `13 sources / 67 rows / 21 GEO skills`, and core Skill evaluation remains `30/30` with zero falsely promoted Skills.
+
+Limitations and blockers:
+
+- Source synchronization remains `partial`: retrieval is `lexical_only`; vector re-embedding, hybrid retrieval, private connectors, multi-page site ingestion and batch source operations are not yet implemented.
+- The current collector only follows explicitly authorized public URLs. It does not prove that arbitrary sites may be crawled, that every dynamic page is extractable, or that private/customer systems are connected.
+- Production API enforcement/Yudao, HTTPS S3/MinIO, optional Xinghe services, Consumer Web/App L3, customer publishing credentials and real elapsed T+7/T+14/T+30 evidence remain open. The strict report therefore remains `BLOCKED`.
+
+Decision:
+
+- The manual-only public knowledge source refresh gap is closed at the durable application, database and browser-workflow level. Knowledge synchronization remains `partial`, and AIRank remains commercial `NO-GO` until the external production, Consumer and observation gates pass.
