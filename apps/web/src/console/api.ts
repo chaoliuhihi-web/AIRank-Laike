@@ -630,6 +630,8 @@ export type ProviderReadiness = {
     provider: string;
     label: string;
     status: "ready" | "blocked";
+    probe_level: "l2_interaction" | "l3_generation";
+    generation_verified: boolean;
     blocker_code?: string;
     reason?: string;
   }>;

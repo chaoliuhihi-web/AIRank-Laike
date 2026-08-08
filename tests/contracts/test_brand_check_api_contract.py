@@ -54,6 +54,8 @@ def test_brand_check_preflights_browser_readiness_before_writing(monkeypatch) ->
                 url=f"https://{provider}.example.test",
                 profile_dir=f"/profiles/{provider}",
                 headless=True,
+                probe_level="l2_interaction",
+                generation_verified=False,
                 blocker_code="login_required",
                 reason="login required",
             )

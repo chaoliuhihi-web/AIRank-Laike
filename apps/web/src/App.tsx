@@ -1137,6 +1137,8 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div className="provider-metrics">
               <Badge tone={item.status === "ready" ? "success" : "danger"}>{item.status}</Badge>
               <span>采集模式<strong>{readiness?.mode ?? "unknown"}</strong></span>
+              <span>探测层级<strong>{item.probe_level === "l3_generation" ? "L3 真实生成" : "L2 页面交互"}</strong></span>
+              <span>生成验证<strong>{item.generation_verified ? "已通过" : "未通过"}</strong></span>
               <span>状态说明<strong>{item.reason || item.blocker_code || "探测通过"}</strong></span>
             </div>
           </article>

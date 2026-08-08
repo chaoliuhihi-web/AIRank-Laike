@@ -87,6 +87,8 @@ def test_provider_readiness_returns_enveloped_contract(monkeypatch) -> None:
     assert len(body["data"]["providers"]) == len(api_main.DEFAULT_PROVIDER_SCOPE)
     assert {item["status"] for item in body["data"]["providers"]} == {"blocked"}
     assert {item["blocker_code"] for item in body["data"]["providers"]} == {"login_required"}
+    assert {item["probe_level"] for item in body["data"]["providers"]} == {"l2_interaction"}
+    assert {item["generation_verified"] for item in body["data"]["providers"]} == {False}
     validate_response("provider_readiness_response.schema.json", body)
 
 

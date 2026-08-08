@@ -121,6 +121,8 @@ class ProviderReadinessResult:
     url: str
     profile_dir: str
     headless: bool
+    probe_level: str = "l2_interaction"
+    generation_verified: bool = False
     blocker_code: str | None = None
     reason: str | None = None
     screenshot_path: str | None = None
@@ -402,6 +404,8 @@ def probe_api_provider_readiness(provider: str) -> ProviderReadinessResult:
         url=f"https://{settings.endpoint_host}" if settings.endpoint_host else "",
         profile_dir="",
         headless=True,
+        probe_level="l3_generation",
+        generation_verified=ready,
         blocker_code=None if ready else blocker_code_by_state.get(result.state, "unknown_blocked"),
         reason=result.message,
     )
@@ -649,6 +653,8 @@ def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResul
             url=result["page_url"],
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            probe_level="l3_generation",
+            generation_verified=True,
             blocker_code=None,
             reason="L3 consumer generation probe returned a substantive answer",
             screenshot_path=result["screenshot_path"],
@@ -661,6 +667,8 @@ def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResul
             url=exc.page_url or config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            probe_level="l3_generation",
+            generation_verified=False,
             blocker_code=classify_blocker_reason(exc.reason),
             reason=exc.reason[:300],
             screenshot_path=exc.screenshot_path,
@@ -673,6 +681,8 @@ def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResul
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            probe_level="l3_generation",
+            generation_verified=False,
             blocker_code="timeout",
             reason=f"browser timeout: {str(exc)[:300]}",
         )
@@ -684,6 +694,8 @@ def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResul
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            probe_level="l3_generation",
+            generation_verified=False,
             blocker_code="network_error",
             reason=f"browser automation failed: {str(exc)[:300]}",
         )
@@ -695,6 +707,8 @@ def probe_provider_generation_readiness(provider: str) -> ProviderReadinessResul
             url=config.url,
             profile_dir=str(config.profile_dir),
             headless=config.headless,
+            probe_level="l3_generation",
+            generation_verified=False,
             blocker_code=classify_blocker_reason(str(exc)),
             reason=str(exc)[:300],
         )

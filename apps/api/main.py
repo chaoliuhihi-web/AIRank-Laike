@@ -783,6 +783,8 @@ class ProviderReadinessItem(BaseModel):
     url: str
     profile_dir: str
     headless: bool
+    probe_level: Literal["l2_interaction", "l3_generation"]
+    generation_verified: bool
     blocker_code: Optional[
         Literal[
             "login_required",
@@ -2419,6 +2421,8 @@ def build_provider_readiness_items(provider_scope: list[Provider]) -> list[Provi
                     url="",
                     profile_dir="",
                     headless=True,
+                    probe_level="l2_interaction",
+                    generation_verified=False,
                     blocker_code="unknown_blocked",
                     reason=exc.reason,
                 )
@@ -2433,6 +2437,8 @@ def build_provider_readiness_items(provider_scope: list[Provider]) -> list[Provi
                 url=result.url,
                 profile_dir=result.profile_dir,
                 headless=result.headless,
+                probe_level=result.probe_level,  # type: ignore[arg-type]
+                generation_verified=result.generation_verified,
                 blocker_code=result.blocker_code,  # type: ignore[arg-type]
                 reason=result.reason,
                 screenshot_path=result.screenshot_path,

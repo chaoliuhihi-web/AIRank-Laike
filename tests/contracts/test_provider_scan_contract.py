@@ -171,6 +171,8 @@ def test_release_generation_probe_requires_substantive_consumer_answer(
     result = probe_provider_generation_readiness("qianwen")
 
     assert result.status == "ready"
+    assert result.probe_level == "l3_generation"
+    assert result.generation_verified is True
     assert result.reason == "L3 consumer generation probe returned a substantive answer"
 
 

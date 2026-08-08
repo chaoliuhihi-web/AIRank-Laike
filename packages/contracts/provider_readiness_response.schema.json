@@ -18,7 +18,7 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["provider", "label", "status", "url", "profile_dir", "headless"],
+            "required": ["provider", "label", "status", "url", "profile_dir", "headless", "probe_level", "generation_verified"],
             "additionalProperties": false,
             "properties": {
               "provider": {
@@ -30,6 +30,8 @@
               "url": { "type": "string" },
               "profile_dir": { "type": "string" },
               "headless": { "type": "boolean" },
+              "probe_level": { "type": "string", "enum": ["l2_interaction", "l3_generation"] },
+              "generation_verified": { "type": "boolean" },
               "blocker_code": {
                 "type": "string",
                 "enum": ["login_required", "captcha_required", "prompt_input_missing", "timeout", "network_error", "unknown_blocked", "provider_not_configured", "provider_disabled", "provider_auth_failed", "provider_model_failed", "provider_generation_failed", "provider_circuit_open"]
