@@ -129,6 +129,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | `KNOWLEDGE_SYNC_ALREADY_ACTIVE` | 409 | 同一策略已有排队或运行中的检查，不能重复入队 |
 | `KNOWLEDGE_SYNC_VERSION_CONFLICT` | 409 | 更新使用的策略版本已过期，需要刷新后重试 |
 | `CONTENT_EVIDENCE_MISSING` | 409 | 内容引用的事实证据缺失、冲突或失效 |
+| `EVIDENCE_GAP_QUALITY_BLOCKED` | 409 | 扫描未通过测量质量门禁，禁止生成可干预证据缺口 |
+| `EVIDENCE_GAP_BASIS_INVALID` | 409 | 缺少完整不可变样本、证据 hash 或质量报告 hash，禁止推导缺口 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_gap_derivation_request.schema.json",
+  "title": "AIRank Evidence Gap Derivation Request",
+  "type": "object",
+  "required": ["run_id", "requested_by"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string", "pattern": "^scan_run_[A-Za-z0-9_-]+$" },
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

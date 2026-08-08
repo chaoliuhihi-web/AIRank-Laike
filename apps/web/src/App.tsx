@@ -82,6 +82,7 @@ import {
   createFactEvidenceReviewCase,
   createPageAudit,
   downloadReportEvidencePacket,
+  deriveEvidenceGaps,
   fetchQuestionObservationBatches,
   fetchAnswerSample,
   fetchAnswerSamples,
@@ -94,6 +95,7 @@ import {
   fetchCitationSourceCaptures,
   fetchLatestCitationSourceCaptures,
   fetchEvidenceObject,
+  fetchEvidenceGaps,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
   fetchEvidenceReviewEscalations,
@@ -166,6 +168,7 @@ import {
   type EvidenceReviewQueue,
   type EvidenceReviewerRouting,
   type EvidenceIntegrityAudit,
+  type EvidenceGapList,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -4419,6 +4422,16 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
   const [contentAssets, setContentAssets] = useState<GovernedContentAsset[]>([]);
   const [facts, setFacts] = useState<FactRevision[]>([]);
+  const [scanRuns, setScanRuns] = useState<ScanRun[]>([]);
+  const [evidenceGaps, setEvidenceGaps] = useState<EvidenceGapList>({
+    project_id: "",
+    contract_version: "airank.evidence-gap.v2",
+    gaps: [],
+    governed_gap_count: 0,
+    unverified_legacy_count: 0,
+  });
+  const [selectedGapRunId, setSelectedGapRunId] = useState("");
+  const [derivingGaps, setDerivingGaps] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewingAssetId, setReviewingAssetId] = useState<string | null>(null);
   const [creatingBlueprint, setCreatingBlueprint] = useState(false);
@@ -4445,6 +4458,8 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   useEffect(() => {
     if (!project.id) {
       setBundle(fallbackAssetBundle);
+      setScanRuns([]);
+      setEvidenceGaps({ project_id: "", contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
       return;
     }
     const controller = new AbortController();
@@ -4452,11 +4467,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchAssetBundle(project.id, controller.signal),
       fetchContentAssets(project.id, controller.signal),
       fetchFacts(project.id, controller.signal),
+      fetchScanRuns(project.id, controller.signal),
+      fetchEvidenceGaps(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
+        setScanRuns(nextRuns);
+        setEvidenceGaps(nextGaps);
+        const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
+        setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
         setSelectedFactRevisionIds((current) => current.filter((revisionId) => eligibleIds.has(revisionId)));
         const entityFacts = nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation && fact.subject_ref_id);
@@ -4477,12 +4498,15 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setBundle(fallbackAssetBundle);
         setContentAssets([]);
         setFacts([]);
+        setScanRuns([]);
+        setEvidenceGaps({ project_id: project.id, contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
   }, [project.id]);
 
   const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
+  const completedScanRuns = scanRuns.filter((run) => run.status === "completed");
   const subjectOptions = Array.from(new globalThis.Map<string, { subjectId: string; subjectType: FactRevision["subject_type"] }>(
     eligibleFacts
       .filter((fact) => fact.subject_ref_id && fact.subject_type !== "general")
@@ -4503,6 +4527,37 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     .filter((fact) => explainerAssignments[fact.revision_id])
     .reduce((total, fact) => total + fact.fact_text.replace(/\s+/g, "").length, 0);
   const explainerRoleCoverageComplete = explainerRoles.every((role) => explainerRoleCounts[role.value] >= role.minimum);
+
+  const submitEvidenceGapDerivation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !selectedGapRunId) {
+      notify({ title: "没有可推导的扫描", desc: "请选择一条已完成扫描；排队、运行中或失败扫描不能形成干预依据。", tone: "warning" });
+      return;
+    }
+    setDerivingGaps(true);
+    try {
+      const result = await deriveEvidenceGaps(project.id, selectedGapRunId);
+      const [nextGaps, nextBundle] = await Promise.all([
+        fetchEvidenceGaps(project.id),
+        fetchAssetBundle(project.id),
+      ]);
+      setEvidenceGaps(nextGaps);
+      setBundle(nextBundle);
+      notify({
+        title: result.idempotent_replay ? "证据缺口已复用" : "证据缺口已推导",
+        desc: `形成 ${result.gap_count} 个稳定未提及缺口，跳过 ${result.skipped_group_count} 个不满足规则的分组；所有正常样本仍保留。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({
+        title: "证据缺口未生成",
+        desc: error instanceof Error ? error.message : "扫描质量或不可变证据未通过门禁。",
+        tone: "danger",
+      });
+    } finally {
+      setDerivingGaps(false);
+    }
+  };
 
   const toggleBlueprintFact = (revisionId: string) => {
     setSelectedFactRevisionIds((current) => current.includes(revisionId)
@@ -4667,6 +4722,64 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
       {loadError && <DataStateCard title="内容资产读取失败" desc={loadError} tone="danger" />}
+      <Panel title="真实扫描 → 证据缺口">
+        <form className="content-blueprint-form" data-testid="evidence-gap-derive-form" onSubmit={(event) => void submitEvidenceGapDerivation(event)}>
+          <div className="content-blueprint-wide knowledge-search-policy">
+            <Badge tone="primary">airank.evidence-gap.v2</Badge>
+            <span>只读取质量门禁通过的不可变样本。同一问题、平台和采集面至少 3 次独立有效回答都未提及品牌，才形成稳定缺口；未提及仍计入有效分母。</span>
+          </div>
+          <label>
+            已完成扫描
+            <select data-testid="evidence-gap-run-select" value={selectedGapRunId} onChange={(event) => setSelectedGapRunId(event.target.value)}>
+              <option value="">请选择真实扫描</option>
+              {completedScanRuns.map((run) => <option value={run.run_id} key={run.run_id}>{run.name || run.run_id} · {run.cohort_type} · {run.repetitions} 次 · {run.collector_surfaces.join("/")}</option>)}
+            </select>
+            <small>服务端会重新计算 measurement-quality.v4；质量阻断时不会落库缺口。</small>
+          </label>
+          <div className="content-blueprint-actions">
+            <span>{completedScanRuns.length} 条已完成扫描 · {evidenceGaps.governed_gap_count} 个证据缺口</span>
+            <button className="airank-console-primary-button" data-testid="derive-evidence-gaps" type="submit" disabled={derivingGaps || !selectedGapRunId}>{derivingGaps ? "校验证据中…" : "从真实样本推导"}</button>
+          </div>
+        </form>
+        {evidenceGaps.unverified_legacy_count > 0 ? (
+          <DataStateCard title="历史缺口未进入干预" desc={`检测到 ${evidenceGaps.unverified_legacy_count} 个未绑定真实样本证据的历史缺口。它们只保留审计，不会生成内容建议；请从质量通过的扫描重新推导。`} tone="warning" />
+        ) : null}
+        {evidenceGaps.gaps.length === 0 ? (
+          <DataStateCard title="尚无稳定证据缺口" desc="这可能表示尚未执行推导、扫描质量被阻断，或没有任何分组满足连续独立有效样本均未提及的规则；系统不会补造缺口数量。" tone="warning" />
+        ) : (
+          <div className="content-review-list" data-testid="evidence-gap-list">
+            {evidenceGaps.gaps.map((gap) => (
+              <article className="content-review-item" data-testid="evidence-gap-card" key={gap.gap_id}>
+                <div className="content-review-head">
+                  <div><strong>{gap.title}</strong><span>{gap.provider} · {gap.collector_surface} · {formatDateTime(gap.created_at)}</span></div>
+                  <Badge tone={gap.severity === "high" ? "danger" : gap.severity === "medium" ? "warning" : "muted"}>{gap.severity}</Badge>
+                </div>
+                <div className="content-review-body">{gap.description}</div>
+                <div className="content-review-proof">
+                  <span>{gap.valid_sample_count} 条有效样本</span>
+                  <span>{gap.normal_unmentioned_count} 条正常未提及</span>
+                  <span>{gap.citation_ids.length} 条原生引用</span>
+                  <span>{gap.fact_atom_ids.length} 条审核事实</span>
+                  <span>建议 {gap.suggested_asset_type}</span>
+                  <code>{gap.evidence_sha256.slice(0, 16)}…</code>
+                </div>
+                <div className="fact-review-actions">
+                  <button className="outline-button" type="button" onClick={() => openPanel({
+                    title: `${gap.title} · 样本证据`,
+                    desc: `质量报告 ${gap.quality_report_sha256}；证据基础 ${gap.evidence_sha256}。`,
+                    items: [
+                      `AnswerSnapshot：${gap.answer_snapshot_ids.join("、")}`,
+                      `EvidenceSnapshot：${gap.evidence_snapshot_ids.join("、")}`,
+                      `Citation：${gap.citation_ids.length ? gap.citation_ids.join("、") : "当前样本无 Provider 原生引用"}`,
+                      `FactAtom：${gap.fact_atom_ids.length ? gap.fact_atom_ids.join("、") : "待补审核事实，不允许直接生成内容"}`,
+                    ],
+                  })}><Eye size={16} />下钻证据</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
       <Panel title="证据绑定页面蓝图">
         <form className="content-blueprint-form" onSubmit={(event) => void submitBlueprint(event)}>
           <label>产物类型<select value={assetType} onChange={(event) => setAssetType(event.target.value as GovernedContentCreateInput["assetType"])}>{governedAssetTypes.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>

@@ -92,8 +92,19 @@ def create_asset_bundle_tables(repository: MySQLAssetBundleRepository) -> None:
                   id VARCHAR(64) PRIMARY KEY,
                   tenant_id VARCHAR(64) NOT NULL,
                   project_id VARCHAR(64) NOT NULL,
+                  run_id VARCHAR(64) NULL,
+                  gap_type VARCHAR(64) NOT NULL DEFAULT 'evidence_gap',
+                  contract_version VARCHAR(64) NULL,
+                  derivation_policy VARCHAR(96) NULL,
                   title VARCHAR(255) NOT NULL,
                   severity VARCHAR(32) NOT NULL,
+                  evidence_summary_json TEXT NULL,
+                  answer_snapshot_ids TEXT NULL,
+                  evidence_snapshot_ids TEXT NULL,
+                  citation_ids TEXT NULL,
+                  fact_atom_ids TEXT NULL,
+                  evidence_sha256 VARCHAR(64) NULL,
+                  quality_report_sha256 VARCHAR(64) NULL,
                   suggested_asset_type VARCHAR(64) NULL,
                   status VARCHAR(32) NOT NULL,
                   updated_at DATETIME NOT NULL,
@@ -186,7 +197,7 @@ def test_mysql_asset_bundle_uses_content_assets_and_publish_state() -> None:
     assert bundle.tenant_id == "tenant_asset"
     assert {asset.asset_id for asset in bundle.assets} == {"asset_fact_page", "asset_faq"}
     assert {asset.asset_id: asset.progress for asset in bundle.assets}["asset_fact_page"] == 100
-    assert "1 个内容缺口" in bundle.recommendation
+    assert "1 个未绑定样本证据的历史缺口" in bundle.recommendation
 
 
 def test_mysql_asset_bundle_uses_display_metadata_when_present() -> None:
@@ -225,11 +236,58 @@ def test_mysql_asset_bundle_uses_gap_empty_state_without_seed_assets() -> None:
             text(
                 """
                 INSERT INTO airank_content_gaps (
-                  id, tenant_id, project_id, title, severity, suggested_asset_type, status, updated_at
+                  id, tenant_id, project_id, run_id, gap_type,
+                  contract_version, derivation_policy, title, severity,
+                  evidence_summary_json, answer_snapshot_ids,
+                  evidence_snapshot_ids, citation_ids, fact_atom_ids,
+                  evidence_sha256, quality_report_sha256,
+                  suggested_asset_type, status, updated_at
                 )
                 VALUES (
-                  'gap_compare', 'tenant_asset', 'project_asset',
-                  '缺少竞品对比页', 'medium', 'comparison_page', 'open', '2026-05-17 11:00:00'
+                  'gap_compare', 'tenant_asset', 'project_asset', 'scan_run_gap',
+                  'brand_unmentioned', 'airank.evidence-gap.v2',
+                  'airank.brand-unmentioned-gap.v1', '缺少竞品对比页', 'medium',
+                  :evidence_summary,
+                  '["snapshot_1","snapshot_2","snapshot_3"]',
+                  '["evidence_1","evidence_2","evidence_3"]', '[]', '[]',
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                  'comparison_page', 'open', '2026-05-17 11:00:00'
+                )
+                """
+            ),
+            {
+                "evidence_summary": json.dumps(
+                    {
+                        "provider": "qianwen",
+                        "collector_surface": "api",
+                        "valid_sample_count": 3,
+                    }
+                )
+            },
+        )
+
+    bundle = repository.get_bundle("tenant_asset", "project_asset")
+
+    assert [asset.asset_id for asset in bundle.assets] == ["gap_gap_compare"]
+    assert bundle.assets[0].progress == 0
+    assert bundle.assets[0].status == "待补事实"
+    assert "3 条不可变有效样本" in bundle.assets[0].desc
+
+
+def test_mysql_asset_bundle_excludes_unverified_legacy_gap_from_actions() -> None:
+    repository = MySQLAssetBundleRepository("sqlite+pysqlite:///:memory:")
+    create_asset_bundle_tables(repository)
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_content_gaps (
+                  id, tenant_id, project_id, title, severity,
+                  suggested_asset_type, status, updated_at
+                ) VALUES (
+                  'gap_legacy', 'tenant_asset', 'project_asset', '旧缺口',
+                  'high', 'fact_page', 'open', '2026-05-17 11:00:00'
                 )
                 """
             )
@@ -237,9 +295,9 @@ def test_mysql_asset_bundle_uses_gap_empty_state_without_seed_assets() -> None:
 
     bundle = repository.get_bundle("tenant_asset", "project_asset")
 
-    assert [asset.asset_id for asset in bundle.assets] == ["gap_gap_compare"]
-    assert bundle.assets[0].progress == 0
-    assert bundle.assets[0].status == "待生成"
+    assert bundle.assets == []
+    assert "未绑定样本证据" in bundle.recommendation
+    assert "重新推导" in bundle.recommendation
 
 
 def test_mysql_asset_bundle_is_tenant_scoped() -> None:

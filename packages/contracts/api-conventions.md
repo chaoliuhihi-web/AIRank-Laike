@@ -171,7 +171,16 @@ AI 收录包接口：
 GET /api/v1/projects/{project_id}/asset-bundle
 ```
 
-响应使用 `asset_bundle_response.schema.json`。当前返回可用于前端资产页的真实 API payload；资产内容仍是 dev-only seed，不代表生产内容生成。
+响应使用 `asset_bundle_response.schema.json`。当前返回数据库中的真实内容资产；尚未生成资产时，只允许把 `airank.evidence-gap.v2` 且有证据 hash 的缺口展示为待补事实入口，不能用 seed 或历史缺口冒充生产建议。
+
+证据缺口接口：
+
+```text
+GET  /api/v1/projects/{project_id}/evidence-gaps
+POST /api/v1/projects/{project_id}/evidence-gaps/derive
+```
+
+推导请求、结果和列表分别使用 `evidence_gap_derivation_request.schema.json`、`evidence_gap_derivation_response.schema.json` 与 `evidence_gap_list_response.schema.json`。服务端只从通过 `airank.measurement-quality.v4` 的不可变扫描样本推导 `airank.evidence-gap.v2`：同一问题、Provider、采集面必须拥有完整 sample index、至少 3 次独立会话、有效 AnswerSnapshot/EvidenceSnapshot hash，且每条都是正常有效的 `not_mentioned`。正常未提及样本不得删除；只是不满足该稳定缺口规则的分组不生成缺口。历史上未绑定证据 hash 的缺口只计入 `unverified_legacy_count`，不得直接进入内容建议。推导记录保存质量报告 hash、全量证据基础 hash、回答/证据/引用 ID 和可信操作者，支持按扫描运行与 Idempotency-Key 确定性重放。
 
 ## 幂等
 
@@ -183,6 +192,7 @@ GET /api/v1/projects/{project_id}/asset-bundle
 - 发起 retest
 - 创建独立证据复核任务
 - 生成报告证据包
+- 从质量通过的扫描推导证据缺口
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
 

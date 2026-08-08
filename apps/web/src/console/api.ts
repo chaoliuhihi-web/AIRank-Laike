@@ -94,6 +94,56 @@ export type AssetBundle = {
   assets: AssetBundleItem[];
 };
 
+export type EvidenceGap = {
+  gap_id: string;
+  project_id: string;
+  run_id: string;
+  gap_type: "brand_unmentioned";
+  contract_version: "airank.evidence-gap.v2";
+  derivation_policy: "airank.brand-unmentioned-gap.v1";
+  severity: "low" | "medium" | "high";
+  title: string;
+  description: string;
+  related_question_ids: string[];
+  provider: string;
+  collector_surface: "api" | "web" | "app" | "manual_import";
+  valid_sample_count: number;
+  normal_unmentioned_count: number;
+  answer_snapshot_ids: string[];
+  evidence_snapshot_ids: string[];
+  citation_ids: string[];
+  fact_atom_ids: string[];
+  suggested_asset_type: string;
+  evidence_sha256: string;
+  quality_report_sha256: string;
+  status: string;
+  created_at: string;
+};
+
+export type EvidenceGapList = {
+  project_id: string;
+  contract_version: "airank.evidence-gap.v2";
+  gaps: EvidenceGap[];
+  governed_gap_count: number;
+  unverified_legacy_count: number;
+};
+
+export type EvidenceGapDerivation = {
+  derivation_run_id: string;
+  project_id: string;
+  run_id: string;
+  contract_version: "airank.evidence-gap.v2";
+  derivation_policy: "airank.brand-unmentioned-gap.v1";
+  quality_report_sha256: string;
+  evidence_basis_sha256: string;
+  gap_count: number;
+  skipped_group_count: number;
+  gaps: EvidenceGap[];
+  created_by: string;
+  created_at: string;
+  idempotent_replay: boolean;
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -1576,6 +1626,37 @@ export async function fetchAssetBundle(projectId: string, signal?: AbortSignal):
 
   const payload = (await response.json()) as AssetBundlePayload;
   return payload.data;
+}
+
+export function fetchEvidenceGaps(projectId: string, signal?: AbortSignal): Promise<EvidenceGapList> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-gaps`,
+    "trc_web_evidence_gaps",
+    signal,
+  );
+}
+
+export async function deriveEvidenceGaps(projectId: string, runId: string): Promise<EvidenceGapDerivation> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) {
+    throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  }
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-gaps/derive`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `gap-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_evidence_gap_derive"),
+      },
+      body: JSON.stringify({ run_id: runId, requested_by: actor }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence gap derivation failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceGapDerivation }).data;
 }
 
 export async function fetchReports(projectId: string, signal?: AbortSignal): Promise<ReportList> {

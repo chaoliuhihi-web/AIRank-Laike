@@ -127,6 +127,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "KNOWLEDGE_SYNC_ALREADY_ACTIVE": (409, "Knowledge source sync policy already has an active run"),
     "KNOWLEDGE_SYNC_VERSION_CONFLICT": (409, "Knowledge source sync policy version conflict"),
     "CONTENT_EVIDENCE_MISSING": (409, "Content evidence is missing or ineligible"),
+    "EVIDENCE_GAP_QUALITY_BLOCKED": (409, "Scan run did not pass the evidence-gap quality gate"),
+    "EVIDENCE_GAP_BASIS_INVALID": (409, "Evidence-gap derivation basis is incomplete or invalid"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -2138,17 +2140,36 @@ class MySQLAssetBundleRepository:
             gap_rows = conn.execute(
                 text(
                     """
-                    SELECT id, title, severity, suggested_asset_type, status
+                    SELECT id, title, severity, suggested_asset_type, status,
+                           evidence_summary_json, fact_atom_ids, evidence_sha256
                     FROM airank_content_gaps
                     WHERE tenant_id = :tenant_id
                       AND project_id = :project_id
                       AND deleted_at IS NULL
                       AND status <> 'closed'
+                      AND contract_version = 'airank.evidence-gap.v2'
+                      AND evidence_sha256 IS NOT NULL
                     ORDER BY severity ASC, updated_at DESC
                     """
                 ),
                 {"tenant_id": tenant_id, "project_id": project_id},
             ).mappings().all()
+            legacy_gap_count = int(
+                conn.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM airank_content_gaps
+                        WHERE tenant_id = :tenant_id
+                          AND project_id = :project_id
+                          AND deleted_at IS NULL
+                          AND status <> 'closed'
+                          AND (contract_version IS NULL OR evidence_sha256 IS NULL)
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "project_id": project_id},
+                ).scalar_one()
+            )
 
         assets = []
         for row in asset_rows:
@@ -2172,20 +2193,32 @@ class MySQLAssetBundleRepository:
                 )
             )
         if not assets:
-            assets = [
-                AssetBundleItem(
-                    asset_id=f"gap_{row['id']}",
-                    title=row["title"],
-                    desc=f"建议生成 {row['suggested_asset_type'] or 'content_asset'} 以补齐 {row['severity']} 缺口",
-                    progress=0,
-                    status="待生成",
+            for row in gap_rows[:8]:
+                summary = parse_json_value(row["evidence_summary_json"], {})
+                facts = parse_json_value(row["fact_atom_ids"], [])
+                valid_samples = int(summary.get("valid_sample_count") or 0) if isinstance(summary, dict) else 0
+                provider = str(summary.get("provider") or "unknown") if isinstance(summary, dict) else "unknown"
+                surface = str(summary.get("collector_surface") or "unknown") if isinstance(summary, dict) else "unknown"
+                fact_count = len(facts) if isinstance(facts, list) else 0
+                assets.append(
+                    AssetBundleItem(
+                        asset_id=f"gap_{row['id']}",
+                        title=row["title"],
+                        desc=(
+                            f"{provider} · {surface} 的 {valid_samples} 条不可变有效样本已绑定；"
+                            f"当前 {fact_count} 条事实。先补齐审核事实，再生成 "
+                            f"{row['suggested_asset_type'] or 'content_asset'}。"
+                        ),
+                        progress=0,
+                        status="待补事实" if fact_count == 0 else "待生成",
+                    )
                 )
-                for row in gap_rows[:8]
-            ]
         completeness = round(sum(asset.progress for asset in assets) / len(assets)) if assets else 0
         open_gap_count = len(gap_rows)
         if open_gap_count:
-            recommendation = f"优先补齐 {open_gap_count} 个内容缺口，再发布 AI 收录包。"
+            recommendation = f"优先处理 {open_gap_count} 个可下钻证据缺口；补齐审核事实后再生成和发布。"
+        elif legacy_gap_count:
+            recommendation = f"发现 {legacy_gap_count} 个未绑定样本证据的历史缺口；请从通过质量门禁的扫描重新推导，不能直接用于内容建议。"
         elif not assets:
             recommendation = "尚无经过事实审核的内容资产，不生成完成度或发布建议。"
         elif completeness < 100:
@@ -5990,3 +6023,10 @@ except ImportError:  # pragma: no cover
     from source_registry_routes import router as source_registry_router  # type: ignore[no-redef]
 
 app.include_router(source_registry_router)
+
+try:
+    from .evidence_gap_routes import router as evidence_gap_router
+except ImportError:  # pragma: no cover
+    from evidence_gap_routes import router as evidence_gap_router  # type: ignore[no-redef]
+
+app.include_router(evidence_gap_router)

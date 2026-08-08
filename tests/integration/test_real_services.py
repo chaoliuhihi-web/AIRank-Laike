@@ -17,7 +17,7 @@ from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.main import (
@@ -59,6 +59,7 @@ from apps.api.knowledge_routes import (
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
+from apps.api.evidence_gap_routes import DeriveEvidenceGapsRequest, MySQLEvidenceGapRepository
 from apps.api.retest_routes import MySQLRetestRepository, _comparison_data
 from apps.api.report_packet import MySQLReportEvidencePacketRepository
 from apps.api.question_routes import (
@@ -142,7 +143,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0030"
+EXPECTED_ALEMBIC_HEAD = "20260809_0031"
 
 
 def require_real_flag(flag: str) -> None:
@@ -208,7 +209,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 76
+        assert table_count == 77
         for table_name in (
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
@@ -217,6 +218,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             "airank_evidence_review_team_sync_runs",
             "airank_notification_deliveries",
             "airank_notification_delivery_receipts",
+            "airank_content_gap_derivation_runs",
         ):
             assert conn.execute(
                 text(
@@ -235,6 +237,21 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_content_gaps'
+                  AND column_name IN (
+                    'contract_version', 'derivation_policy',
+                    'answer_snapshot_ids', 'evidence_snapshot_ids',
+                    'citation_ids', 'fact_atom_ids', 'evidence_summary_json',
+                    'evidence_sha256', 'quality_report_sha256', 'derived_by'
+                  )
+                """
+            )
+        ).scalar_one() == 10
         assert conn.execute(
             text(
                 """
@@ -895,7 +912,8 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         detail = evidence_repo.get_sample(tenant_id, snapshot_id)
         assert bundle.assets[0].asset_id == "asset_real_fact_page"
         assert bundle.assets[0].progress == 100
-        assert "1 个内容缺口" in bundle.recommendation
+        assert "1 个未绑定样本证据的历史缺口" in bundle.recommendation
+        assert "不能直接用于内容建议" in bundle.recommendation
         assert [sample.snapshot_id for sample in samples] == [snapshot_id]
         assert sample_aggregates == {
             "total": 1,
@@ -2107,6 +2125,71 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         assert baseline_quality["publishable"] is True
         assert compare_quality["publishable"] is True
         assert baseline_quality["metrics"]["not_mentioned_count"] == 3
+        gap_repository = MySQLEvidenceGapRepository(database_url())
+        gap_payload = DeriveEvidenceGapsRequest(
+            run_id=runs[0].run_id,
+            requested_by="integration_evidence_gap_reviewer",
+        )
+        gap_derivation = gap_repository.derive(
+            tenant_id,
+            project.project_id,
+            gap_payload,
+            idempotency_key=f"evidence-gap-{runs[0].run_id}",
+            actor="integration_evidence_gap_reviewer",
+            trace_id="trc_evidence_gap_mysql",
+        )
+        gap_replay = gap_repository.derive(
+            tenant_id,
+            project.project_id,
+            gap_payload,
+            idempotency_key=f"evidence-gap-replay-{runs[0].run_id}",
+            actor="integration_evidence_gap_reviewer",
+            trace_id="trc_evidence_gap_mysql_replay",
+        )
+        mentioned_derivation = gap_repository.derive(
+            tenant_id,
+            project.project_id,
+            DeriveEvidenceGapsRequest(
+                run_id=runs[1].run_id,
+                requested_by="integration_evidence_gap_reviewer",
+            ),
+            idempotency_key=f"evidence-gap-{runs[1].run_id}",
+            actor="integration_evidence_gap_reviewer",
+            trace_id="trc_evidence_gap_mysql_mentioned",
+        )
+        assert gap_derivation.gap_count == 1
+        assert gap_derivation.skipped_group_count == 0
+        assert gap_derivation.idempotent_replay is False
+        assert gap_replay.idempotent_replay is True
+        assert gap_replay.derivation_run_id == gap_derivation.derivation_run_id
+        assert mentioned_derivation.gap_count == 0
+        assert mentioned_derivation.skipped_group_count == 1
+        gap = gap_derivation.gaps[0]
+        assert gap.normal_unmentioned_count == 3
+        assert len(gap.answer_snapshot_ids) == 3
+        assert len(gap.evidence_snapshot_ids) == 3
+        assert len(gap.evidence_sha256) == 64
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM airank_answer_snapshots "
+                    "WHERE tenant_id=:tenant_id AND id IN :snapshot_ids"
+                ).bindparams(bindparam("snapshot_ids", expanding=True)),
+                {"tenant_id": tenant_id, "snapshot_ids": gap.answer_snapshot_ids},
+            ).scalar_one() == 3
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM airank_evidence_snapshots "
+                    "WHERE tenant_id=:tenant_id AND id IN :evidence_ids"
+                ).bindparams(bindparam("evidence_ids", expanding=True)),
+                {"tenant_id": tenant_id, "evidence_ids": gap.evidence_snapshot_ids},
+            ).scalar_one() == 3
+        gap_bundle = MySQLAssetBundleRepository(database_url()).get_bundle(
+            tenant_id, project.project_id
+        )
+        assert [item.asset_id for item in gap_bundle.assets] == [f"gap_{gap.gap_id}"]
+        assert gap_bundle.assets[0].status == "待补事实"
+        assert "3 条不可变有效样本" in gap_bundle.assets[0].desc
         report_id = f"report_packet_it_{uuid4().hex[:12]}"
         retest_run_id = f"retest_packet_it_{uuid4().hex[:12]}"
         window_id = f"window_packet_it_{uuid4().hex[:12]}"

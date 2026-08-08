@@ -1188,3 +1188,24 @@ Decision:
 ### Decision
 
 - The current engineering slice passes every executable strict check and closes the standalone Worker packaging defect. AIRank remains commercial `NO-GO` because the remaining failed gates require production/customer identities, infrastructure, channel endpoints or elapsed evidence.
+
+## Evidence-backed content-gap derivation gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0031` adds provenance fields to `airank_content_gaps` and an immutable, idempotent derivation-run ledger. The real database is at head with 77 AIRank tables; offline SQL and real migration pass.
+- `airank.evidence-gap.v2` accepts only a completed scan whose recomputed `airank.measurement-quality.v4` report is publishable. Each question/provider/surface group must contain every expected sample index, independent sessions, immutable answer/raw hashes, and only valid `not_mentioned` samples.
+- The result freezes the quality-report hash, canonical evidence-basis hash, AnswerSnapshot/EvidenceSnapshot/Citation identifiers, sample counts, policy version and trusted actor. Normal unmentioned samples remain in the measurement denominator; skipped groups are not deleted.
+- Legacy gaps without contract/evidence hashes remain auditable but are excluded from asset actions. A governed gap without approved FactAtom evidence appears as `待补事实`, not as generated content.
+- Contract/unit/acceptance tests cover deterministic derivation, mentioned/reused-session rejection, authenticated actor override, JSON Schema validation and legacy-gap exclusion. Real MySQL proves one 3-sample unmentioned group creates one gap, a mentioned group creates zero, and replay creates no duplicate.
+- Browser acceptance proves a quality-blocked run returns 409 without changing the one existing gap; the quality-passed Doubao API run idempotently replays and drills down to 3 AnswerSnapshots, 3 EvidenceSnapshots and both 64-character hashes. Mobile has no page overflow and console warning/error counts are zero.
+
+### Still blocked
+
+- The current gap policy covers only stable brand non-mention. Citation-support gaps, fact-conflict/staleness gaps, page-audit findings and a cross-domain opportunity priority model are not yet orchestrated.
+- The verified gap has zero approved FactAtoms and therefore cannot generate or publish content. This is intentional fail-closed behavior, not a completed intervention.
+- Production Yudao authentication/directory, HTTPS object storage, customer notification and publishing endpoints, Consumer Web/App evidence, reviewer benchmark 0/20, Kimi rotation, DeepSeek migration and elapsed T+7/T+14/T+30 customer evidence remain open.
+
+### Decision
+
+- The evidence-to-action boundary is now truthful and auditable, but AIRank remains commercial `NO-GO` until the existing external and customer-evidence gates pass.

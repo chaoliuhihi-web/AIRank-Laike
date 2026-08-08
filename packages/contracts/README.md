@@ -28,6 +28,10 @@ M1 已冻结的 API schema：
 - `fact_review_request.schema.json`
 - `fact_review_response.schema.json`
 - `asset_bundle_response.schema.json`
+- `evidence_gap.schema.json`
+- `evidence_gap_derivation_request.schema.json`
+- `evidence_gap_derivation_response.schema.json`
+- `evidence_gap_list_response.schema.json`
 - `report_list_response.schema.json`
 - `download_receipt_response.schema.json`
 - `fact_accuracy_bundle_response.schema.json`
@@ -46,7 +50,6 @@ M1 已冻结的 API schema：
 - `fact_atom.schema.json` — 可信事实卡的内部最小事实单元（FactAtom）
 - `fact_store.schema.json` — 企业事实库条目
 - `competitor_suppression.schema.json` — 竞品压制分析
-- `evidence_gap.schema.json` — 内容/信源缺口（推荐证据缺口）
 - `asset_bundle.schema.json` — AI 收录包 / AI 推荐资产包
 - `publish_record.schema.json` — 发布记录和状态机
 - `retest_report.schema.json`
