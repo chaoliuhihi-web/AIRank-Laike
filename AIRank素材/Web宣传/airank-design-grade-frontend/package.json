@@ -7,10 +7,12 @@
     "serve": "python3 -m http.server 8080",
     "check": "node scripts/check-static.mjs",
     "audit": "node scripts/check-static.mjs",
-    "routes": "node scripts/check-routes.mjs"
+    "routes": "node scripts/check-routes.mjs",
+    "test:lead": "node scripts/check-lead-api.mjs",
+    "deploy:check": "node scripts/check-deployment.mjs",
+    "release:check": "npm run check && npm run routes && npm run test:lead && npm run deploy:check"
   },
   "dependencies": {
-    "nodemailer": "^6.9.16"
-  },
-  "devDependencies": {}
+    "nodemailer": "9.0.5"
+  }
 }

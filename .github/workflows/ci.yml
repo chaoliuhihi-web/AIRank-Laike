@@ -90,3 +90,23 @@ jobs:
       - name: Build web
         working-directory: apps/web
         run: npm run build
+
+  marketing-site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AIRank素材/Web宣传/airank-design-grade-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: AIRank素材/Web宣传/airank-design-grade-frontend/package-lock.json
+
+      - name: Install marketing-site dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run marketing-site release gate
+        run: npm run release:check

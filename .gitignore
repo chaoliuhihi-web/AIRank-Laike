@@ -33,3 +33,7 @@ AIRank素材/Web宣传/airank-web-frontend.zip
 AIRank素材/Web宣传/airank-web-frontend/
 AIRank素材/Web宣传/airank-*-frontend.zip
 AIRank素材/Web宣传/airank-*-frontend/
+
+# The design-grade website is production source; its local .gitignore owns build exclusions.
+!AIRank素材/Web宣传/airank-design-grade-frontend/
+!AIRank素材/Web宣传/airank-design-grade-frontend/**

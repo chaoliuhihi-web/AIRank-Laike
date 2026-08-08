@@ -1,3 +1,10 @@
 User-agent: *
 Allow: /
+Disallow: /pages/
+Disallow: /design-system/
+Disallow: /login/
+Disallow: /thank-you/
+Disallow: /404.html
+Disallow: /trial.html
+Disallow: /checkup.html
 Sitemap: https://airank.net.cn/sitemap.xml
