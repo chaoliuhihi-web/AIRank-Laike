@@ -35,6 +35,14 @@ export const consoleRoutes: ConsoleRoute[] = [
     priority: "M1",
   },
   {
+    id: "page-audit",
+    path: "/console/page-audit",
+    label: "官网可提取性",
+    icon: "ScanSearch",
+    sourceImage: "",
+    priority: "M1",
+  },
+  {
     id: "evidence",
     path: "/console/evidence",
     label: "证据中心",

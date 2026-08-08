@@ -21,8 +21,18 @@ objects:
 - `SourceCitation` stores URL, host, title, cited text and source type.
 - `MockAnswerProvider` builds deterministic snapshots from worker job payloads.
 
-The provider refuses to create an answer snapshot without at least one citation.
-This keeps scan and report code from producing unsupported conclusions.
+有效回答可以没有原生引用；“无引用”本身是必须保留的真实测量状态。系统不会为了让
+报告好看而补造来源。任何需要来源支持的报告结论仍必须通过独立证据门禁。
+
+## Citation selection 与 support
+
+`CitationClaim` 把回答中的具体断言绑定到精确字符边界和回答 SHA-256；
+`CitationSupportReview` 追加保存 Claim/Citation 对的支持、矛盾或证据不足结论。
+
+- Provider 返回 URL 只代表 source selection，不代表来源吸收或支持；
+- Provider 摘要和来源面板复核只能标为 provisional；
+- 只有人工复核且绑定不可变来源页面对象的记录进入可交付支持率；
+- 后续复核通过追加记录和 supersedes 链生效，不覆盖旧证据。
 
 ## M3 FactAtom source bridge
 

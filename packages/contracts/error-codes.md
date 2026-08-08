@@ -25,6 +25,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | `RESOURCE_NOT_FOUND` | 404 | 资源不存在 |
 | `METHOD_NOT_ALLOWED` | 405 | HTTP 方法不支持 |
 | `STATE_CONFLICT` | 409 | 状态冲突 |
+| `IDEMPOTENCY_CONFLICT` | 409 | 同一幂等键对应了不同请求内容，拒绝重复副作用 |
 | `RATE_LIMITED` | 429 | 被限流 |
 | `INTERNAL_ERROR` | 500 | 未预期错误 |
 
@@ -69,6 +70,14 @@ FACT_DISCLOSURE_FORBIDDEN
 | `JOB_TIMEOUT` | 500 | job 超时 |
 | `JOB_MAX_ATTEMPTS_EXCEEDED` | 500 | job 重试耗尽 |
 
+## 页面可提取性审计
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `PAGE_AUDIT_URL_REQUIRED` | 400 | 项目未配置官网且请求未提供审计 URL |
+| `PAGE_AUDIT_URL_INVALID` | 400 | 页面 URL 不符合安全出站策略或格式无效 |
+| `PAGE_AUDIT_NOT_FOUND` | 404 | 页面审计运行不存在或不属于当前租户项目 |
+
 ## 事实和内容
 
 | 错误码 | HTTP | 说明 |
@@ -90,6 +99,14 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_DISCLOSURE_FORBIDDEN` | 403 | 不允许用于公开内容 |
 | `ASSET_NOT_FOUND` | 404 | 内容资产不存在 |
 | `ASSET_REVIEW_REQUIRED` | 409 | 内容需要审校 |
+
+## 引用支持度
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `CITATION_NOT_FOUND` | 404 | 引用不存在，或不属于当前断言与样本 |
+| `CITATION_CLAIM_NOT_FOUND` | 404 | 回答断言不存在或不属于当前租户 |
+| `CITATION_SUPPORT_EVIDENCE_INVALID` | 409 | 断言边界、来源摘要、对象 hash 或证据等级不满足支持度复核门禁 |
 
 ## 报告和证据
 

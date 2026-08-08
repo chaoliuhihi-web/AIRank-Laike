@@ -12,6 +12,12 @@ from .publisher import (
     PublisherGateway,
     run_next_publish_job,
 )
+from .page_audit import (
+    MySQLPageAuditExecutionRepository,
+    PageAuditWorkerError,
+    build_page_audit_service,
+    run_next_page_audit_job,
+)
 from .scan import ScanWorkerError, run_next_real_scan_job
 
 
@@ -20,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true", help="claim at most one eligible job and exit")
     parser.add_argument(
         "--job-type",
-        choices=("all", "publish", "scan"),
+        choices=("all", "publish", "scan", "page-audit"),
         default="all",
         help="limit this process to publish or scan jobs",
     )
@@ -41,10 +47,13 @@ def main() -> int:
     store = MySQLJobLeaseStore(database_url)
     repository = MySQLPublishExecutionRepository(database_url)
     gateway = PublisherGateway()
+    page_audit_repository = MySQLPageAuditExecutionRepository(database_url)
+    page_audit_service = build_page_audit_service()
 
     while True:
         receipt = None
         scan_result = None
+        page_audit_result = None
         try:
             if args.job_type in {"all", "publish"}:
                 receipt = run_next_publish_job(
@@ -55,6 +64,13 @@ def main() -> int:
                 )
             if receipt is None and args.job_type in {"all", "scan"}:
                 scan_result = run_next_real_scan_job(store, worker_id=worker_id)
+            if receipt is None and scan_result is None and args.job_type in {"all", "page-audit"}:
+                page_audit_result = run_next_page_audit_job(
+                    store,
+                    page_audit_repository,
+                    page_audit_service,
+                    worker_id=worker_id,
+                )
         except PublisherError as exc:
             print(
                 json.dumps(
@@ -69,6 +85,19 @@ def main() -> int:
             if args.once:
                 return 1
         except ScanWorkerError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            if args.once:
+                return 1
+        except PageAuditWorkerError as exc:
             print(
                 json.dumps(
                     {
@@ -97,6 +126,8 @@ def main() -> int:
                 )
             elif scan_result is not None:
                 print(json.dumps(scan_result.to_record(), ensure_ascii=False))
+            elif page_audit_result is not None:
+                print(json.dumps(page_audit_result.to_record(), ensure_ascii=False))
             if args.once:
                 return 1 if scan_result is not None and scan_result.status == "failed" else 0
         time.sleep(poll_seconds)

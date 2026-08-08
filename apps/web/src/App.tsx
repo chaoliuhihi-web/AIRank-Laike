@@ -47,6 +47,7 @@ import {
   RotateCw,
   Scale,
   SearchCheck,
+  ScanSearch,
   Send,
   Settings,
   ShieldAlert,
@@ -67,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createPageAudit,
   fetchQuestionObservationBatches,
   fetchAnswerSample,
   fetchAnswerSamples,
@@ -74,12 +76,15 @@ import {
   fetchAssetBundle,
   fetchConsoleOverview,
   fetchContentAssets,
+  fetchCitationSupport,
   fetchEvidenceObject,
   fetchFactConflicts,
   fetchFacts,
   fetchInternalSkills,
   fetchKnowledgeGovernance,
   fetchKnowledgeSources,
+  fetchPageAudit,
+  fetchPageAudits,
   fetchMeasurementQuality,
   fetchProviderReadiness,
   fetchPublishAttempts,
@@ -112,12 +117,15 @@ import {
   type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
+  type CitationSupportBundle,
   type FactConflict,
   type GovernedContentAsset,
   type FactRevision,
   type InternalSkill,
   type KnowledgeGovernance,
   type KnowledgeSearch,
+  type PageAuditFinding,
+  type PageAuditRun,
   type KnowledgeSource,
   type MeasurementQualityReport,
   type ProviderReadiness,
@@ -172,6 +180,7 @@ const iconMap: Record<string, LucideIcon> = {
   Rocket,
   RotateCw,
   SearchCheck,
+  ScanSearch,
   Send,
   Settings,
   ShieldAlert,
@@ -195,6 +204,12 @@ const qualityLimitationLabels: Record<string, string> = {
   citation_support_not_evaluated: "引用支持度尚未评测",
   fact_accuracy_not_evaluated: "事实准确率尚未评测",
   repeat_stability_unavailable: "重复采样稳定性不可用",
+};
+const citationSupportLimitationLabels: Record<string, string> = {
+  selected_citations_have_no_answer_claims: "原生引用尚未绑定回答中的具体断言",
+  citation_support_not_reviewed: "断言与引用尚未复核",
+  citation_support_has_no_source_page_snapshot: "尚无不可变来源页面快照",
+  provisional_reviews_excluded_from_support_rate: "临时复核不会进入可交付支持率",
 };
 const sourcePanelStatusLabels: Record<string, string> = {
   captured: "已捕获并存证",
@@ -652,6 +667,7 @@ function ConsolePage({
 }) {
   if (path === "/console/checkup") return <CheckupPage onNavigate={onNavigate} />;
   if (path === "/console/facts") return <FactsPage />;
+  if (path === "/console/page-audit") return <PageAuditPage />;
   if (path === "/console/evidence") return <EvidencePage />;
   if (path === "/console/tasks") return <TaskCenterPage />;
   if (path === "/console/questions") return <QuestionsPage onNavigate={onNavigate} />;
@@ -1135,6 +1151,217 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   );
 }
 
+function pageAuditTone(status: PageAuditRun["status"]): Tone {
+  if (status === "completed") return "success";
+  if (status === "blocked" || status === "failed") return "danger";
+  return "warning";
+}
+
+function findingTone(finding: PageAuditFinding): Tone {
+  if (finding.status === "passed") return "success";
+  if (finding.severity === "critical" || finding.severity === "high") return "danger";
+  return finding.severity === "medium" ? "warning" : "muted";
+}
+
+function PageAuditPage() {
+  const { project } = useConsoleOverview();
+  const { notify } = useActionFeedback();
+  const [url, setUrl] = useState(project.website || "");
+  const [runs, setRuns] = useState<PageAuditRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const selected = runs.find((run) => run.run_id === selectedRunId) ?? runs[0] ?? null;
+
+  useEffect(() => {
+    setUrl(project.website || "");
+    if (!project.id) {
+      setRuns([]);
+      setSelectedRunId(null);
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    fetchPageAudits(project.id, controller.signal)
+      .then((data) => {
+        setRuns(data);
+        setSelectedRunId((current) => current ?? data[0]?.run_id ?? null);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "页面诊断接口不可用");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [project.id, project.website]);
+
+  useEffect(() => {
+    if (!project.id || !selected || !["queued", "running"].includes(selected.status)) return;
+    const controller = new AbortController();
+    const timer = window.setInterval(() => {
+      fetchPageAudit(project.id, selected.run_id, controller.signal)
+        .then((updated) => {
+          setRuns((current) => [updated, ...current.filter((item) => item.run_id !== updated.run_id)]);
+          setLoadError(null);
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            setLoadError(error instanceof Error ? error.message : "页面诊断状态刷新失败");
+          }
+        });
+    }, 1800);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [project.id, selected?.run_id, selected?.status]);
+
+  const submitAudit = async (event: FormEvent) => {
+    event.preventDefault();
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor || !url.trim()) {
+      notify({
+        title: "无法发起诊断",
+        desc: !project.id ? "请先创建品牌项目。" : !actor ? "当前会话缺少可信操作人。" : "请输入公开页面 URL。",
+        tone: "danger",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await createPageAudit(project.id, url.trim(), actor);
+      setRuns((current) => [created, ...current.filter((item) => item.run_id !== created.run_id)]);
+      setSelectedRunId(created.run_id);
+      setLoadError(null);
+      notify({ title: "诊断任务已入队", desc: "Worker 将使用固定 DNS 目标抓取，并保存逐规则证据。", tone: "success" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "页面诊断任务创建失败";
+      setLoadError(message);
+      notify({ title: "诊断任务创建失败", desc: message, tone: "danger" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const failedFindings = selected?.findings.filter((finding) => finding.status === "failed") ?? [];
+
+  return (
+    <>
+      <PageHeader
+        title="官网可提取性"
+        subtitle="检查服务器返回的 HTML、索引指令、正文与结构化数据；技术可提取性分不等于品牌推荐率。"
+        action={<Badge tone="primary">独立技术指标</Badge>}
+      />
+      <form className="airank-console-card page-audit-launcher" onSubmit={submitAudit}>
+        <div>
+          <label htmlFor="page-audit-url">公开页面 URL</label>
+          <span>支持公开 HTTP(S) 页面；私网、云元数据地址、危险重定向和超大响应会被阻断。</span>
+        </div>
+        <input
+          id="page-audit-url"
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="https://example.com/product"
+          inputMode="url"
+        />
+        <button className="airank-console-primary-button" type="submit" disabled={submitting || !project.id}>
+          <ScanSearch size={18} />{submitting ? "提交中…" : "开始真实抓取"}
+        </button>
+      </form>
+
+      {loadError && <DataStateCard title="页面诊断链路异常" desc={loadError} tone="danger" />}
+      {!project.id && <DataStateCard title="尚未创建品牌项目" desc="先完成品牌建档，再对官网或事实页发起技术诊断。" tone="warning" />}
+      {project.id && loading && <DataStateCard title="正在读取诊断历史" desc="只加载当前租户和项目的真实任务。" tone="primary" />}
+      {project.id && !loading && runs.length === 0 && !loadError && (
+        <DataStateCard title="尚无官网诊断证据" desc="输入公开页面 URL 后发起第一次真实抓取；本页不会生成示例分数。" tone="warning" />
+      )}
+
+      {selected && (
+        <section className="page-audit-layout">
+          <div className="page-audit-main">
+            <article className="airank-console-card page-audit-summary">
+              <div className="page-audit-score" data-status={selected.status}>
+                <strong>{selected.technical_extractability_score ?? "—"}</strong>
+                <span>技术可提取性</span>
+              </div>
+              <div className="page-audit-summary-copy">
+                <div className="page-audit-summary-head">
+                  <div>
+                    <Badge tone={pageAuditTone(selected.status)}>{selected.status}</Badge>
+                    <h2>{selected.extracted.title || selected.requested_url}</h2>
+                  </div>
+                  <span>{formatDateTime(selected.completed_at || selected.created_at)}</span>
+                </div>
+                <p>{selected.error_message || (selected.status === "completed" ? `${selected.finding_count - selected.failed_finding_count} 项通过，${selected.failed_finding_count} 项需要修复。` : "任务已入队，等待 Worker 抓取和逐规则分析。")}</p>
+                <dl className="page-audit-proof-grid">
+                  <div><dt>HTTP</dt><dd>{selected.response_status ?? "—"}</dd></div>
+                  <div><dt>正文字符</dt><dd>{selected.extracted.visible_text_chars ?? "—"}</dd></div>
+                  <div><dt>H1</dt><dd>{selected.extracted.h1_count ?? "—"}</dd></div>
+                  <div><dt>重定向</dt><dd>{selected.redirect_count ?? "—"}</dd></div>
+                  <div><dt>证据等级</dt><dd>{selected.evidence_grade || "等待抓取"}</dd></div>
+                  <div><dt>内容 Hash</dt><dd title={selected.content_sha256 ?? undefined}>{selected.content_sha256 ? selected.content_sha256.slice(0, 12) : "—"}</dd></div>
+                </dl>
+              </div>
+            </article>
+
+            {selected.status === "completed" && (
+              <div className="page-audit-findings">
+                <div className="section-heading">
+                  <div><span>逐规则证据</span><h2>{failedFindings.length ? "优先修复可定位的问题" : "当前规则全部通过"}</h2></div>
+                  <Badge tone={failedFindings.length ? "warning" : "success"}>{failedFindings.length} 项失败</Badge>
+                </div>
+                {selected.findings.map((finding) => (
+                  <article className="airank-console-card page-audit-finding" data-status={finding.status} key={finding.finding_id || finding.rule_id}>
+                    <div className="page-audit-finding-icon">
+                      {finding.status === "passed" ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+                    </div>
+                    <div>
+                      <div className="page-audit-finding-head">
+                        <h3>{finding.title}</h3>
+                        <Badge tone={findingTone(finding)}>{finding.status === "passed" ? "通过" : finding.severity}</Badge>
+                      </div>
+                      <p>{finding.description}</p>
+                      {finding.recommendation && <strong>{finding.recommendation}</strong>}
+                      <code>{finding.rule_id} · {JSON.stringify(finding.evidence)}</code>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <aside className="airank-console-card page-audit-history">
+            <div className="rail-title"><FileSearch size={22} /><h2>诊断历史</h2></div>
+            <p>每次抓取独立保存，不覆盖旧结果。</p>
+            <div className="page-audit-history-list">
+              {runs.map((run) => (
+                <button
+                  type="button"
+                  data-active={run.run_id === selected.run_id}
+                  key={run.run_id}
+                  onClick={() => setSelectedRunId(run.run_id)}
+                >
+                  <span><Badge tone={pageAuditTone(run.status)}>{run.status}</Badge><small>{formatDateTime(run.created_at)}</small></span>
+                  <strong>{run.technical_extractability_score ?? "—"}</strong>
+                  <em>{run.requested_url}</em>
+                </button>
+              ))}
+            </div>
+            <div className="page-audit-disclaimer">
+              <Info size={18} />
+              <span>该结果只说明页面是否便于抓取和提取；品牌提及、推荐与引用必须回到多平台真实样本验证。</span>
+            </div>
+          </aside>
+        </section>
+      )}
+    </>
+  );
+}
+
 function FactsPage() {
   const { project } = useConsoleOverview();
   const { openPanel, notify } = useActionFeedback();
@@ -1585,6 +1812,8 @@ function EvidencePage() {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [objectPreviews, setObjectPreviews] = useState<{ screenshot: string | null; sourcePanel: string | null }>({ screenshot: null, sourcePanel: null });
   const [objectPreviewError, setObjectPreviewError] = useState<string | null>(null);
+  const [citationSupport, setCitationSupport] = useState<CitationSupportBundle | null>(null);
+  const [citationSupportError, setCitationSupportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) return;
@@ -1681,6 +1910,26 @@ function EvidencePage() {
       createdUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [selected?.screenshot.object_ref_id, selected?.source_panel.object_ref_id]);
+
+  useEffect(() => {
+    if (!selected?.snapshot_id) {
+      setCitationSupport(null);
+      setCitationSupportError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchCitationSupport(selected.snapshot_id, controller.signal)
+      .then((data) => {
+        setCitationSupport(data);
+        setCitationSupportError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setCitationSupport(null);
+        setCitationSupportError(error instanceof Error ? error.message : "引用支持度接口不可用");
+      });
+    return () => controller.abort();
+  }, [selected?.snapshot_id]);
 
   const openSample = async (snapshotId: string) => {
     setLoadingDetail(snapshotId);
@@ -1790,6 +2039,36 @@ function EvidencePage() {
                   <li key={citation.citation_id}><a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a><span>{citation.cited_text || "Provider 未返回引用原文"}</span></li>
                 ))}
               </ol>
+            )}
+            <div className="citation-support-separator" />
+            <strong>引用选择 ≠ 引用支持</strong>
+            {citationSupportError && <DataStateCard title="引用支持度读取失败" desc={citationSupportError} tone="danger" />}
+            {citationSupport && (
+              <>
+                <p className="rail-caption">
+                  Provider 列出 {citationSupport.metrics.selected_citation_count} 个来源；已登记 {citationSupport.metrics.claim_count} 条回答断言，
+                  当前有 {citationSupport.metrics.commercially_verified_review_count} 个“人工核对 + 不可变来源页面”复核可进入支持率。
+                </p>
+                <dl className="evidence-metadata citation-support-metrics">
+                  <div><dt>可交付支持率</dt><dd>{citationSupport.metrics.citation_support_rate === null ? "待核验" : `${Math.round(citationSupport.metrics.citation_support_rate * 100)}%`}</dd></div>
+                  <div><dt>支持 / 矛盾 / 不足</dt><dd>{citationSupport.metrics.supports_count} / {citationSupport.metrics.contradicts_count} / {citationSupport.metrics.insufficient_count}</dd></div>
+                  <div><dt>当前复核对</dt><dd>{citationSupport.metrics.review_count}</dd></div>
+                </dl>
+                {citationSupport.metrics.known_limitations.length > 0 && (
+                  <DataStateCard
+                    title="引用支持度尚不可用于客户报告"
+                    desc={citationSupport.metrics.known_limitations.map((item) => citationSupportLimitationLabels[item] ?? item).join(" · ")}
+                    tone="warning"
+                  />
+                )}
+                {citationSupport.claims.length > 0 && (
+                  <ol className="evidence-citations citation-claims">
+                    {citationSupport.claims.map((claim) => (
+                      <li key={claim.claim_id}><strong>{claim.claim_text}</strong><span>回答边界 {claim.answer_start}–{claim.answer_end} · {claim.extraction_method}</span></li>
+                    ))}
+                  </ol>
+                )}
+              </>
             )}
           </Panel>
           <Panel title="采集与对象证据">

@@ -62,6 +62,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "RESOURCE_NOT_FOUND": (404, "Resource not found"),
     "METHOD_NOT_ALLOWED": (405, "Method not allowed"),
     "STATE_CONFLICT": (409, "State conflict"),
+    "IDEMPOTENCY_CONFLICT": (409, "Idempotency key payload conflict"),
     "RATE_LIMITED": (429, "Rate limited"),
     "INTERNAL_ERROR": (500, "Internal server error"),
     "AUTH_TOKEN_MISSING": (401, "Authentication token is missing"),
@@ -110,6 +111,12 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "REPORT_NOT_FOUND": (404, "Report not found"),
     "REPORT_QUALITY_BLOCKED": (409, "Report did not pass the measurement quality gate"),
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
+    "PAGE_AUDIT_URL_REQUIRED": (400, "Page audit URL is required"),
+    "PAGE_AUDIT_URL_INVALID": (400, "Page audit URL is invalid"),
+    "PAGE_AUDIT_NOT_FOUND": (404, "Page audit run not found"),
+    "CITATION_NOT_FOUND": (404, "Citation not found"),
+    "CITATION_CLAIM_NOT_FOUND": (404, "Citation claim not found"),
+    "CITATION_SUPPORT_EVIDENCE_INVALID": (409, "Citation support evidence is invalid"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
@@ -5457,3 +5464,17 @@ except ImportError:  # pragma: no cover
     from question_routes import router as question_router  # type: ignore[no-redef]
 
 app.include_router(question_router)
+
+try:
+    from .page_audit_routes import router as page_audit_router
+except ImportError:  # pragma: no cover
+    from page_audit_routes import router as page_audit_router  # type: ignore[no-redef]
+
+app.include_router(page_audit_router)
+
+try:
+    from .citation_support_routes import router as citation_support_router
+except ImportError:  # pragma: no cover
+    from citation_support_routes import router as citation_support_router  # type: ignore[no-redef]
+
+app.include_router(citation_support_router)

@@ -57,7 +57,7 @@ becomes `published`.
 Run one publish job:
 
 ```bash
-PYTHONPATH=apps/worker:packages/domain/src \
+PYTHONPATH=apps/worker:packages/domain/src:packages/crawler-lite/src:packages/outbound-security/src \
   python3 -m airank_worker.main --once
 ```
 
@@ -67,7 +67,7 @@ and remains terminal until an explicit retry transition.
 Run one durable scan dispatch:
 
 ```bash
-PYTHONPATH=.:apps/worker:packages/domain/src:packages/evidence/src:packages/provider-gateway/src:packages/score/src:packages/skills/src \
+PYTHONPATH=.:apps/worker:packages/domain/src:packages/evidence/src:packages/crawler-lite/src:packages/outbound-security/src:packages/provider-gateway/src:packages/score/src:packages/skills/src \
   AIRANK_DATABASE_URL="$AIRANK_DATABASE_URL" \
   python3 -m airank_worker.main --job-type scan --once
 ```

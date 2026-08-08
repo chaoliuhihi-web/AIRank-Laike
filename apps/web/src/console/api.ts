@@ -28,6 +28,56 @@ export type ConsoleOverview = {
   message: string;
 };
 
+export type PageAuditFinding = {
+  finding_id: string;
+  rule_id: string;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  status: "passed" | "failed";
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence: Record<string, unknown>;
+  score_delta: number;
+};
+
+export type PageAuditRun = {
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  job_id: string;
+  requested_url: string;
+  final_url: string | null;
+  status: "queued" | "running" | "completed" | "blocked" | "failed";
+  rules_version: string;
+  evidence_grade: string | null;
+  technical_extractability_score: number | null;
+  response_status: number | null;
+  response_content_type: string | null;
+  response_bytes: number | null;
+  content_sha256: string | null;
+  connected_ip: string | null;
+  redirect_count: number | null;
+  extracted: {
+    title?: string;
+    meta_description?: string;
+    canonical_url?: string;
+    robots_directives?: string[];
+    h1_count?: number;
+    visible_text_chars?: number;
+    json_ld_types?: string[];
+  };
+  error_code: string | null;
+  error_message: string | null;
+  requested_by: string;
+  finding_count: number;
+  failed_finding_count: number;
+  findings: PageAuditFinding[];
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  idempotent_replay: boolean;
+};
+
 export type AssetBundleItem = {
   asset_id?: string;
   title: string;
@@ -253,6 +303,50 @@ export type AnswerSampleCollection = {
   validCount: number;
   validUnmentionedCount: number;
   citationSampleCount: number;
+};
+
+export type CitationSupportBundle = {
+  snapshot_id: string;
+  claims: Array<{
+    claim_id: string;
+    snapshot_id: string;
+    claim_text: string;
+    answer_start: number;
+    answer_end: number;
+    answer_sha256: string;
+    claim_sha256: string;
+    extraction_method: "manual" | "ai_assisted";
+    extractor_version: string;
+    created_by: string;
+    created_at: string;
+  }>;
+  reviews: Array<{
+    review_id: string;
+    claim_id: string;
+    citation_id: string;
+    support_label: "supports" | "contradicts" | "insufficient";
+    evidence_grade: "provider_excerpt_only" | "source_panel_capture" | "source_page_snapshot";
+    source_excerpt: string;
+    source_content_sha256: string;
+    source_object_ref_id: string | null;
+    rationale: string;
+    review_method: "human" | "ai_assisted";
+    reviewed_by: string;
+    reviewed_at: string;
+    supersedes_review_id: string | null;
+    commercially_verified: boolean;
+  }>;
+  metrics: {
+    selected_citation_count: number;
+    claim_count: number;
+    review_count: number;
+    commercially_verified_review_count: number;
+    supports_count: number;
+    contradicts_count: number;
+    insufficient_count: number;
+    citation_support_rate: number | null;
+    known_limitations: string[];
+  };
 };
 
 export type MeasurementQualityReport = {
@@ -924,6 +1018,34 @@ export function fetchKnowledgeSources(projectId: string, signal?: AbortSignal): 
   return fetchData(`/api/v1/projects/${projectId}/knowledge-sources`, "trc_web_sources", signal);
 }
 
+export function fetchPageAudits(projectId: string, signal?: AbortSignal): Promise<PageAuditRun[]> {
+  return fetchData(`/api/v1/projects/${projectId}/page-audits`, "trc_web_page_audits", signal);
+}
+
+export function fetchPageAudit(projectId: string, runId: string, signal?: AbortSignal): Promise<PageAuditRun> {
+  return fetchData(`/api/v1/projects/${projectId}/page-audits/${runId}`, "trc_web_page_audit", signal);
+}
+
+export async function createPageAudit(projectId: string, url: string, requestedBy: string): Promise<PageAuditRun> {
+  const randomPart = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await fetch(`/api/v1/projects/${projectId}/page-audits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_page_audit_create") },
+    body: JSON.stringify({
+      url,
+      idempotency_key: `page-audit-${randomPart}`,
+      requested_by: requestedBy,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Page audit request failed with ${response.status}`));
+  }
+  const payload = (await response.json()) as { data: PageAuditRun };
+  return payload.data;
+}
+
 export async function saveKnowledgeSource(
   projectId: string,
   input: KnowledgeSourceInput,
@@ -1039,6 +1161,10 @@ export async function fetchAnswerSamples(
 
 export function fetchAnswerSample(snapshotId: string, signal?: AbortSignal): Promise<AnswerSampleDetail> {
   return fetchData(`/api/v1/samples/${snapshotId}`, "trc_web_sample", signal);
+}
+
+export function fetchCitationSupport(snapshotId: string, signal?: AbortSignal): Promise<CitationSupportBundle> {
+  return fetchData(`/api/v1/samples/${snapshotId}/citation-support`, "trc_web_citation_support", signal);
 }
 
 export function fetchMeasurementQuality(

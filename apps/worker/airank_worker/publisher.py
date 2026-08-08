@@ -3,19 +3,21 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import ipaddress
 import json
 import os
 import socket
 from typing import Any, Callable, Mapping, Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse, urlunparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
 from sqlalchemy import create_engine, text
 
 from airank_domain import AsyncJob, sha256_text
+from airank_outbound_security import (
+    OutboundPolicy,
+    OutboundSecurityError,
+    SafeOutboundClient,
+)
 
 from .lease import InMemoryJobLeaseStore, MySQLJobLeaseStore
 
@@ -82,9 +84,11 @@ class PublishTransport(Protocol):
 
 
 class UrllibPublishTransport:
-    class _NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
+    """Compatibility name for the pinned, no-proxy AIRank outbound client."""
+
+    def __init__(self, policy: OutboundPolicy, *, max_response_bytes: int) -> None:
+        self.policy = policy
+        self.max_response_bytes = max_response_bytes
 
     def request(
         self,
@@ -96,30 +100,30 @@ class UrllibPublishTransport:
         timeout_seconds: float,
     ) -> tuple[int, Mapping[str, str], Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-        request = Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with build_opener(self._NoRedirect()).open(request, timeout=timeout_seconds) as response:
-                response_body = response.read()
-                parsed = json.loads(response_body.decode("utf-8")) if response_body else {}
-                return int(response.status), dict(response.headers.items()), parsed
-        except HTTPError as exc:
+            response = SafeOutboundClient(
+                self.policy,
+                timeout_seconds=timeout_seconds,
+                max_response_bytes=self.max_response_bytes,
+                max_redirects=0,
+            ).request(method, url, headers=headers, body=body)
+        except OutboundSecurityError as exc:
             raise PublisherError(
-                "PUBLISH_UPSTREAM_REJECTED",
-                f"publisher returned HTTP {exc.code}",
-                retryable=exc.code == 429 or exc.code >= 500,
-                status_code=exc.code,
+                "PUBLISH_NETWORK_FAILED" if exc.retryable else "PUBLISH_ENDPOINT_FORBIDDEN",
+                exc.message,
+                retryable=exc.retryable,
             ) from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise PublisherError(
-                "PUBLISH_NETWORK_FAILED",
-                f"publisher network request failed: {type(exc).__name__}",
-                retryable=True,
-            ) from exc
+        try:
+            parsed = json.loads(response.body.decode("utf-8")) if response.body else {}
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PublisherError(
-                "PUBLISH_RESPONSE_INVALID",
-                "publisher returned invalid JSON",
-            ) from exc
+            if response.status < 200 or response.status >= 300:
+                parsed = {}
+            else:
+                raise PublisherError(
+                    "PUBLISH_RESPONSE_INVALID",
+                    "publisher returned invalid JSON",
+                ) from exc
+        return response.status, response.headers, parsed
 
 
 class PublisherGateway:
@@ -131,12 +135,31 @@ class PublisherGateway:
         resolver: Callable[..., list[tuple[Any, ...]]] = socket.getaddrinfo,
     ) -> None:
         self.env = env if env is not None else os.environ
-        self.transport = transport or UrllibPublishTransport()
         self.resolver = resolver
         try:
             self.timeout_seconds = max(1.0, float(self.env.get("AIRANK_PUBLISH_TIMEOUT_SECONDS") or 30))
         except (TypeError, ValueError):
             self.timeout_seconds = 30.0
+        try:
+            self.max_response_bytes = max(
+                1,
+                int(self.env.get("AIRANK_PUBLISH_MAX_RESPONSE_BYTES") or 1_000_000),
+            )
+        except (TypeError, ValueError):
+            self.max_response_bytes = 1_000_000
+        allowed_hosts = {
+            item.strip().lower().rstrip(".")
+            for item in str(self.env.get("AIRANK_PUBLISH_ALLOWED_HOSTS") or "").split(",")
+            if item.strip()
+        }
+        self.outbound_policy = OutboundPolicy(
+            allowed_hosts=allowed_hosts,
+            resolver=self.resolver,
+        )
+        self.transport = transport or UrllibPublishTransport(
+            self.outbound_policy,
+            max_response_bytes=self.max_response_bytes,
+        )
 
     def request_sha256(self, snapshot: PublishSnapshot) -> str:
         payload = self._public_payload(snapshot)
@@ -261,31 +284,11 @@ class PublisherGateway:
         )
 
     def _validate_endpoint(self, value: str) -> None:
-        parsed = urlparse(value)
-        host = (parsed.hostname or "").lower()
-        if parsed.scheme != "https" or not host or parsed.username or parsed.password:
-            raise PublisherError("PUBLISH_ENDPOINT_FORBIDDEN", "publisher endpoint must be credential-free HTTPS")
-        allowed_hosts = {
-            item.strip().lower()
-            for item in str(self.env.get("AIRANK_PUBLISH_ALLOWED_HOSTS") or "").split(",")
-            if item.strip()
-        }
-        if not allowed_hosts or host not in allowed_hosts:
-            raise PublisherError("PUBLISH_ENDPOINT_FORBIDDEN", "publisher endpoint host is not allowlisted")
         try:
-            addresses = {
-                entry[4][0]
-                for entry in self.resolver(host, parsed.port or 443, type=socket.SOCK_STREAM)
-                if entry and len(entry) >= 5 and entry[4]
-            }
-        except OSError as exc:
-            raise PublisherError("PUBLISH_DNS_FAILED", "publisher endpoint DNS resolution failed", retryable=True) from exc
-        if not addresses:
-            raise PublisherError("PUBLISH_DNS_FAILED", "publisher endpoint has no resolved address", retryable=True)
-        for address in addresses:
-            ip = ipaddress.ip_address(address)
-            if not ip.is_global:
-                raise PublisherError("PUBLISH_ENDPOINT_FORBIDDEN", "publisher endpoint resolves to a non-public address")
+            self.outbound_policy.resolve(value)
+        except OutboundSecurityError as exc:
+            code = "PUBLISH_DNS_FAILED" if exc.code == "OUTBOUND_DNS_FAILED" else "PUBLISH_ENDPOINT_FORBIDDEN"
+            raise PublisherError(code, exc.message, retryable=exc.retryable) from exc
 
     @staticmethod
     def _public_payload(snapshot: PublishSnapshot) -> dict[str, Any]:

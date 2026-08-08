@@ -18,8 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 INTERNAL_SOURCE_PATHS = (
     ROOT,
     ROOT / "apps" / "worker" / "src",
+    ROOT / "packages" / "crawler-lite" / "src",
     ROOT / "packages" / "domain" / "src",
     ROOT / "packages" / "evidence" / "src",
+    ROOT / "packages" / "outbound-security" / "src",
     ROOT / "packages" / "provider-gateway" / "src",
     ROOT / "packages" / "score" / "src",
     ROOT / "packages" / "skills" / "src",
@@ -404,10 +406,20 @@ def release_checks(
         production_object_storage_configuration_check(),
         runtime_version_check(),
         command_check("contract tests", "python3 -m pytest tests/contracts -q", remove_database_urls=True),
+        command_check(
+            "crawler lite tests",
+            "python3 -m pytest packages/crawler-lite/tests -q",
+            remove_database_urls=True,
+        ),
         command_check("acceptance tests", "python3 -m pytest tests/acceptance -q", remove_database_urls=True),
         command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),
         command_check("score tests", "cd packages/score && python3 -m pytest -q", remove_database_urls=True),
         command_check("evidence tests", "cd packages/evidence && python3 -m pytest -q", remove_database_urls=True),
+        command_check(
+            "outbound security tests",
+            "python3 -m pytest packages/outbound-security/tests -q",
+            remove_database_urls=True,
+        ),
         command_check("core skill evaluation", "python3 scripts/evaluate_core_skills.py", remove_database_urls=True),
         command_check(
             "xinghe adapter tests",

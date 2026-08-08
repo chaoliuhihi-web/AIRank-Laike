@@ -18,6 +18,9 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
 
     for api_call in (
         "fetchProviderReadiness",
+        "fetchCitationSupport",
+        "fetchPageAudits",
+        "createPageAudit",
         "fetchKnowledgeSources",
         "saveKnowledgeSource",
         "searchKnowledge",
@@ -56,6 +59,12 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "来源内出现次数必须是" in app_source
     assert "质量阻断" in app_source
     assert 'item.status === "quality_blocked"' in app_source
+    assert "技术可提取性分不等于品牌推荐率" in app_source
+    assert "引用选择 ≠ 引用支持" in app_source
+    assert "人工核对 + 不可变来源页面" in app_source
+    route_source = (ROOT / "apps" / "web" / "src" / "console" / "routes" / "console-routes.ts").read_text(encoding="utf-8")
+    assert 'path: "/console/page-audit"' in route_source
+    assert 'label: "官网可提取性"' in route_source
 
 
 def test_backend_exposes_console_list_contracts() -> None:
