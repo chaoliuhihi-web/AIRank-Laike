@@ -480,9 +480,10 @@ def render_markdown(checks: Sequence[Check]) -> str:
 
 
 def trim_detail(detail: str, *, max_chars: int = 6000) -> str:
-    if len(detail) <= max_chars:
-        return detail
-    return detail[:max_chars] + "\n... <truncated>"
+    normalized = "\n".join(line.rstrip() for line in detail.splitlines())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + "\n... <truncated>"
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

@@ -924,6 +924,12 @@ def begin_fresh_conversation(page: Any) -> dict[str, Any]:
                     }
             except PlaywrightError:
                 continue
+    page_text = normalized_body_text(page)
+    page_url = str(getattr(page, "url", "")).lower()
+    if looks_login_blocked(page_text) or any(
+        marker in page_url for marker in ("sign_in", "signin", "login")
+    ):
+        raise RuntimeError("web page requires login or human verification")
     raise RuntimeError(
         "fresh conversation could not be verified; consumer sample was blocked"
     )
@@ -1018,7 +1024,7 @@ def wait_for_answer_text(page: Any, before_text: str, prompt: str, deadline: flo
 def normalized_body_text(page: Any) -> str:
     try:
         text = page.locator("body").inner_text(timeout=5000)
-    except PlaywrightError:
+    except (PlaywrightError, AttributeError):
         return ""
     return normalize_text(text)
 

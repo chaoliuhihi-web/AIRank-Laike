@@ -93,6 +93,14 @@ def test_consumer_browser_blocks_when_new_conversation_cannot_be_verified() -> N
         begin_fresh_conversation(FakeConversationPage(None))
 
 
+def test_consumer_browser_classifies_login_url_before_sampling() -> None:
+    page = FakeConversationPage(None)
+    page.url = "https://provider.example.test/sign_in"
+
+    with pytest.raises(RuntimeError, match="requires login or human verification"):
+        begin_fresh_conversation(page)
+
+
 def test_slider_verification_is_classified_as_captcha() -> None:
     challenge = "亲，请拖动下方滑块完成验证，通过验证以确保正常访问"
 

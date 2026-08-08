@@ -229,3 +229,11 @@ def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.Mon
 
     assert any(check.name == "provider gateway tests" for check in checks)
     assert checks[-1].name == "browser provider readiness"
+
+
+def test_release_report_strips_trailing_whitespace_from_command_output() -> None:
+    report = release_readiness.render_markdown(
+        [release_readiness.Check("example", "PASS", "example", "line one  \nline two \n")]
+    )
+
+    assert not any(line.endswith(" ") for line in report.splitlines())
