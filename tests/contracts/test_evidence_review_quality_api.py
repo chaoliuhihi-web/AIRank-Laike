@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -250,6 +250,175 @@ def test_actor_inbox_is_blind_prioritized_and_cursor_paginated(
     )
     assert tampered.status_code == 422
     assert tampered.json()["error"]["code"] == "EVIDENCE_REVIEW_CURSOR_INVALID"
+
+
+def test_assignment_lease_prevents_duplicate_work_and_preserves_sla(
+    client: TestClient,
+    repositories,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, review_repo = repositories
+    clock = [datetime(2026, 8, 9, 1, 0, tzinfo=timezone.utc)]
+    monkeypatch.setattr(evidence_review_routes, "now_utc", lambda: clock[0])
+    monkeypatch.setenv("AIRANK_EVIDENCE_REVIEW_LEASE_SECONDS", "60")
+    monkeypatch.setenv("AIRANK_EVIDENCE_REVIEW_SECONDARY_SLA_SECONDS", "300")
+    monkeypatch.setenv("AIRANK_EVIDENCE_REVIEW_DUE_SOON_SECONDS", "60")
+
+    claim_id = create_claim(client)
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "reviewer-1",
+            "Idempotency-Key": "review-assignment-case",
+        },
+        json=citation_case_payload(claim_id, purpose="benchmark"),
+    ).json()["data"]
+
+    initial = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+    ).json()["data"]
+    assert initial["actionable_count"] == 1
+    assert initial["assigned_to_me_count"] == 0
+    assert initial["unassigned_count"] == 1
+    assert initial["overdue_count"] == 0
+    assert initial["cases"][0]["assignment"]["state"] == "unassigned"
+
+    assignment_response = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/assignment-claims",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_case_version": created["version"]},
+    )
+    assert assignment_response.status_code == 201
+    validate_contract(
+        "evidence_review_assignment_response.schema.json",
+        assignment_response.json(),
+    )
+    assignment = assignment_response.json()["data"]
+    assert assignment["state"] == "assigned_to_me"
+    assert assignment["owned_by_current_actor"] is True
+    assert assignment["sla_state"] == "on_track"
+    assert assignment["version"] == 1
+    assert "assigned_to" not in assignment
+
+    replay = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/assignment-claims",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_case_version": created["version"]},
+    )
+    assert replay.status_code == 201
+    assert replay.json()["data"]["assignment_id"] == assignment["assignment_id"]
+    assert replay.json()["data"]["idempotent_replay"] is True
+
+    owner_inbox = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+    ).json()["data"]
+    assert owner_inbox["assigned_to_me_count"] == 1
+    assert owner_inbox["unassigned_count"] == 0
+    assert owner_inbox["cases"][0]["assignment"]["state"] == "assigned_to_me"
+
+    other_inbox = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    ).json()["data"]
+    assert other_inbox["actionable_count"] == 0
+    peer_queue = client.get(
+        "/api/v1/projects/project_1/evidence-review-cases",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    ).json()["data"]
+    assert peer_queue["cases"][0]["next_action"] == "none"
+    assert peer_queue["cases"][0]["assignment"]["state"] == "assigned_to_other"
+    assert "assigned_to" not in peer_queue["cases"][0]["assignment"]
+
+    conflicting_decision = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+        json={
+            "label": "supports",
+            "rationale": "租约仍属于另一审核人。",
+            "reviewed_by": "spoofed",
+        },
+    )
+    assert conflicting_decision.status_code == 409
+    assert conflicting_decision.json()["error"]["code"] == "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT"
+
+    forbidden_heartbeat = client.post(
+        f"/api/v1/evidence-review-assignments/{assignment['assignment_id']}/heartbeats",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+        json={"expected_version": assignment["version"]},
+    )
+    assert forbidden_heartbeat.status_code == 403
+    assert forbidden_heartbeat.json()["error"]["code"] == "EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN"
+
+    clock[0] += timedelta(seconds=30)
+    heartbeat = client.post(
+        f"/api/v1/evidence-review-assignments/{assignment['assignment_id']}/heartbeats",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_version": assignment["version"]},
+    )
+    assert heartbeat.status_code == 200
+    heartbeat_data = heartbeat.json()["data"]
+    assert heartbeat_data["version"] == 2
+    assert heartbeat_data["due_at"] == assignment["due_at"]
+
+    stale_heartbeat = client.post(
+        f"/api/v1/evidence-review-assignments/{assignment['assignment_id']}/heartbeats",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_version": 1},
+    )
+    assert stale_heartbeat.status_code == 409
+    assert stale_heartbeat.json()["error"]["code"] == "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT"
+
+    released = client.post(
+        f"/api/v1/evidence-review-assignments/{assignment['assignment_id']}/release",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_version": 2, "reason": "交还给待办池。"},
+    )
+    assert released.status_code == 200
+    assert released.json()["data"]["state"] == "released"
+
+    second_owner = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/assignment-claims",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+        json={"expected_case_version": created["version"]},
+    ).json()["data"]
+    assert second_owner["assignment_id"] != assignment["assignment_id"]
+
+    clock[0] += timedelta(seconds=61)
+    expired = client.post(
+        f"/api/v1/evidence-review-assignments/{second_owner['assignment_id']}/heartbeats",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+        json={"expected_version": second_owner["version"]},
+    )
+    assert expired.status_code == 409
+    assert expired.json()["error"]["code"] == "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"
+
+    reclaimed = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/assignment-claims",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"expected_case_version": created["version"]},
+    ).json()["data"]
+    completed = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={
+            "label": "supports",
+            "rationale": "重新领取后完成独立复核。",
+            "reviewed_by": "spoofed",
+        },
+    )
+    assert completed.status_code == 201
+    assert completed.json()["data"]["status"] == "agreed"
+    assert review_repo.assignments[reclaimed["assignment_id"]]["status"] == "completed"
+    assert {
+        "claimed",
+        "heartbeat",
+        "released",
+        "expired",
+        "completed",
+    } <= {item["event_type"] for item in review_repo.assignment_events}
 
 
 def test_two_distinct_matching_reviewers_finalize_commercial_support(client: TestClient) -> None:

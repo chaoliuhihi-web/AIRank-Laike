@@ -43,6 +43,53 @@ def test_independent_review_has_storage_contract_and_blind_workflow() -> None:
     assert "Keep peer labels blind" in standard_api
 
 
+def test_review_assignment_has_persistent_lease_sla_and_blind_owner_contract() -> None:
+    migration = read(
+        "apps/api/alembic/versions/20260809_0027_evidence_review_assignments.py"
+    )
+    routes = read("apps/api/evidence_review_routes.py")
+    contract = read(
+        "packages/contracts/evidence_review_assignment_response.schema.json"
+    )
+    inbox_contract = read(
+        "packages/contracts/evidence_review_inbox_response.schema.json"
+    )
+    web = read("apps/web/src/App.tsx")
+    api = read("apps/web/src/console/api.ts")
+
+    for token in (
+        "airank_evidence_review_assignments",
+        "airank_evidence_review_assignment_events",
+        "active_slot",
+        "lease_expires_at",
+        "due_at",
+        "last_heartbeat_at",
+    ):
+        assert token in migration
+    for route in (
+        '"/evidence-review-cases/{case_id}/assignment-claims"',
+        '"/evidence-review-assignments/{assignment_id}/heartbeats"',
+        '"/evidence-review-assignments/{assignment_id}/release"',
+    ):
+        assert route in routes
+    for token in (
+        "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT",
+        "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED",
+        "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT",
+        "assigned_to_me_count",
+        "unassigned_count",
+        "overdue_count",
+    ):
+        assert token in routes or token in inbox_contract
+    assert '"assigned_to"' not in contract
+    assert "claimEvidenceReviewAssignment" in api
+    assert "heartbeatEvidenceReviewAssignment" in api
+    assert "releaseEvidenceReviewAssignment" in api
+    assert "领取任务" in web
+    assert "SLA 已逾期" in web
+    assert "我已领取 · 租约至" in web
+
+
 def test_review_quality_has_real_agreement_and_kappa_gate() -> None:
     quality = read("packages/evidence/src/airank_evidence/review_quality.py")
     contract = read("packages/contracts/evidence_review_queue_response.schema.json")

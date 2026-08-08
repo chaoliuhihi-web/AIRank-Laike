@@ -1054,3 +1054,27 @@ Limitations and blockers:
 Decision:
 
 - Large reviewer queues can now be traversed without weakening blind review or distorting quality statistics. AIRank remains commercial `NO-GO` until reviewer quality, production infrastructure, Consumer collection and longitudinal evidence pass their gates.
+
+## 2026-08-09 Reviewer Assignment Lease Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Alembic `20260809_0027` adds tenant/project-scoped reviewer assignments and append-only assignment events. The schema reached 69 AIRank tables in real MySQL; a generated active-slot unique key and case-row locking ensure at most one active owner for each case/reviewer role.
+- Claim is idempotent for the same trusted actor and conflicts for another active owner. Heartbeat, release and expiry takeover use optimistic versions; heartbeat extends the lease without resetting the original secondary/adjudication SLA. Direct decision submission atomically auto-claims an unowned case and completes the assignment.
+- Public assignment responses expose ownership state, lease/SLA timestamps and version but never `assigned_to`. The actor-specific inbox excludes work held by another active reviewer, includes expired work for takeover, and reports assigned-to-me, unassigned and overdue counts without changing full-project agreement or kappa denominators.
+- Real MySQL used two concurrent threads against the same case: one claim succeeded and one returned `EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT`. The same test verified stable `due_at` across heartbeat, release, forced expiry, persisted expiry event, takeover, automatic completion and adjudicator assignment.
+- Real browser acceptance signed in as a secondary reviewer and exercised unassigned/overdue display, claim, peer-account invisibility, heartbeat, release, reclaim and evidence-bound drill-down. The detail showed the immutable answer, exact Claim, source text and second-review form. Public network responses contained no assignee identity.
+- Desktop 1543px and mobile 390×844 had no page-level horizontal overflow; all three assignment controls fit the mobile viewport. After completing the QA fixture, the fresh authenticated page had zero console warnings/errors. The isolated tenant was removed from all 61 tenant-scoped tables with zero rows remaining.
+- Full local regression passed `449 passed, 30 skipped`; contracts passed `189`; acceptance passed `76`; real MySQL integration passed `28 passed, 2 skipped`; the Node 24 production build passed.
+
+Limitations and blockers:
+
+- Persistent ownership is individual actor routing, not a production reviewer-team dispatcher. Yudao group/permission routing, on-call rotation, workload balancing and automated SLA escalation notifications are not implemented.
+- The real customer benchmark remains 0/20 and Cohen's kappa is still unavailable. Concurrency and browser fixtures prove engineering behavior only; they do not establish reviewer quality.
+- Production Yudao authentication, HTTPS S3/MinIO, Consumer Web/App L3, Kimi credential rotation, DeepSeek model migration, customer publishing credentials and elapsed T+7/T+14/T+30 evidence remain open.
+
+Decision:
+
+- AIRank now prevents duplicate reviewer ownership and preserves a complete assignment/SLA audit trail without weakening blind review. The capability remains `partial`, and AIRank remains commercial `NO-GO` until reviewer-quality and external production gates pass.

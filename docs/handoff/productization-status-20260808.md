@@ -114,11 +114,12 @@
 104. 修复 Citation Support 人工工作台的 Claim 误绑定风险：删除“登记整段回答为唯一待核验断言”的快捷路径，支持审核人在上方不可变回答直接选择原句并映射 DOM selection 到精确字符边界；手工粘贴时要求原句在回答内唯一。存在多条 Claim 时，下方来源片段审核必须通过“当前来源片段要核验的断言”选择器显式指定，`supports/contradicts/insufficient` 不再默认使用数组第一项。隔离真实 MySQL/Worker/浏览器登记两条 Claim，边界分别为 0–29 和 29–54；明确选择第二条并提交 production `insufficient` 后，数据库 `airank_evidence_review_cases.claim_id` 与第二条一致，第一审核人为可信会话账号，状态为 `awaiting_secondary`。1543px 与 390×844 无页面级溢出，console `0 error / 0 warning`；验收租户 17 张表共 20 行与 2 个对象文件已清理为 0。该结果只证明 Claim 选择和证据绑定正确，0/20 客户 benchmark 仍保持阻断。
 105. 将独立复核从样本内状态卡扩展为项目级“我的独立复核待办”：证据中心省略 snapshot filter 读取整个项目 case，但只把后端按可信登录账号计算为 `submit_secondary/adjudicate` 的任务列为可执行；第一审核人自己的 case 不会伪装成待办，同伴未终结标签继续保持 `visible_decisions=[]`。操作入口只负责打开对应不可变样本并滚动到原始回答、精确 Claim、来源和样本内盲审表单，不提供脱离证据的一键裁决。隔离真实 MySQL 创建 1 条 benchmark 第一审 case，第二审核账号在浏览器看到 1 条项目待办并成功下钻，网络响应为 `next_action=submit_secondary/current_actor_role=null/visible_decisions=[]`；1543px 与 390×844 的 html/body 宽度均等于视口，干净页 console `0 error / 0 warning`。验收租户 14 张表共 15 行已精确清理为 0。该入口帮助形成 20 个真实 benchmark，但不会把当前 0/20 包装成质量通过；持久分派、SLA、分页和审核抽检仍为 `partial`。
 106. 项目复核待办新增独立契约和服务端游标分页：MySQL 查询只取当前账号可执行的 `awaiting_secondary/disputed`，排除该账号已在引用或事实复核表留下决定的 case；争议裁决优先，再按创建时间与 case ID 稳定 seek，游标无效时返回版本化 422 错误。完整 case 查询继续用于全局统计/kappa，不因分页改变分母。隔离真实 MySQL 建立 14 条 benchmark case，第三审核账号得到 `actionable=14/adjudication=2/awaiting=12`，第一页 12、第二页 2、14 条唯一且同伴决定全部隐藏；真实浏览器点击“继续加载”从 12 增到 14，网络两次 200，随后下钻到不可变回答、精确 Claim 和两个第三人裁决入口。1543px 与 390×844 均无页面级溢出，console `0 error / 0 warning`；下钻滚动的 React 提交时序缺口同时修复。验收租户 14 张表共 83 行精确清理后剩余 0，对象目录未产生。持久分派、团队路由、SLA/升级和真实客户 20 条 benchmark 仍为 `partial/blocked`。
+107. 项目复核待办新增正式持久任务分派：Alembic `20260809_0027` 增加 assignment 与 append-only event 两张表，生成式 active slot 唯一约束与 case 行锁共同阻止同一 case/role 被并发重复领取。领取、幂等重放、续租、主动释放、租约过期、接管和提交完成均有版本与事件；续租只延长 lease，不重置二审 24h/裁决 4h SLA，直接提交会在无人持有时原子自动领取并完成。API 永不返回 `assigned_to`，其他账号在有效租约期内既看不到任务，也无法提交冲突决定。真实 MySQL 双线程证明两个审核人并发领取只有一个成功；浏览器按“待领取 1/逾期 1 → 领取 → 他人待办 0 → 续租 → 释放 → 重新领取 → 不可变回答/精确 Claim/来源/二审表单”完整验收，1543px 与 390×844 无横向溢出，干净页 console `0 error / 0 warning`；隔离租户在 61 张 tenant 表中清理后为 0 行。全仓 `449 passed, 30 skipped`，真实 MySQL `28 passed, 2 skipped`。团队路由、自动升级通知和真实客户 20 条 benchmark 仍为 `partial/blocked`。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `447 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `449 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -134,8 +135,8 @@
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260808_0026`；67 张 AIRank 表校验通过；新增项目证据完整性巡检、finding 和报告包关联，同时继续覆盖独立复核、来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
-- 本地真实 MySQL integration：`28 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增 v2 源证据与派生状态巡检、v7 确定性离线评审 ZIP、CLI 重建校验及源/派生/包篡改失败关闭，并继续覆盖盲态双人复核、来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0026`。
+- MySQL：Alembic `20260809_0027`；69 张 AIRank 表校验通过；新增独立复核 assignment/事件台账及 active slot 唯一约束，同时继续覆盖项目证据完整性巡检、来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
+- 本地真实 MySQL integration：`28 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增真实并发任务领取、续租/SLA、释放、过期接管、自动完成和事件审计，并继续覆盖 v2 源证据与派生状态巡检、v7 确定性离线评审 ZIP、来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0027`。
 - 页面干预真实 MySQL 验收：通用 FAQ 蓝图继续通过来源→事实→批准→审核→`airank.publish-snapshot.v2`；专用比较使用 2 主体×10 维度生成 20 条 Claim/Support，专用解释使用七类角色/12 条事实/1400+ 证据字符生成 12 条 Claim/Support，两者均通过内容审校和不可变导出。所有测试租户都在 finally 清理，避免把验收事实冒充客户数据。
 - 专用内容真实 HTTP/MySQL 验收：独立 3.11 API 进程和隔离租户通过登录、项目、32 个来源/主体事实、逐事实审核、Comparison/Explainer 创建、内容审校与 export 发布包；客户端伪造的创建人/审核人均被认证会话 `http-qa` 覆盖。结果为 Comparison 10 段/20 Claim/20 Support、Explainer 7 段/12 Claim/12 Support，两个发布包均为 `packaged`；验收后 62 张租户表合计 0 行残留。
 - 发布中心真实浏览器/MySQL 验收：隔离租户从已批准内容点击创建 export 不可变包，绑定真实 URL、不可变截图对象及 SHA-256、已完成 baseline 后变为 `published`，并持久化 4 个 scheduled 观察窗口；快照创建人与证据登记人均由可信会话 `browser-publish-qa` 覆盖。API 对单边截图字段返回 422，对 hash 不匹配返回 `409 PUBLICATION_SCREENSHOT_EVIDENCE_INVALID`；1024px 桌面及移动窄视口均无页面级横向溢出，console `0 error / 0 warning`，隔离租户数据随后精确清理为 0。
@@ -151,7 +152,7 @@
 1. 保持四平台 API 重复门禁和 7/7 Provider 原生引用 benchmark 持续回归，将千问已验证的原生来源契约扩展到豆包、Kimi、DeepSeek 的官方可用搜索结构，并完成 Kimi 凭证轮换与 DeepSeek 新型号迁移；当前结果不外推为 Consumer、引用支持或增长结论。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
-4. 为已完成的盲态双人复核队列补真实客户人工标注集、claim 细粒度框选与运营抽检；当前 0/20 benchmark 和不可估计 kappa 必须保持阻断，不能用工程测试样本替代客户审核质量。
+4. 为已完成的盲态双人复核、精确 Claim、游标队列和持久任务租约补 Yudao 审核团队路由、自动升级通知、抽检策略及真实客户人工标注集；当前 0/20 benchmark 和不可估计 kappa 必须保持阻断，不能用工程测试样本替代客户审核质量。
 5. 在已完成数据库分布式容量租约与优先级多上游路由基础上，补动态择优、管理 API、长时崩溃恢复和负载压测；配额耗尽与幂等冲突继续禁止通过备用路由绕过。
 6. 在已完成的客户授权公开来源自动同步、不可变版本和旧事实失效基础上，补局部重嵌入、混合检索、私有连接器与批量站点来源；当前 `lexical_only` 仍不得包装成语义检索，也不得自动发现未授权站点。
 7. 为已完成的专用 Explainer/Comparison 补真实客户内容质量与公平性 benchmark、3–4 主体工作台、完整 Schema.org validator、页面审计缺口自动编排和外部 CMS 模板；本地代码与真实 MySQL 闭环不等于客户内容已经通过人工质量基准。

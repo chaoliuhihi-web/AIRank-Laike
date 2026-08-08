@@ -68,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  claimEvidenceReviewAssignment,
   createKnowledgeSyncPolicy,
   createPublishPackage,
   createComparisonContent,
@@ -120,8 +121,10 @@ import {
   getStoredAuthSession,
   loginToAirank,
   importQuestionObservations,
+  heartbeatEvidenceReviewAssignment,
   recordConsoleAction,
   recordPublicationEvidence,
+  releaseEvidenceReviewAssignment,
   reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
@@ -2144,6 +2147,7 @@ function EvidencePage() {
   const [reviewInbox, setReviewInbox] = useState<EvidenceReviewInbox | null>(null);
   const [reviewInboxError, setReviewInboxError] = useState<string | null>(null);
   const [reviewInboxLoadingMore, setReviewInboxLoadingMore] = useState(false);
+  const [reviewAssignmentAction, setReviewAssignmentAction] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [reviewPurpose, setReviewPurpose] = useState<"production" | "benchmark">("production");
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { label: string; rationale: string }>>({});
@@ -2496,6 +2500,53 @@ function EvidencePage() {
       setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办翻页失败");
     } finally {
       setReviewInboxLoadingMore(false);
+    }
+  };
+  const claimReviewAssignment = async (reviewCase: EvidenceReviewCase) => {
+    const actionKey = `${reviewCase.case_id}:claim`;
+    setReviewAssignmentAction(actionKey);
+    setReviewInboxError(null);
+    try {
+      await claimEvidenceReviewAssignment(reviewCase.case_id, reviewCase.version);
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewInboxError(error instanceof Error ? error.message : "复核任务领取失败");
+    } finally {
+      setReviewAssignmentAction(null);
+    }
+  };
+  const heartbeatReviewAssignment = async (reviewCase: EvidenceReviewCase) => {
+    const assignment = reviewCase.assignment;
+    if (!assignment?.assignment_id || !assignment.version) return;
+    const actionKey = `${reviewCase.case_id}:heartbeat`;
+    setReviewAssignmentAction(actionKey);
+    setReviewInboxError(null);
+    try {
+      await heartbeatEvidenceReviewAssignment(assignment.assignment_id, assignment.version);
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewInboxError(error instanceof Error ? error.message : "复核任务续租失败");
+    } finally {
+      setReviewAssignmentAction(null);
+    }
+  };
+  const releaseReviewAssignment = async (reviewCase: EvidenceReviewCase) => {
+    const assignment = reviewCase.assignment;
+    if (!assignment?.assignment_id || !assignment.version) return;
+    const actionKey = `${reviewCase.case_id}:release`;
+    setReviewAssignmentAction(actionKey);
+    setReviewInboxError(null);
+    try {
+      await releaseEvidenceReviewAssignment(
+        assignment.assignment_id,
+        assignment.version,
+        "当前审核人主动释放，返回未分配队列。",
+      );
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewInboxError(error instanceof Error ? error.message : "复核任务释放失败");
+    } finally {
+      setReviewAssignmentAction(null);
     }
   };
   const refreshQuality = async () => {
@@ -2892,7 +2943,7 @@ function EvidencePage() {
       </div>
       <Panel title={`我的独立复核待办 · ${reviewInbox?.actionable_count ?? 0}`}>
         <p className="rail-caption">
-          这里按当前登录账号从整个项目汇总可执行的第二审核与第三人裁决。队列不会显示其他审核人的未终结标签；必须先打开原始样本、精确 Claim 和不可变来源，再在样本内提交决定。
+          这里按当前登录账号从整个项目汇总可执行的第二审核与第三人裁决。领取会建立持久租约和 SLA，其他审核人不会重复看到已领取任务；队列仍不显示同伴未终结标签，必须先打开原始样本、精确 Claim 和不可变来源，再提交决定。
         </p>
         {reviewInboxError && <DataStateCard title="项目复核待办读取失败" desc={reviewInboxError} tone="danger" />}
         {reviewInbox && (
@@ -2901,6 +2952,9 @@ function EvidencePage() {
               <div><dt>当前账号可执行</dt><dd>{reviewInbox.actionable_count}</dd></div>
               <div><dt>等待第二审核</dt><dd>{reviewInbox.awaiting_secondary_count}</dd></div>
               <div><dt>等待第三人裁决</dt><dd>{reviewInbox.adjudication_count}</dd></div>
+              <div><dt>我已领取</dt><dd>{reviewInbox.assigned_to_me_count}</dd></div>
+              <div><dt>待领取</dt><dd>{reviewInbox.unassigned_count}</dd></div>
+              <div><dt>SLA 已逾期</dt><dd>{reviewInbox.overdue_count}</dd></div>
               <div><dt>当前已加载</dt><dd>{reviewInbox.cases.length} / {reviewInbox.actionable_count}</dd></div>
             </dl>
             {actionableReviewCases.length === 0 ? (
@@ -2914,10 +2968,41 @@ function EvidencePage() {
                       <small>{reviewCase.purpose === "benchmark" ? `${reviewCase.benchmark_version} · 仅质量评测` : "生产指标复核"}</small>
                       <small>样本 {reviewCase.snapshot_id} · Claim {reviewCase.claim_id}</small>
                       <small>创建于 {formatDateTime(reviewCase.created_at)} · 证据 {reviewCase.evidence_basis_sha256.slice(0, 12)}…</small>
+                      {reviewCase.assignment && (
+                        <>
+                          <small>
+                            {reviewCase.assignment.state === "assigned_to_me"
+                              ? `我已领取 · 租约至 ${formatDateTime(reviewCase.assignment.lease_expires_at)}`
+                              : reviewCase.assignment.state === "expired"
+                                ? "上一租约已过期 · 可重新领取"
+                                : "尚未领取 · 当前账号可领取"}
+                          </small>
+                          <small>
+                            SLA {reviewCase.assignment.sla_state === "overdue" ? "已逾期" : reviewCase.assignment.sla_state === "due_soon" ? "即将到期" : "进行中"}
+                            {` · 截止 ${formatDateTime(reviewCase.assignment.due_at)}`}
+                          </small>
+                        </>
+                      )}
                     </div>
-                    <button className="table-action" type="button" disabled={loadingDetail === reviewCase.snapshot_id} onClick={() => void openReviewCaseSample(reviewCase)}>
-                      {loadingDetail === reviewCase.snapshot_id ? "读取中" : "打开证据样本"}
-                    </button>
+                    <div className="review-inbox-actions">
+                      {reviewCase.assignment?.state === "assigned_to_me" ? (
+                        <>
+                          <button className="table-action" type="button" disabled={reviewAssignmentAction !== null} onClick={() => void heartbeatReviewAssignment(reviewCase)}>
+                            {reviewAssignmentAction === `${reviewCase.case_id}:heartbeat` ? "续租中" : "续租"}
+                          </button>
+                          <button className="table-action" type="button" disabled={reviewAssignmentAction !== null} onClick={() => void releaseReviewAssignment(reviewCase)}>
+                            {reviewAssignmentAction === `${reviewCase.case_id}:release` ? "释放中" : "释放"}
+                          </button>
+                        </>
+                      ) : (
+                        <button className="table-action" type="button" disabled={reviewAssignmentAction !== null} onClick={() => void claimReviewAssignment(reviewCase)}>
+                          {reviewAssignmentAction === `${reviewCase.case_id}:claim` ? "领取中" : "领取任务"}
+                        </button>
+                      )}
+                      <button className="table-action" type="button" disabled={loadingDetail === reviewCase.snapshot_id} onClick={() => void openReviewCaseSample(reviewCase)}>
+                        {loadingDetail === reviewCase.snapshot_id ? "读取中" : "打开证据样本"}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>

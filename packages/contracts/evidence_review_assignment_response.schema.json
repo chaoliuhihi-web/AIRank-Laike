@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_review_assignment_response.schema.json",
+  "title": "AIRank Evidence Review Assignment Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": { "$ref": "#/$defs/assignment" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "assignment": {
+      "type": "object",
+      "required": [
+        "assignment_id", "case_id", "reviewer_role", "state",
+        "owned_by_current_actor", "sla_state", "action_available_at",
+        "due_at", "assigned_at", "lease_expires_at", "last_heartbeat_at",
+        "completed_at", "released_at", "release_reason", "version",
+        "idempotent_replay"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "assignment_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "reviewer_role": { "enum": ["secondary", "adjudicator"] },
+        "state": { "enum": ["unassigned", "assigned_to_me", "assigned_to_other", "expired", "completed", "released"] },
+        "owned_by_current_actor": { "type": "boolean" },
+        "sla_state": { "enum": ["on_track", "due_soon", "overdue"] },
+        "action_available_at": { "type": "string", "format": "date-time" },
+        "due_at": { "type": "string", "format": "date-time" },
+        "assigned_at": { "type": ["string", "null"], "format": "date-time" },
+        "lease_expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "last_heartbeat_at": { "type": ["string", "null"], "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "released_at": { "type": ["string", "null"], "format": "date-time" },
+        "release_reason": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+        "version": { "type": ["integer", "null"], "minimum": 1 },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

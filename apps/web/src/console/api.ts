@@ -539,6 +539,25 @@ export type EvidenceReviewDecision = {
   review_id: string;
 };
 
+export type EvidenceReviewAssignment = {
+  assignment_id: string | null;
+  case_id: string;
+  reviewer_role: "secondary" | "adjudicator";
+  state: "unassigned" | "assigned_to_me" | "assigned_to_other" | "expired" | "completed" | "released";
+  owned_by_current_actor: boolean;
+  sla_state: "on_track" | "due_soon" | "overdue";
+  action_available_at: string;
+  due_at: string;
+  assigned_at: string | null;
+  lease_expires_at: string | null;
+  last_heartbeat_at: string | null;
+  completed_at: string | null;
+  released_at: string | null;
+  release_reason: string | null;
+  version: number | null;
+  idempotent_replay: boolean;
+};
+
 export type EvidenceReviewCase = {
   case_id: string;
   tenant_id: string;
@@ -555,6 +574,7 @@ export type EvidenceReviewCase = {
   decision_count: number;
   current_actor_role: "primary" | "secondary" | "adjudicator" | null;
   next_action: "submit_secondary" | "adjudicate" | "complete" | "none";
+  assignment: EvidenceReviewAssignment | null;
   visible_decisions: EvidenceReviewDecision[];
   created_by: string;
   finalized_by: string | null;
@@ -596,6 +616,9 @@ export type EvidenceReviewInbox = {
   actionable_count: number;
   awaiting_secondary_count: number;
   adjudication_count: number;
+  assigned_to_me_count: number;
+  unassigned_count: number;
+  overdue_count: number;
   limit: number;
   next_cursor: string | null;
 };
@@ -2001,6 +2024,70 @@ export async function submitEvidenceReviewDecision(
     throw new Error(await readErrorMessage(response, `Evidence review decision failed with ${response.status}`));
   }
   return ((await response.json()) as { data: EvidenceReviewCase }).data;
+}
+
+export async function claimEvidenceReviewAssignment(
+  caseId: string,
+  expectedCaseVersion?: number,
+): Promise<EvidenceReviewAssignment> {
+  const response = await fetch(
+    `/api/v1/evidence-review-cases/${encodeURIComponent(caseId)}/assignment-claims`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_assignment_claim"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expected_case_version: expectedCaseVersion }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence review assignment claim failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewAssignment }).data;
+}
+
+export async function heartbeatEvidenceReviewAssignment(
+  assignmentId: string,
+  expectedVersion: number,
+): Promise<EvidenceReviewAssignment> {
+  const response = await fetch(
+    `/api/v1/evidence-review-assignments/${encodeURIComponent(assignmentId)}/heartbeats`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_assignment_heartbeat"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expected_version: expectedVersion }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence review assignment heartbeat failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewAssignment }).data;
+}
+
+export async function releaseEvidenceReviewAssignment(
+  assignmentId: string,
+  expectedVersion: number,
+  reason: string,
+): Promise<EvidenceReviewAssignment> {
+  const response = await fetch(
+    `/api/v1/evidence-review-assignments/${encodeURIComponent(assignmentId)}/release`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_assignment_release"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expected_version: expectedVersion, reason }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence review assignment release failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewAssignment }).data;
 }
 
 export function fetchMeasurementQuality(

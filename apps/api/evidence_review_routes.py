@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from base64 import b64decode, urlsafe_b64encode
 from binascii import Error as Base64Error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from threading import RLock
@@ -27,6 +27,10 @@ router = APIRouter(prefix="/api/v1", tags=["evidence-review-quality"])
 TRACE_HEADER = "X-AIRank-Trace-Id"
 BENCHMARK_VERSION = "airank.evidence-review-benchmark.v1"
 BENCHMARK_MINIMUM_CASE_COUNT = 20
+DEFAULT_REVIEW_ASSIGNMENT_LEASE_SECONDS = 15 * 60
+DEFAULT_SECONDARY_REVIEW_SLA_SECONDS = 24 * 60 * 60
+DEFAULT_ADJUDICATION_REVIEW_SLA_SECONDS = 4 * 60 * 60
+DEFAULT_REVIEW_DUE_SOON_SECONDS = 60 * 60
 
 
 def now_utc() -> datetime:
@@ -101,6 +105,56 @@ class EvidenceReviewDecisionData(BaseModel):
     review_id: str
 
 
+class EvidenceReviewAssignmentClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_case_version: Optional[int] = Field(default=None, ge=1)
+
+
+class EvidenceReviewAssignmentHeartbeatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+
+
+class EvidenceReviewAssignmentReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class EvidenceReviewAssignmentData(BaseModel):
+    assignment_id: Optional[str]
+    case_id: str
+    reviewer_role: Literal["secondary", "adjudicator"]
+    state: Literal[
+        "unassigned",
+        "assigned_to_me",
+        "assigned_to_other",
+        "expired",
+        "completed",
+        "released",
+    ]
+    owned_by_current_actor: bool
+    sla_state: Literal["on_track", "due_soon", "overdue"]
+    action_available_at: datetime
+    due_at: datetime
+    assigned_at: Optional[datetime]
+    lease_expires_at: Optional[datetime]
+    last_heartbeat_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    released_at: Optional[datetime]
+    release_reason: Optional[str]
+    version: Optional[int]
+    idempotent_replay: bool = False
+
+
+class EvidenceReviewAssignmentResponse(BaseModel):
+    data: EvidenceReviewAssignmentData
+    meta: dict[str, str]
+
+
 class EvidenceReviewCaseData(BaseModel):
     case_id: str
     tenant_id: str
@@ -124,6 +178,7 @@ class EvidenceReviewCaseData(BaseModel):
     decision_count: int
     current_actor_role: Optional[Literal["primary", "secondary", "adjudicator"]]
     next_action: Literal["submit_secondary", "adjudicate", "complete", "none"]
+    assignment: Optional[EvidenceReviewAssignmentData]
     visible_decisions: list[EvidenceReviewDecisionData]
     created_by: str
     finalized_by: Optional[str]
@@ -175,6 +230,9 @@ class EvidenceReviewInboxData(BaseModel):
     actionable_count: int
     awaiting_secondary_count: int
     adjudication_count: int
+    assigned_to_me_count: int
+    unassigned_count: int
+    overdue_count: int
     limit: int
     next_cursor: Optional[str]
 
@@ -231,6 +289,33 @@ class EvidenceReviewRepository(Protocol):
         cursor: Optional[str],
     ) -> EvidenceReviewInboxData: ...
 
+    def claim_assignment(
+        self,
+        tenant_id: str,
+        case_id: str,
+        payload: EvidenceReviewAssignmentClaimRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData: ...
+
+    def heartbeat_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentHeartbeatRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData: ...
+
+    def release_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentReleaseRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData: ...
+
 
 def evidence_basis_for_citation(
     claim_id: str, review: citation_routes.CitationSupportReviewCreateRequest
@@ -281,6 +366,130 @@ def allowed_labels(review_kind: str) -> set[str]:
     if review_kind == "citation_support":
         return {"supports", "contradicts", "insufficient"}
     return {"accurate", "inaccurate", "outdated", "insufficient_evidence"}
+
+
+def bounded_env_seconds(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = str(os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def review_assignment_lease_seconds() -> int:
+    return bounded_env_seconds(
+        "AIRANK_EVIDENCE_REVIEW_LEASE_SECONDS",
+        DEFAULT_REVIEW_ASSIGNMENT_LEASE_SECONDS,
+        60,
+        4 * 60 * 60,
+    )
+
+
+def review_sla_seconds(role: str) -> int:
+    if role == "adjudicator":
+        return bounded_env_seconds(
+            "AIRANK_EVIDENCE_REVIEW_ADJUDICATION_SLA_SECONDS",
+            DEFAULT_ADJUDICATION_REVIEW_SLA_SECONDS,
+            5 * 60,
+            14 * 24 * 60 * 60,
+        )
+    return bounded_env_seconds(
+        "AIRANK_EVIDENCE_REVIEW_SECONDARY_SLA_SECONDS",
+        DEFAULT_SECONDARY_REVIEW_SLA_SECONDS,
+        5 * 60,
+        30 * 24 * 60 * 60,
+    )
+
+
+def review_due_soon_seconds() -> int:
+    return bounded_env_seconds(
+        "AIRANK_EVIDENCE_REVIEW_DUE_SOON_SECONDS",
+        DEFAULT_REVIEW_DUE_SOON_SECONDS,
+        60,
+        24 * 60 * 60,
+    )
+
+
+def review_action_role(case: Mapping[str, Any]) -> Optional[Literal["secondary", "adjudicator"]]:
+    status = str(case["status"])
+    if status == "awaiting_secondary":
+        return "secondary"
+    if status == "disputed":
+        return "adjudicator"
+    return None
+
+
+def review_action_available_at(case: Mapping[str, Any]) -> datetime:
+    value = case.get("updated_at") if str(case["status"]) == "disputed" else case.get("created_at")
+    return citation_routes._utc_datetime(value or case["created_at"])
+
+
+def review_sla_state(due_at: datetime, at: datetime) -> Literal["on_track", "due_soon", "overdue"]:
+    if due_at <= at:
+        return "overdue"
+    if due_at - at <= timedelta(seconds=review_due_soon_seconds()):
+        return "due_soon"
+    return "on_track"
+
+
+def assignment_data_from_mapping(
+    case: Mapping[str, Any],
+    assignment: Optional[Mapping[str, Any]],
+    actor: str,
+    *,
+    at: Optional[datetime] = None,
+    idempotent_replay: bool = False,
+) -> EvidenceReviewAssignmentData:
+    at = at or now_utc()
+    role = str(assignment["reviewer_role"]) if assignment is not None else review_action_role(case)
+    if role not in {"secondary", "adjudicator"}:
+        raise ValueError("assignment view requires an actionable reviewer role")
+    action_available_at = (
+        citation_routes._utc_datetime(assignment["action_available_at"])
+        if assignment is not None
+        else review_action_available_at(case)
+    )
+    due_at = (
+        citation_routes._utc_datetime(assignment["due_at"])
+        if assignment is not None
+        else action_available_at + timedelta(seconds=review_sla_seconds(role))
+    )
+    state: str = "unassigned"
+    owned = False
+    if assignment is not None:
+        status = str(assignment["status"])
+        lease_expires_at = citation_routes._utc_datetime(assignment["lease_expires_at"])
+        assigned_to = str(assignment["assigned_to"])
+        if status == "active" and lease_expires_at <= at:
+            state = "expired"
+        elif status == "active" and assigned_to == actor:
+            state = "assigned_to_me"
+            owned = True
+        elif status == "active":
+            state = "assigned_to_other"
+        elif status in {"completed", "released", "expired"}:
+            state = status
+    return EvidenceReviewAssignmentData(
+        assignment_id=(str(assignment.get("id") or assignment.get("assignment_id")) if assignment is not None else None),
+        case_id=str(case.get("case_id") or case.get("id")),
+        reviewer_role=role,
+        state=state,
+        owned_by_current_actor=owned,
+        sla_state=review_sla_state(due_at, at),
+        action_available_at=action_available_at,
+        due_at=due_at,
+        assigned_at=(citation_routes._utc_datetime(assignment["assigned_at"]) if assignment is not None else None),
+        lease_expires_at=(citation_routes._utc_datetime(assignment["lease_expires_at"]) if assignment is not None else None),
+        last_heartbeat_at=(citation_routes._utc_datetime(assignment["last_heartbeat_at"]) if assignment is not None else None),
+        completed_at=(citation_routes._utc_datetime(assignment["completed_at"]) if assignment is not None and assignment.get("completed_at") else None),
+        released_at=(citation_routes._utc_datetime(assignment["released_at"]) if assignment is not None and assignment.get("released_at") else None),
+        release_reason=(str(assignment["release_reason"]) if assignment is not None and assignment.get("release_reason") else None),
+        version=(int(assignment["version"]) if assignment is not None else None),
+        idempotent_replay=idempotent_replay,
+    )
 
 
 def validate_label_against_frozen_evidence(
@@ -339,6 +548,8 @@ class InMemoryEvidenceReviewRepository:
         self.lock = RLock()
         self.cases: dict[str, dict[str, Any]] = {}
         self.idempotency: dict[tuple[str, str, str], tuple[str, str]] = {}
+        self.assignments: dict[str, dict[str, Any]] = {}
+        self.assignment_events: list[dict[str, Any]] = []
 
     def create_citation_case(
         self,
@@ -473,18 +684,23 @@ class InMemoryEvidenceReviewRepository:
             if case is None or case["tenant_id"] != tenant_id:
                 raise StarletteHTTPException(404, detail={"code": "EVIDENCE_REVIEW_CASE_NOT_FOUND"})
             self._validate_decision(case, payload.label, actor)
+            reviewed_at = now_utc()
+            assignment, _ = self._ensure_assignment(
+                case, actor, trace_id, reviewed_at, expected_case_version=None
+            )
             primary = case["decisions"][0]
             role = "secondary" if case["status"] == "awaiting_secondary" else "adjudicator"
             review = self._clone_in_memory_review(case, primary, payload, actor, role, trace_id)
             case["decisions"].append(review)
             case["version"] += 1
+            case["updated_at"] = reviewed_at
             if role == "secondary":
                 if review_label_value(primary) == payload.label:
                     case.update(
                         status="agreed",
                         consensus_label=payload.label,
                         finalized_by=actor,
-                        finalized_at=now_utc(),
+                        finalized_at=reviewed_at,
                     )
                 else:
                     case["status"] = "disputed"
@@ -493,8 +709,9 @@ class InMemoryEvidenceReviewRepository:
                     status="adjudicated",
                     consensus_label=payload.label,
                     finalized_by=actor,
-                    finalized_at=now_utc(),
+                    finalized_at=reviewed_at,
                 )
+            self._complete_assignment(assignment, actor, trace_id, reviewed_at)
             self._decorate_latest_review(case, review)
             return self._case_data(case, actor)
 
@@ -513,7 +730,12 @@ class InMemoryEvidenceReviewRepository:
                 and value["project_id"] == project_id
                 and (snapshot_id is None or value["snapshot_id"] == snapshot_id)
             ]
-            return build_queue(project_id, snapshot_id, cases, actor)
+            return build_queue(
+                project_id,
+                snapshot_id,
+                [self._case_with_assignment(value) for value in cases],
+                actor,
+            )
 
     def list_inbox(
         self,
@@ -525,14 +747,18 @@ class InMemoryEvidenceReviewRepository:
     ) -> EvidenceReviewInboxData:
         cursor_key = decode_review_inbox_cursor(cursor) if cursor else None
         with self.lock:
-            actionable = [
-                value
-                for value in self.cases.values()
-                if value["tenant_id"] == tenant_id
-                and value["project_id"] == project_id
-                and case_data_from_mapping(value, actor).next_action
-                in {"submit_secondary", "adjudicate"}
-            ]
+            at = now_utc()
+            actionable = []
+            rendered: dict[str, EvidenceReviewCaseData] = {}
+            for value in self.cases.values():
+                if value["tenant_id"] != tenant_id or value["project_id"] != project_id:
+                    continue
+                mapped = self._case_with_assignment(value, at=at)
+                data = case_data_from_mapping(mapped, actor, at=at)
+                if data.next_action not in {"submit_secondary", "adjudicate"}:
+                    continue
+                actionable.append(value)
+                rendered[str(value["case_id"])] = data
             actionable.sort(key=review_inbox_cursor_key)
             page_candidates = [
                 value
@@ -542,9 +768,10 @@ class InMemoryEvidenceReviewRepository:
             page = page_candidates[: limit + 1]
             has_more = len(page) > limit
             returned = page[:limit]
+            returned_data = [rendered[str(value["case_id"])] for value in returned]
             return EvidenceReviewInboxData(
                 project_id=project_id,
-                cases=[case_data_from_mapping(value, actor) for value in returned],
+                cases=returned_data,
                 actionable_count=len(actionable),
                 awaiting_secondary_count=sum(
                     str(value["status"]) == "awaiting_secondary" for value in actionable
@@ -552,9 +779,235 @@ class InMemoryEvidenceReviewRepository:
                 adjudication_count=sum(
                     str(value["status"]) == "disputed" for value in actionable
                 ),
+                assigned_to_me_count=sum(
+                    item.assignment is not None
+                    and item.assignment.state == "assigned_to_me"
+                    for item in rendered.values()
+                ),
+                unassigned_count=sum(
+                    item.assignment is not None
+                    and item.assignment.state in {"unassigned", "expired"}
+                    for item in rendered.values()
+                ),
+                overdue_count=sum(
+                    item.assignment is not None
+                    and item.assignment.sla_state == "overdue"
+                    for item in rendered.values()
+                ),
                 limit=limit,
                 next_cursor=(encode_review_inbox_cursor(returned[-1]) if has_more else None),
             )
+
+    def claim_assignment(
+        self,
+        tenant_id: str,
+        case_id: str,
+        payload: EvidenceReviewAssignmentClaimRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        with self.lock:
+            case = self.cases.get(case_id)
+            if case is None or case["tenant_id"] != tenant_id:
+                raise StarletteHTTPException(404, detail={"code": "EVIDENCE_REVIEW_CASE_NOT_FOUND"})
+            assignment, replay = self._ensure_assignment(
+                case,
+                actor,
+                trace_id,
+                now_utc(),
+                expected_case_version=payload.expected_case_version,
+            )
+            return assignment_data_from_mapping(
+                case, assignment, actor, idempotent_replay=replay
+            )
+
+    def heartbeat_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentHeartbeatRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        with self.lock:
+            assignment = self.assignments.get(assignment_id)
+            if assignment is None or assignment["tenant_id"] != tenant_id:
+                raise StarletteHTTPException(404, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_NOT_FOUND"})
+            case = self.cases[str(assignment["case_id"])]
+            at = now_utc()
+            self._validate_assignment_owner(assignment, actor, payload.expected_version)
+            if citation_routes._utc_datetime(assignment["lease_expires_at"]) <= at:
+                self._expire_assignment(assignment, actor, trace_id, at)
+                raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"})
+            assignment["last_heartbeat_at"] = at
+            assignment["lease_expires_at"] = at + timedelta(seconds=review_assignment_lease_seconds())
+            assignment["version"] += 1
+            assignment["updated_at"] = at
+            self._append_assignment_event(assignment, "heartbeat", actor, trace_id, at)
+            return assignment_data_from_mapping(case, assignment, actor)
+
+    def release_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentReleaseRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        with self.lock:
+            assignment = self.assignments.get(assignment_id)
+            if assignment is None or assignment["tenant_id"] != tenant_id:
+                raise StarletteHTTPException(404, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_NOT_FOUND"})
+            case = self.cases[str(assignment["case_id"])]
+            at = now_utc()
+            self._validate_assignment_owner(assignment, actor, payload.expected_version)
+            if citation_routes._utc_datetime(assignment["lease_expires_at"]) <= at:
+                self._expire_assignment(assignment, actor, trace_id, at)
+                raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"})
+            assignment.update(
+                status="released",
+                released_at=at,
+                release_reason=payload.reason,
+                version=int(assignment["version"]) + 1,
+                updated_at=at,
+            )
+            self._append_assignment_event(assignment, "released", actor, trace_id, at)
+            return assignment_data_from_mapping(case, assignment, actor)
+
+    def _case_with_assignment(
+        self, case: Mapping[str, Any], *, at: Optional[datetime] = None
+    ) -> dict[str, Any]:
+        mapped = dict(case)
+        role = review_action_role(case)
+        if role is None:
+            mapped["assignment"] = None
+            return mapped
+        candidates = [
+            item
+            for item in self.assignments.values()
+            if item["tenant_id"] == case["tenant_id"]
+            and item["case_id"] == case["case_id"]
+            and item["reviewer_role"] == role
+        ]
+        candidates.sort(key=lambda item: (item["assigned_at"], item["id"]), reverse=True)
+        current = next((item for item in candidates if item["status"] == "active"), None)
+        if current is None and candidates and candidates[0]["status"] == "expired":
+            current = candidates[0]
+        mapped["assignment"] = current
+        return mapped
+
+    def _ensure_assignment(
+        self,
+        case: dict[str, Any],
+        actor: str,
+        trace_id: str,
+        at: datetime,
+        *,
+        expected_case_version: Optional[int],
+    ) -> tuple[dict[str, Any], bool]:
+        if expected_case_version is not None and int(case["version"]) != expected_case_version:
+            raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT"})
+        role = review_action_role(case)
+        if role is None:
+            raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_CASE_FINAL"})
+        if any(item.reviewed_by == actor for item in case["decisions"]):
+            raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"})
+        candidates = [
+            item
+            for item in self.assignments.values()
+            if item["tenant_id"] == case["tenant_id"]
+            and item["case_id"] == case["case_id"]
+            and item["reviewer_role"] == role
+            and item["status"] == "active"
+        ]
+        candidates.sort(key=lambda item: (item["assigned_at"], item["id"]), reverse=True)
+        current = candidates[0] if candidates else None
+        if current is not None and citation_routes._utc_datetime(current["lease_expires_at"]) <= at:
+            self._expire_assignment(current, actor, trace_id, at)
+            current = None
+        if current is not None:
+            if current["assigned_to"] != actor:
+                raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT"})
+            return current, True
+        action_available_at = review_action_available_at(case)
+        assignment_id = f"evidence_review_assignment_{uuid4().hex}"
+        assignment = {
+            "id": assignment_id,
+            "tenant_id": case["tenant_id"],
+            "project_id": case["project_id"],
+            "case_id": case["case_id"],
+            "reviewer_role": role,
+            "assigned_to": actor,
+            "status": "active",
+            "action_available_at": action_available_at,
+            "assigned_at": at,
+            "due_at": action_available_at + timedelta(seconds=review_sla_seconds(role)),
+            "lease_expires_at": at + timedelta(seconds=review_assignment_lease_seconds()),
+            "last_heartbeat_at": at,
+            "completed_at": None,
+            "released_at": None,
+            "release_reason": None,
+            "version": 1,
+            "created_at": at,
+            "updated_at": at,
+        }
+        self.assignments[assignment_id] = assignment
+        self._append_assignment_event(assignment, "claimed", actor, trace_id, at)
+        return assignment, False
+
+    def _validate_assignment_owner(
+        self, assignment: Mapping[str, Any], actor: str, expected_version: int
+    ) -> None:
+        if assignment["status"] != "active":
+            raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_NOT_ACTIVE"})
+        if assignment["assigned_to"] != actor:
+            raise StarletteHTTPException(403, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN"})
+        if int(assignment["version"]) != expected_version:
+            raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT"})
+
+    def _expire_assignment(
+        self, assignment: dict[str, Any], actor: str, trace_id: str, at: datetime
+    ) -> None:
+        assignment.update(
+            status="expired",
+            version=int(assignment["version"]) + 1,
+            updated_at=at,
+        )
+        self._append_assignment_event(assignment, "expired", actor, trace_id, at)
+
+    def _complete_assignment(
+        self, assignment: dict[str, Any], actor: str, trace_id: str, at: datetime
+    ) -> None:
+        assignment.update(
+            status="completed",
+            completed_at=at,
+            version=int(assignment["version"]) + 1,
+            updated_at=at,
+        )
+        self._append_assignment_event(assignment, "completed", actor, trace_id, at)
+
+    def _append_assignment_event(
+        self,
+        assignment: Mapping[str, Any],
+        event_type: str,
+        actor: str,
+        trace_id: str,
+        at: datetime,
+    ) -> None:
+        self.assignment_events.append(
+            {
+                "id": f"review_assignment_event_{uuid4().hex}",
+                "tenant_id": assignment["tenant_id"],
+                "project_id": assignment["project_id"],
+                "case_id": assignment["case_id"],
+                "assignment_id": assignment["id"],
+                "event_type": event_type,
+                "assignment_version": assignment["version"],
+                "actor": actor,
+                "trace_id": trace_id,
+                "created_at": at,
+            }
+        )
 
     def _replay(self, tenant_id: str, project_id: str, key: str, request_hash: str, actor: str) -> Optional[EvidenceReviewCaseData]:
         item = self.idempotency.get((tenant_id, project_id, key))
@@ -592,6 +1045,7 @@ class InMemoryEvidenceReviewRepository:
             "created_by": values["actor"],
             "finalized_by": None,
             "created_at": created_at,
+            "updated_at": created_at,
             "finalized_at": None,
         }
 
@@ -607,9 +1061,8 @@ class InMemoryEvidenceReviewRepository:
         if any(item.reviewed_by == actor for item in case["decisions"]):
             raise StarletteHTTPException(409, detail={"code": "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"})
 
-    @staticmethod
-    def _case_data(case: Mapping[str, Any], actor: str) -> EvidenceReviewCaseData:
-        return case_data_from_mapping(case, actor)
+    def _case_data(self, case: Mapping[str, Any], actor: str) -> EvidenceReviewCaseData:
+        return case_data_from_mapping(self._case_with_assignment(case), actor)
 
     @staticmethod
     def _clone_in_memory_review(case: Mapping[str, Any], primary: Any, payload: EvidenceReviewDecisionRequest, actor: str, role: str, trace_id: str) -> Any:
@@ -912,6 +1365,15 @@ class MySQLEvidenceReviewRepository:
             role = "secondary" if status == "awaiting_secondary" else "adjudicator"
             primary = next(item for item in decisions if str(item["reviewer_role"]) == "primary")
             validate_label_against_frozen_evidence(kind, primary, payload.label)
+            assignment, _ = self._ensure_assignment(
+                conn,
+                case,
+                actor,
+                trace_id,
+                reviewed_at,
+                expected_case_version=None,
+                decisions=decisions,
+            )
             review_id = self._clone_decision(conn, case, primary, payload, actor, role, reviewed_at)
             version = int(case["version"]) + 1
             if role == "secondary":
@@ -952,6 +1414,7 @@ class MySQLEvidenceReviewRepository:
                     ),
                     {"consensus_label": payload.label, "review_id": review_id, "version": version, "finalized_by": actor, "finalized_at": reviewed_at, "updated_at": reviewed_at, "tenant_id": tenant_id, "case_id": case_id},
                 )
+            self._complete_assignment(conn, assignment, actor, trace_id, reviewed_at)
             self._audit(conn, tenant_id, str(case["project_id"]), case_id, "evidence_review.decision_submitted", actor, trace_id, {"review_kind": kind, "reviewer_role": role, "review_id": review_id, "status": next_status if role == "secondary" else "adjudicated"}, reviewed_at)
             return self._load_case(conn, tenant_id, case_id, actor)
 
@@ -986,6 +1449,7 @@ class MySQLEvidenceReviewRepository:
         cursor: Optional[str],
     ) -> EvidenceReviewInboxData:
         cursor_key = decode_review_inbox_cursor(cursor) if cursor else None
+        as_of = now_utc()
         eligibility = """
           c.status IN ('awaiting_secondary', 'disputed')
           AND NOT EXISTS (
@@ -1000,13 +1464,23 @@ class MySQLEvidenceReviewRepository:
               AND fact_review.review_case_id=c.id
               AND fact_review.reviewed_by=:actor
           )
+          AND (
+            assignment.id IS NULL
+            OR assignment.assigned_to=:actor
+            OR assignment.lease_expires_at<=:as_of
+          )
         """
         cursor_clause = ""
         params: dict[str, Any] = {
             "tenant_id": tenant_id,
             "project_id": project_id,
             "actor": actor,
+            "as_of": as_of,
             "row_limit": limit + 1,
+            "secondary_overdue_before": as_of
+            - timedelta(seconds=review_sla_seconds("secondary")),
+            "adjudication_overdue_before": as_of
+            - timedelta(seconds=review_sla_seconds("adjudicator")),
         }
         if cursor_key is not None:
             cursor_clause = """
@@ -1038,8 +1512,29 @@ class MySQLEvidenceReviewRepository:
                            SUM(CASE WHEN c.status='awaiting_secondary' THEN 1 ELSE 0 END)
                              AS awaiting_secondary_count,
                            SUM(CASE WHEN c.status='disputed' THEN 1 ELSE 0 END)
-                             AS adjudication_count
+                             AS adjudication_count,
+                           SUM(CASE WHEN assignment.id IS NOT NULL
+                                         AND assignment.assigned_to=:actor
+                                         AND assignment.lease_expires_at>:as_of
+                                    THEN 1 ELSE 0 END) AS assigned_to_me_count,
+                           SUM(CASE WHEN assignment.id IS NULL
+                                         OR assignment.lease_expires_at<=:as_of
+                                    THEN 1 ELSE 0 END) AS unassigned_count,
+                           SUM(CASE
+                                 WHEN c.status='awaiting_secondary'
+                                      AND c.created_at<=:secondary_overdue_before THEN 1
+                                 WHEN c.status='disputed'
+                                      AND c.updated_at<=:adjudication_overdue_before THEN 1
+                                 ELSE 0
+                               END) AS overdue_count
                     FROM airank_evidence_review_cases c
+                    LEFT JOIN airank_evidence_review_assignments assignment
+                      ON assignment.tenant_id=c.tenant_id
+                     AND assignment.case_id=c.id
+                     AND assignment.status='active'
+                     AND assignment.reviewer_role=(
+                       CASE WHEN c.status='disputed' THEN 'adjudicator' ELSE 'secondary' END
+                     )
                     WHERE c.tenant_id=:tenant_id AND c.project_id=:project_id
                       AND {eligibility}
                     """
@@ -1050,6 +1545,13 @@ class MySQLEvidenceReviewRepository:
                 text(
                     f"""
                     SELECT c.* FROM airank_evidence_review_cases c
+                    LEFT JOIN airank_evidence_review_assignments assignment
+                      ON assignment.tenant_id=c.tenant_id
+                     AND assignment.case_id=c.id
+                     AND assignment.status='active'
+                     AND assignment.reviewer_role=(
+                       CASE WHEN c.status='disputed' THEN 'adjudicator' ELSE 'secondary' END
+                     )
                     WHERE c.tenant_id=:tenant_id AND c.project_id=:project_id
                       AND {eligibility}
                       {cursor_clause}
@@ -1065,15 +1567,470 @@ class MySQLEvidenceReviewRepository:
             cases = [self._case_mapping(conn, row) for row in returned]
             return EvidenceReviewInboxData(
                 project_id=project_id,
-                cases=[case_data_from_mapping(case, actor) for case in cases],
+                cases=[case_data_from_mapping(case, actor, at=as_of) for case in cases],
                 actionable_count=int(counts["actionable_count"] or 0),
                 awaiting_secondary_count=int(counts["awaiting_secondary_count"] or 0),
                 adjudication_count=int(counts["adjudication_count"] or 0),
+                assigned_to_me_count=int(counts["assigned_to_me_count"] or 0),
+                unassigned_count=int(counts["unassigned_count"] or 0),
+                overdue_count=int(counts["overdue_count"] or 0),
                 limit=limit,
                 next_cursor=(
                     encode_review_inbox_cursor(returned[-1]) if has_more else None
                 ),
             )
+
+    def claim_assignment(
+        self,
+        tenant_id: str,
+        case_id: str,
+        payload: EvidenceReviewAssignmentClaimRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        at = now_utc()
+        with self.engine.begin() as conn:
+            case = self._locked_case(conn, tenant_id, case_id)
+            assignment, replay = self._ensure_assignment(
+                conn,
+                case,
+                actor,
+                trace_id,
+                at,
+                expected_case_version=payload.expected_case_version,
+            )
+            return assignment_data_from_mapping(
+                {**dict(case), "case_id": str(case["id"])},
+                assignment,
+                actor,
+                at=at,
+                idempotent_replay=replay,
+            )
+
+    def heartbeat_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentHeartbeatRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        at = now_utc()
+        expired = False
+        result: Optional[EvidenceReviewAssignmentData] = None
+        with self.engine.begin() as conn:
+            assignment = self._locked_assignment(conn, tenant_id, assignment_id)
+            case = self._locked_case(conn, tenant_id, str(assignment["case_id"]))
+            self._validate_assignment_owner(assignment, actor, payload.expected_version)
+            if citation_routes._utc_datetime(assignment["lease_expires_at"]) <= at:
+                assignment = self._expire_assignment(conn, assignment, actor, trace_id, at)
+                expired = True
+            else:
+                next_version = int(assignment["version"]) + 1
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_evidence_review_assignments
+                        SET last_heartbeat_at=:at, lease_expires_at=:lease_expires_at,
+                            version=:version, updated_at=:at
+                        WHERE tenant_id=:tenant_id AND id=:assignment_id
+                        """
+                    ),
+                    {
+                        "at": at,
+                        "lease_expires_at": at
+                        + timedelta(seconds=review_assignment_lease_seconds()),
+                        "version": next_version,
+                        "tenant_id": tenant_id,
+                        "assignment_id": assignment_id,
+                    },
+                )
+                assignment = self._assignment_row(conn, tenant_id, assignment_id)
+                self._insert_assignment_event(
+                    conn, assignment, "heartbeat", actor, trace_id, at
+                )
+                self._audit(
+                    conn,
+                    tenant_id,
+                    str(assignment["project_id"]),
+                    str(assignment["case_id"]),
+                    "evidence_review.assignment_heartbeat",
+                    actor,
+                    trace_id,
+                    {"assignment_id": assignment_id, "version": next_version},
+                    at,
+                )
+            result = assignment_data_from_mapping(
+                {**dict(case), "case_id": str(case["id"])}, assignment, actor, at=at
+            )
+        if expired:
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"}
+            )
+        assert result is not None
+        return result
+
+    def release_assignment(
+        self,
+        tenant_id: str,
+        assignment_id: str,
+        payload: EvidenceReviewAssignmentReleaseRequest,
+        actor: str,
+        trace_id: str,
+    ) -> EvidenceReviewAssignmentData:
+        at = now_utc()
+        expired = False
+        result: Optional[EvidenceReviewAssignmentData] = None
+        with self.engine.begin() as conn:
+            assignment = self._locked_assignment(conn, tenant_id, assignment_id)
+            case = self._locked_case(conn, tenant_id, str(assignment["case_id"]))
+            self._validate_assignment_owner(assignment, actor, payload.expected_version)
+            if citation_routes._utc_datetime(assignment["lease_expires_at"]) <= at:
+                assignment = self._expire_assignment(conn, assignment, actor, trace_id, at)
+                expired = True
+            else:
+                next_version = int(assignment["version"]) + 1
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_evidence_review_assignments
+                        SET status='released', released_at=:at, release_reason=:reason,
+                            version=:version, updated_at=:at
+                        WHERE tenant_id=:tenant_id AND id=:assignment_id
+                        """
+                    ),
+                    {
+                        "at": at,
+                        "reason": payload.reason,
+                        "version": next_version,
+                        "tenant_id": tenant_id,
+                        "assignment_id": assignment_id,
+                    },
+                )
+                assignment = self._assignment_row(conn, tenant_id, assignment_id)
+                self._insert_assignment_event(
+                    conn,
+                    assignment,
+                    "released",
+                    actor,
+                    trace_id,
+                    at,
+                    {"reason": payload.reason},
+                )
+                self._audit(
+                    conn,
+                    tenant_id,
+                    str(assignment["project_id"]),
+                    str(assignment["case_id"]),
+                    "evidence_review.assignment_released",
+                    actor,
+                    trace_id,
+                    {"assignment_id": assignment_id, "reason": payload.reason},
+                    at,
+                )
+            result = assignment_data_from_mapping(
+                {**dict(case), "case_id": str(case["id"])}, assignment, actor, at=at
+            )
+        if expired:
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"}
+            )
+        assert result is not None
+        return result
+
+    def _locked_case(
+        self, conn: Any, tenant_id: str, case_id: str
+    ) -> Mapping[str, Any]:
+        lock_suffix = " FOR UPDATE" if self.engine.dialect.name == "mysql" else ""
+        row = conn.execute(
+            text(
+                f"SELECT * FROM airank_evidence_review_cases "
+                f"WHERE tenant_id=:tenant_id AND id=:case_id{lock_suffix}"
+            ),
+            {"tenant_id": tenant_id, "case_id": case_id},
+        ).mappings().first()
+        if row is None:
+            raise StarletteHTTPException(
+                404, detail={"code": "EVIDENCE_REVIEW_CASE_NOT_FOUND"}
+            )
+        return row
+
+    def _locked_assignment(
+        self, conn: Any, tenant_id: str, assignment_id: str
+    ) -> Mapping[str, Any]:
+        lock_suffix = " FOR UPDATE" if self.engine.dialect.name == "mysql" else ""
+        row = conn.execute(
+            text(
+                f"SELECT * FROM airank_evidence_review_assignments "
+                f"WHERE tenant_id=:tenant_id AND id=:assignment_id{lock_suffix}"
+            ),
+            {"tenant_id": tenant_id, "assignment_id": assignment_id},
+        ).mappings().first()
+        if row is None:
+            raise StarletteHTTPException(
+                404, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_NOT_FOUND"}
+            )
+        return row
+
+    @staticmethod
+    def _assignment_row(
+        conn: Any, tenant_id: str, assignment_id: str
+    ) -> Mapping[str, Any]:
+        row = conn.execute(
+            text(
+                "SELECT * FROM airank_evidence_review_assignments "
+                "WHERE tenant_id=:tenant_id AND id=:assignment_id"
+            ),
+            {"tenant_id": tenant_id, "assignment_id": assignment_id},
+        ).mappings().one()
+        return row
+
+    def _ensure_assignment(
+        self,
+        conn: Any,
+        case: Mapping[str, Any],
+        actor: str,
+        trace_id: str,
+        at: datetime,
+        *,
+        expected_case_version: Optional[int],
+        decisions: Optional[list[Mapping[str, Any]]] = None,
+    ) -> tuple[Mapping[str, Any], bool]:
+        if expected_case_version is not None and int(case["version"]) != expected_case_version:
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT"}
+            )
+        role = review_action_role(case)
+        if role is None:
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_CASE_FINAL"}
+            )
+        decisions = decisions if decisions is not None else self._decision_rows(conn, case)
+        if any(str(item["reviewed_by"]) == actor for item in decisions):
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"}
+            )
+        lock_suffix = " FOR UPDATE" if self.engine.dialect.name == "mysql" else ""
+        current = conn.execute(
+            text(
+                "SELECT * FROM airank_evidence_review_assignments "
+                "WHERE tenant_id=:tenant_id AND case_id=:case_id "
+                "AND reviewer_role=:reviewer_role AND status='active' "
+                f"ORDER BY assigned_at DESC, id DESC LIMIT 1{lock_suffix}"
+            ),
+            {
+                "tenant_id": case["tenant_id"],
+                "case_id": case["id"],
+                "reviewer_role": role,
+            },
+        ).mappings().first()
+        if current is not None and citation_routes._utc_datetime(current["lease_expires_at"]) <= at:
+            self._expire_assignment(conn, current, actor, trace_id, at)
+            current = None
+        if current is not None:
+            if str(current["assigned_to"]) != actor:
+                raise StarletteHTTPException(
+                    409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT"}
+                )
+            return current, True
+        action_available_at = review_action_available_at(case)
+        assignment_id = f"evidence_review_assignment_{uuid4().hex}"
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_evidence_review_assignments (
+                  id, tenant_id, project_id, case_id, reviewer_role, assigned_to,
+                  status, action_available_at, assigned_at, due_at,
+                  lease_expires_at, last_heartbeat_at, version, created_at, updated_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, :case_id, :reviewer_role, :assigned_to,
+                  'active', :action_available_at, :assigned_at, :due_at,
+                  :lease_expires_at, :last_heartbeat_at, 1, :created_at, :updated_at
+                )
+                """
+            ),
+            {
+                "id": assignment_id,
+                "tenant_id": case["tenant_id"],
+                "project_id": case["project_id"],
+                "case_id": case["id"],
+                "reviewer_role": role,
+                "assigned_to": actor,
+                "action_available_at": action_available_at,
+                "assigned_at": at,
+                "due_at": action_available_at
+                + timedelta(seconds=review_sla_seconds(role)),
+                "lease_expires_at": at
+                + timedelta(seconds=review_assignment_lease_seconds()),
+                "last_heartbeat_at": at,
+                "created_at": at,
+                "updated_at": at,
+            },
+        )
+        assignment = self._assignment_row(
+            conn, str(case["tenant_id"]), assignment_id
+        )
+        self._insert_assignment_event(
+            conn, assignment, "claimed", actor, trace_id, at
+        )
+        self._audit(
+            conn,
+            str(case["tenant_id"]),
+            str(case["project_id"]),
+            str(case["id"]),
+            "evidence_review.assignment_claimed",
+            actor,
+            trace_id,
+            {
+                "assignment_id": assignment_id,
+                "reviewer_role": role,
+                "due_at": assignment["due_at"].isoformat(),
+                "lease_expires_at": assignment["lease_expires_at"].isoformat(),
+            },
+            at,
+        )
+        return assignment, False
+
+    @staticmethod
+    def _validate_assignment_owner(
+        assignment: Mapping[str, Any], actor: str, expected_version: int
+    ) -> None:
+        if str(assignment["status"]) != "active":
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_NOT_ACTIVE"}
+            )
+        if str(assignment["assigned_to"]) != actor:
+            raise StarletteHTTPException(
+                403, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN"}
+            )
+        if int(assignment["version"]) != expected_version:
+            raise StarletteHTTPException(
+                409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT"}
+            )
+
+    def _expire_assignment(
+        self,
+        conn: Any,
+        assignment: Mapping[str, Any],
+        actor: str,
+        trace_id: str,
+        at: datetime,
+    ) -> Mapping[str, Any]:
+        next_version = int(assignment["version"]) + 1
+        conn.execute(
+            text(
+                """
+                UPDATE airank_evidence_review_assignments
+                SET status='expired', version=:version, updated_at=:at
+                WHERE tenant_id=:tenant_id AND id=:assignment_id
+                """
+            ),
+            {
+                "version": next_version,
+                "at": at,
+                "tenant_id": assignment["tenant_id"],
+                "assignment_id": assignment["id"],
+            },
+        )
+        updated = self._assignment_row(
+            conn, str(assignment["tenant_id"]), str(assignment["id"])
+        )
+        self._insert_assignment_event(
+            conn, updated, "expired", actor, trace_id, at
+        )
+        self._audit(
+            conn,
+            str(updated["tenant_id"]),
+            str(updated["project_id"]),
+            str(updated["case_id"]),
+            "evidence_review.assignment_expired",
+            actor,
+            trace_id,
+            {"assignment_id": updated["id"], "version": next_version},
+            at,
+        )
+        return updated
+
+    def _complete_assignment(
+        self,
+        conn: Any,
+        assignment: Mapping[str, Any],
+        actor: str,
+        trace_id: str,
+        at: datetime,
+    ) -> None:
+        next_version = int(assignment["version"]) + 1
+        conn.execute(
+            text(
+                """
+                UPDATE airank_evidence_review_assignments
+                SET status='completed', completed_at=:at,
+                    version=:version, updated_at=:at
+                WHERE tenant_id=:tenant_id AND id=:assignment_id
+                  AND status='active' AND assigned_to=:actor
+                """
+            ),
+            {
+                "at": at,
+                "version": next_version,
+                "tenant_id": assignment["tenant_id"],
+                "assignment_id": assignment["id"],
+                "actor": actor,
+            },
+        )
+        updated = self._assignment_row(
+            conn, str(assignment["tenant_id"]), str(assignment["id"])
+        )
+        self._insert_assignment_event(
+            conn, updated, "completed", actor, trace_id, at
+        )
+
+    @staticmethod
+    def _insert_assignment_event(
+        conn: Any,
+        assignment: Mapping[str, Any],
+        event_type: str,
+        actor: str,
+        trace_id: str,
+        at: datetime,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_evidence_review_assignment_events (
+                  id, tenant_id, project_id, case_id, assignment_id,
+                  event_type, assignment_version, actor, trace_id,
+                  payload_json, created_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, :case_id, :assignment_id,
+                  :event_type, :assignment_version, :actor, :trace_id,
+                  :payload_json, :created_at
+                )
+                """
+            ),
+            {
+                "id": f"review_assignment_event_{uuid4().hex}",
+                "tenant_id": assignment["tenant_id"],
+                "project_id": assignment["project_id"],
+                "case_id": assignment["case_id"],
+                "assignment_id": assignment["id"],
+                "event_type": event_type,
+                "assignment_version": assignment["version"],
+                "actor": actor,
+                "trace_id": trace_id,
+                "payload_json": json.dumps(
+                    {
+                        "status": assignment["status"],
+                        "reviewer_role": assignment["reviewer_role"],
+                        **dict(extra or {}),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "created_at": at,
+            },
+        )
 
     def _insert_case(self, conn: Any, **values: Any) -> None:
         actor = values.pop("actor")
@@ -1215,7 +2172,31 @@ class MySQLEvidenceReviewRepository:
         return case_data_from_mapping(self._case_mapping(conn, row), actor)
 
     def _case_mapping(self, conn: Any, row: Mapping[str, Any]) -> dict[str, Any]:
-        return {**dict(row), "case_id": str(row["id"]), "decisions": self._decision_rows(conn, row)}
+        role = review_action_role(row)
+        assignment = None
+        if role is not None:
+            assignment = conn.execute(
+                text(
+                    """
+                    SELECT * FROM airank_evidence_review_assignments
+                    WHERE tenant_id=:tenant_id AND case_id=:case_id
+                      AND reviewer_role=:reviewer_role AND status='active'
+                    ORDER BY assigned_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "tenant_id": row["tenant_id"],
+                    "case_id": row["id"],
+                    "reviewer_role": role,
+                },
+            ).mappings().first()
+        return {
+            **dict(row),
+            "case_id": str(row["id"]),
+            "decisions": self._decision_rows(conn, row),
+            "assignment": assignment,
+        }
 
     @staticmethod
     def _decision_rows(conn: Any, case: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -1276,16 +2257,28 @@ def decision_data(item: Any) -> EvidenceReviewDecisionData:
     )
 
 
-def case_data_from_mapping(case: Mapping[str, Any], actor: str) -> EvidenceReviewCaseData:
+def case_data_from_mapping(
+    case: Mapping[str, Any], actor: str, *, at: Optional[datetime] = None
+) -> EvidenceReviewCaseData:
     decisions = [decision_data(item) for item in case.get("decisions", [])]
     status = str(case["status"])
     final = status in {"agreed", "adjudicated"}
     visible = decisions if final else [item for item in decisions if item.reviewed_by == actor]
     current = next((item.reviewer_role for item in decisions if item.reviewed_by == actor), None)
+    assignment: Optional[EvidenceReviewAssignmentData] = None
+    if not final and current is None and review_action_role(case) is not None:
+        raw_assignment = case.get("assignment")
+        assignment = assignment_data_from_mapping(
+            case,
+            raw_assignment if isinstance(raw_assignment, Mapping) else None,
+            actor,
+            at=at,
+        )
     next_action: str
-    if status == "awaiting_secondary" and current is None:
+    assignment_available = assignment is None or assignment.state != "assigned_to_other"
+    if status == "awaiting_secondary" and current is None and assignment_available:
         next_action = "submit_secondary"
-    elif status == "disputed" and current is None:
+    elif status == "disputed" and current is None and assignment_available:
         next_action = "adjudicate"
     elif final:
         next_action = "complete"
@@ -1307,6 +2300,7 @@ def case_data_from_mapping(case: Mapping[str, Any], actor: str) -> EvidenceRevie
         decision_count=len(decisions),
         current_actor_role=current,
         next_action=next_action,
+        assignment=assignment,
         visible_decisions=visible,
         created_by=str(case["created_by"]),
         finalized_by=str(case["finalized_by"]) if case.get("finalized_by") else None,
@@ -1458,6 +2452,76 @@ def submit_evidence_review_decision(
         meta["trace_id"],
     )
     return EvidenceReviewCaseResponse(data=data, meta=meta)
+
+
+@router.post(
+    "/evidence-review-cases/{case_id}/assignment-claims",
+    response_model=EvidenceReviewAssignmentResponse,
+    status_code=201,
+)
+def claim_evidence_review_assignment(
+    case_id: str,
+    payload: EvidenceReviewAssignmentClaimRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
+) -> EvidenceReviewAssignmentResponse:
+    meta = response_meta(trace_id)
+    actor = trusted_actor("console-reviewer", authenticated_actor)
+    return EvidenceReviewAssignmentResponse(
+        data=EVIDENCE_REVIEW_REPOSITORY.claim_assignment(
+            tenant_id, case_id, payload, actor, meta["trace_id"]
+        ),
+        meta=meta,
+    )
+
+
+@router.post(
+    "/evidence-review-assignments/{assignment_id}/heartbeats",
+    response_model=EvidenceReviewAssignmentResponse,
+)
+def heartbeat_evidence_review_assignment(
+    assignment_id: str,
+    payload: EvidenceReviewAssignmentHeartbeatRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
+) -> EvidenceReviewAssignmentResponse:
+    meta = response_meta(trace_id)
+    actor = trusted_actor("console-reviewer", authenticated_actor)
+    return EvidenceReviewAssignmentResponse(
+        data=EVIDENCE_REVIEW_REPOSITORY.heartbeat_assignment(
+            tenant_id, assignment_id, payload, actor, meta["trace_id"]
+        ),
+        meta=meta,
+    )
+
+
+@router.post(
+    "/evidence-review-assignments/{assignment_id}/release",
+    response_model=EvidenceReviewAssignmentResponse,
+)
+def release_evidence_review_assignment(
+    assignment_id: str,
+    payload: EvidenceReviewAssignmentReleaseRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
+) -> EvidenceReviewAssignmentResponse:
+    meta = response_meta(trace_id)
+    actor = trusted_actor("console-reviewer", authenticated_actor)
+    return EvidenceReviewAssignmentResponse(
+        data=EVIDENCE_REVIEW_REPOSITORY.release_assignment(
+            tenant_id, assignment_id, payload, actor, meta["trace_id"]
+        ),
+        meta=meta,
+    )
 
 
 @router.get(

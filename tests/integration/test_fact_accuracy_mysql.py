@@ -366,13 +366,39 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
                     SELECT
                       (SELECT COUNT(*) FROM airank_fact_accuracy_reviews
                        WHERE tenant_id=:tenant_id) AS review_count,
-                          (SELECT COUNT(*) FROM airank_audit_events
-                           WHERE tenant_id=:tenant_id
-                             AND entity_type='evidence_review_case') AS audit_count
+                      (SELECT COUNT(*) FROM airank_audit_events
+                       WHERE tenant_id=:tenant_id
+                         AND entity_type='evidence_review_case') AS audit_count,
+                      (SELECT COUNT(*)
+                       FROM airank_evidence_review_assignments
+                       WHERE tenant_id=:tenant_id
+                         AND case_id=:case_id
+                         AND status='completed') AS completed_assignment_count
+                    """
+                ),
+                {"tenant_id": tenant_id, "case_id": review_case.case_id},
+            ).mappings().one()
+            assert dict(rows) == {
+                "review_count": 2,
+                "audit_count": 3,
+                "completed_assignment_count": 1,
+            }
+            audit_actions = conn.execute(
+                text(
+                    """
+                    SELECT event_type
+                    FROM airank_audit_events
+                    WHERE tenant_id=:tenant_id
+                      AND entity_type='evidence_review_case'
+                    ORDER BY created_at, id
                     """
                 ),
                 {"tenant_id": tenant_id},
-            ).mappings().one()
-            assert dict(rows) == {"review_count": 2, "audit_count": 2}
+            ).scalars().all()
+            assert audit_actions == [
+                "evidence_review.case_created",
+                "evidence_review.assignment_claimed",
+                "evidence_review.decision_submitted",
+            ]
     finally:
         cleanup_tenant(engine, tenant_id)

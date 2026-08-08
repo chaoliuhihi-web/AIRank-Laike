@@ -90,6 +90,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `EVIDENCE_REVIEW_CASE_EXISTS` | 409 | 同一目标、证据基础和用途已经存在复核任务 |
 | `EVIDENCE_REVIEW_CASE_FINAL` | 409 | 复核任务已一致通过或完成裁决，不能继续追加普通决定 |
 | `EVIDENCE_REVIEW_CURSOR_INVALID` | 422 | 独立复核待办游标无法解码、版本不受支持或字段非法 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_NOT_FOUND` | 404 | 独立复核任务领取记录不存在或不属于当前租户 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT` | 409 | 当前动作已被另一审核人持久领取且租约仍有效 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_NOT_ACTIVE` | 409 | 领取记录已经完成、释放或过期，不能继续操作 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED` | 409 | 当前审核人的领取租约已过期，需要重新领取 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT` | 409 | case 或领取记录版本已变化，需要刷新后重试 |
+| `EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN` | 403 | 当前账号不是领取人，不能续租或释放任务 |
 | `EVIDENCE_REVIEW_LABEL_INVALID` | 409 | 决定标签不属于该引用支持或事实准确性任务的允许集合 |
 | `EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN` | 409 | 第二复核人或裁决人必须与之前的审核人不同 |
 | `SOURCE_REGISTRY_ENTRY_NOT_FOUND` | 404 | 引用域名未出现在当前租户项目的真实 Citation 中，不能凭空创建来源分类 |

@@ -2066,6 +2066,18 @@ button:disabled {
   min-width: 0;
 }
 
+.review-inbox-card > div:first-child {
+  flex: 1 1 auto;
+}
+
+.review-inbox-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .review-inbox-card strong,
 .review-inbox-card small {
   display: block;
@@ -2117,6 +2129,10 @@ button:disabled {
   }
 
   .review-inbox-card .table-action {
+    width: 100%;
+  }
+
+  .review-inbox-actions {
     width: 100%;
   }
 

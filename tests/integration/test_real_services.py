@@ -75,6 +75,9 @@ from apps.api.citation_support_routes import (
 )
 from apps.api.evidence_review_routes import (
     CitationReviewCaseCreateRequest,
+    EvidenceReviewAssignmentClaimRequest,
+    EvidenceReviewAssignmentHeartbeatRequest,
+    EvidenceReviewAssignmentReleaseRequest,
     EvidenceReviewDecisionRequest,
     FactReviewCaseCreateRequest,
     MySQLEvidenceReviewRepository,
@@ -115,7 +118,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0026"
+EXPECTED_ALEMBIC_HEAD = "20260809_0027"
 
 
 def require_real_flag(flag: str) -> None:
@@ -181,7 +184,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 67
+        assert table_count == 69
         assert conn.execute(
             text(
                 """
@@ -4100,6 +4103,108 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             )
         assert self_review.value.detail["code"] == "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"
 
+        def attempt_claim(actor: str) -> tuple[str, Any, str | None]:
+            try:
+                return (
+                    actor,
+                    review_repo.claim_assignment(
+                        tenant_id,
+                        citation_case.case_id,
+                        EvidenceReviewAssignmentClaimRequest(
+                            expected_case_version=citation_case.version
+                        ),
+                        actor,
+                        f"trace-review-claim-{actor}",
+                    ),
+                    None,
+                )
+            except StarletteHTTPException as exc:
+                return actor, None, str(exc.detail["code"])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claim_outcomes = list(
+                executor.map(attempt_claim, ["reviewer-2", "reviewer-3"])
+            )
+        successful_claims = [item for item in claim_outcomes if item[1] is not None]
+        failed_claims = [item for item in claim_outcomes if item[2] is not None]
+        assert len(successful_claims) == 1
+        assert len(failed_claims) == 1
+        assert failed_claims[0][2] == "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT"
+        winner_actor, claimed, _ = successful_claims[0]
+        loser_actor = failed_claims[0][0]
+        assert claimed.state == "assigned_to_me"
+        assert claimed.owned_by_current_actor is True
+        assert claimed.assignment_id
+        assert claimed.version == 1
+        assert review_repo.list_inbox(
+            tenant_id, project.project_id, loser_actor, 12, None
+        ).actionable_count == 0
+        renewed = review_repo.heartbeat_assignment(
+            tenant_id,
+            claimed.assignment_id,
+            EvidenceReviewAssignmentHeartbeatRequest(expected_version=claimed.version),
+            winner_actor,
+            "trace-review-heartbeat",
+        )
+        assert renewed.version == 2
+        assert renewed.due_at == claimed.due_at
+        released = review_repo.release_assignment(
+            tenant_id,
+            claimed.assignment_id,
+            EvidenceReviewAssignmentReleaseRequest(
+                expected_version=renewed.version,
+                reason="integration release before reclaim",
+            ),
+            winner_actor,
+            "trace-review-release",
+        )
+        assert released.state == "released"
+        expiring = review_repo.claim_assignment(
+            tenant_id,
+            citation_case.case_id,
+            EvidenceReviewAssignmentClaimRequest(
+                expected_case_version=citation_case.version
+            ),
+            "reviewer-3",
+            "trace-review-expiring-claim",
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_evidence_review_assignments
+                    SET lease_expires_at=:expired_at
+                    WHERE tenant_id=:tenant_id AND id=:assignment_id
+                    """
+                ),
+                {
+                    "expired_at": datetime.now(timezone.utc) - timedelta(seconds=1),
+                    "tenant_id": tenant_id,
+                    "assignment_id": expiring.assignment_id,
+                },
+            )
+        with pytest.raises(StarletteHTTPException) as lease_expired:
+            review_repo.heartbeat_assignment(
+                tenant_id,
+                expiring.assignment_id,
+                EvidenceReviewAssignmentHeartbeatRequest(
+                    expected_version=expiring.version
+                ),
+                "reviewer-3",
+                "trace-review-expired-heartbeat",
+            )
+        assert lease_expired.value.detail["code"] == "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED"
+        reclaimed = review_repo.claim_assignment(
+            tenant_id,
+            citation_case.case_id,
+            EvidenceReviewAssignmentClaimRequest(
+                expected_case_version=citation_case.version
+            ),
+            "reviewer-2",
+            "trace-review-reclaim",
+        )
+        assert reclaimed.assignment_id != claimed.assignment_id
+
         disputed = review_repo.submit_decision(
             tenant_id,
             citation_case.case_id,
@@ -4235,8 +4340,40 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
                 text("SELECT COUNT(*) FROM airank_evidence_review_cases WHERE tenant_id=:tenant_id"),
                 {"tenant_id": tenant_id},
             ).scalar_one()
+            assignment_rows = conn.execute(
+                text(
+                    """
+                    SELECT id, status, assigned_to, reviewer_role
+                    FROM airank_evidence_review_assignments
+                    WHERE tenant_id=:tenant_id
+                    ORDER BY assigned_at, id
+                    """
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().all()
+            assignment_events = conn.execute(
+                text(
+                    """
+                    SELECT event_type
+                    FROM airank_evidence_review_assignment_events
+                    WHERE tenant_id=:tenant_id
+                    """
+                ),
+                {"tenant_id": tenant_id},
+            ).scalars().all()
         assert case_count == 2
         assert {"evidence_review.case_created", "evidence_review.decision_submitted"} <= audit_types
+        assignment_by_id = {str(row["id"]): row for row in assignment_rows}
+        assert assignment_by_id[claimed.assignment_id]["status"] == "released"
+        assert assignment_by_id[expiring.assignment_id]["status"] == "expired"
+        assert assignment_by_id[reclaimed.assignment_id]["status"] == "completed"
+        assert assignment_by_id[reclaimed.assignment_id]["assigned_to"] == "reviewer-2"
+        assert assignment_by_id[reclaimed.assignment_id]["reviewer_role"] == "secondary"
+        assert any(
+            row["status"] == "completed" and row["reviewer_role"] == "adjudicator"
+            for row in assignment_rows
+        )
+        assert {"claimed", "heartbeat", "released", "completed"} <= set(assignment_events)
     finally:
         cleanup_tenant(engine, tenant_id)
 
