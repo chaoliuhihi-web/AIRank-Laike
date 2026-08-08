@@ -373,6 +373,67 @@ export type OpportunityActionRouting = {
   idempotent_replay: boolean;
 };
 
+export type OpportunityDependency = {
+  dependency_id: string;
+  action_id: string;
+  prerequisite_action_id: string;
+  prerequisite_status: OpportunityAction["status"];
+  dependency_type: "finish_to_start" | "evidence_prerequisite";
+  status: "active" | "waived";
+  satisfied: boolean;
+  rationale: string;
+  waiver_reason: string | null;
+  version: number;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityExecutionPlan = {
+  plan_id: string;
+  action_id: string;
+  action_status: OpportunityAction["status"];
+  contract_version: "airank.opportunity-execution-plan.v1";
+  status: "draft" | "approved";
+  estimate_source: "human_estimate";
+  estimated_effort_hours: string;
+  estimated_budget_amount: string;
+  currency: "CNY";
+  planned_start_at: string | null;
+  planned_due_at: string | null;
+  assumptions: string;
+  outcome_forecast_allowed: false;
+  dependencies: OpportunityDependency[];
+  unsatisfied_dependency_count: number;
+  version: number;
+  event_count: number;
+  last_event_sha256: string;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityExecutionPortfolio = {
+  project_id: string;
+  contract_version: "airank.opportunity-execution-plan.v1";
+  planning_required_count: number;
+  approved_plan_count: number;
+  planning_coverage_complete: boolean;
+  total_estimated_effort_hours: string | null;
+  total_estimated_budget_amount: string | null;
+  currency: "CNY";
+  topological_order: string[][];
+  blocked_action_ids: string[];
+  plans: OpportunityExecutionPlan[];
+  unplanned_action_ids: string[];
+  outcome_forecast_allowed: false;
+  known_limitations: string[];
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -1996,6 +2057,91 @@ export function fetchOpportunityActionRouting(projectId: string, signal?: AbortS
     "trc_web_opportunity_action_routing",
     signal,
   );
+}
+
+export function fetchOpportunityExecutionPortfolio(projectId: string, signal?: AbortSignal): Promise<OpportunityExecutionPortfolio> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-execution-portfolio`,
+    "trc_web_opportunity_execution_portfolio",
+    signal,
+  );
+}
+
+export async function putOpportunityExecutionPlan(
+  projectId: string,
+  actionId: string,
+  input: {
+    estimatedEffortHours: string;
+    estimatedBudgetAmount: string;
+    assumptions: string;
+    expectedVersion?: number;
+  },
+): Promise<OpportunityExecutionPlan> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-actions/${encodeURIComponent(actionId)}/plan`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_execution_plan") },
+      body: JSON.stringify({
+        status: "approved",
+        estimated_effort_hours: input.estimatedEffortHours,
+        estimated_budget_amount: input.estimatedBudgetAmount,
+        currency: "CNY",
+        assumptions: input.assumptions,
+        ...(input.expectedVersion ? { expected_version: input.expectedVersion } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity execution plan update failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityExecutionPlan }).data;
+}
+
+export async function createOpportunityDependency(
+  projectId: string,
+  actionId: string,
+  prerequisiteActionId: string,
+  rationale: string,
+): Promise<OpportunityDependency> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-actions/${encodeURIComponent(actionId)}/dependencies`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-dependency-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_dependency"),
+      },
+      body: JSON.stringify({
+        prerequisite_action_id: prerequisiteActionId,
+        dependency_type: "finish_to_start",
+        rationale,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity dependency creation failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityDependency }).data;
+}
+
+export async function waiveOpportunityDependency(
+  projectId: string,
+  dependencyId: string,
+  expectedVersion: number,
+  waiverReason: string,
+): Promise<OpportunityDependency> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-dependencies/${encodeURIComponent(dependencyId)}/waivers`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_dependency_waiver") },
+      body: JSON.stringify({
+        expected_version: expectedVersion,
+        waiver_reason: waiverReason,
+        acknowledge_no_outcome_claim: true,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity dependency waiver failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityDependency }).data;
 }
 
 export async function createOpportunityActionTeam(projectId: string, name: string): Promise<OpportunityActionRouting> {

@@ -1304,3 +1304,25 @@ Decision:
 ### Decision
 
 - Team routing and capacity close another internal delivery-control gap, but AIRank remains commercial `NO-GO`. Build success, manual membership and pending escalation events are not substituted for production identity, external delivery or observed GEO outcomes.
+
+## Opportunity execution planning and dependency gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0036` adds one current human execution plan per opportunity action, cross-action dependencies and a shared append-only plan/dependency event ledger with previous-event SHA-256. The real database is at head with 89 AIRank tables.
+- Plans explicitly store `estimate_source=human_estimate`, effort hours, CNY budget, optional timezone-aware dates, assumptions, optimistic version and `outcome_forecast_allowed=false`. Portfolio effort and budget remain null until every non-final action has an approved plan.
+- Dependency creation is idempotent, rejects self-dependency and in-progress targets, serializes graph mutation by locking the project's actions and rejects cycles. Duplicate edge types do not corrupt topological indegree. Final prerequisites and waived dependencies no longer block or pollute the open-action execution order.
+- An unsatisfied dependency now blocks an open action from being claimed into `in_progress`, and blocks an assigned evidence-gated action from refreshing into execution. A waiver requires the current version, a substantive reason and explicit acknowledgement that no outcome claim is allowed; it appends rather than overwrites audit history.
+- The asset workflow reads the real portfolio API and exposes coverage, conditional totals, dependency blockers, topological layers, plan approval, dependency creation and explicit waiver. Labels state that estimates are not invoices, spend or recommendation/growth forecasts. Node 24 TypeScript/Vite production build passes; the new planning UI has not been rerun through browser visual/E2E acceptance in this slice and remains pending.
+- Contract and acceptance suites pass 219 and 89 tests. Full default regression passes `514 passed, 33 skipped`; real MySQL passes `31 passed, 2 skipped`. The real planning chain verifies no partial totals, 4h/1000 + 6h/2000 = 10h/3000 after complete approval, deterministic two-layer ordering, reverse-cycle rejection, claim blocking, audited waiver, post-waiver claim and a two-event dependency hash chain.
+
+### Still blocked
+
+- Human estimates are not contracts, time sheets, invoices or observed spend. Calendar-aware capacity scheduling and a governed 30/60/90 portfolio view are not implemented.
+- The new planning UI has production build evidence but no fresh browser click/visual evidence. It must not be described as browser-E2E complete until that separate gate runs.
+- Real Yudao action-team synchronization and a customer HTTPS notification receipt remain absent. Manual team membership and pending Outbox events are not production identity or delivery proof.
+- Existing production HTTPS object storage, Yudao auth, optional Xinghe services, Consumer Browser/App collection, customer publishing, reviewer benchmark, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 evidence blockers remain unchanged.
+
+### Decision
+
+- AIRank can now turn an evidence-backed opportunity queue into a constrained human execution portfolio without inventing ROI. This engineering slice is complete, but the product remains commercial `NO-GO` until the external production, browser and customer-evidence gates pass.

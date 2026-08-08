@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_dependency.schema.json",
+  "title": "AIRank Opportunity Action Dependency",
+  "type": "object",
+  "required": ["dependency_id", "action_id", "prerequisite_action_id", "prerequisite_status", "dependency_type", "status", "satisfied", "rationale", "waiver_reason", "version", "created_by", "updated_by", "created_at", "updated_at", "idempotent_replay"],
+  "additionalProperties": false,
+  "properties": {
+    "dependency_id": { "type": "string", "pattern": "^opportunity_dependency_[0-9a-f]{20}$" },
+    "action_id": { "$ref": "#/$defs/action_id" },
+    "prerequisite_action_id": { "$ref": "#/$defs/action_id" },
+    "prerequisite_status": { "type": "string", "minLength": 1 },
+    "dependency_type": { "type": "string", "enum": ["finish_to_start", "evidence_prerequisite"] },
+    "status": { "type": "string", "enum": ["active", "waived"] },
+    "satisfied": { "type": "boolean" },
+    "rationale": { "type": "string", "minLength": 12, "maxLength": 2000 },
+    "waiver_reason": { "type": ["string", "null"], "minLength": 20, "maxLength": 2000 },
+    "version": { "type": "integer", "minimum": 1 },
+    "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "updated_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "idempotent_replay": { "type": "boolean" }
+  },
+  "$defs": {
+    "action_id": { "type": "string", "pattern": "^opportunity_action_[0-9a-f]{20}$" }
+  }
+}

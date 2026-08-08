@@ -151,6 +151,12 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "OPPORTUNITY_ACTION_ROUTING_BLOCKED": (409, "Opportunity action routing is not ready"),
     "OPPORTUNITY_ACTION_ROUTING_FORBIDDEN": (403, "Current actor is not routed for this opportunity"),
     "OPPORTUNITY_ACTION_CAPACITY_REACHED": (409, "Opportunity action owner capacity is reached"),
+    "OPPORTUNITY_ACTION_DEPENDENCY_BLOCKED": (409, "Opportunity action has unsatisfied prerequisites"),
+    "OPPORTUNITY_PLAN_VERSION_CONFLICT": (409, "Opportunity execution plan version is stale"),
+    "OPPORTUNITY_DEPENDENCY_NOT_FOUND": (404, "Opportunity action dependency was not found"),
+    "OPPORTUNITY_DEPENDENCY_INVALID": (409, "Opportunity action dependency is invalid"),
+    "OPPORTUNITY_DEPENDENCY_CYCLE": (409, "Opportunity action dependency would create a cycle"),
+    "OPPORTUNITY_DEPENDENCY_VERSION_CONFLICT": (409, "Opportunity action dependency version is stale"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -6080,3 +6086,10 @@ except ImportError:  # pragma: no cover
     from opportunity_routing_routes import router as opportunity_routing_router  # type: ignore[no-redef]
 
 app.include_router(opportunity_routing_router)
+
+try:
+    from .opportunity_planning_routes import router as opportunity_planning_router
+except ImportError:  # pragma: no cover
+    from opportunity_planning_routes import router as opportunity_planning_router  # type: ignore[no-redef]
+
+app.include_router(opportunity_planning_router)

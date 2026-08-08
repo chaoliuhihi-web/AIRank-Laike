@@ -186,6 +186,9 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_opportunity_action_teams` | `tenant_id` | `project_id` | 机会交付团队、状态与外部目录同步摘要 | 项目/状态、名称幂等和外部组索引覆盖；不保存目录凭证 |
 | `airank_opportunity_action_team_members` | `tenant_id` | `project_id` | 成员资格、活动行动容量与升级接收标记 | 团队/优先级和用户/状态索引覆盖；手工成员外部核验固定为 false |
 | `airank_opportunity_action_routes` | `tenant_id` | `project_id` | 四类机会来源到交付团队的版本化当前路由 | 每项目/source_kind 唯一，团队/状态索引覆盖 |
+| `airank_opportunity_action_plans` | `tenant_id` | `project_id` | 每个行动的人工计划、预算、工时和版本 | 每项目/action 唯一，项目/status/截止时间索引覆盖；固定非效果预测 |
+| `airank_opportunity_action_dependencies` | `tenant_id` | `project_id` | 行动前置依赖、满足状态与人工豁免 | 行动/前置行动/状态和租户项目幂等键索引覆盖；应用层项目锁与环检测 |
+| `airank_opportunity_action_plan_events` | `tenant_id` | `project_id` | 计划、依赖和豁免的 hash 链追加事件 | aggregate/version 唯一，项目/aggregate/时间索引覆盖 |
 | `airank_integration_capabilities` | 无 | 无 | 能力探测状态，非租户业务数据 | `uk_airank_capabilities`、`idx_airank_capabilities_status` 覆盖 |
 | `airank_audit_events` | `tenant_id` | `project_id` 可空 | 审计列表、实体审计、trace 排查 | `idx_airank_audit_events_project`、`idx_airank_audit_events_entity`、`idx_airank_audit_events_trace` 覆盖 |
 

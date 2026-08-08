@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_execution_portfolio_response.schema.json",
+  "title": "AIRank Opportunity Execution Portfolio Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["project_id", "contract_version", "planning_required_count", "approved_plan_count", "planning_coverage_complete", "total_estimated_effort_hours", "total_estimated_budget_amount", "currency", "topological_order", "blocked_action_ids", "plans", "unplanned_action_ids", "outcome_forecast_allowed", "known_limitations"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "contract_version": { "const": "airank.opportunity-execution-plan.v1" },
+        "planning_required_count": { "type": "integer", "minimum": 0 },
+        "approved_plan_count": { "type": "integer", "minimum": 0 },
+        "planning_coverage_complete": { "type": "boolean" },
+        "total_estimated_effort_hours": { "$ref": "#/$defs/nullable_decimal" },
+        "total_estimated_budget_amount": { "$ref": "#/$defs/nullable_decimal" },
+        "currency": { "const": "CNY" },
+        "topological_order": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/action_id" } } },
+        "blocked_action_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/action_id" } },
+        "plans": { "type": "array", "items": { "$ref": "opportunity_execution_plan.schema.json" } },
+        "unplanned_action_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/action_id" } },
+        "outcome_forecast_allowed": { "const": false },
+        "known_limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "action_id": { "type": "string", "pattern": "^opportunity_action_[0-9a-f]{20}$" },
+    "decimal": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }] },
+    "nullable_decimal": { "oneOf": [{ "$ref": "#/$defs/decimal" }, { "type": "null" }] },
+    "meta": {
+      "type": "object", "required": ["trace_id", "request_id"], "additionalProperties": false,
+      "properties": { "trace_id": { "type": "string", "minLength": 1 }, "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" } }
+    }
+  }
+}

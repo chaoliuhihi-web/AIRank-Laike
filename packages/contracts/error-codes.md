@@ -153,6 +153,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPPORTUNITY_ACTION_ROUTING_BLOCKED` | 409 | 已启用团队路由，但该来源没有可用团队或成员 |
 | `OPPORTUNITY_ACTION_ROUTING_FORBIDDEN` | 403 | 当前认证账号不是该机会来源路由团队的有效成员 |
 | `OPPORTUNITY_ACTION_CAPACITY_REACHED` | 409 | 当前责任人的活动机会数达到团队成员容量上限 |
+| `OPPORTUNITY_ACTION_DEPENDENCY_BLOCKED` | 409 | 当前行动仍有未满足的前置依赖，不能进入执行中 |
+| `OPPORTUNITY_PLAN_VERSION_CONFLICT` | 409 | 机会执行计划版本已变化，必须刷新后再更新人工估算 |
+| `OPPORTUNITY_DEPENDENCY_NOT_FOUND` | 404 | 机会行动依赖不存在或不属于当前租户项目 |
+| `OPPORTUNITY_DEPENDENCY_INVALID` | 409 | 机会行动依赖无效，例如行动依赖自身 |
+| `OPPORTUNITY_DEPENDENCY_CYCLE` | 409 | 新依赖会形成循环，或持久依赖图已无法拓扑排序 |
+| `OPPORTUNITY_DEPENDENCY_VERSION_CONFLICT` | 409 | 机会行动依赖版本已变化，必须刷新后再豁免 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_dependency_create_request.schema.json",
+  "title": "AIRank Opportunity Dependency Create Request",
+  "type": "object",
+  "required": ["prerequisite_action_id", "dependency_type", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "prerequisite_action_id": { "$ref": "#/$defs/action_id" },
+    "dependency_type": { "type": "string", "enum": ["finish_to_start", "evidence_prerequisite"] },
+    "rationale": { "type": "string", "minLength": 12, "maxLength": 2000 }
+  },
+  "$defs": {
+    "action_id": { "type": "string", "pattern": "^opportunity_action_[0-9a-f]{20}$" }
+  }
+}

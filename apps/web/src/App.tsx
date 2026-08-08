@@ -70,6 +70,7 @@ import {
   compileQuestionMap,
   claimEvidenceReviewAssignment,
   claimOpportunityAction,
+  createOpportunityDependency,
   createOpportunityActionTeam,
   bindFactAcquisitionEvidence,
   createEvidenceReviewerTeam,
@@ -105,6 +106,7 @@ import {
   fetchFactAcquisitionTasks,
   fetchOpportunityActions,
   fetchOpportunityActionRouting,
+  fetchOpportunityExecutionPortfolio,
   fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
@@ -160,6 +162,8 @@ import {
   updateKnowledgeSyncPolicy,
   upsertOpportunityActionMember,
   putOpportunityActionRoute,
+  putOpportunityExecutionPlan,
+  waiveOpportunityDependency,
   verifyOpportunityActionNotObserved,
   type AuthSession,
   type AnswerSample,
@@ -187,6 +191,8 @@ import {
   type OpportunityAction,
   type OpportunityActionList,
   type OpportunityActionRouting,
+  type OpportunityDependency,
+  type OpportunityExecutionPortfolio,
   type OpportunitySourceKind,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
@@ -4486,9 +4492,26 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     known_limitations: ["yudao_action_team_sync_not_configured"],
     idempotent_replay: false,
   });
+  const [opportunityPlanning, setOpportunityPlanning] = useState<OpportunityExecutionPortfolio>({
+    project_id: "",
+    contract_version: "airank.opportunity-execution-plan.v1",
+    planning_required_count: 0,
+    approved_plan_count: 0,
+    planning_coverage_complete: false,
+    total_estimated_effort_hours: null,
+    total_estimated_budget_amount: null,
+    currency: "CNY",
+    topological_order: [],
+    blocked_action_ids: [],
+    plans: [],
+    unplanned_action_ids: [],
+    outcome_forecast_allowed: false,
+    known_limitations: ["human_estimate_not_invoice_or_spend"],
+  });
   const [derivingOpportunities, setDerivingOpportunities] = useState(false);
   const [actingOpportunityId, setActingOpportunityId] = useState<string | null>(null);
   const [routingMutationKey, setRoutingMutationKey] = useState<string | null>(null);
+  const [planningMutationKey, setPlanningMutationKey] = useState<string | null>(null);
   const [creatingFactTaskGapId, setCreatingFactTaskGapId] = useState<string | null>(null);
   const [bindingFactTaskId, setBindingFactTaskId] = useState<string | null>(null);
   const [taskFactSelections, setTaskFactSelections] = useState<Record<string, string>>({});
@@ -4526,6 +4549,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setOpportunities({ project_id: "", contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
       setOpportunityActions({ project_id: "", contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
       setOpportunityRouting({ project_id: "", contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
+      setOpportunityPlanning({ project_id: "", contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
       return;
     }
     const controller = new AbortController();
@@ -4539,8 +4563,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchOpportunities(project.id, controller.signal),
       fetchOpportunityActions(project.id, controller.signal),
       fetchOpportunityActionRouting(project.id, controller.signal),
+      fetchOpportunityExecutionPortfolio(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityPlanning]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
@@ -4550,6 +4575,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunities(nextOpportunities);
         setOpportunityActions(nextOpportunityActions);
         setOpportunityRouting(nextOpportunityRouting);
+        setOpportunityPlanning(nextOpportunityPlanning);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4578,6 +4604,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunities({ project_id: project.id, contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
         setOpportunityActions({ project_id: project.id, contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
         setOpportunityRouting({ project_id: project.id, contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
+        setOpportunityPlanning({ project_id: project.id, contract_version: "airank.opportunity-execution-plan.v1", planning_required_count: 0, approved_plan_count: 0, planning_coverage_complete: false, total_estimated_effort_hours: null, total_estimated_budget_amount: null, currency: "CNY", topological_order: [], blocked_action_ids: [], plans: [], unplanned_action_ids: [], outcome_forecast_allowed: false, known_limitations: ["human_estimate_not_invoice_or_spend"] });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4669,7 +4696,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setActingOpportunityId(item.snapshot_id);
     try {
       const action = await createOpportunityAction(project.id, item.snapshot_id);
-      setOpportunityActions(await fetchOpportunityActions(project.id));
+      const [nextActions, nextPlanning] = await Promise.all([
+        fetchOpportunityActions(project.id),
+        fetchOpportunityExecutionPortfolio(project.id),
+      ]);
+      setOpportunityActions(nextActions);
+      setOpportunityPlanning(nextPlanning);
       notify({
         title: action.idempotent_replay ? "执行行动已存在" : "已纳入执行台账",
         desc: action.status === "evidence_blocked"
@@ -4689,7 +4721,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setActingOpportunityId(action.action_id);
     try {
       const claimed = await claimOpportunityAction(project.id, action.action_id, action.version);
-      setOpportunityActions(await fetchOpportunityActions(project.id));
+      const [nextActions, nextPlanning] = await Promise.all([
+        fetchOpportunityActions(project.id),
+        fetchOpportunityExecutionPortfolio(project.id),
+      ]);
+      setOpportunityActions(nextActions);
+      setOpportunityPlanning(nextPlanning);
       notify({
         title: "行动已领取",
         desc: claimed.status === "evidence_blocked"
@@ -4709,7 +4746,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setActingOpportunityId(action.action_id);
     try {
       await verifyOpportunityActionNotObserved(project.id, action.action_id, action.version, verificationRunId);
-      setOpportunityActions(await fetchOpportunityActions(project.id));
+      const [nextActions, nextPlanning] = await Promise.all([
+        fetchOpportunityActions(project.id),
+        fetchOpportunityExecutionPortfolio(project.id),
+      ]);
+      setOpportunityActions(nextActions);
+      setOpportunityPlanning(nextPlanning);
       notify({
         title: "已记录本轮未再观察到",
         desc: "行动由最新完整快照终结，但这不是品牌推荐、增长或长期解决的证明。",
@@ -4769,6 +4811,88 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       notify({ title: "机会来源路由未保存", desc: error instanceof Error ? error.message : "团队为空、停用或路由版本已变化。", tone: "danger" });
     } finally {
       setRoutingMutationKey(null);
+    }
+  };
+
+  const submitOpportunityPlan = async (
+    action: OpportunityAction,
+    effortHours: string,
+    budgetAmount: string,
+    assumptions: string,
+    expectedVersion?: number,
+  ) => {
+    if (!project.id) return;
+    setPlanningMutationKey(`plan:${action.action_id}`);
+    try {
+      const plan = await putOpportunityExecutionPlan(project.id, action.action_id, {
+        estimatedEffortHours: effortHours,
+        estimatedBudgetAmount: budgetAmount,
+        assumptions,
+        expectedVersion,
+      });
+      setOpportunityPlanning(await fetchOpportunityExecutionPortfolio(project.id));
+      notify({
+        title: plan.idempotent_replay ? "人工计划未变化" : "人工计划已批准",
+        desc: `记录 ${plan.estimated_effort_hours} 小时、¥${plan.estimated_budget_amount} 人工估算；不作为实际支出或效果预测。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "人工计划未保存", desc: error instanceof Error ? error.message : "估算字段或版本不满足门禁。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
+    }
+  };
+
+  const submitOpportunityDependency = async (
+    action: OpportunityAction,
+    prerequisiteActionId: string,
+    rationale: string,
+  ) => {
+    if (!project.id) return;
+    setPlanningMutationKey(`dependency:${action.action_id}`);
+    try {
+      const dependency = await createOpportunityDependency(
+        project.id,
+        action.action_id,
+        prerequisiteActionId,
+        rationale,
+      );
+      setOpportunityPlanning(await fetchOpportunityExecutionPortfolio(project.id));
+      notify({
+        title: dependency.idempotent_replay ? "前置依赖已存在" : "前置依赖已记录",
+        desc: dependency.satisfied ? "前置行动已满足。" : "当前行动已进入依赖阻断，完成前置行动或记录人工豁免后解除。",
+        tone: dependency.satisfied ? "success" : "warning",
+      });
+    } catch (error) {
+      notify({ title: "前置依赖未添加", desc: error instanceof Error ? error.message : "依赖无效或会形成循环。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
+    }
+  };
+
+  const submitOpportunityDependencyWaiver = async (
+    dependency: OpportunityDependency,
+    waiverReason: string,
+  ) => {
+    if (!project.id) return;
+    setPlanningMutationKey(`waive:${dependency.dependency_id}`);
+    try {
+      await waiveOpportunityDependency(
+        project.id,
+        dependency.dependency_id,
+        dependency.version,
+        waiverReason,
+      );
+      setOpportunityPlanning(await fetchOpportunityExecutionPortfolio(project.id));
+      notify({
+        title: "人工依赖豁免已审计",
+        desc: "该依赖视为满足，但豁免不证明行动效果、品牌推荐或增长。",
+        tone: "warning",
+      });
+    } catch (error) {
+      notify({ title: "依赖豁免未记录", desc: error instanceof Error ? error.message : "豁免原因或版本不满足门禁。", tone: "danger" });
+    } finally {
+      setPlanningMutationKey(null);
     }
   };
 
@@ -4998,10 +5122,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         data={opportunities}
         actionData={opportunityActions}
         routingData={opportunityRouting}
+        planningData={opportunityPlanning}
         currentUserId={getStoredAuthSession()?.user.userId ?? ""}
         deriving={derivingOpportunities}
         actingActionId={actingOpportunityId}
         routingMutationKey={routingMutationKey}
+        planningMutationKey={planningMutationKey}
         onDerive={() => void submitOpportunityDerivation()}
         onCreateAction={(item) => void submitOpportunityActionCreate(item)}
         onClaimAction={(item) => void submitOpportunityActionClaim(item)}
@@ -5009,6 +5135,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         onCreateTeam={(name) => void submitOpportunityTeamCreate(name)}
         onJoinTeam={(teamId) => void submitOpportunityTeamJoin(teamId)}
         onPutRoute={(sourceKind, teamId) => void submitOpportunityRoute(sourceKind, teamId)}
+        onSavePlan={(action, effortHours, budgetAmount, assumptions, expectedVersion) => void submitOpportunityPlan(action, effortHours, budgetAmount, assumptions, expectedVersion)}
+        onAddDependency={(action, prerequisiteActionId, rationale) => void submitOpportunityDependency(action, prerequisiteActionId, rationale)}
+        onWaiveDependency={(dependency, waiverReason) => void submitOpportunityDependencyWaiver(dependency, waiverReason)}
         onNavigate={onNavigate}
       />
       <Panel title="真实扫描 → 证据缺口">

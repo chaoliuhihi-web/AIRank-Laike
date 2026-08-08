@@ -421,6 +421,10 @@ class MySQLOpportunityActionRepository:
             assigned_to = str(action["assigned_to"] or "")
             if assigned_to and assigned_to != actor:
                 raise action_error(403, "OPPORTUNITY_ACTION_OWNER_FORBIDDEN", {"action_id": action_id})
+            if str(action["status"]) == "open":
+                self._require_dependencies_satisfied(
+                    conn, tenant_id, project_id, action_id
+                )
             routing = resolve_action_claim_route(
                 conn,
                 self.engine.dialect.name,
@@ -567,6 +571,10 @@ class MySQLOpportunityActionRepository:
                         409,
                         "OPPORTUNITY_ACTION_TRANSITION_INVALID",
                         {"reason": "no_newer_opportunity_evidence"},
+                    )
+                if assigned_to:
+                    self._require_dependencies_satisfied(
+                        conn, tenant_id, project_id, action_id
                     )
                 values.update(
                     status="in_progress" if assigned_to else "open",
@@ -814,6 +822,42 @@ class MySQLOpportunityActionRepository:
     def _require_owner(action: Mapping[str, Any], actor: str) -> None:
         if str(action["assigned_to"] or "") != actor:
             raise action_error(403, "OPPORTUNITY_ACTION_OWNER_FORBIDDEN", {"action_id": str(action["id"])})
+
+    @staticmethod
+    def _require_dependencies_satisfied(
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        action_id: str,
+    ) -> None:
+        rows = conn.execute(
+            text(
+                """
+                SELECT dependency.id
+                FROM airank_opportunity_action_dependencies dependency
+                JOIN airank_opportunity_actions prerequisite
+                  ON prerequisite.tenant_id=dependency.tenant_id
+                 AND prerequisite.id=dependency.prerequisite_action_id
+                WHERE dependency.tenant_id=:tenant_id
+                  AND dependency.project_id=:project_id
+                  AND dependency.action_id=:action_id
+                  AND dependency.status='active'
+                  AND prerequisite.status NOT IN ('verified_not_observed', 'waived')
+                ORDER BY dependency.id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "action_id": action_id,
+            },
+        ).scalars().all()
+        if rows:
+            raise action_error(
+                409,
+                "OPPORTUNITY_ACTION_DEPENDENCY_BLOCKED",
+                {"unsatisfied_dependency_count": len(rows)},
+            )
 
     @staticmethod
     def _event_replay(conn: Any, tenant_id: str, action_id: str, idempotency_key: str, request_sha256: str) -> bool:

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_dependency_waive_request.schema.json",
+  "title": "AIRank Opportunity Dependency Waive Request",
+  "type": "object",
+  "required": ["expected_version", "waiver_reason", "acknowledge_no_outcome_claim"],
+  "additionalProperties": false,
+  "properties": {
+    "expected_version": { "type": "integer", "minimum": 1 },
+    "waiver_reason": { "type": "string", "minLength": 20, "maxLength": 2000 },
+    "acknowledge_no_outcome_claim": { "const": true }
+  }
+}

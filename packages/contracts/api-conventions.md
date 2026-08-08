@@ -214,11 +214,17 @@ GET  /api/v1/projects/{project_id}/opportunity-action-routing
 POST /api/v1/projects/{project_id}/opportunity-action-teams
 PUT  /api/v1/projects/{project_id}/opportunity-action-teams/{team_id}/members/{user_id}
 PUT  /api/v1/projects/{project_id}/opportunity-action-routes/{source_kind}
+GET  /api/v1/projects/{project_id}/opportunity-execution-portfolio
+PUT  /api/v1/projects/{project_id}/opportunity-actions/{action_id}/plan
+POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/dependencies
+POST /api/v1/projects/{project_id}/opportunity-dependencies/{dependency_id}/waivers
 ```
 
 行动使用 `airank.opportunity-action.v1`。只有最新完整推导中的不可变机会快照能创建每个稳定机会唯一的行动；默认截止日期由严重度映射，责任人通过认证身份自助领取，任务版本和 Idempotency-Key 阻止覆盖与重复副作用。`evidence_blocked` 即使已领取也不会自动转为执行中，必须由更新且 `ready_for_action` 的机会快照执行 `refresh_evidence`。`verify_not_observed` 只能绑定比来源更新的最新完整推导，并证明该稳定机会不在该次完整 manifest 中；`waive` 必须由责任人提供至少 20 字原因。两种终结都固定 `effect_claim_allowed=false`，不得解释为品牌推荐、增长或长期解决。所有状态变化写入带前序 hash 的追加事件。
 
 行动团队路由使用 `airank.opportunity-action-routing.v1`，按四类 `source_kind` 配置交付团队。完全未配置时兼容 `unrestricted_legacy`；配置任一路由后，缺路由、停用/空团队、非成员与容量耗尽分别返回显式阻断。管理员操作要求 `airank:opportunity:admin`，成员领取只信任认证身份。手工成员固定 `external_membership_verified=false`，不能冒充 Yudao 目录证明。Scheduler 以 `opportunity_action.sla_overdue.v1` 记录逾期与无身份路由摘要；Outbox pending 不等于外部通知，只有通知 Consumer 的成功回执才使行动返回 `external_delivery_verified=true`。
+
+执行计划与依赖使用 `airank.opportunity-execution-plan.v1`。计划写入、依赖创建和依赖豁免同样要求 `airank:opportunity:admin`；GET 只返回当前项目的人工计划、覆盖率、依赖阻断与拓扑层级。预算和工时仅为人工估算，只有所有未终结行动均存在 approved plan 时才计算组合汇总，任何响应都固定 `outcome_forecast_allowed=false`。依赖创建使用 `Idempotency-Key`，项目内图变更通过行动行锁串行化并拒绝自依赖、执行中目标和循环依赖。未满足依赖阻止 open 行动被领取为 `in_progress`，以及已领取的证据阻断行动刷新为执行中；最新完整复测仍可按独立观测证据终结行动。依赖豁免必须提交乐观锁版本、实质原因和非效果声明确认。
 
 ## 幂等
 
@@ -233,6 +239,7 @@ PUT  /api/v1/projects/{project_id}/opportunity-action-routes/{source_kind}
 - 从质量通过的扫描推导证据缺口
 - 从受治理来源证据推导跨域干预机会快照
 - 从最新机会快照创建、领取和复测终结行动
+- 创建机会行动前置依赖
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
 

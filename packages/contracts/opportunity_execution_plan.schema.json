@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_execution_plan.schema.json",
+  "title": "AIRank Opportunity Execution Plan",
+  "type": "object",
+  "required": ["plan_id", "action_id", "action_status", "contract_version", "status", "estimate_source", "estimated_effort_hours", "estimated_budget_amount", "currency", "planned_start_at", "planned_due_at", "assumptions", "outcome_forecast_allowed", "dependencies", "unsatisfied_dependency_count", "version", "event_count", "last_event_sha256", "created_by", "updated_by", "created_at", "updated_at", "idempotent_replay"],
+  "additionalProperties": false,
+  "properties": {
+    "plan_id": { "type": "string", "pattern": "^opportunity_plan_[0-9a-f]{20}$" },
+    "action_id": { "type": "string", "pattern": "^opportunity_action_[0-9a-f]{20}$" },
+    "action_status": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "airank.opportunity-execution-plan.v1" },
+    "status": { "type": "string", "enum": ["draft", "approved"] },
+    "estimate_source": { "const": "human_estimate" },
+    "estimated_effort_hours": { "$ref": "#/$defs/decimal" },
+    "estimated_budget_amount": { "$ref": "#/$defs/decimal" },
+    "currency": { "const": "CNY" },
+    "planned_start_at": { "type": ["string", "null"], "format": "date-time" },
+    "planned_due_at": { "type": ["string", "null"], "format": "date-time" },
+    "assumptions": { "type": "string", "minLength": 8, "maxLength": 4000 },
+    "outcome_forecast_allowed": { "const": false },
+    "dependencies": { "type": "array", "items": { "$ref": "opportunity_dependency.schema.json" } },
+    "unsatisfied_dependency_count": { "type": "integer", "minimum": 0 },
+    "version": { "type": "integer", "minimum": 1 },
+    "event_count": { "type": "integer", "minimum": 1 },
+    "last_event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "updated_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "idempotent_replay": { "type": "boolean" }
+  },
+  "$defs": {
+    "decimal": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$" }] }
+  }
+}

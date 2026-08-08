@@ -70,3 +70,41 @@ def test_opportunity_action_routing_is_visible_in_the_real_asset_workflow() -> N
     assert "SLA 升级" in board
     assert "fetchOpportunityActionRouting" in api
     assert "putOpportunityActionRoute" in api
+
+
+def test_opportunity_execution_planning_separates_estimates_from_outcomes() -> None:
+    migration = (ROOT / "apps/api/alembic/versions/20260809_0036_opportunity_execution_plans.py").read_text(encoding="utf-8")
+    routes = (ROOT / "apps/api/opportunity_planning_routes.py").read_text(encoding="utf-8")
+    for required in (
+        "airank_opportunity_action_plans",
+        "airank_opportunity_action_dependencies",
+        "airank_opportunity_action_plan_events",
+        "estimated_effort_hours",
+        "estimated_budget_amount",
+        "previous_event_sha256",
+        "outcome_forecast_allowed",
+    ):
+        assert required in migration
+    assert 'estimate_source="human_estimate"' in routes
+    assert '"no_growth_or_recommendation_forecast"' in routes
+    assert '"outcome_forecast_allowed": False' in routes
+    assert "_contains_cycle" in routes
+    assert "ORDER BY id FOR UPDATE" in routes
+    assert "planning_coverage_complete=coverage" in routes
+    assert "acknowledge_no_outcome_claim" in routes
+    actions = (ROOT / "apps/api/opportunity_action_routes.py").read_text(encoding="utf-8")
+    assert "OPPORTUNITY_ACTION_DEPENDENCY_BLOCKED" in actions
+    assert "_require_dependencies_satisfied" in actions
+
+
+def test_opportunity_execution_planning_is_visible_in_the_real_asset_workflow() -> None:
+    board = (ROOT / "apps/web/src/console/OpportunityBoard.tsx").read_text(encoding="utf-8")
+    api = (ROOT / "apps/web/src/console/api.ts").read_text(encoding="utf-8")
+    assert "airank.opportunity-execution-plan.v1" in board
+    assert "人工预算与前置依赖" in board
+    assert "效果声明：禁止" in board
+    assert "planning_coverage_complete" in board
+    assert "fetchOpportunityExecutionPortfolio" in api
+    assert "putOpportunityExecutionPlan" in api
+    assert "createOpportunityDependency" in api
+    assert "waiveOpportunityDependency" in api

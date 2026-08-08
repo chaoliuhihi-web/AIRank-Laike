@@ -3,6 +3,8 @@ import type {
   OpportunityAction,
   OpportunityActionList,
   OpportunityActionRouting,
+  OpportunityDependency,
+  OpportunityExecutionPortfolio,
   OpportunityList,
   OpportunitySourceKind,
 } from "./api";
@@ -66,10 +68,12 @@ export function OpportunityBoard({
   data,
   actionData,
   routingData,
+  planningData,
   currentUserId,
   deriving,
   actingActionId,
   routingMutationKey,
+  planningMutationKey,
   onDerive,
   onCreateAction,
   onClaimAction,
@@ -77,15 +81,20 @@ export function OpportunityBoard({
   onCreateTeam,
   onJoinTeam,
   onPutRoute,
+  onSavePlan,
+  onAddDependency,
+  onWaiveDependency,
   onNavigate,
 }: {
   data: OpportunityList;
   actionData: OpportunityActionList;
   routingData: OpportunityActionRouting;
+  planningData: OpportunityExecutionPortfolio;
   currentUserId: string;
   deriving: boolean;
   actingActionId: string | null;
   routingMutationKey: string | null;
+  planningMutationKey: string | null;
   onDerive: () => void;
   onCreateAction: (item: InterventionOpportunity) => void;
   onClaimAction: (item: OpportunityAction) => void;
@@ -93,10 +102,14 @@ export function OpportunityBoard({
   onCreateTeam: (name: string) => void;
   onJoinTeam: (teamId: string) => void;
   onPutRoute: (sourceKind: OpportunitySourceKind, teamId: string) => void;
+  onSavePlan: (action: OpportunityAction, effortHours: string, budgetAmount: string, assumptions: string, expectedVersion?: number) => void;
+  onAddDependency: (action: OpportunityAction, prerequisiteActionId: string, rationale: string) => void;
+  onWaiveDependency: (dependency: OpportunityDependency, waiverReason: string) => void;
   onNavigate: (path: string) => void;
 }) {
   const latest = data.latest_derivation_run;
   const actionsByOpportunity = new Map(actionData.actions.map((item) => [item.opportunity_id, item]));
+  const plansByAction = new Map(planningData.plans.map((item) => [item.action_id, item]));
   const currentOpportunityIds = new Set(data.opportunities.map((item) => item.opportunity_id));
   const currentUserTeamIds = new Set(
     routingData.teams
@@ -274,6 +287,139 @@ export function OpportunityBoard({
           </div>
         )}
       </section>
+
+      {actionData.actions.length > 0 && (
+        <section className="opportunity-planning-panel" aria-label="机会执行预算与依赖">
+          <header>
+            <div>
+              <span className="opportunity-eyebrow">airank.opportunity-execution-plan.v1</span>
+              <h4>人工预算与前置依赖</h4>
+              <p>工时和预算是实施人员估算，不是发票、实际支出或推荐增长预测。只有全部未终结行动拥有已批准计划时才汇总。</p>
+            </div>
+            <span data-complete={planningData.planning_coverage_complete}>
+              {planningData.approved_plan_count}/{planningData.planning_required_count} 已批准
+            </span>
+          </header>
+          <div className="opportunity-planning-summary">
+            <div>
+              <span>预算覆盖</span>
+              <strong>{planningData.planning_coverage_complete ? "完整" : "不完整"}</strong>
+            </div>
+            <div>
+              <span>人工估算工时</span>
+              <strong>{planningData.total_estimated_effort_hours === null ? "—" : `${planningData.total_estimated_effort_hours} h`}</strong>
+            </div>
+            <div>
+              <span>人工估算预算</span>
+              <strong>{planningData.total_estimated_budget_amount === null ? "—" : `¥${planningData.total_estimated_budget_amount}`}</strong>
+            </div>
+            <div>
+              <span>依赖阻断</span>
+              <strong>{planningData.blocked_action_ids.length}</strong>
+            </div>
+          </div>
+          {!planningData.planning_coverage_complete && (
+            <p className="opportunity-planning-warning">
+              汇总值保持空白：仍有 {planningData.unplanned_action_ids.length} 个未终结行动缺少已批准人工计划。
+            </p>
+          )}
+          {planningData.topological_order.length > 0 && (
+            <div className="opportunity-planning-order">
+              <strong>可执行层级</strong>
+              {planningData.topological_order.map((layer, index) => (
+                <span key={`${index}-${layer.join("-")}`}>第 {index + 1} 层 · {layer.map(shortHash).join("、")}</span>
+              ))}
+            </div>
+          )}
+          <div className="opportunity-planning-list">
+            {actionData.actions
+              .filter((action) => !["verified_not_observed", "waived"].includes(action.status))
+              .map((action) => {
+                const plan = plansByAction.get(action.action_id);
+                const availablePrerequisites = actionData.actions.filter((candidate) => candidate.action_id !== action.action_id);
+                return (
+                  <article key={action.action_id} data-blocked={planningData.blocked_action_ids.includes(action.action_id)}>
+                    <div className="opportunity-planning-action-title">
+                      <div>
+                        <strong>{actionStateLabels[action.status]} · {shortHash(action.action_id)}</strong>
+                        <span>{action.action_note}</span>
+                      </div>
+                      <span>{plan ? `${plan.status === "approved" ? "已批准" : "草稿"} · v${plan.version}` : "尚未计划"}</span>
+                    </div>
+                    <form
+                      className="opportunity-plan-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const form = new FormData(event.currentTarget);
+                        onSavePlan(
+                          action,
+                          String(form.get("effort_hours") || "").trim(),
+                          String(form.get("budget_amount") || "").trim(),
+                          String(form.get("assumptions") || "").trim(),
+                          plan?.version,
+                        );
+                      }}
+                    >
+                      <label>人工工时<input name="effort_hours" type="number" min="0.01" max="10000" step="0.01" required defaultValue={plan?.estimated_effort_hours ?? "8"} /></label>
+                      <label>预算（CNY）<input name="budget_amount" type="number" min="0" max="100000000" step="0.01" required defaultValue={plan?.estimated_budget_amount ?? "0"} /></label>
+                      <label className="opportunity-plan-assumptions">估算依据<input name="assumptions" minLength={20} maxLength={4000} required defaultValue={plan?.assumptions ?? "由实施负责人根据当前证据范围人工估算，实际投入以交付记录为准。"} /></label>
+                      <button type="submit" disabled={planningMutationKey === `plan:${action.action_id}`}>
+                        {planningMutationKey === `plan:${action.action_id}` ? "保存中…" : "批准人工计划"}
+                      </button>
+                    </form>
+                    {availablePrerequisites.length > 0 && (
+                      <form
+                        className="opportunity-dependency-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const form = new FormData(event.currentTarget);
+                          onAddDependency(
+                            action,
+                            String(form.get("prerequisite_action_id") || ""),
+                            String(form.get("rationale") || "").trim(),
+                          );
+                        }}
+                      >
+                        <label>前置行动<select name="prerequisite_action_id" required defaultValue=""><option value="" disabled>选择前置行动</option>{availablePrerequisites.map((candidate) => <option value={candidate.action_id} key={candidate.action_id}>{shortHash(candidate.action_id)} · {actionStateLabels[candidate.status]}</option>)}</select></label>
+                        <label>依赖依据<input name="rationale" minLength={12} maxLength={2000} required defaultValue="先完成前置行动并核验证据，再开始本行动。" /></label>
+                        <button type="submit" disabled={planningMutationKey === `dependency:${action.action_id}`}>
+                          {planningMutationKey === `dependency:${action.action_id}` ? "添加中…" : "添加前置依赖"}
+                        </button>
+                      </form>
+                    )}
+                    {plan?.dependencies.length ? (
+                      <div className="opportunity-dependency-list">
+                        {plan.dependencies.map((dependency) => (
+                          <div key={dependency.dependency_id} data-satisfied={dependency.satisfied}>
+                            <div>
+                              <strong>{dependency.satisfied ? "依赖已满足" : "依赖阻断中"} · {shortHash(dependency.prerequisite_action_id)}</strong>
+                              <span>{dependency.rationale}{dependency.waiver_reason ? ` · 豁免：${dependency.waiver_reason}` : ""}</span>
+                            </div>
+                            {dependency.status === "active" && !dependency.satisfied && (
+                              <form
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const form = new FormData(event.currentTarget);
+                                  onWaiveDependency(dependency, String(form.get("waiver_reason") || "").trim());
+                                }}
+                              >
+                                <input name="waiver_reason" minLength={20} maxLength={2000} required defaultValue="经人工确认本轮可跳过前置行动，但不据此声明任何推荐或增长效果。" />
+                                <button type="submit" disabled={planningMutationKey === `waive:${dependency.dependency_id}`}>
+                                  {planningMutationKey === `waive:${dependency.dependency_id}` ? "记录中…" : "记录人工豁免"}
+                                </button>
+                              </form>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+          </div>
+          <p className="opportunity-planning-disclaimer"><strong>效果声明：禁止。</strong> 当前没有自动日历排程，人工估算也不能替代合同、发票、工时单或发布后复测。</p>
+        </section>
+      )}
 
       {actionData.actions.length > 0 && (
         <section className="opportunity-action-queue" aria-label="机会行动台账">
