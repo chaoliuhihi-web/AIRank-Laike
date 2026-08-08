@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path
+import subprocess
+import sys
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
@@ -555,6 +559,8 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     assert created.idempotent_replay is False
     assert replay.idempotent_replay is True
     assert latest.packet_id == created.packet_id
+    assert created.schema_version == "airank.report-evidence-packet.v7"
+    assert created.content_type == "application/zip"
     assert created.summary.sample_count == 6
     assert created.summary.citation_count == 1
     assert created.summary.source_host_count == 1
@@ -572,14 +578,40 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     metadata = json.loads(object_row["metadata_json"])
     payload = storage.get_bytes(metadata["object_key"])
     assert hashlib.sha256(payload).hexdigest() == created.content_sha256
-    manifest = json.loads(payload)
+    with ZipFile(io.BytesIO(payload)) as archive:
+        assert archive.namelist() == [
+            "README.txt",
+            "manifest/report-evidence.json",
+            "report/report.html",
+            "review/scorecard.csv",
+            "SHA256SUMS",
+        ]
+        manifest = json.loads(archive.read("manifest/report-evidence.json"))
+    packet_path = tmp_path / "customer-evidence-packet.zip"
+    packet_path.write_bytes(payload)
+    verified = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "verify_report_evidence_packet.py"),
+            str(packet_path),
+            "--expected-sha256",
+            created.content_sha256,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verified.returncode == 0, verified.stderr
+    assert json.loads(verified.stdout)["status"] == "verified"
     assert manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert manifest["counts"]["samples"] == 6
-    assert manifest["schema_version"] == "airank.report-evidence-packet.v6"
+    assert manifest["schema_version"] == "airank.report-evidence-packet.v7"
+    assert manifest["source_record"]["report_id"] == "report_real"
     assert manifest["evidence_integrity"]["status"] == "passed"
     assert created.integrity_audit_id
     assert manifest["source_governance"]["summary"]["unclassified_host_count"] == 1
-    assert "answer_text" not in payload.decode("utf-8")
+    assert b"answer_text" not in payload
     assert {audit["event_type"] for audit in audits} == {
         "evidence.integrity_audited",
         "report.evidence_packet_created",
@@ -870,7 +902,7 @@ def test_mysql_report_packet_creates_new_immutable_version_when_source_governanc
                 """
                 SELECT COUNT(*) FROM airank_report_evidence_packets
                 WHERE tenant_id='tenant_report' AND report_id='report_real'
-                      AND schema_version='airank.report-evidence-packet.v6'
+                      AND schema_version='airank.report-evidence-packet.v7'
                 """
             )
         ).scalar_one()

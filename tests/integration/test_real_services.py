@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import uuid4
+from zipfile import ZipFile
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -2240,8 +2242,10 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
             object_metadata = json.loads(object_metadata)
         manifest_bytes = storage.get_bytes(object_metadata["object_key"])
         assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
-        manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "airank.report-evidence-packet.v6"
+        with ZipFile(io.BytesIO(manifest_bytes)) as archive:
+            manifest = json.loads(archive.read("manifest/report-evidence.json"))
+            assert "score_0_to_5" in archive.read("review/scorecard.csv").decode("utf-8-sig")
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v7"
         assert manifest["evidence_integrity"]["status"] == "passed"
         assert manifest["counts"]["samples"] == 6
         assert manifest["counts"]["citations"] == 6

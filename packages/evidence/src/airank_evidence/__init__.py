@@ -43,6 +43,17 @@ from .report import (
     canonical_json_bytes,
     canonical_json_sha256,
 )
+from .report_verifier import (
+    ReportEvidencePacketVerification,
+    ReportEvidencePacketVerificationError,
+    verify_report_evidence_packet,
+)
+from .review_bundle import (
+    REPORT_REVIEW_BUNDLE_MEMBERS,
+    REPORT_REVIEW_BUNDLE_VERSION,
+    render_report_html,
+    render_scorecard_csv,
+)
 from .snapshot import AnswerSnapshot, SourceCitation
 from .source_registry import (
     SourceClassificationRevision,
@@ -83,6 +94,10 @@ __all__ = [
     "ReportConclusion",
     "ReportEvidencePacket",
     "ReportEvidencePacketError",
+    "ReportEvidencePacketVerification",
+    "ReportEvidencePacketVerificationError",
+    "REPORT_REVIEW_BUNDLE_MEMBERS",
+    "REPORT_REVIEW_BUNDLE_VERSION",
     "SourceCitation",
     "SourceClassificationRevision",
     "IndependentReviewPair",
@@ -102,4 +117,7 @@ __all__ = [
     "generate_gap_from_citations",
     "current_source_classification",
     "normalize_source_host",
+    "render_report_html",
+    "render_scorecard_csv",
+    "verify_report_evidence_packet",
 ]

@@ -46,7 +46,7 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "raise RuntimeError" in version_history_migration
 
     for required in (
-        "airank.report-evidence-packet.v6",
+        "airank.report-evidence-packet.v7",
         "evidence_integrity",
         "sample_index",
         "citation_index",
@@ -96,6 +96,7 @@ def test_report_frontend_downloads_verifies_then_records_receipt() -> None:
     assert "crypto.randomUUID()" in client
     assert "packet_id: packet.packet_id" in client
     assert "content_sha256: packet.content_sha256" in client
-    assert "证据包已校验并下载" in page
+    assert "可核验证据 ZIP 已下载" in page
+    assert "canonical manifest、可打印 HTML、空白评分表和 SHA256SUMS" in page
     assert "来源已具备有效权威结论" in page
     assert 'title: "下载回执已记录"' not in page

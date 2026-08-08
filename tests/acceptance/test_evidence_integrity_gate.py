@@ -48,7 +48,7 @@ def test_project_integrity_audit_is_persistent_drillable_and_report_blocking() -
     assert "no_evidence_entities" in routes
     assert '"REPORT_EVIDENCE_INTEGRITY_BLOCKED"' in report
     assert "integrity_audit=integrity_manifest" in report
-    assert 'REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v6"' in packet
+    assert 'REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v7"' in packet
     assert '"evidence_integrity"' in packet
 
 

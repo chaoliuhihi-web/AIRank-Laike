@@ -8,9 +8,10 @@ import re
 from typing import Any
 
 from .source_registry import normalize_source_host
+from .review_bundle import REPORT_REVIEW_BUNDLE_VERSION, build_report_review_bundle
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v6"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v7"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
 EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v2"
@@ -66,6 +67,7 @@ def _validate_independent_commercial_review(
 class ReportEvidencePacket:
     packet_id: str
     manifest: dict[str, Any]
+    manifest_bytes: bytes
     canonical_bytes: bytes
     sha256: str
 
@@ -644,7 +646,9 @@ def build_report_evidence_packet(
 
     manifest_basis: dict[str, Any] = {
         "schema_version": REPORT_EVIDENCE_PACKET_VERSION,
+        "bundle_version": REPORT_REVIEW_BUNDLE_VERSION,
         "canonicalization": "airank.sorted-key-utf8-json.v1",
+        "source_record": report_record,
         "report": {
             "report_id": report_record["report_id"],
             "tenant_id": report_record["tenant_id"],
@@ -729,10 +733,12 @@ def build_report_evidence_packet(
         "packet_id": packet_id,
         "packet_basis_sha256": packet_basis_sha256,
     }
-    canonical_bytes = canonical_json_bytes(manifest)
+    manifest_bytes = canonical_json_bytes(manifest)
+    canonical_bytes = build_report_review_bundle(manifest, manifest_bytes)
     return ReportEvidencePacket(
         packet_id=packet_id,
         manifest=manifest,
+        manifest_bytes=manifest_bytes,
         canonical_bytes=canonical_bytes,
         sha256=hashlib.sha256(canonical_bytes).hexdigest(),
     )

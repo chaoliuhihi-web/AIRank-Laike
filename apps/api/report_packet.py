@@ -60,12 +60,13 @@ class ReportEvidencePacketData(BaseModel):
         "airank.report-evidence-packet.v4",
         "airank.report-evidence-packet.v5",
         "airank.report-evidence-packet.v6",
+        "airank.report-evidence-packet.v7",
     ]
     status: Literal["ready"]
     object_ref_id: str
     integrity_audit_id: Optional[str]
     content_url: str
-    content_type: Literal["application/json"]
+    content_type: Literal["application/json", "application/zip"]
     byte_size: int
     content_sha256: str
     report_sha256: str
@@ -286,13 +287,13 @@ class MySQLReportEvidencePacketRepository:
 
         partition = hashlib.sha256(f"{tenant_id}:{report_row['project_id']}".encode("utf-8")).hexdigest()[:24]
         object_key = (
-            f"reports/{partition}/{report_id}/{packet.sha256[:2]}/{packet.sha256}.json"
+            f"reports/{partition}/{report_id}/{packet.sha256[:2]}/{packet.sha256}.zip"
         )
         try:
             stored = self._storage().put_bytes(
                 packet.canonical_bytes,
                 key=object_key,
-                content_type="application/json",
+                content_type="application/zip",
             )
         except ObjectStorageError as exc:
             raise StarletteHTTPException(
@@ -1172,7 +1173,7 @@ class MySQLReportEvidencePacketRepository:
             stored = self._storage().put_bytes(
                 packet.canonical_bytes,
                 key=object_key,
-                content_type="application/json",
+                content_type=str(row["content_type"]),
             )
         except ObjectStorageError as exc:
             raise StarletteHTTPException(

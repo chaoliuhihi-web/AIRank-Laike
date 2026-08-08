@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v6` | v4 测量质量门禁 + `airank.evidence-integrity.v2` 项目源证据与派生状态重建、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、巡检 manifest、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3/v4/v5 只读兼容，HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v7` | v4 测量质量门禁 + `airank.evidence-integrity.v2` 源证据与派生状态重建；确定性 ZIP 内含 canonical manifest、可打印 HTML、空白评分表、README、SHA256SUMS，最终 production 双人审核与 packet 级 download receipt；离线校验必须使用 API/回执整包 hash，历史 v1–v6 只读兼容，PDF/Word/数字签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -922,3 +922,25 @@ Limitations and blockers:
 Decision:
 
 - AIRank now proves that supported customer-report numbers match their stored raw evidence at delivery time. This closes the known Retest report-drift path, but AIRank remains commercial `NO-GO` until external production, Consumer, human-quality and longitudinal-observation gates pass.
+
+## 2026-08-08 Offline Review Bundle and Packet v7 Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- New customer artifacts use `airank.report-evidence-packet.v7` and are stored as deterministic `application/zip` objects. Fixed members are README, canonical evidence manifest, printable HTML, blank review scorecard and SHA256SUMS; ZIP order, timestamp, permissions and storage mode are deterministic.
+- The manifest includes the complete derived report source record but still excludes raw answer bodies and human note bodies. The offline verifier invokes the production packet builder to recalculate quality gates, metrics, evidence indexes, source governance, review hashes, packet basis and the entire ZIP.
+- Verification requires the external `content_sha256` returned by AIRank or its download receipt. A missing anchor, archive/member tamper, duplicate JSON key, non-standard JSON number, decompression limit breach or deterministic-rebuild mismatch fails closed. Internal checksums are explicitly not presented as a digital signature.
+- The formal CSV contains five weighted review dimensions while score, reviewer, reviewed time, rationale and decision remain blank. The HTML repeats the non-causal/no-recommendation-guarantee boundary and is print responsive.
+- Contract/package/CLI tests verify deterministic replay, external anchoring, member coverage and tamper rejection. Full regression passed `436 passed, 30 skipped`; real MySQL integration passed `28 passed, 2 skipped`; Node 24 production build and high-severity npm audit passed.
+- A browser-generated real MySQL bundle contained six independent samples and six citations. The v2 source/derived audit passed 15/15 with zero blockers; packet creation returned 201, object download 200 and receipt creation 201. The stored object independently returned `verified` through the CLI. Report UI and bundled HTML had no page-level overflow at 1440px or 390×844 and no console warnings/errors.
+
+Limitations and blockers:
+
+- PDF/Word rendering, Ed25519 or enterprise signing, and an independently hosted public verification page are not implemented. The API/download-receipt hash is the current external anchor.
+- Production Yudao authentication, production HTTPS S3/MinIO, Consumer Web/App L3, real customer reviewer benchmark, customer publishing credentials, elapsed T+7/T+14/T+30 evidence, Kimi credential rotation and DeepSeek model migration remain open.
+
+Decision:
+
+- AIRank now has a customer-readable, offline-rebuildable evidence deliverable rather than a machine-only JSON download. It remains commercial `NO-GO` until external production, Consumer, human-quality, signing and longitudinal-observation gates pass.

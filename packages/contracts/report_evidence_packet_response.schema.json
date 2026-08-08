@@ -27,7 +27,8 @@
             "airank.report-evidence-packet.v3",
             "airank.report-evidence-packet.v4",
             "airank.report-evidence-packet.v5",
-            "airank.report-evidence-packet.v6"
+            "airank.report-evidence-packet.v6",
+            "airank.report-evidence-packet.v7"
           ]
         },
         "status": { "const": "ready" },
@@ -37,7 +38,7 @@
           "pattern": "^integrity_audit_[0-9a-f]{20}$"
         },
         "content_url": { "type": "string", "pattern": "^/api/v1/evidence-objects/[A-Za-z0-9_-]+/content$" },
-        "content_type": { "const": "application/json" },
+        "content_type": { "enum": ["application/json", "application/zip"] },
         "byte_size": { "type": "integer", "minimum": 1 },
         "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
