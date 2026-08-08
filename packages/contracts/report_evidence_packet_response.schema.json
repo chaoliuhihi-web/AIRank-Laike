@@ -24,7 +24,8 @@
           "enum": [
             "airank.report-evidence-packet.v1",
             "airank.report-evidence-packet.v2",
-            "airank.report-evidence-packet.v3"
+            "airank.report-evidence-packet.v3",
+            "airank.report-evidence-packet.v4"
           ]
         },
         "status": { "const": "ready" },

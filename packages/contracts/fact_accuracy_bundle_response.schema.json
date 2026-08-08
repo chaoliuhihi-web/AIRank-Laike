@@ -57,7 +57,9 @@
         "knowledge_source_id", "knowledge_segment_id", "fact_revision_sha256",
         "source_content_sha256", "quoted_text", "quoted_text_sha256", "source_start",
         "source_end", "rationale", "review_method", "reviewed_by", "reviewed_at",
-        "supersedes_review_id", "commercially_verified", "idempotent_replay"
+        "supersedes_review_id", "review_case_id", "reviewer_role",
+        "review_case_status", "review_case_purpose", "evidence_verified", "commercially_verified",
+        "idempotent_replay"
       ],
       "additionalProperties": false,
       "properties": {
@@ -79,6 +81,11 @@
         "reviewed_by": { "type": "string", "minLength": 1 },
         "reviewed_at": { "type": "string", "format": "date-time" },
         "supersedes_review_id": { "type": ["string", "null"] },
+        "review_case_id": { "type": ["string", "null"], "maxLength": 64 },
+        "reviewer_role": { "enum": ["single", "primary", "secondary", "adjudicator"] },
+        "review_case_status": { "enum": ["single_review", "creating", "awaiting_secondary", "disputed", "agreed", "adjudicated", "void"] },
+        "review_case_purpose": { "enum": ["single_review", "production", "benchmark"] },
+        "evidence_verified": { "type": "boolean" },
         "commercially_verified": { "type": "boolean" },
         "idempotent_replay": { "type": "boolean" }
       }

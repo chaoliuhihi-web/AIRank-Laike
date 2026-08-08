@@ -46,6 +46,7 @@ class ReportEvidencePacketData(BaseModel):
         "airank.report-evidence-packet.v1",
         "airank.report-evidence-packet.v2",
         "airank.report-evidence-packet.v3",
+        "airank.report-evidence-packet.v4",
     ]
     status: Literal["ready"]
     object_ref_id: str
@@ -612,9 +613,13 @@ class MySQLReportEvidencePacketRepository:
         ]
 
         try:
-            from .citation_support_routes import load_fact_accuracy_bundles_from_connection
+            from .citation_support_routes import (
+                load_citation_support_bundles_from_connection,
+                load_fact_accuracy_bundles_from_connection,
+            )
         except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
             from citation_support_routes import (  # type: ignore[no-redef]
+                load_citation_support_bundles_from_connection,
                 load_fact_accuracy_bundles_from_connection,
             )
         snapshot_ids = [
@@ -622,11 +627,77 @@ class MySQLReportEvidencePacketRepository:
             for item in samples
             if item.get("snapshot_id")
         ]
+        citation_bundles = load_citation_support_bundles_from_connection(
+            conn,
+            tenant_id,
+            snapshot_ids,
+        )
         fact_bundles = load_fact_accuracy_bundles_from_connection(
             conn,
             tenant_id,
             snapshot_ids,
         )
+        for sample in samples:
+            snapshot_id = str(sample.get("snapshot_id") or "")
+            bundle = citation_bundles.get(snapshot_id)
+            sample["citation_support_score"] = (
+                bundle.metrics.citation_support_rate if bundle else None
+            )
+
+        citations_by_id = {
+            str(item["citation_id"]): item for item in citations
+        }
+        for citation in citations:
+            citation["support_reviews"] = []
+        for snapshot_id in snapshot_ids:
+            bundle = citation_bundles.get(snapshot_id)
+            if bundle is None:
+                continue
+            claims_by_id = {claim.claim_id: claim for claim in bundle.claims}
+            latest_by_pair: dict[tuple[str, str], Any] = {}
+            for review in sorted(
+                (
+                    item
+                    for item in bundle.reviews
+                    if item.review_case_purpose != "benchmark"
+                ),
+                key=lambda item: (item.reviewed_at, item.review_id),
+            ):
+                latest_by_pair[(review.claim_id, review.citation_id)] = review
+            for (claim_id, citation_id), latest in latest_by_pair.items():
+                claim = claims_by_id.get(claim_id)
+                citation = citations_by_id.get(citation_id)
+                if claim is None or citation is None:
+                    continue
+                support_review = {
+                    "claim_id": claim.claim_id,
+                    "claim_sha256": claim.claim_sha256,
+                    "answer_start": claim.answer_start,
+                    "answer_end": claim.answer_end,
+                    "review_id": latest.review_id,
+                    "support_label": latest.support_label,
+                    "evidence_grade": latest.evidence_grade,
+                    "source_content_sha256": latest.source_content_sha256,
+                    "source_object_ref_id": latest.source_object_ref_id,
+                    "source_capture_id": latest.source_capture_id,
+                    "source_segment_id": latest.source_segment_id,
+                    "source_start": latest.source_start,
+                    "source_end": latest.source_end,
+                    "review_method": latest.review_method,
+                    "reviewed_by": latest.reviewed_by,
+                    "reviewed_at": _iso_value(latest.reviewed_at),
+                    "review_case_id": latest.review_case_id,
+                    "reviewer_role": latest.reviewer_role,
+                    "review_case_status": latest.review_case_status,
+                    "review_case_purpose": latest.review_case_purpose,
+                    "evidence_verified": latest.evidence_verified,
+                    "commercially_verified": latest.commercially_verified,
+                }
+                support_review["review_record_sha256"] = canonical_json_sha256(
+                    support_review
+                )
+                citation["support_reviews"].append(support_review)
+
         fact_accuracy_index: list[dict[str, Any]] = []
         for snapshot_id in snapshot_ids:
             bundle = fact_bundles.get(snapshot_id)
@@ -640,6 +711,7 @@ class MySQLReportEvidencePacketRepository:
                         review
                         for review in bundle.reviews
                         if review.claim_id == claim.claim_id
+                        and review.review_case_purpose != "benchmark"
                     ),
                     key=lambda review: (review.reviewed_at, review.review_id),
                 )
@@ -662,6 +734,11 @@ class MySQLReportEvidencePacketRepository:
                         "reviewed_by": latest.reviewed_by,
                         "reviewed_at": _iso_value(latest.reviewed_at),
                         "supersedes_review_id": latest.supersedes_review_id,
+                        "review_case_id": latest.review_case_id,
+                        "reviewer_role": latest.reviewer_role,
+                        "review_case_status": latest.review_case_status,
+                        "review_case_purpose": latest.review_case_purpose,
+                        "evidence_verified": latest.evidence_verified,
                         "commercially_verified": latest.commercially_verified,
                     }
                     latest_review["review_record_sha256"] = canonical_json_sha256(

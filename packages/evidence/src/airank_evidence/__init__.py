@@ -49,6 +49,12 @@ from .source_registry import (
     current_source_classification,
     normalize_source_host,
 )
+from .review_quality import (
+    FINAL_REVIEW_STATUSES,
+    IndependentReviewPair,
+    ReviewQualityMetrics,
+    calculate_review_quality_metrics,
+)
 
 __all__ = [
     "AnswerSnapshot",
@@ -67,6 +73,7 @@ __all__ = [
     "FactAccuracyMetrics",
     "FactAccuracyReview",
     "FactAccuracyVerdict",
+    "FINAL_REVIEW_STATUSES",
     "FilesystemObjectStorage",
     "ObjectStorageError",
     "ObjectStorage",
@@ -78,11 +85,14 @@ __all__ = [
     "ReportEvidencePacketError",
     "SourceCitation",
     "SourceClassificationRevision",
+    "IndependentReviewPair",
+    "ReviewQualityMetrics",
     "S3CompatibleObjectStorage",
     "StoredObject",
     "build_object_storage_from_env",
     "calculate_citation_support_metrics",
     "calculate_fact_accuracy_metrics",
+    "calculate_review_quality_metrics",
     "sha256_bytes",
     "build_report_conclusion",
     "build_report_evidence_packet",

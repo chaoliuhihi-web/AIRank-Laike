@@ -153,6 +153,11 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CITATION_CLAIM_NOT_FOUND": (404, "Citation claim not found"),
     "CITATION_SUPPORT_EVIDENCE_INVALID": (409, "Citation support evidence is invalid"),
     "FACT_ACCURACY_EVIDENCE_INVALID": (409, "Fact accuracy evidence is invalid"),
+    "EVIDENCE_REVIEW_CASE_NOT_FOUND": (404, "Evidence review case was not found"),
+    "EVIDENCE_REVIEW_CASE_EXISTS": (409, "An evidence review case already exists for this evidence basis"),
+    "EVIDENCE_REVIEW_CASE_FINAL": (409, "Evidence review case is already final"),
+    "EVIDENCE_REVIEW_LABEL_INVALID": (409, "Evidence review label is invalid for this case"),
+    "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN": (409, "Independent review requires a different reviewer"),
     "SOURCE_REGISTRY_ENTRY_NOT_FOUND": (404, "Citation source registry entry not found"),
     "SOURCE_CLASSIFICATION_VERSION_CONFLICT": (409, "Citation source classification version conflict"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
@@ -5919,6 +5924,13 @@ except ImportError:  # pragma: no cover
     from citation_support_routes import router as citation_support_router  # type: ignore[no-redef]
 
 app.include_router(citation_support_router)
+
+try:
+    from .evidence_review_routes import router as evidence_review_router
+except ImportError:  # pragma: no cover
+    from evidence_review_routes import router as evidence_review_router  # type: ignore[no-redef]
+
+app.include_router(evidence_review_router)
 
 try:
     from .citation_capture_routes import router as citation_capture_router

@@ -35,6 +35,7 @@ def review(
     *,
     current: bool = True,
     method: str = "human",
+    independent: bool = True,
 ) -> FactAccuracyReview:
     return FactAccuracyReview(
         id=review_id,
@@ -57,7 +58,39 @@ def review(
         source_current=True,
         no_open_conflict=True,
         exact_boundary_verified=True,
+        review_case_id="case_1" if independent else None,
+        reviewer_role="secondary" if independent else "single",
+        review_case_status="agreed" if independent else "single_review",
+        review_case_purpose="production" if independent else "single_review",
     )
+
+
+def test_benchmark_reviews_never_enter_commercial_fact_accuracy() -> None:
+    benchmark = review("review_benchmark", "claim_1", FactAccuracyVerdict.ACCURATE)
+    benchmark = FactAccuracyReview(
+        **{
+            **benchmark.__dict__,
+            "review_case_purpose": "benchmark",
+        }
+    )
+    metrics = calculate_fact_accuracy_metrics(
+        claims=(claim("claim_1"),),
+        reviews=(benchmark,),
+    )
+    assert metrics.fact_accuracy is None
+    assert metrics.commercially_verified_claim_count == 0
+    assert "benchmark_reviews_excluded_from_commercial_metrics" in metrics.known_limitations
+
+
+def test_insufficient_verdict_cannot_become_commercial_with_bound_fact_evidence() -> None:
+    invalid_combination = review(
+        "review_insufficient_bound_fact",
+        "claim_1",
+        FactAccuracyVerdict.INSUFFICIENT_EVIDENCE,
+    )
+
+    assert invalid_combination.evidence_verified is True
+    assert invalid_combination.commercially_verified is False
 
 
 def test_fact_accuracy_requires_complete_decisive_claim_coverage() -> None:
@@ -112,6 +145,24 @@ def test_stale_or_ai_assisted_reviews_never_enter_commercial_accuracy() -> None:
     assert metrics.commercially_verified_claim_count == 0
     assert metrics.fact_accuracy is None
     assert "provisional_or_stale_fact_reviews_excluded" in metrics.known_limitations
+
+
+def test_single_human_fact_review_is_not_commercially_scored() -> None:
+    metrics = calculate_fact_accuracy_metrics(
+        claims=(claim("claim_1"),),
+        reviews=(
+            review(
+                "review_single",
+                "claim_1",
+                FactAccuracyVerdict.ACCURATE,
+                independent=False,
+            ),
+        ),
+    )
+
+    assert metrics.commercially_verified_claim_count == 0
+    assert metrics.fact_accuracy is None
+    assert "fact_accuracy_independent_review_required" in metrics.known_limitations
 
 
 def test_insufficient_evidence_is_recorded_but_not_scored_as_inaccurate() -> None:

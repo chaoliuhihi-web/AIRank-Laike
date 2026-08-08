@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator, FormatChecker
+import pytest
+
+from airank_domain.measurement import sha256_text
+from apps.api import citation_support_routes, evidence_review_routes
+from apps.api.main import app
+
+
+ANSWER = "AIRank 的指标可以下钻到原始样本，但发布内容不等于一定会被模型推荐。"
+CITED = "AIRank 的指标可以从汇总结果下钻到原始回答和引用来源。"
+SOURCE = "来源页面直接支持该断言。"
+CONTRACT_ROOT = Path(__file__).resolve().parents[2] / "packages" / "contracts"
+
+
+def validate_contract(name: str, payload: dict) -> None:
+    schema = json.loads((CONTRACT_ROOT / name).read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
+
+
+@pytest.fixture()
+def repositories(monkeypatch: pytest.MonkeyPatch):
+    citation_repo = citation_support_routes.InMemoryCitationSupportRepository()
+    citation_repo.seed_sample(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        snapshot_id="snapshot_1",
+        answer_text=ANSWER,
+        citation_id="citation_1",
+        cited_text=CITED,
+    )
+    citation_repo.seed_source_object(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        object_ref_id="object_source_1",
+        sha256="b" * 64,
+        kind="citation_source_page",
+        citation_id="citation_1",
+    )
+    citation_repo.seed_source_capture(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        capture_id="capture_1",
+        citation_id="citation_1",
+        raw_object_ref_id="object_source_1",
+        content_sha256="b" * 64,
+        segment_id="segment_1",
+        segment_text=SOURCE,
+    )
+    review_repo = evidence_review_routes.InMemoryEvidenceReviewRepository()
+    monkeypatch.setattr(citation_support_routes, "CITATION_SUPPORT_REPOSITORY", citation_repo)
+    monkeypatch.setattr(evidence_review_routes, "EVIDENCE_REVIEW_REPOSITORY", review_repo)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
+    return citation_repo, review_repo
+
+
+@pytest.fixture()
+def client(repositories) -> TestClient:
+    del repositories
+    return TestClient(app)
+
+
+def create_claim(client: TestClient, *, fact: bool = False) -> str:
+    response = client.post(
+        "/api/v1/samples/snapshot_1/citation-claims",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "claim-reviewer"},
+        json={
+            "answer_start": 0,
+            "answer_end": ANSWER.index("，"),
+            "extraction_method": "manual",
+            "claim_kind": "brand_fact" if fact else "unclassified",
+            "subject_entity_text": "AIRank" if fact else None,
+            "created_by": "spoofed",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["data"]["claim_id"]
+
+
+def citation_case_payload(claim_id: str, *, purpose: str = "production") -> dict:
+    return {
+        "claim_id": claim_id,
+        "purpose": purpose,
+        "review": {
+            "citation_id": "citation_1",
+            "support_label": "supports",
+            "evidence_grade": "source_page_snapshot",
+            "source_excerpt": SOURCE,
+            "source_content_sha256": "b" * 64,
+            "source_object_ref_id": "object_source_1",
+            "source_capture_id": "capture_1",
+            "source_segment_id": "segment_1",
+            "source_start": 0,
+            "source_end": len(SOURCE),
+            "rationale": "第一审核人独立核对不可变来源页。",
+            "review_method": "human",
+            "reviewed_by": "spoofed-primary",
+        },
+    }
+
+
+def test_single_review_is_hidden_from_peer_and_cannot_enter_support_rate(client: TestClient) -> None:
+    claim_id = create_claim(client)
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1", "Idempotency-Key": "review-case-citation-1"},
+        json=citation_case_payload(claim_id),
+    )
+    assert created.status_code == 201
+    validate_contract("evidence_review_case_response.schema.json", created.json())
+    case = created.json()["data"]
+    assert case["status"] == "awaiting_secondary"
+    assert case["current_actor_role"] == "primary"
+    assert case["visible_decisions"][0]["label"] == "supports"
+
+    peer_response = client.get(
+        "/api/v1/projects/project_1/evidence-review-cases?snapshot_id=snapshot_1",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+    )
+    validate_contract("evidence_review_queue_response.schema.json", peer_response.json())
+    peer = peer_response.json()["data"]
+    assert peer["cases"][0]["visible_decisions"] == []
+    assert peer["cases"][0]["next_action"] == "submit_secondary"
+
+    peer_bundle = client.get(
+        "/api/v1/samples/snapshot_1/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+    ).json()["data"]
+    assert peer_bundle["reviews"] == []
+    assert peer_bundle["metrics"]["known_limitations"] == ["citation_support_not_reviewed"]
+
+    primary_bundle = client.get(
+        "/api/v1/samples/snapshot_1/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1"},
+    ).json()["data"]
+    assert len(primary_bundle["reviews"]) == 1
+    metrics = primary_bundle["metrics"]
+    assert metrics["commercially_verified_review_count"] == 0
+    assert metrics["citation_support_rate"] is None
+    assert "citation_support_independent_review_required" in metrics["known_limitations"]
+
+    rejected = client.post(
+        f"/api/v1/evidence-review-cases/{case['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1"},
+        json={"label": "supports", "rationale": "不能自己做第二次复核。", "reviewed_by": "spoofed"},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"
+
+
+def test_two_distinct_matching_reviewers_finalize_commercial_support(client: TestClient) -> None:
+    claim_id = create_claim(client)
+    case = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1", "Idempotency-Key": "review-case-citation-2"},
+        json=citation_case_payload(claim_id),
+    ).json()["data"]
+
+    completed = client.post(
+        f"/api/v1/evidence-review-cases/{case['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"label": "supports", "rationale": "第二审核人独立核对后同意。", "reviewed_by": "spoofed"},
+    )
+    assert completed.status_code == 201
+    data = completed.json()["data"]
+    assert data["status"] == "agreed"
+    assert data["consensus_label"] == "supports"
+    assert data["decision_count"] == 2
+    assert len(data["visible_decisions"]) == 2
+
+    metrics = client.get(
+        "/api/v1/samples/snapshot_1/citation-support",
+        headers={"tenant-id": "tenant_1"},
+    ).json()["data"]["metrics"]
+    assert metrics["commercially_verified_review_count"] == 1
+    assert metrics["citation_support_rate"] == 1.0
+
+
+def test_disagreement_requires_third_distinct_adjudicator_and_is_measured(client: TestClient) -> None:
+    claim_id = create_claim(client)
+    case = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1", "Idempotency-Key": "review-case-benchmark-1"},
+        json=citation_case_payload(claim_id, purpose="benchmark"),
+    ).json()["data"]
+    disputed = client.post(
+        f"/api/v1/evidence-review-cases/{case['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={"label": "contradicts", "rationale": "第二审核人认为原文相反。", "reviewed_by": "spoofed"},
+    ).json()["data"]
+    assert disputed["status"] == "disputed"
+    assert len(disputed["visible_decisions"]) == 1
+    assert disputed["visible_decisions"][0]["reviewer_role"] == "secondary"
+    assert disputed["visible_decisions"][0]["reviewed_by"] == "reviewer-2"
+
+    adjudicated = client.post(
+        f"/api/v1/evidence-review-cases/{case['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+        json={"label": "supports", "rationale": "裁决人复核精确原文后确认支持。", "reviewed_by": "spoofed"},
+    )
+    assert adjudicated.status_code == 201
+    assert adjudicated.json()["data"]["status"] == "adjudicated"
+    assert adjudicated.json()["data"]["decision_count"] == 3
+    benchmark_only_metrics = client.get(
+        "/api/v1/samples/snapshot_1/citation-support",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    ).json()["data"]["metrics"]
+    assert benchmark_only_metrics["citation_support_rate"] is None
+    assert benchmark_only_metrics["commercially_verified_review_count"] == 0
+    assert "benchmark_reviews_excluded_from_commercial_metrics" in benchmark_only_metrics["known_limitations"]
+
+    quality = client.get(
+        "/api/v1/projects/project_1/evidence-review-cases?snapshot_id=snapshot_1",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    ).json()["data"]["benchmark_quality"]
+    assert quality["independently_reviewed_case_count"] == 1
+    assert quality["disagreement_count"] == 1
+    assert quality["adjudicated_count"] == 1
+    assert quality["benchmark_ready"] is False
+    assert "review_benchmark_sample_too_small" in quality["known_limitations"]
+
+
+def test_fact_accuracy_also_requires_independent_agreement(client: TestClient, repositories) -> None:
+    citation_repo, _ = repositories
+    claim_id = create_claim(client, fact=True)
+    fact_text = ANSWER[: ANSWER.index("，")]
+    citation_repo.seed_approved_fact(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        fact_revision_id="factrev_1",
+        fact_text=fact_text,
+        knowledge_source_id="source_1",
+        knowledge_segment_id="fact_segment_1",
+        source_content=f"企业事实：{fact_text}",
+    )
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/fact-accuracy",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "fact-reviewer-1", "Idempotency-Key": "review-case-fact-1"},
+        json={
+            "claim_id": claim_id,
+            "purpose": "production",
+            "review": {
+                "verdict": "accurate",
+                "fact_revision_id": "factrev_1",
+                "rationale": "第一审核人核对审核事实和原文边界。",
+                "review_method": "human",
+                "reviewed_by": "spoofed",
+            },
+        },
+    )
+    assert created.status_code == 201
+    before = client.get(
+        "/api/v1/samples/snapshot_1/fact-accuracy", headers={"tenant-id": "tenant_1"}
+    ).json()["data"]["metrics"]
+    assert before["fact_accuracy"] is None
+
+    completed = client.post(
+        f"/api/v1/evidence-review-cases/{created.json()['data']['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "fact-reviewer-2"},
+        json={"label": "accurate", "rationale": "第二审核人独立核对后同意。", "reviewed_by": "spoofed"},
+    )
+    assert completed.status_code == 201
+    after = client.get(
+        "/api/v1/samples/snapshot_1/fact-accuracy", headers={"tenant-id": "tenant_1"}
+    ).json()["data"]["metrics"]
+    assert after["commercially_verified_claim_count"] == 1
+    assert after["fact_accuracy"] == 1.0
+
+
+def test_fact_peer_label_cannot_change_the_frozen_evidence_class(client: TestClient, repositories) -> None:
+    citation_repo, _ = repositories
+    claim_id = create_claim(client, fact=True)
+    fact_text = ANSWER[: ANSWER.index("，")]
+    citation_repo.seed_approved_fact(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        fact_revision_id="factrev_frozen_evidence",
+        fact_text=fact_text,
+        knowledge_source_id="source_frozen_evidence",
+        knowledge_segment_id="segment_frozen_evidence",
+        source_content=f"企业事实：{fact_text}",
+    )
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/fact-accuracy",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "fact-reviewer-1",
+            "Idempotency-Key": "review-case-frozen-evidence",
+        },
+        json={
+            "claim_id": claim_id,
+            "purpose": "production",
+            "review": {
+                "verdict": "accurate",
+                "fact_revision_id": "factrev_frozen_evidence",
+                "rationale": "第一审核人绑定审核事实和精确原文。",
+                "review_method": "human",
+                "reviewed_by": "spoofed",
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    invalid = client.post(
+        f"/api/v1/evidence-review-cases/{created.json()['data']['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "fact-reviewer-2"},
+        json={
+            "label": "insufficient_evidence",
+            "rationale": "试图在不改变冻结证据的情况下改成无证据。",
+            "reviewed_by": "spoofed",
+        },
+    )
+    assert invalid.status_code == 409
+    assert invalid.json()["error"]["code"] == "EVIDENCE_REVIEW_LABEL_INVALID"
+    assert invalid.json()["error"]["details"]["reason"] == "label_conflicts_with_frozen_evidence"
+
+
+def test_case_creation_is_idempotent_and_payload_conflicts_fail(client: TestClient) -> None:
+    claim_id = create_claim(client)
+    headers = {"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-1", "Idempotency-Key": "review-case-idempotent"}
+    first = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers=headers,
+        json=citation_case_payload(claim_id),
+    )
+    replay = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers=headers,
+        json=citation_case_payload(claim_id),
+    )
+    assert replay.status_code == 201
+    assert replay.json()["data"]["case_id"] == first.json()["data"]["case_id"]
+    assert replay.json()["data"]["idempotent_replay"] is True
+
+    changed = citation_case_payload(claim_id)
+    changed["review"]["support_label"] = "contradicts"
+    conflict = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers=headers,
+        json=changed,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"

@@ -43,10 +43,10 @@ def test_fact_accuracy_is_recomputed_into_quality_and_customer_evidence_packet()
     report = read("packages/evidence/src/airank_evidence/report.py")
     repository = read("apps/api/report_packet.py")
 
-    assert 'row["fact_accuracy"] = metrics.fact_accuracy' in retest
-    assert 'row["fact_reviewed_claim_count"] = metrics.decisive_claim_count' in retest
+    assert 'row["fact_accuracy"] = fact_metrics.fact_accuracy if fact_metrics else None' in retest
+    assert 'row["fact_reviewed_claim_count"] = fact_metrics.decisive_claim_count if fact_metrics else 0' in retest
     assert '"fact_accuracy": item.fact_accuracy' in quality
-    assert "airank.report-evidence-packet.v3" in report
+    assert "airank.report-evidence-packet.v4" in report
     assert '"fact_accuracy_index": fact_accuracy_index' in report
     assert 'f"fact_accuracy_index {metric_name} does not match metrics' in report
     assert "review_record_sha256" in repository
@@ -61,11 +61,12 @@ def test_console_exposes_honest_manual_fact_accuracy_workflow_without_demo_value
 
     for token in (
         "fetchFactAccuracy",
-        "createFactAccuracyReview",
+        "createFactEvidenceReviewCase",
         "fact_revision_id",
         "Idempotency-Key",
     ):
         assert token in api
+    assert "createFactAccuracyReview" not in api
     for label in (
         "事实准确性 · 人工证据审核",
         "只有全部事实声明完成确定性人工核验后才输出准确率",

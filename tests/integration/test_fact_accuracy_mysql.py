@@ -13,6 +13,11 @@ from apps.api.citation_support_routes import (
     FactAccuracyReviewCreateRequest,
     MySQLCitationSupportRepository,
 )
+from apps.api.evidence_review_routes import (
+    EvidenceReviewDecisionRequest,
+    FactReviewCaseCreateRequest,
+    MySQLEvidenceReviewRepository,
+)
 from apps.api.knowledge_routes import (
     FactProposalRequest,
     FactRevisionReviewRequest,
@@ -69,6 +74,7 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
     scan_repository = MySQLScanRepository(database_url())
     knowledge_repository = MySQLKnowledgeRepository(database_url())
     evidence_repository = MySQLCitationSupportRepository(database_url())
+    review_repository = MySQLEvidenceReviewRepository(database_url())
     retest_repository = MySQLRetestRepository(database_url())
     report_packet_repository = MySQLReportEvidencePacketRepository(database_url())
     fact_text = "AIRank 支持四类 Prompt Cohort。"
@@ -193,24 +199,44 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
                 created_by="fact-reviewer",
             ),
         )
-        reviewed = evidence_repository.create_fact_accuracy_review(
-            tenant_id,
-            claim.claim_id,
-            FactAccuracyReviewCreateRequest(
+        review_payload = FactReviewCaseCreateRequest(
+            claim_id=claim.claim_id,
+            purpose="production",
+            review=FactAccuracyReviewCreateRequest(
                 verdict="accurate",
                 fact_revision_id=approved.revision_id,
-                rationale="人工核对当前审核事实与原始来源边界。",
-                reviewed_by="fact-reviewer",
+                rationale="第一审核人核对当前审核事实与原始来源边界。",
+                reviewed_by="fact-reviewer-1",
             ),
-            "fact-accuracy-review-v1",
-            "trace_fact_accuracy_v1",
         )
+        review_case = review_repository.create_fact_case(
+            tenant_id,
+            project.project_id,
+            review_payload,
+            "fact-accuracy-review-case-v1",
+            "fact-reviewer-1",
+            "trace_fact_accuracy_primary",
+        )
+        assert review_case.status == "awaiting_secondary"
+        completed = review_repository.submit_decision(
+            tenant_id,
+            review_case.case_id,
+            EvidenceReviewDecisionRequest(
+                label="accurate",
+                rationale="第二审核人独立核对后同意。",
+                reviewed_by="fact-reviewer-2",
+            ),
+            "fact-reviewer-2",
+            "trace_fact_accuracy_secondary",
+        )
+        assert completed.status == "agreed"
+        bundle = evidence_repository.get_fact_accuracy_bundle(tenant_id, snapshot_id)
+        reviewed = bundle.reviews[-1]
         assert reviewed.commercially_verified is True
         assert reviewed.quoted_text == fact_text
         assert reviewed.source_start is not None
         assert reviewed.source_end is not None
 
-        bundle = evidence_repository.get_fact_accuracy_bundle(tenant_id, snapshot_id)
         assert bundle.metrics.factual_claim_count == 1
         assert bundle.metrics.evaluation_coverage_rate == 1.0
         assert bundle.metrics.fact_accuracy == 1.0
@@ -272,19 +298,15 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
         assert "quoted_text" not in fact_index[0]["latest_review"]
         assert fact_index[0]["latest_review"]["quoted_text_sha256"] == reviewed.quoted_text_sha256
 
-        replay = evidence_repository.create_fact_accuracy_review(
+        replay = review_repository.create_fact_case(
             tenant_id,
-            claim.claim_id,
-            FactAccuracyReviewCreateRequest(
-                verdict="accurate",
-                fact_revision_id=approved.revision_id,
-                rationale="人工核对当前审核事实与原始来源边界。",
-                reviewed_by="fact-reviewer",
-            ),
-            "fact-accuracy-review-v1",
+            project.project_id,
+            review_payload,
+            "fact-accuracy-review-case-v1",
+            "fact-reviewer-1",
             "trace_fact_accuracy_replay",
         )
-        assert replay.review_id == reviewed.review_id
+        assert replay.case_id == review_case.case_id
         assert replay.idempotent_replay is True
 
         source_v2 = knowledge_repository.create_source(
@@ -344,13 +366,13 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
                     SELECT
                       (SELECT COUNT(*) FROM airank_fact_accuracy_reviews
                        WHERE tenant_id=:tenant_id) AS review_count,
-                      (SELECT COUNT(*) FROM airank_audit_events
-                       WHERE tenant_id=:tenant_id
-                         AND event_type='sample.fact_accuracy_reviewed') AS audit_count
+                          (SELECT COUNT(*) FROM airank_audit_events
+                           WHERE tenant_id=:tenant_id
+                             AND entity_type='evidence_review_case') AS audit_count
                     """
                 ),
                 {"tenant_id": tenant_id},
             ).mappings().one()
-        assert dict(rows) == {"review_count": 1, "audit_count": 1}
+            assert dict(rows) == {"review_count": 2, "audit_count": 2}
     finally:
         cleanup_tenant(engine, tenant_id)

@@ -440,7 +440,7 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     manifest = json.loads(payload)
     assert manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert manifest["counts"]["samples"] == 2
-    assert manifest["schema_version"] == "airank.report-evidence-packet.v3"
+    assert manifest["schema_version"] == "airank.report-evidence-packet.v4"
     assert manifest["source_governance"]["summary"]["unclassified_host_count"] == 1
     assert "answer_text" not in payload.decode("utf-8")
     assert audit["event_type"] == "report.evidence_packet_created"
@@ -610,7 +610,7 @@ def test_mysql_report_packet_creates_new_immutable_version_when_source_governanc
                 """
                 SELECT COUNT(*) FROM airank_report_evidence_packets
                 WHERE tenant_id='tenant_report' AND report_id='report_real'
-                  AND schema_version='airank.report-evidence-packet.v3'
+                  AND schema_version='airank.report-evidence-packet.v4'
                 """
             )
         ).scalar_one()

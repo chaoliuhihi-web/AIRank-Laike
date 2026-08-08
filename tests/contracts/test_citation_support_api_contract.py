@@ -112,7 +112,7 @@ def test_selected_citation_and_provisional_support_are_reported_separately(clien
     assert "citation_support_has_no_source_page_snapshot" in metrics["known_limitations"]
 
 
-def test_source_page_snapshot_human_review_can_enter_support_rate(client: TestClient) -> None:
+def test_source_page_snapshot_human_review_needs_independent_peer_before_support_rate(client: TestClient) -> None:
     claim_id = create_claim(client)
     repository = citation_support_routes.CITATION_SUPPORT_REPOSITORY
     assert isinstance(repository, citation_support_routes.InMemoryCitationSupportRepository)
@@ -155,13 +155,15 @@ def test_source_page_snapshot_human_review_can_enter_support_rate(client: TestCl
         },
     )
     assert reviewed.status_code == 201
-    assert reviewed.json()["data"]["commercially_verified"] is True
+    assert reviewed.json()["data"]["evidence_verified"] is True
+    assert reviewed.json()["data"]["commercially_verified"] is False
     metrics = client.get(
         "/api/v1/samples/snapshot_1/citation-support",
         headers={"tenant-id": "tenant_1"},
     ).json()["data"]["metrics"]
-    assert metrics["commercially_verified_review_count"] == 1
-    assert metrics["citation_support_rate"] == 1.0
+    assert metrics["commercially_verified_review_count"] == 0
+    assert metrics["citation_support_rate"] is None
+    assert "citation_support_independent_review_required" in metrics["known_limitations"]
 
 
 def test_source_page_snapshot_requires_exact_saved_source_boundary(client: TestClient) -> None:
@@ -230,7 +232,7 @@ def test_provider_excerpt_must_match_immutable_cited_text(client: TestClient) ->
     assert response.json()["error"]["code"] == "CITATION_SUPPORT_EVIDENCE_INVALID"
 
 
-def test_human_fact_review_with_current_approved_exact_source_enters_accuracy(
+def test_human_fact_review_with_current_approved_exact_source_needs_independent_peer(
     client: TestClient,
 ) -> None:
     claim_id = create_fact_claim(client)
@@ -265,7 +267,8 @@ def test_human_fact_review_with_current_approved_exact_source_enters_accuracy(
     assert reviewed.status_code == 201
     data = reviewed.json()["data"]
     assert data["reviewed_by"] == "trusted_fact_reviewer"
-    assert data["commercially_verified"] is True
+    assert data["evidence_verified"] is True
+    assert data["commercially_verified"] is False
     assert data["quoted_text"] == fact_text
 
     replay = client.post(
@@ -290,8 +293,9 @@ def test_human_fact_review_with_current_approved_exact_source_enters_accuracy(
     validate_contract("fact_accuracy_bundle_response.schema.json", bundle.json())
     metrics = bundle.json()["data"]["metrics"]
     assert metrics["factual_claim_count"] == 1
-    assert metrics["evaluation_coverage_rate"] == 1.0
-    assert metrics["fact_accuracy"] == 1.0
+    assert metrics["evaluation_coverage_rate"] == 0.0
+    assert metrics["fact_accuracy"] is None
+    assert "fact_accuracy_independent_review_required" in metrics["known_limitations"]
 
 
 def test_insufficient_fact_evidence_is_visible_but_never_scored_as_false(

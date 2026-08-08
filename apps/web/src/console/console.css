@@ -1886,6 +1886,120 @@ button:disabled {
   gap: 4px;
 }
 
+.review-quality-metrics {
+  margin: 14px 0;
+}
+
+.review-purpose-control {
+  display: grid;
+  gap: 6px;
+  max-width: 360px;
+  margin: 14px 0;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.review-purpose-control select {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--console-text-strong);
+  font: 700 13px / 20px var(--console-font-family);
+}
+
+.review-case-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.review-case-card {
+  padding: 16px;
+  border: 1px solid var(--console-border);
+  border-radius: 14px;
+  background: #fbfcff;
+}
+
+.review-case-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.review-case-heading strong,
+.review-case-heading small {
+  display: block;
+}
+
+.review-case-heading small {
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+  overflow-wrap: anywhere;
+}
+
+.review-decision-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-decision-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.review-decision-list span {
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+  overflow-wrap: anywhere;
+}
+
+.review-decision-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(260px, 1.45fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.review-decision-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.review-decision-form select,
+.review-decision-form textarea {
+  width: 100%;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--console-text-strong);
+  font: 600 13px / 20px var(--console-font-family);
+}
+
+.review-decision-form select {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.review-decision-form textarea {
+  min-height: 42px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
 .citation-source-capture {
   margin-top: 12px;
   padding: 12px;
@@ -3851,8 +3965,13 @@ button:disabled {
   }
 
   .fact-accuracy-metrics,
-  .fact-accuracy-form {
+  .fact-accuracy-form,
+  .review-decision-form {
     grid-template-columns: 1fr;
+  }
+
+  .review-decision-form .primary-button {
+    width: 100%;
   }
 
   .fact-accuracy-wide {

@@ -75,8 +75,8 @@ import {
   createGovernedContent,
   createCitationClaim,
   createCitationSourceCapture,
-  createCitationSupportReview,
-  createFactAccuracyReview,
+  createCitationEvidenceReviewCase,
+  createFactEvidenceReviewCase,
   createPageAudit,
   downloadReportEvidencePacket,
   fetchQuestionObservationBatches,
@@ -90,6 +90,7 @@ import {
   fetchCitationSourceCapture,
   fetchCitationSourceCaptures,
   fetchEvidenceObject,
+  fetchEvidenceReviewCases,
   fetchFactConflicts,
   fetchFactAccuracy,
   fetchFacts,
@@ -124,6 +125,7 @@ import {
   saveKnowledgeSource,
   searchKnowledge,
   triggerKnowledgeSync,
+  submitEvidenceReviewDecision,
   reviewSourceRegistryEntry,
   runBrandCheck,
   storeAuthSession,
@@ -142,6 +144,8 @@ import {
   type CitationSourceCapture,
   type FactConflict,
   type FactAccuracyBundle,
+  type EvidenceReviewCase,
+  type EvidenceReviewQueue,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -272,12 +276,32 @@ const factAccuracyLimitationLabels: Record<string, string> = {
   provisional_or_stale_fact_reviews_excluded: "AI 辅助、过期来源、旧事实版本或冲突审核已排除",
   fact_accuracy_contains_insufficient_evidence: "存在缺少已审核事实来源的声明",
   fact_accuracy_incomplete_coverage: "只有全部事实声明完成确定性人工核验后才输出准确率",
+  fact_accuracy_independent_review_required: "单人预审不能进入准确率，必须由不同审核人一致或完成第三人裁决",
+  benchmark_reviews_excluded_from_commercial_metrics: "一致性 Benchmark 仅评估审核质量，已从客户指标中排除",
 };
 const citationSupportLimitationLabels: Record<string, string> = {
   selected_citations_have_no_answer_claims: "原生引用尚未绑定回答中的具体断言",
   citation_support_not_reviewed: "断言与引用尚未复核",
   citation_support_has_no_source_page_snapshot: "尚无不可变来源页面快照",
   provisional_reviews_excluded_from_support_rate: "临时复核不会进入可交付支持率",
+  citation_support_independent_review_required: "单人预审不能进入支持率，必须由不同审核人一致或完成第三人裁决",
+  benchmark_reviews_excluded_from_commercial_metrics: "一致性 Benchmark 仅评估审核质量，已从客户指标中排除",
+};
+const reviewCaseStatusLabels: Record<EvidenceReviewCase["status"], string> = {
+  creating: "创建中",
+  awaiting_secondary: "等待第二审核人",
+  disputed: "结论分歧，等待裁决",
+  agreed: "双人一致",
+  adjudicated: "已完成第三人裁决",
+  void: "已作废",
+};
+const reviewQualityLimitationLabels: Record<string, string> = {
+  review_benchmark_has_no_cases: "尚无人工标注 benchmark 样本",
+  review_cases_awaiting_independent_second_review: "存在尚未完成第二人独立复核的任务",
+  review_cases_awaiting_adjudication: "存在尚未完成第三人裁决的分歧任务",
+  review_benchmark_sample_too_small: "已完成样本少于当前 benchmark 最小数量",
+  review_benchmark_kappa_not_estimable: "标签分布不足，暂时无法估计 Cohen’s kappa",
+  review_benchmark_kappa_below_threshold: "Cohen’s kappa 低于当前审核质量门槛",
 };
 const sourcePanelStatusLabels: Record<string, string> = {
   captured: "已捕获并存证",
@@ -2098,6 +2122,11 @@ function EvidencePage() {
   const [factClaimId, setFactClaimId] = useState("");
   const [factRevisionId, setFactRevisionId] = useState("");
   const [factRationale, setFactRationale] = useState("人工核对回答声明、当前审核事实与原始来源边界。");
+  const [reviewQueue, setReviewQueue] = useState<EvidenceReviewQueue | null>(null);
+  const [reviewQueueError, setReviewQueueError] = useState<string | null>(null);
+  const [reviewAction, setReviewAction] = useState<string | null>(null);
+  const [reviewPurpose, setReviewPurpose] = useState<"production" | "benchmark">("production");
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, { label: string; rationale: string }>>({});
   const [sourceRegistry, setSourceRegistry] = useState<SourceRegistryEntry[]>([]);
   const [sourceRegistryError, setSourceRegistryError] = useState<string | null>(null);
   const [sourceReviewHost, setSourceReviewHost] = useState("");
@@ -2281,6 +2310,26 @@ function EvidencePage() {
   }, [project.id, selected?.snapshot_id]);
 
   useEffect(() => {
+    if (!project.id || !selected?.snapshot_id) {
+      setReviewQueue(null);
+      setReviewQueueError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchEvidenceReviewCases(project.id, selected.snapshot_id, controller.signal)
+      .then((queue) => {
+        setReviewQueue(queue);
+        setReviewQueueError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReviewQueue(null);
+        setReviewQueueError(error instanceof Error ? error.message : "双人复核队列不可用");
+      });
+    return () => controller.abort();
+  }, [project.id, selected?.snapshot_id]);
+
+  useEffect(() => {
     const citations = selected?.citations ?? [];
     if (citations.length === 0) {
       setCitationCaptures({});
@@ -2340,6 +2389,10 @@ function EvidencePage() {
     const bundle = await fetchFactAccuracy(selected.snapshot_id);
     setFactAccuracy(bundle);
     setFactClaimId((current) => bundle.claims.some((claim) => claim.claim_id === current) ? current : bundle.claims.find((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact")?.claim_id || "");
+  };
+  const refreshReviewQueue = async () => {
+    if (!project.id || !selected?.snapshot_id) return;
+    setReviewQueue(await fetchEvidenceReviewCases(project.id, selected.snapshot_id));
   };
   const refreshQuality = async () => {
     if (!project.id || !selectedRunId) return;
@@ -2411,12 +2464,13 @@ function EvidencePage() {
     setFactAction(`review:${verdict}`);
     setFactAccuracyError(null);
     try {
-      await createFactAccuracyReview(factClaimId, {
+      await createFactEvidenceReviewCase(project.id, factClaimId, {
         verdict,
         factRevisionId: verdict === "insufficient_evidence" ? undefined : factRevisionId,
         rationale: factRationale.trim(),
+        purpose: reviewPurpose,
       });
-      await Promise.all([refreshFactAccuracy(), refreshQuality()]);
+      await Promise.all([refreshFactAccuracy(), refreshReviewQueue(), refreshQuality()]);
     } catch (error) {
       setFactAccuracyError(error instanceof Error ? error.message : "事实准确性审核失败");
     } finally {
@@ -2449,7 +2503,7 @@ function EvidencePage() {
     setCitationAction(`review:${citationId}:${supportLabel}`);
     setCitationActionError(null);
     try {
-      await createCitationSupportReview(claim.claim_id, {
+      await createCitationEvidenceReviewCase(project.id, claim.claim_id, {
         citationId,
         supportLabel,
         sourceExcerpt: segment.segment_text,
@@ -2459,12 +2513,41 @@ function EvidencePage() {
         sourceSegmentId: segment.segment_id,
         sourceStart: segment.source_start,
         sourceEnd: segment.source_end,
+        purpose: reviewPurpose,
       });
-      await refreshCitationSupport();
+      await Promise.all([refreshCitationSupport(), refreshReviewQueue(), refreshQuality()]);
     } catch (error) {
       setCitationActionError(error instanceof Error ? error.message : "引用支持度复核失败");
     } finally {
       setCitationAction(null);
+    }
+  };
+  const submitReviewCaseDecision = async (reviewCase: EvidenceReviewCase) => {
+    const draft = reviewDrafts[reviewCase.case_id] ?? {
+      label: reviewCase.review_kind === "citation_support" ? "supports" : "accurate",
+      rationale: "独立核对不可变证据后提交复核结论。",
+    };
+    if (!draft.rationale.trim()) {
+      setReviewQueueError("请填写独立复核或裁决依据。");
+      return;
+    }
+    setReviewAction(reviewCase.case_id);
+    setReviewQueueError(null);
+    try {
+      await submitEvidenceReviewDecision(reviewCase.case_id, {
+        label: draft.label,
+        rationale: draft.rationale.trim(),
+      });
+      await Promise.all([
+        refreshReviewQueue(),
+        refreshCitationSupport(),
+        refreshFactAccuracy(),
+        refreshQuality(),
+      ]);
+    } catch (error) {
+      setReviewQueueError(error instanceof Error ? error.message : "独立复核提交失败");
+    } finally {
+      setReviewAction(null);
     }
   };
   const openSourceReview = (entry: SourceRegistryEntry) => {
@@ -2666,7 +2749,7 @@ function EvidencePage() {
             {factAccuracy && (
               <>
                 <p className="rail-caption">
-                  准确率只统计品牌/竞品事实声明；必须由人工绑定当前审核事实与精确来源边界。AI 辅助、证据不足、旧版本和冲突事实不会进入商业指标。
+                  准确率只统计品牌/竞品事实声明；第一审核人必须绑定当前审核事实与精确来源边界，第二审核人独立判断。一致或第三人裁决后才进入商业指标。
                 </p>
                 <dl className="evidence-metadata fact-accuracy-metrics">
                   <div><dt>可交付准确率</dt><dd>{factAccuracy.metrics.fact_accuracy === null ? "待完成全量核验" : `${Math.round(factAccuracy.metrics.fact_accuracy * 100)}%`}</dd></div>
@@ -2696,10 +2779,10 @@ function EvidencePage() {
                     <label>人工核验依据<textarea rows={2} value={factRationale} onChange={(event) => setFactRationale(event.target.value)} /></label>
                     {facts.length === 0 && <DataStateCard title="没有可绑定的审核事实" desc="请先在事实知识库添加来源并审核事实。缺少证据时只能记录“证据不足”，不能推断准确或错误。" tone="warning" />}
                     <div className="citation-review-actions">
-                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("accurate")}>人工确认准确</button>
-                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("inaccurate")}>人工确认不准确</button>
-                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("outdated")}>人工确认已过期</button>
-                      <button type="button" className="table-action" disabled={factAction !== null} onClick={() => void reviewFactClaim("insufficient_evidence")}>证据不足</button>
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("accurate")}>第一复核：准确</button>
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("inaccurate")}>第一复核：不准确</button>
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("outdated")}>第一复核：已过期</button>
+                      <button type="button" className="table-action" disabled={factAction !== null} onClick={() => void reviewFactClaim("insufficient_evidence")}>第一复核：证据不足</button>
                     </div>
                   </div>
                 )}
@@ -2708,9 +2791,83 @@ function EvidencePage() {
                     {factAccuracy.claims.filter((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact").map((claim) => {
                       const reviews = factAccuracy.reviews.filter((review) => review.claim_id === claim.claim_id);
                       const latest = reviews[reviews.length - 1];
-                      return <li key={claim.claim_id}><strong>{claim.claim_text}</strong><span>{claim.claim_kind === "brand_fact" ? "品牌事实" : "竞品事实"} · {claim.subject_entity_text || "主体未记录"} · 回答边界 {claim.answer_start}–{claim.answer_end}</span>{latest ? <span><Badge tone={latest.commercially_verified ? latest.verdict === "accurate" ? "success" : "danger" : "warning"}>{latest.verdict}</Badge> {latest.commercially_verified ? `证据 ${latest.fact_revision_sha256?.slice(0, 12)}…` : "当前审核不进入商业指标"}</span> : <span>尚未审核</span>}</li>;
+                      return <li key={claim.claim_id}><strong>{claim.claim_text}</strong><span>{claim.claim_kind === "brand_fact" ? "品牌事实" : "竞品事实"} · {claim.subject_entity_text || "主体未记录"} · 回答边界 {claim.answer_start}–{claim.answer_end}</span>{latest ? <span><Badge tone={latest.commercially_verified ? latest.verdict === "accurate" ? "success" : "danger" : "warning"}>{latest.verdict}</Badge> {latest.commercially_verified ? `双人复核证据 ${latest.fact_revision_sha256?.slice(0, 12)}…` : latest.evidence_verified ? "证据边界通过，等待独立复核/裁决" : "当前审核不进入商业指标"}</span> : <span>尚未审核</span>}</li>;
                     })}
                   </ol>
+                )}
+              </>
+            )}
+          </Panel>
+          <Panel title="双人复核与一致性门禁">
+            <p className="rail-caption">
+              第一审核人的标签和依据在任务终结前不会向其他审核人展示；第二审核人必须使用不同账号独立提交。结论不一致时，必须再由第三个不同账号裁决。单人预审永远不会直接进入客户指标。
+            </p>
+            <label className="review-purpose-control">
+              新建复核用途
+              <select value={reviewPurpose} onChange={(event) => setReviewPurpose(event.target.value as "production" | "benchmark")}>
+                <option value="production">生产指标复核</option>
+                <option value="benchmark">一致性 Benchmark</option>
+              </select>
+              <small>Benchmark 任务只用于检验审核质量，不会进入客户生产指标。</small>
+            </label>
+            {reviewQueueError && <DataStateCard title="双人复核操作失败" desc={reviewQueueError} tone="danger" />}
+            {reviewQueue && (
+              <>
+                <dl className="evidence-metadata review-quality-metrics">
+                  <div><dt>生产任务完成</dt><dd>{reviewQueue.production_quality.finalized_case_count} / {reviewQueue.production_quality.case_count}</dd></div>
+                  <div><dt>等待第二审核 / 裁决</dt><dd>{reviewQueue.production_quality.awaiting_secondary_count} / {reviewQueue.production_quality.disputed_count}</dd></div>
+                  <div><dt>Benchmark 双人样本</dt><dd>{reviewQueue.benchmark_quality.independently_reviewed_case_count} / {reviewQueue.benchmark_quality.benchmark_minimum_case_count}</dd></div>
+                  <div><dt>一致率 / Cohen’s kappa</dt><dd>{reviewQueue.benchmark_quality.raw_agreement_rate === null ? "样本不足" : `${Math.round(reviewQueue.benchmark_quality.raw_agreement_rate * 100)}%`} / {reviewQueue.benchmark_quality.cohen_kappa === null ? "不可估计" : reviewQueue.benchmark_quality.cohen_kappa.toFixed(3)}（门槛 ≥ {reviewQueue.benchmark_quality.benchmark_minimum_kappa.toFixed(2)}）</dd></div>
+                </dl>
+                {!reviewQueue.benchmark_quality.benchmark_quality_passed && (
+                  <DataStateCard
+                    title="人工标注 benchmark 尚未达门禁"
+                    desc={reviewQueue.benchmark_quality.known_limitations.map((item) => reviewQualityLimitationLabels[item] ?? item).join(" · ")}
+                    tone="warning"
+                  />
+                )}
+                {reviewQueue.cases.length === 0 ? (
+                  <DataStateCard title="当前样本尚无双人复核任务" desc="请先在事实准确性或引用来源片段中提交第一复核；系统不会把旧的单人审核自动升级成双人结论。" tone="warning" />
+                ) : (
+                  <div className="review-case-list">
+                    {reviewQueue.cases.map((reviewCase) => {
+                      const options = reviewCase.review_kind === "citation_support"
+                        ? [["supports", "支持"], ["contradicts", "矛盾"], ["insufficient", "证据不足"]]
+                        : [["accurate", "准确"], ["inaccurate", "不准确"], ["outdated", "已过期"], ["insufficient_evidence", "证据不足"]];
+                      const draft = reviewDrafts[reviewCase.case_id] ?? {
+                        label: options[0][0],
+                        rationale: "独立核对不可变证据后提交复核结论。",
+                      };
+                      return (
+                        <article className="review-case-card" key={reviewCase.case_id}>
+                          <div className="review-case-heading">
+                            <div><strong>{reviewCase.review_kind === "citation_support" ? "引用支持" : "事实准确性"}</strong><small>{reviewCase.purpose === "benchmark" ? reviewCase.benchmark_version : "生产复核"} · v{reviewCase.version}</small></div>
+                            <Badge tone={reviewCase.status === "agreed" || reviewCase.status === "adjudicated" ? "success" : reviewCase.status === "disputed" ? "danger" : "warning"}>{reviewCaseStatusLabels[reviewCase.status]}</Badge>
+                          </div>
+                          <dl className="evidence-metadata">
+                            <div><dt>证据基础</dt><dd>{reviewCase.evidence_basis_sha256.slice(0, 16)}…</dd></div>
+                            <div><dt>已提交决定</dt><dd>{reviewCase.decision_count}</dd></div>
+                            <div><dt>当前账号角色</dt><dd>{reviewCase.current_actor_role || "尚未参与"}</dd></div>
+                            <div><dt>最终标签</dt><dd>{reviewCase.consensus_label || "未形成"}</dd></div>
+                          </dl>
+                          {reviewCase.visible_decisions.length > 0 && (
+                            <ol className="review-decision-list">
+                              {reviewCase.visible_decisions.map((decision) => <li key={decision.review_id}><strong>{decision.reviewer_role} · {decision.label}</strong><span>{decision.reviewed_by} · {decision.rationale}</span></li>)}
+                            </ol>
+                          )}
+                          {(reviewCase.next_action === "submit_secondary" || reviewCase.next_action === "adjudicate") && (
+                            <div className="review-decision-form">
+                              <label>独立结论<select value={draft.label} onChange={(event) => setReviewDrafts((current) => ({ ...current, [reviewCase.case_id]: { ...draft, label: event.target.value } }))}>{options.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                              <label>审核依据<textarea rows={2} value={draft.rationale} onChange={(event) => setReviewDrafts((current) => ({ ...current, [reviewCase.case_id]: { ...draft, rationale: event.target.value } }))} /></label>
+                              <button className="primary-button" type="button" disabled={reviewAction === reviewCase.case_id} onClick={() => void submitReviewCaseDecision(reviewCase)}>{reviewAction === reviewCase.case_id ? "提交中" : reviewCase.next_action === "adjudicate" ? "提交第三人裁决" : "提交第二人独立复核"}</button>
+                            </div>
+                          )}
+                          {reviewCase.next_action === "none" && reviewCase.status === "awaiting_secondary" && <small>当前账号已完成第一复核，请由另一审核账号独立提交。</small>}
+                          {reviewCase.next_action === "none" && reviewCase.status === "disputed" && <small>当前账号已参与该任务，请由第三个不同审核账号裁决。</small>}
+                        </article>
+                      );
+                    })}
+                  </div>
                 )}
               </>
             )}
@@ -2756,9 +2913,9 @@ function EvidencePage() {
                               <small>原文边界 {segment.source_start}–{segment.source_end} · {segment.segment_sha256.slice(0, 12)}…</small>
                               <p>{segment.segment_text}</p>
                               <div className="citation-review-actions">
-                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "supports")}>人工确认支持</button>
-                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "contradicts")}>人工确认矛盾</button>
-                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "insufficient")}>证据不足</button>
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "supports")}>第一复核：支持</button>
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "contradicts")}>第一复核：矛盾</button>
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "insufficient")}>第一复核：证据不足</button>
                               </div>
                             </article>
                           ))}
@@ -2778,7 +2935,7 @@ function EvidencePage() {
               <>
                 <p className="rail-caption">
                   Provider 列出 {citationSupport.metrics.selected_citation_count} 个来源；已登记 {citationSupport.metrics.claim_count} 条回答断言，
-                  当前有 {citationSupport.metrics.commercially_verified_review_count} 个“人工核对 + 不可变来源页面”复核可进入支持率。
+                  当前有 {citationSupport.metrics.commercially_verified_review_count} 个“不可变来源页面 + 不同审核人一致/裁决”结论可进入支持率。
                 </p>
                 <dl className="evidence-metadata citation-support-metrics">
                   <div><dt>可交付支持率</dt><dd>{citationSupport.metrics.citation_support_rate === null ? "待核验" : `${Math.round(citationSupport.metrics.citation_support_rate * 100)}%`}</dd></div>

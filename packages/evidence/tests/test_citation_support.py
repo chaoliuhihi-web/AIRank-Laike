@@ -37,6 +37,7 @@ def review(
     label: CitationSupportLabel,
     grade: CitationSupportEvidenceGrade,
     reviewed_at: datetime = NOW,
+    independent: bool = True,
 ) -> CitationSupportReview:
     return CitationSupportReview(
         id=review_id,
@@ -65,7 +66,33 @@ def review(
             if grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT
             else None
         ),
+        review_case_id="case_1" if independent else None,
+        reviewer_role="secondary" if independent else "single",
+        review_case_status="agreed" if independent else "single_review",
+        review_case_purpose="production" if independent else "single_review",
     )
+
+
+def test_benchmark_reviews_never_enter_commercial_support_rate() -> None:
+    benchmark = review(
+        review_id="review_benchmark",
+        label=CitationSupportLabel.SUPPORTS,
+        grade=CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT,
+    )
+    benchmark = CitationSupportReview(
+        **{
+            **benchmark.__dict__,
+            "review_case_purpose": "benchmark",
+        }
+    )
+    metrics = calculate_citation_support_metrics(
+        selected_citation_ids=("citation_1",),
+        claims=(claim(),),
+        reviews=(benchmark,),
+    )
+    assert metrics.citation_support_rate is None
+    assert metrics.commercially_verified_review_count == 0
+    assert "benchmark_reviews_excluded_from_commercial_metrics" in metrics.known_limitations
 
 
 def test_claim_boundary_and_answer_hash_are_immutable() -> None:
@@ -104,6 +131,26 @@ def test_provider_excerpt_review_is_provisional_and_not_scored() -> None:
     assert metrics.commercially_verified_review_count == 0
     assert metrics.citation_support_rate is None
     assert "citation_support_has_no_source_page_snapshot" in metrics.known_limitations
+
+
+def test_single_human_source_review_is_visible_but_not_commercially_scored() -> None:
+    metrics = calculate_citation_support_metrics(
+        selected_citation_ids=("citation_1",),
+        claims=(claim(),),
+        reviews=(
+            review(
+                review_id="review_single",
+                label=CitationSupportLabel.SUPPORTS,
+                grade=CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT,
+                independent=False,
+            ),
+        ),
+    )
+
+    assert metrics.review_count == 1
+    assert metrics.commercially_verified_review_count == 0
+    assert metrics.citation_support_rate is None
+    assert "citation_support_independent_review_required" in metrics.known_limitations
 
 
 def test_latest_source_page_review_drives_support_rate_without_overwriting_history() -> None:

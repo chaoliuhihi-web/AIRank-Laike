@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v3` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2 只读兼容，HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v4` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3 只读兼容，HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -724,7 +724,7 @@ Passed:
 - Alembic `20260808_0019` adds append-only fact-accuracy reviews. Commercially eligible reviews require a current, approved, human-reviewed, public/redacted FactRevision, a current source, no open conflict and an exact excerpt boundary inside the source segment.
 - `accurate`, `inaccurate`, `outdated` and `insufficient` remain distinct. `insufficient` does not bind a fabricated FactRevision, and fact accuracy is only calculated when every registered brand/competitor factual claim has a decisive current review.
 - Superseding or invalidating a fact/source preserves historical reviews while automatically removing them from current metrics. AI-derived labels cannot overwrite the raw claim or human review history.
-- Retest reports and `airank.report-evidence-packet.v3` recompute fact claim count, review coverage, accuracy and source-governance eligibility from current MySQL evidence. The packet stores hashes and boundaries, not copied answer/source or human-note bodies; historical v1/v2 packets remain readable.
+- Retest reports and `airank.report-evidence-packet.v4` recompute fact claim count, final production review coverage, accuracy, citation support and source-governance eligibility from current MySQL evidence. The packet stores hashes and boundaries, not copied answer/source or human-note bodies; historical v1/v2/v3 packets remain readable.
 - The Evidence Center supports exact claim registration and human verdicts. Desktop and 390x844 browser QA completed the path, showed 100% only for the isolated 1/1 QA fact, kept the run blocked for missing repetition/citations, then removed the QA project. Reloading the real project preserved all nine valid not-mentioned samples and reported zero console errors.
 - Full local regression passed `354 passed, 25 skipped`; real MySQL integration passed `23 passed, 2 skipped`. They cover exact boundaries, idempotency, audit, recalculation, packet hash validation and stale-evidence invalidation. Node 24 TypeScript/Vite build and the high-severity npm audit passed with zero known vulnerabilities.
 
@@ -775,7 +775,7 @@ Passed:
 
 Limitations and blockers:
 
-- Versioned bulk import of the public CN-GEO source taxonomy, double-review workflow, labeled reviewer-agreement benchmark and expiry operations remain incomplete. Evidence-packet/report integration is closed by the v3 gate below.
+- Versioned bulk import of the public CN-GEO source taxonomy and expiry operations remain incomplete. The double-review workflow is implemented by the v4 gate below, but the real customer-labeled reviewer-agreement benchmark remains 0/20 and blocked.
 - Four-platform same-cohort repetition remains incomplete until Kimi is securely reinjected after rotation. Consumer Web/App L3, production Yudao, production HTTPS object storage and customer publishing credentials remain external blockers.
 
 Decision:
@@ -788,7 +788,7 @@ Release Gate: PARTIAL / COMMERCIAL NO-GO
 
 Passed:
 
-- New customer artifacts use `airank.report-evidence-packet.v3`. Each Citation is reconciled to its exact snapshot and normalized host; the manifest carries the current source-classification revision, request hash, review time, validity and revision-record hash without copying the review-note body.
+- New customer artifacts use `airank.report-evidence-packet.v4`. Each Citation is reconciled to its exact snapshot and normalized host; the manifest carries the current source-classification revision, request hash, review time, validity and revision-record hash without copying the review-note body. Citation-support/fact conclusions additionally require final production independent-review provenance.
 - Unclassified, expired, unknown-authority, prohibited-use and unresolved-host cases are counted separately and become explicit limitations. Observed answers and citations remain deliverable, but incomplete governance coverage makes `source_authority_summary_eligible=false`; the UI does not convert partial coverage into an overall authority claim.
 - Alembic `20260808_0021` keeps multiple immutable packet versions for the same report/schema. A source review or expiry transition changes the packet basis and creates a new content-addressed version; identical evidence replays the existing content hash.
 - Packet replay now verifies backing object availability and integrity. A missing object can only be restored from a freshly rebuilt identical canonical payload with the same SHA-256 and emits `report.evidence_packet_object_restored`; a corrupt object fails closed with `EVIDENCE_INTEGRITY_FAILED`.
@@ -797,7 +797,7 @@ Passed:
 
 Limitations and blockers:
 
-- HTML/PDF/Word rendering, digital signatures, a public verification CLI, versioned public taxonomy import, double-review workflow and expiry operations remain incomplete.
+- HTML/PDF/Word rendering, digital signatures, a public verification CLI, versioned public taxonomy import, real customer-labeled review benchmark and expiry operations remain incomplete.
 - This gate proves truthful governed JSON delivery, not four-platform same-cohort measurement, Consumer Web/App evidence, production authentication/storage or real customer uplift.
 
 Decision:
@@ -853,3 +853,25 @@ Limitations and blockers:
 Decision:
 
 - The manual-only public knowledge source refresh gap is closed at the durable application, database and browser-workflow level. Knowledge synchronization remains `partial`, and AIRank remains commercial `NO-GO` until the external production, Consumer and observation gates pass.
+
+## 2026-08-08 Independent Evidence Review and Agreement Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Alembic `20260808_0025` adds immutable evidence review cases for citation support and fact accuracy. A case records purpose, evidence-basis hash, first/second/adjudication review IDs, final label and lifecycle without overwriting the underlying decisions.
+- The second reviewer must use a different authenticated account and cannot see the first reviewer's label or rationale while the case is pending. A disagreement requires a third distinct account; pending, disputed and old single-review records cannot enter customer metrics.
+- `production` and `benchmark` are separate cohorts. Benchmark decisions never enter citation-support or fact-accuracy metrics. Quality reporting exposes raw agreement and multi-class Cohen's kappa; the deterministic gate requires at least 20 completed independent pairs and kappa >= 0.80.
+- Customer packets now use `airank.report-evidence-packet.v4`. Commercial citation/fact entries must carry a final production case, secondary/adjudicator role, verified evidence boundary and immutable record hash; packet validation recomputes citation support and fact accuracy instead of trusting report labels.
+- Full regression passed `427 passed, 30 skipped`; real MySQL integration passed `28 passed, 2 skipped`; Scheduler passed `7/7`, Worker `35/35`, the absorption matrix remained `13 sources / 67 rows / 21 GEO skills`, and 10 core Skills passed all 30 eval cases without false promotion. Node 24 production build and high-severity npm audit passed.
+- Real browser QA retained nine valid not-mentioned samples, displayed the independent-review panel, 0/20 benchmark, the kappa >= 0.80 threshold and an explicit blocked state. Desktop 1024px and mobile 390x844 had no page-level overflow; console warning/error count was zero.
+
+Limitations and blockers:
+
+- The current project has no real customer-labeled benchmark pairs, so reviewer quality is 0/20 and kappa is not estimable. Engineering tests prove the workflow and formulas, not reviewer reliability.
+- Production Yudao, HTTPS S3/MinIO, Consumer Web/App L3, customer publishing credentials, elapsed T+7/T+14/T+30 evidence, Kimi credential rotation and DeepSeek model migration remain open.
+
+Decision:
+
+- The missing double-review workflow is closed at contract, storage, API, metric, report and browser levels. Reviewer-quality evidence remains blocked, and AIRank remains commercial `NO-GO`.

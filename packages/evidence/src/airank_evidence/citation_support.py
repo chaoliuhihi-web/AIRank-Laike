@@ -9,6 +9,7 @@ from statistics import fmean
 from airank_domain.measurement import sha256_text
 
 from .fact_accuracy import AnswerClaimKind
+from .review_quality import FINAL_REVIEW_STATUSES
 
 
 class CitationSupportLabel(str, Enum):
@@ -101,6 +102,10 @@ class CitationSupportReview:
     source_segment_id: str | None = None
     source_start: int | None = None
     source_end: int | None = None
+    review_case_id: str | None = None
+    reviewer_role: str = "single"
+    review_case_status: str = "single_review"
+    review_case_purpose: str = "single_review"
 
     def __post_init__(self) -> None:
         if not self.source_excerpt.strip():
@@ -131,7 +136,7 @@ class CitationSupportReview:
                 raise ValueError("source page support requires an exact source boundary")
 
     @property
-    def commercially_verified(self) -> bool:
+    def evidence_verified(self) -> bool:
         return (
             self.evidence_grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT
             and self.review_method == "human"
@@ -139,6 +144,16 @@ class CitationSupportReview:
             and self.source_segment_id is not None
             and self.source_start is not None
             and self.source_end is not None
+        )
+
+    @property
+    def commercially_verified(self) -> bool:
+        return (
+            self.evidence_verified
+            and self.review_case_id is not None
+            and self.reviewer_role in {"secondary", "adjudicator"}
+            and self.review_case_status in FINAL_REVIEW_STATUSES
+            and self.review_case_purpose == "production"
         )
 
 
@@ -167,8 +182,14 @@ def calculate_citation_support_metrics(
         raise ValueError("citation support review references an unknown claim")
     if any(review.citation_id not in citation_ids for review in reviews):
         raise ValueError("citation support review references an unselected citation")
+    benchmark_reviews = tuple(
+        review for review in reviews if review.review_case_purpose == "benchmark"
+    )
     latest_by_pair: dict[tuple[str, str], CitationSupportReview] = {}
-    for review in sorted(reviews, key=lambda item: (item.reviewed_at, item.id)):
+    for review in sorted(
+        (item for item in reviews if item.review_case_purpose != "benchmark"),
+        key=lambda item: (item.reviewed_at, item.id),
+    ):
         latest_by_pair[(review.claim_id, review.citation_id)] = review
     current = tuple(latest_by_pair.values())
     verified = tuple(review for review in current if review.commercially_verified)
@@ -181,8 +202,12 @@ def calculate_citation_support_metrics(
         limitations.append("selected_citations_have_no_answer_claims")
     if claims and not current:
         limitations.append("citation_support_not_reviewed")
+    if benchmark_reviews:
+        limitations.append("benchmark_reviews_excluded_from_commercial_metrics")
     if current and not verified:
         limitations.append("citation_support_has_no_source_page_snapshot")
+        if any(review.review_case_status not in FINAL_REVIEW_STATUSES for review in current):
+            limitations.append("citation_support_independent_review_required")
     if len(verified) < len(current):
         limitations.append("provisional_reviews_excluded_from_support_rate")
     return CitationSupportMetrics(

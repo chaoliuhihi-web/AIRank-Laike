@@ -46,7 +46,7 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "raise RuntimeError" in version_history_migration
 
     for required in (
-        "airank.report-evidence-packet.v3",
+        "airank.report-evidence-packet.v4",
         "sample_index",
         "citation_index",
         "fact_accuracy_index",

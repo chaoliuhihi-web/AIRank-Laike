@@ -113,7 +113,7 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4";
   status: "ready";
   object_ref_id: string;
   content_url: string;
@@ -424,6 +424,11 @@ export type CitationSupportBundle = {
     reviewed_by: string;
     reviewed_at: string;
     supersedes_review_id: string | null;
+    review_case_id: string | null;
+    reviewer_role: "single" | "primary" | "secondary" | "adjudicator";
+    review_case_status: "single_review" | "creating" | "awaiting_secondary" | "disputed" | "agreed" | "adjudicated" | "void";
+    review_case_purpose: "single_review" | "production" | "benchmark";
+    evidence_verified: boolean;
     commercially_verified: boolean;
   }>;
   metrics: {
@@ -461,6 +466,11 @@ export type FactAccuracyBundle = {
     reviewed_by: string;
     reviewed_at: string;
     supersedes_review_id: string | null;
+    review_case_id: string | null;
+    reviewer_role: "single" | "primary" | "secondary" | "adjudicator";
+    review_case_status: "single_review" | "creating" | "awaiting_secondary" | "disputed" | "agreed" | "adjudicated" | "void";
+    review_case_purpose: "single_review" | "production" | "benchmark";
+    evidence_verified: boolean;
     commercially_verified: boolean;
     idempotent_replay: boolean;
   }>;
@@ -478,6 +488,66 @@ export type FactAccuracyBundle = {
     fact_accuracy: number | null;
     known_limitations: string[];
   };
+};
+
+export type EvidenceReviewDecision = {
+  reviewer_role: "primary" | "secondary" | "adjudicator";
+  label: string;
+  rationale: string;
+  reviewed_by: string;
+  reviewed_at: string;
+  review_id: string;
+};
+
+export type EvidenceReviewCase = {
+  case_id: string;
+  tenant_id: string;
+  project_id: string;
+  snapshot_id: string;
+  review_kind: "citation_support" | "fact_accuracy";
+  claim_id: string;
+  citation_id: string | null;
+  evidence_basis_sha256: string;
+  purpose: "production" | "benchmark";
+  benchmark_version: string | null;
+  status: "creating" | "awaiting_secondary" | "disputed" | "agreed" | "adjudicated" | "void";
+  consensus_label: string | null;
+  decision_count: number;
+  current_actor_role: "primary" | "secondary" | "adjudicator" | null;
+  next_action: "submit_secondary" | "adjudicate" | "complete" | "none";
+  visible_decisions: EvidenceReviewDecision[];
+  created_by: string;
+  finalized_by: string | null;
+  created_at: string;
+  finalized_at: string | null;
+  version: number;
+  idempotent_replay: boolean;
+};
+
+export type ReviewQualityMetrics = {
+  case_count: number;
+  independently_reviewed_case_count: number;
+  finalized_case_count: number;
+  awaiting_secondary_count: number;
+  disputed_count: number;
+  agreement_count: number;
+  disagreement_count: number;
+  adjudicated_count: number;
+  raw_agreement_rate: number | null;
+  cohen_kappa: number | null;
+  benchmark_minimum_case_count: number;
+  benchmark_minimum_kappa: number;
+  benchmark_ready: boolean;
+  benchmark_quality_passed: boolean;
+  known_limitations: string[];
+};
+
+export type EvidenceReviewQueue = {
+  project_id: string;
+  snapshot_id: string | null;
+  cases: EvidenceReviewCase[];
+  production_quality: ReviewQualityMetrics;
+  benchmark_quality: ReviewQualityMetrics;
 };
 
 export type CitationSourceCapture = {
@@ -1591,39 +1661,57 @@ export function fetchFactAccuracy(snapshotId: string, signal?: AbortSignal): Pro
   return fetchData(`/api/v1/samples/${snapshotId}/fact-accuracy`, "trc_web_fact_accuracy", signal);
 }
 
-export async function createFactAccuracyReview(
+export function fetchEvidenceReviewCases(
+  projectId: string,
+  snapshotId?: string,
+  signal?: AbortSignal,
+): Promise<EvidenceReviewQueue> {
+  const query = snapshotId ? `?snapshot_id=${encodeURIComponent(snapshotId)}` : "";
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-cases${query}`,
+    "trc_web_evidence_review_queue",
+    signal,
+  );
+}
+
+export async function createFactEvidenceReviewCase(
+  projectId: string,
   claimId: string,
   input: {
     verdict: FactAccuracyBundle["reviews"][number]["verdict"];
     factRevisionId?: string;
     rationale: string;
+    purpose?: "production" | "benchmark";
   },
-): Promise<FactAccuracyBundle["reviews"][number]> {
+): Promise<EvidenceReviewCase> {
   const session = getStoredAuthSession();
   const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-  const headers = {
-    ...buildApiHeaders("trc_web_fact_accuracy_review"),
-    "Content-Type": "application/json",
-    "Idempotency-Key": `fact-accuracy-${claimId}-${randomPart}`,
-  };
   const response = await fetch(
-    `/api/v1/answer-claims/${encodeURIComponent(claimId)}/fact-accuracy-reviews`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-cases/fact-accuracy`,
     {
       method: "POST",
-      headers,
+      headers: {
+        ...buildApiHeaders("trc_web_fact_review_case"),
+        "Content-Type": "application/json",
+        "Idempotency-Key": `fact-review-case-${claimId}-${randomPart}`,
+      },
       body: JSON.stringify({
-        verdict: input.verdict,
-        fact_revision_id: input.factRevisionId,
-        rationale: input.rationale,
-        review_method: "human",
-        reviewed_by: session?.user.userId ?? "console-reviewer",
+        claim_id: claimId,
+        purpose: input.purpose ?? "production",
+        review: {
+          verdict: input.verdict,
+          fact_revision_id: input.factRevisionId,
+          rationale: input.rationale,
+          review_method: "human",
+          reviewed_by: session?.user.userId ?? "console-reviewer",
+        },
       }),
     },
   );
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, `Fact accuracy review failed with ${response.status}`));
+    throw new Error(await readErrorMessage(response, `Fact review case failed with ${response.status}`));
   }
-  return ((await response.json()) as { data: FactAccuracyBundle["reviews"][number] }).data;
+  return ((await response.json()) as { data: EvidenceReviewCase }).data;
 }
 
 export async function createCitationSourceCapture(citationId: string): Promise<CitationSourceCapture> {
@@ -1726,7 +1814,8 @@ export async function reviewSourceRegistryEntry(
   return ((await response.json()) as { data: SourceRegistryEntry }).data;
 }
 
-export async function createCitationSupportReview(
+export async function createCitationEvidenceReviewCase(
+  projectId: string,
   claimId: string,
   input: {
     citationId: string;
@@ -1738,32 +1827,71 @@ export async function createCitationSupportReview(
     sourceSegmentId: string;
     sourceStart: number;
     sourceEnd: number;
+    purpose?: "production" | "benchmark";
   },
-): Promise<CitationSupportBundle["reviews"][number]> {
+): Promise<EvidenceReviewCase> {
   const session = getStoredAuthSession();
-  const response = await fetch(`/api/v1/citation-claims/${encodeURIComponent(claimId)}/reviews`, {
-    method: "POST",
-    headers: { ...buildApiHeaders("trc_web_citation_review"), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      citation_id: input.citationId,
-      support_label: input.supportLabel,
-      evidence_grade: "source_page_snapshot",
-      source_excerpt: input.sourceExcerpt,
-      source_content_sha256: input.sourceContentSha256,
-      source_object_ref_id: input.sourceObjectRefId,
-      source_capture_id: input.sourceCaptureId,
-      source_segment_id: input.sourceSegmentId,
-      source_start: input.sourceStart,
-      source_end: input.sourceEnd,
-      rationale: "人工在证据中心核对不可变来源页面片段与回答断言。",
-      review_method: "human",
-      reviewed_by: session?.user.userId ?? "console-reviewer",
-    }),
-  });
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-cases/citation-support`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_citation_review_case"),
+        "Content-Type": "application/json",
+        "Idempotency-Key": `citation-review-case-${claimId}-${randomPart}`,
+      },
+      body: JSON.stringify({
+        claim_id: claimId,
+        purpose: input.purpose ?? "production",
+        review: {
+          citation_id: input.citationId,
+          support_label: input.supportLabel,
+          evidence_grade: "source_page_snapshot",
+          source_excerpt: input.sourceExcerpt,
+          source_content_sha256: input.sourceContentSha256,
+          source_object_ref_id: input.sourceObjectRefId,
+          source_capture_id: input.sourceCaptureId,
+          source_segment_id: input.sourceSegmentId,
+          source_start: input.sourceStart,
+          source_end: input.sourceEnd,
+          rationale: "第一审核人独立核对不可变来源页面片段与回答断言。",
+          review_method: "human",
+          reviewed_by: session?.user.userId ?? "console-reviewer",
+        },
+      }),
+    },
+  );
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, `Citation review request failed with ${response.status}`));
+    throw new Error(await readErrorMessage(response, `Citation review case failed with ${response.status}`));
   }
-  return ((await response.json()) as { data: CitationSupportBundle["reviews"][number] }).data;
+  return ((await response.json()) as { data: EvidenceReviewCase }).data;
+}
+
+export async function submitEvidenceReviewDecision(
+  caseId: string,
+  input: { label: string; rationale: string },
+): Promise<EvidenceReviewCase> {
+  const session = getStoredAuthSession();
+  const response = await fetch(
+    `/api/v1/evidence-review-cases/${encodeURIComponent(caseId)}/decisions`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_decision"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        label: input.label,
+        rationale: input.rationale,
+        reviewed_by: session?.user.userId ?? "console-reviewer",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence review decision failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewCase }).data;
 }
 
 export function fetchMeasurementQuality(

@@ -363,6 +363,11 @@ def test_report_evidence_packet_binds_fact_review_hash_and_metrics() -> None:
         "reviewed_by": "reviewer_1",
         "reviewed_at": "2026-08-08T12:00:00+00:00",
         "supersedes_review_id": None,
+        "review_case_id": "evidence_review_case_1",
+        "reviewer_role": "secondary",
+        "review_case_status": "agreed",
+        "review_case_purpose": "production",
+        "evidence_verified": True,
         "commercially_verified": True,
     }
     review["review_record_sha256"] = canonical_json_sha256(review)
@@ -390,6 +395,97 @@ def test_report_evidence_packet_binds_fact_review_hash_and_metrics() -> None:
     assert packet.manifest["counts"]["fact_accuracy_reviews"] == 1
     assert packet.manifest["source_governance"]["summary"]["authority_summary_eligible"] is False
     assert packet.manifest["fact_accuracy_index"][0]["latest_review"]["review_record_sha256"] == review["review_record_sha256"]
+
+
+def test_report_evidence_packet_recomputes_independently_reviewed_citation_support() -> None:
+    report = publishable_report_record()
+    report["metrics"]["baseline_metrics"]["citation_support"] = 1.0
+    samples = [
+        {
+            "task_id": "task_1",
+            "run_id": "scan_baseline",
+            "snapshot_id": "snap_1",
+            "sample_status": "valid",
+            "mention_class": "not_mentioned",
+            "answer_sha256": "3" * 64,
+            "raw_response_sha256": "5" * 64,
+            "evidence_snapshot_id": "evidence_1",
+            "collector_surface": "web",
+            "citation_support_score": 1.0,
+        },
+        {
+            "task_id": "task_2",
+            "run_id": "scan_compare",
+            "snapshot_id": "snap_2",
+            "sample_status": "valid",
+            "mention_class": "recommended",
+            "answer_sha256": "6" * 64,
+            "raw_response_sha256": "7" * 64,
+            "evidence_snapshot_id": "evidence_2",
+            "collector_surface": "web",
+            "citation_support_score": None,
+        },
+    ]
+    support_review = {
+        "claim_id": "claim_1",
+        "claim_sha256": "8" * 64,
+        "answer_start": 0,
+        "answer_end": 8,
+        "review_id": "review_1",
+        "support_label": "supports",
+        "evidence_grade": "source_page_snapshot",
+        "source_content_sha256": "9" * 64,
+        "source_object_ref_id": "object_source_1",
+        "source_capture_id": "capture_1",
+        "source_segment_id": "segment_1",
+        "source_start": 0,
+        "source_end": 16,
+        "review_method": "human",
+        "reviewed_by": "reviewer_2",
+        "reviewed_at": "2026-08-08T12:00:00+00:00",
+        "review_case_id": "evidence_review_case_1",
+        "reviewer_role": "secondary",
+        "review_case_status": "agreed",
+        "review_case_purpose": "production",
+        "evidence_verified": True,
+        "commercially_verified": True,
+    }
+    support_review["review_record_sha256"] = canonical_json_sha256(support_review)
+    citations = [
+        {
+            "citation_id": "cite_1",
+            "snapshot_id": "snap_1",
+            "url": "https://example.com/source",
+            "host": "example.com",
+            "support_reviews": [support_review],
+        }
+    ]
+    packet = build_report_evidence_packet(
+        report_record=report,
+        sample_index=samples,
+        citation_index=citations,
+        fact_accuracy_index=[],
+        evidence_object_index=[],
+        source_governance=source_governance_for(citations),
+    )
+    assert packet.manifest["measurement"]["baseline_metrics"]["citation_support"] == 1.0
+    assert packet.manifest["citation_index"][0]["support_reviews"][0]["review_case_status"] == "agreed"
+
+    tampered = dict(support_review)
+    tampered["review_case_purpose"] = "benchmark"
+    tampered["review_record_sha256"] = canonical_json_sha256(
+        {key: value for key, value in tampered.items() if key != "review_record_sha256"}
+    )
+    citations[0]["support_reviews"] = [tampered]
+    with pytest.raises(ReportEvidencePacketError, match="benchmark review"):
+        build_report_evidence_packet(
+            report_record=report,
+            sample_index=samples,
+            citation_index=citations,
+            fact_accuracy_index=[],
+            evidence_object_index=[],
+            source_governance=source_governance_for(citations),
+        )
 
 
 def test_report_evidence_packet_binds_effective_source_governance_hashes() -> None:
@@ -434,7 +530,7 @@ def test_report_evidence_packet_binds_effective_source_governance_hashes() -> No
     )
 
     summary = packet.manifest["source_governance"]["summary"]
-    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v3"
+    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v4"
     assert summary["source_host_count"] == 1
     assert summary["authority_coverage_rate"] == 1.0
     assert summary["authority_summary_eligible"] is True

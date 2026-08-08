@@ -100,9 +100,10 @@ def test_frontend_never_equates_selected_citations_with_support() -> None:
     api = (ROOT / "apps" / "web" / "src" / "console" / "api.ts").read_text(encoding="utf-8")
 
     assert "引用选择 ≠ 引用支持" in app
-    assert "人工核对 + 不可变来源页面" in app
+    assert "不可变来源页面 + 不同审核人一致/裁决" in app
     assert "可交付支持率" in app
     assert "fetchCitationSupport" in api
     assert "抓取来源页" in app
     assert "原文边界" in app
-    assert "createCitationSupportReview" in api
+    assert "createCitationEvidenceReviewCase" in api
+    assert "createCitationSupportReview" not in api

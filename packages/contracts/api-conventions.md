@@ -126,16 +126,19 @@ GET  /api/v1/reports/{report_id}/evidence-packets/latest
 GET  /api/v1/evidence-objects/{object_ref_id}/content
 ```
 
-生成接口必须携带每次客户导出动作唯一的 `Idempotency-Key`，操作者来自认证上下文；服务端再按完整内容 hash 去重，所以同一证据不会重复建包，而来源修订或有效期状态变化可以形成新的不可变版本。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。当前新包使用 `airank.report-evidence-packet.v3`，采用内容寻址保存，包含公式、限制项、风险、样本/引用/事实准确性/来源治理/对象索引和文件哈希，但不复制原始回答正文或人工分类说明正文。事实索引保存声明与回答边界、当前审核裁决、FactRevision/KnowledgeSource/KnowledgeSegment 引用及原文边界 hash，并与报告中的声明数、确定性覆盖率和准确率复算一致。来源治理索引按 Citation 精确 host 保存当前分类修订及其 hash，未分类、过期、未知权威、禁止用途和无法解析 host 分开进入限制项；治理覆盖不完整时仍可交付观测事实，但不得生成整体来源权威性结论。历史 v1/v2 包仍可下载，但新建时不会冒充 v3。原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
+生成接口必须携带每次客户导出动作唯一的 `Idempotency-Key`，操作者来自认证上下文；服务端再按完整内容 hash 去重，所以同一证据不会重复建包，而来源修订或有效期状态变化可以形成新的不可变版本。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。当前新包使用 `airank.report-evidence-packet.v4`，采用内容寻址保存，包含公式、限制项、风险、样本/引用/事实准确性/来源治理/对象索引和文件哈希，但不复制原始回答正文或人工分类说明正文。事实与引用支持索引只接受 `production` 用途、不同审核人双人一致或第三人裁决后的最终结论，并保存 review case、审核角色、证据边界和记录 hash；`benchmark` 与旧单人审核只用于质量评估或历史追溯，不进入客户指标。来源治理索引按 Citation 精确 host 保存当前分类修订及其 hash，未分类、过期、未知权威、禁止用途和无法解析 host 分开进入限制项；治理覆盖不完整时仍可交付观测事实，但不得生成整体来源权威性结论。历史 v1/v2/v3 包仍可下载，但新建时不会冒充 v4。原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
 
 事实准确性审核接口：
 
 ```text
 GET  /api/v1/samples/{snapshot_id}/fact-accuracy
 POST /api/v1/answer-claims/{claim_id}/fact-accuracy-reviews
+POST /api/v1/projects/{project_id}/evidence-review-cases/fact-accuracy
+POST /api/v1/evidence-review-cases/{case_id}/decisions
+GET  /api/v1/projects/{project_id}/evidence-review-cases
 ```
 
-GET 响应使用 `fact_accuracy_bundle_response.schema.json`，POST 请求使用 `fact_accuracy_review_request.schema.json` 并要求 `Idempotency-Key`。只有 `brand_fact` 与 `competitor_fact` 进入分母；`accurate/inaccurate/outdated` 必须由人工绑定当前已审核、公开或脱敏、未过期、无冲突的 FactRevision 及有效来源精确原文边界。`insufficient_evidence` 保留为证据缺口，不得按错误计分。只有全部事实声明都完成当前、确定性人工核验时才输出 `fact_accuracy`；事实或来源失效后旧审核自动退出商业指标，但不可变审核记录保留。
+GET 响应使用 `fact_accuracy_bundle_response.schema.json`；旧单人 POST 仅保留兼容与历史取证，不进入商业指标。生产审核必须通过 evidence review case 创建第一审核，再由不同账号盲审；不一致时由第三个不同账号裁决。只有 `brand_fact` 与 `competitor_fact` 进入分母；`accurate/inaccurate/outdated` 必须由人工绑定当前已审核、公开或脱敏、未过期、无冲突的 FactRevision 及有效来源精确原文边界。`insufficient_evidence` 保留为证据缺口，不得按错误计分。只有全部事实声明都完成当前、确定性、最终 `production` 双人审核时才输出 `fact_accuracy`；事实或来源失效后旧审核自动退出商业指标，但不可变审核记录保留。`benchmark` 至少需要 20 个独立双人样本、全部终结且 Cohen's kappa 不低于 0.80 才通过审核质量门禁；benchmark 结论永不进入客户指标。
 
 ## M3 事实审核契约
 
@@ -163,7 +166,7 @@ GET /api/v1/projects/{project_id}/asset-bundle
 - 创建 publish package
 - 生成报告
 - 发起 retest
-- 创建事实准确性审核
+- 创建独立证据复核任务
 - 生成报告证据包
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。

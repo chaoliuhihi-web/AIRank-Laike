@@ -68,7 +68,7 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert 'item.status === "quality_blocked"' in app_source
     assert "技术可提取性分不等于品牌推荐率" in app_source
     assert "引用选择 ≠ 引用支持" in app_source
-    assert "人工核对 + 不可变来源页面" in app_source
+    assert "不可变来源页面 + 不同审核人一致/裁决" in app_source
     assert "创建不可变发布包" in app_source
     assert "登记真实发布证据" in app_source
     assert "客户站点凭证只允许由 Worker 安全注入" in app_source

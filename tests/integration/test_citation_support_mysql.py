@@ -14,6 +14,11 @@ from apps.api.citation_support_routes import (
     CitationSupportReviewCreateRequest,
     MySQLCitationSupportRepository,
 )
+from apps.api.evidence_review_routes import (
+    CitationReviewCaseCreateRequest,
+    EvidenceReviewDecisionRequest,
+    MySQLEvidenceReviewRepository,
+)
 from apps.api.main import (
     BuyerQuestionCreateRequest,
     MySQLProjectRepository,
@@ -61,6 +66,7 @@ def test_real_mysql_citation_selection_and_support_are_separate_append_only_evid
     project_repository = MySQLProjectRepository(database_url())
     scan_repository = MySQLScanRepository(database_url())
     support_repository = MySQLCitationSupportRepository(database_url())
+    review_repository = MySQLEvidenceReviewRepository(database_url())
     answer_text = "企业可以把 AI 回答指标下钻到原始样本和引用证据。"
     cited_text = "每条汇总结论都应关联原始回答、引用与不可变内容摘要。"
 
@@ -300,28 +306,50 @@ def test_real_mysql_citation_selection_and_support_are_separate_append_only_evid
                     "created_at": datetime.now(timezone.utc),
                 },
             )
-        verified = support_repository.create_review(
+        review_case = review_repository.create_citation_case(
             tenant_id,
-            claim.claim_id,
-            CitationSupportReviewCreateRequest(
-                citation_id=citation_id,
-                support_label="supports",
-                evidence_grade="source_page_snapshot",
-                source_excerpt=source_excerpt,
-                source_content_sha256=source_sha256,
-                source_object_ref_id=source_object_id,
-                source_capture_id=source_capture_id,
-                source_segment_id=source_segment_id,
-                source_start=0,
-                source_end=len(source_excerpt),
-                rationale="人工核对不可变来源页面后确认支持。",
-                reviewed_by="integration-reviewer",
+            project.project_id,
+            CitationReviewCaseCreateRequest(
+                claim_id=claim.claim_id,
+                purpose="production",
+                review=CitationSupportReviewCreateRequest(
+                    citation_id=citation_id,
+                    support_label="supports",
+                    evidence_grade="source_page_snapshot",
+                    source_excerpt=source_excerpt,
+                    source_content_sha256=source_sha256,
+                    source_object_ref_id=source_object_id,
+                    source_capture_id=source_capture_id,
+                    source_segment_id=source_segment_id,
+                    source_start=0,
+                    source_end=len(source_excerpt),
+                    rationale="第一审核人核对不可变来源页面后确认支持。",
+                    reviewed_by="integration-reviewer-1",
+                ),
             ),
+            "citation-support-production-case",
+            "integration-reviewer-1",
+            "trace-citation-support-primary",
         )
-        assert verified.commercially_verified is True
-        assert verified.supersedes_review_id == provisional.review_id
+        assert review_case.status == "awaiting_secondary"
+        completed = review_repository.submit_decision(
+            tenant_id,
+            review_case.case_id,
+            EvidenceReviewDecisionRequest(
+                label="supports",
+                rationale="第二审核人独立核对来源边界后同意。",
+                reviewed_by="integration-reviewer-2",
+            ),
+            "integration-reviewer-2",
+            "trace-citation-support-secondary",
+        )
+        assert completed.status == "agreed"
         bundle = support_repository.get_bundle(tenant_id, snapshot_id)
-        assert len(bundle.reviews) == 2
+        verified = bundle.reviews[-1]
+        assert verified.commercially_verified is True
+        assert verified.review_case_id == review_case.case_id
+        assert verified.reviewer_role == "secondary"
+        assert len(bundle.reviews) == 3
         assert bundle.metrics.review_count == 1
         assert bundle.metrics.commercially_verified_review_count == 1
         assert bundle.metrics.citation_support_rate == 1.0

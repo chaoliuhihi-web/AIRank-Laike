@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_review_case_response.schema.json",
+  "title": "AIRank Independent Evidence Review Case Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": { "$ref": "#/$defs/case" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "required": ["reviewer_role", "label", "rationale", "reviewed_by", "reviewed_at", "review_id"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewer_role": { "enum": ["primary", "secondary", "adjudicator"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "review_id": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "case_id", "tenant_id", "project_id", "snapshot_id", "review_kind",
+        "claim_id", "citation_id", "evidence_basis_sha256", "purpose",
+        "benchmark_version", "status", "consensus_label", "decision_count",
+        "current_actor_role", "next_action", "visible_decisions", "created_by",
+        "finalized_by", "created_at", "finalized_at", "version", "idempotent_replay"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "project_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "snapshot_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "review_kind": { "enum": ["citation_support", "fact_accuracy"] },
+        "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "citation_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "evidence_basis_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "purpose": { "enum": ["production", "benchmark"] },
+        "benchmark_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "status": { "enum": ["creating", "awaiting_secondary", "disputed", "agreed", "adjudicated", "void"] },
+        "consensus_label": { "type": ["string", "null"], "maxLength": 32 },
+        "decision_count": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "current_actor_role": { "enum": ["primary", "secondary", "adjudicator", null] },
+        "next_action": { "enum": ["submit_secondary", "adjudicate", "complete", "none"] },
+        "visible_decisions": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/decision" } },
+        "created_by": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "finalized_by": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "finalized_at": { "type": ["string", "null"], "format": "date-time" },
+        "version": { "type": "integer", "minimum": 1 },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

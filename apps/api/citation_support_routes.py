@@ -30,6 +30,9 @@ from airank_evidence import (
 
 TRACE_HEADER = "X-AIRank-Trace-Id"
 router = APIRouter(prefix="/api/v1", tags=["citation-support"])
+PENDING_INDEPENDENT_REVIEW_STATUSES = frozenset(
+    {"creating", "awaiting_secondary", "disputed"}
+)
 
 
 def now_utc() -> datetime:
@@ -52,6 +55,19 @@ def trusted_actor(requested: str, authenticated: Optional[str]) -> str:
     raise StarletteHTTPException(
         status_code=401, detail={"code": "AUTH_TOKEN_INVALID"}
     )
+
+
+def review_visible_to_actor(
+    *,
+    review_case_id: Optional[str],
+    review_case_status: str,
+    reviewed_by: str,
+    actor_id: Optional[str],
+) -> bool:
+    """Keep peer labels blind until the independent review case is final."""
+    if not review_case_id or review_case_status not in PENDING_INDEPENDENT_REVIEW_STATUSES:
+        return True
+    return bool(actor_id and reviewed_by == actor_id)
 
 
 class CitationClaimCreateRequest(BaseModel):
@@ -153,6 +169,11 @@ class FactAccuracyReviewData(BaseModel):
     reviewed_by: str
     reviewed_at: datetime
     supersedes_review_id: Optional[str]
+    review_case_id: Optional[str] = None
+    reviewer_role: str = "single"
+    review_case_status: str = "single_review"
+    review_case_purpose: str = "single_review"
+    evidence_verified: bool = False
     commercially_verified: bool
     idempotent_replay: bool = False
 
@@ -207,6 +228,11 @@ class CitationSupportReviewData(BaseModel):
     reviewed_by: str
     reviewed_at: datetime
     supersedes_review_id: Optional[str]
+    review_case_id: Optional[str] = None
+    reviewer_role: str = "single"
+    review_case_status: str = "single_review"
+    review_case_purpose: str = "single_review"
+    evidence_verified: bool = False
     commercially_verified: bool
 
 
@@ -251,7 +277,9 @@ class CitationSupportRepository(Protocol):
     def create_review(
         self, tenant_id: str, claim_id: str, payload: CitationSupportReviewCreateRequest
     ) -> CitationSupportReviewData: ...
-    def get_bundle(self, tenant_id: str, snapshot_id: str) -> CitationSupportBundleData: ...
+    def get_bundle(
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
+    ) -> CitationSupportBundleData: ...
     def create_fact_accuracy_review(
         self,
         tenant_id: str,
@@ -261,7 +289,7 @@ class CitationSupportRepository(Protocol):
         trace_id: str,
     ) -> FactAccuracyReviewData: ...
     def get_fact_accuracy_bundle(
-        self, tenant_id: str, snapshot_id: str
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
     ) -> FactAccuracyBundleData: ...
 
 
@@ -457,13 +485,25 @@ class InMemoryCitationSupportRepository:
             self.reviews.append(data)
             return data
 
-    def get_bundle(self, tenant_id: str, snapshot_id: str) -> CitationSupportBundleData:
+    def get_bundle(
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
+    ) -> CitationSupportBundleData:
         with self.lock:
             if (tenant_id, snapshot_id) not in self.samples:
                 raise StarletteHTTPException(404, detail={"code": "OBJECT_REF_NOT_FOUND"})
             claims = [item for item in self.claims.values() if item.snapshot_id == snapshot_id]
             claim_ids = {item.claim_id for item in claims}
-            reviews = [item for item in self.reviews if item.claim_id in claim_ids]
+            reviews = [
+                item
+                for item in self.reviews
+                if item.claim_id in claim_ids
+                and review_visible_to_actor(
+                    review_case_id=item.review_case_id,
+                    review_case_status=item.review_case_status,
+                    reviewed_by=item.reviewed_by,
+                    actor_id=actor_id,
+                )
+            ]
             citation_ids = tuple(
                 item_id
                 for item_id, item in self.citations.items()
@@ -522,7 +562,7 @@ class InMemoryCitationSupportRepository:
             return data
 
     def get_fact_accuracy_bundle(
-        self, tenant_id: str, snapshot_id: str
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
     ) -> FactAccuracyBundleData:
         with self.lock:
             if (tenant_id, snapshot_id) not in self.samples:
@@ -532,7 +572,15 @@ class InMemoryCitationSupportRepository:
             ]
             claim_ids = {item.claim_id for item in claims}
             reviews = [
-                item for item in self.fact_accuracy_reviews if item.claim_id in claim_ids
+                item
+                for item in self.fact_accuracy_reviews
+                if item.claim_id in claim_ids
+                and review_visible_to_actor(
+                    review_case_id=item.review_case_id,
+                    review_case_status=item.review_case_status,
+                    reviewed_by=item.reviewed_by,
+                    actor_id=actor_id,
+                )
             ]
             return build_fact_accuracy_bundle(snapshot_id, claims, reviews)
 
@@ -711,6 +759,7 @@ class InMemoryCitationSupportRepository:
             reviewed_by=model.reviewed_by,
             reviewed_at=model.reviewed_at,
             supersedes_review_id=supersedes_review_id,
+            evidence_verified=model.evidence_verified,
             commercially_verified=model.commercially_verified,
         )
 
@@ -912,7 +961,9 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
             )
         return review_model_data(model, supersedes)
 
-    def get_bundle(self, tenant_id: str, snapshot_id: str) -> CitationSupportBundleData:
+    def get_bundle(
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
+    ) -> CitationSupportBundleData:
         with self.engine.begin() as conn:
             sample = conn.execute(
                 text("SELECT id FROM airank_answer_snapshots WHERE tenant_id=:tenant_id AND id=:id"),
@@ -944,11 +995,28 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                 params.update({f"claim_{index}": value for index, value in enumerate(claim_ids)})
                 review_rows = conn.execute(
                     text(
-                        f"SELECT * FROM airank_citation_support_reviews WHERE tenant_id=:tenant_id AND claim_id IN ({placeholders}) ORDER BY reviewed_at, id"
+                        f"""
+                        SELECT r.*, c.status AS review_case_status,
+                               c.purpose AS review_case_purpose
+                        FROM airank_citation_support_reviews r
+                        LEFT JOIN airank_evidence_review_cases c
+                          ON c.tenant_id=r.tenant_id AND c.id=r.review_case_id
+                        WHERE r.tenant_id=:tenant_id AND r.claim_id IN ({placeholders})
+                        ORDER BY r.reviewed_at, r.id
+                        """
                     ),
                     params,
                 ).mappings().all()
-                reviews = [review_row(row) for row in review_rows]
+                reviews = [
+                    review
+                    for review in (review_row(row) for row in review_rows)
+                    if review_visible_to_actor(
+                        review_case_id=review.review_case_id,
+                        review_case_status=review.review_case_status,
+                        reviewed_by=review.reviewed_by,
+                        actor_id=actor_id,
+                    )
+                ]
         return build_bundle(snapshot_id, citation_ids, claims, reviews)
 
     def create_fact_accuracy_review(
@@ -1147,7 +1215,7 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
             )
 
     def get_fact_accuracy_bundle(
-        self, tenant_id: str, snapshot_id: str
+        self, tenant_id: str, snapshot_id: str, actor_id: Optional[str] = None
     ) -> FactAccuracyBundleData:
         with self.engine.begin() as conn:
             sample = conn.execute(
@@ -1194,6 +1262,16 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                         conn, tenant_id, str(row[0]), replay=False
                     )
                     for row in rows
+                ]
+                reviews = [
+                    review
+                    for review in reviews
+                    if review_visible_to_actor(
+                        review_case_id=review.review_case_id,
+                        review_case_status=review.review_case_status,
+                        reviewed_by=review.reviewed_by,
+                        actor_id=actor_id,
+                    )
                 ]
         return build_fact_accuracy_bundle(snapshot_id, claims, reviews)
 
@@ -1344,6 +1422,8 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                        content.content_text, segment.segment_text,
                        segment.source_start AS segment_start,
                        segment.source_end AS segment_end,
+                       review_case.status AS review_case_status,
+                       review_case.purpose AS review_case_purpose,
                        (SELECT COUNT(*) FROM airank_fact_conflicts c
                         WHERE c.tenant_id=ar.tenant_id
                           AND c.fact_atom_id=fr.fact_atom_id
@@ -1361,6 +1441,9 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                 LEFT JOIN airank_knowledge_segments segment
                   ON segment.tenant_id=ar.tenant_id
                  AND segment.id=ar.knowledge_segment_id
+                LEFT JOIN airank_evidence_review_cases review_case
+                  ON review_case.tenant_id=ar.tenant_id
+                 AND review_case.id=ar.review_case_id
                 WHERE ar.tenant_id=:tenant_id AND ar.id=:review_id
                 """
             ),
@@ -1474,6 +1557,11 @@ def review_model_data(model: CitationSupportReview, supersedes: Optional[str]) -
         reviewed_by=model.reviewed_by,
         reviewed_at=model.reviewed_at,
         supersedes_review_id=supersedes,
+        review_case_id=model.review_case_id,
+        reviewer_role=model.reviewer_role,
+        review_case_status=model.review_case_status,
+        review_case_purpose=model.review_case_purpose,
+        evidence_verified=model.evidence_verified,
         commercially_verified=model.commercially_verified,
     )
 
@@ -1502,6 +1590,12 @@ def review_row(row: Mapping[str, Any]) -> CitationSupportReviewData:
         ),
         source_start=(int(row["source_start"]) if row.get("source_start") is not None else None),
         source_end=(int(row["source_end"]) if row.get("source_end") is not None else None),
+        review_case_id=(
+            str(row["review_case_id"]) if row.get("review_case_id") else None
+        ),
+        reviewer_role=str(row.get("reviewer_role") or "single"),
+        review_case_status=str(row.get("review_case_status") or "single_review"),
+        review_case_purpose=str(row.get("review_case_purpose") or "single_review"),
     )
     return review_model_data(model, str(row["supersedes_review_id"]) if row["supersedes_review_id"] else None)
 
@@ -1530,6 +1624,11 @@ def fact_accuracy_review_data(
         reviewed_by=model.reviewed_by,
         reviewed_at=model.reviewed_at,
         supersedes_review_id=model.supersedes_review_id,
+        review_case_id=model.review_case_id,
+        reviewer_role=model.reviewer_role,
+        review_case_status=model.review_case_status,
+        review_case_purpose=model.review_case_purpose,
+        evidence_verified=model.evidence_verified,
         commercially_verified=model.commercially_verified,
         idempotent_replay=replay,
     )
@@ -1649,6 +1748,12 @@ def fact_accuracy_review_row(
         source_current=source_current,
         no_open_conflict=int(row.get("open_conflict_count") or 0) == 0,
         exact_boundary_verified=exact_boundary,
+        review_case_id=(
+            str(row["review_case_id"]) if row.get("review_case_id") else None
+        ),
+        reviewer_role=str(row.get("reviewer_role") or "single"),
+        review_case_status=str(row.get("review_case_status") or "single_review"),
+        review_case_purpose=str(row.get("review_case_purpose") or "single_review"),
     )
     return fact_accuracy_review_data(model, quoted_text, replay)
 
@@ -1694,6 +1799,10 @@ def build_fact_accuracy_bundle(
             source_current=item.commercially_verified,
             no_open_conflict=item.commercially_verified,
             exact_boundary_verified=item.commercially_verified,
+            review_case_id=item.review_case_id,
+            reviewer_role=item.reviewer_role,
+            review_case_status=item.review_case_status,
+            review_case_purpose=item.review_case_purpose,
         )
         for item in reviews
     )
@@ -1806,6 +1915,107 @@ def load_fact_accuracy_bundles_from_connection(
     return bundles
 
 
+def load_citation_support_bundles_from_connection(
+    conn: Any,
+    tenant_id: str,
+    snapshot_ids: list[str] | tuple[str, ...],
+) -> dict[str, CitationSupportBundleData]:
+    """Load citation-support bundles without exposing pending peer decisions."""
+
+    ordered_snapshot_ids = tuple(dict.fromkeys(item for item in snapshot_ids if item))
+    if not ordered_snapshot_ids:
+        return {}
+    placeholders = ", ".join(
+        f":citation_snapshot_{index}" for index in range(len(ordered_snapshot_ids))
+    )
+    params: dict[str, Any] = {"tenant_id": tenant_id}
+    params.update(
+        {
+            f"citation_snapshot_{index}": value
+            for index, value in enumerate(ordered_snapshot_ids)
+        }
+    )
+    citation_rows = conn.execute(
+        text(
+            f"""
+            SELECT id, snapshot_id
+            FROM airank_source_citations
+            WHERE tenant_id=:tenant_id AND snapshot_id IN ({placeholders})
+            ORDER BY snapshot_id, citation_order, id
+            """
+        ),
+        params,
+    ).mappings().all()
+    citation_ids_by_snapshot: dict[str, list[str]] = {
+        snapshot_id: [] for snapshot_id in ordered_snapshot_ids
+    }
+    for row in citation_rows:
+        citation_ids_by_snapshot[str(row["snapshot_id"])].append(str(row["id"]))
+
+    claim_rows = conn.execute(
+        text(
+            f"""
+            SELECT * FROM airank_answer_claims
+            WHERE tenant_id=:tenant_id AND snapshot_id IN ({placeholders})
+            ORDER BY snapshot_id, answer_start, id
+            """
+        ),
+        params,
+    ).mappings().all()
+    claims_by_snapshot: dict[str, list[CitationClaimData]] = {
+        snapshot_id: [] for snapshot_id in ordered_snapshot_ids
+    }
+    for row in claim_rows:
+        claims_by_snapshot[str(row["snapshot_id"])].append(claim_row(row))
+
+    reviews_by_claim: dict[str, list[CitationSupportReviewData]] = {}
+    claim_ids = [str(row["id"]) for row in claim_rows]
+    if claim_ids:
+        claim_placeholders = ", ".join(
+            f":citation_claim_{index}" for index in range(len(claim_ids))
+        )
+        review_params: dict[str, Any] = {"tenant_id": tenant_id}
+        review_params.update(
+            {
+                f"citation_claim_{index}": value
+                for index, value in enumerate(claim_ids)
+            }
+        )
+        review_rows = conn.execute(
+            text(
+                f"""
+                SELECT r.*, c.status AS review_case_status,
+                       c.purpose AS review_case_purpose
+                FROM airank_citation_support_reviews r
+                LEFT JOIN airank_evidence_review_cases c
+                  ON c.tenant_id=r.tenant_id AND c.id=r.review_case_id
+                WHERE r.tenant_id=:tenant_id
+                  AND r.claim_id IN ({claim_placeholders})
+                ORDER BY r.reviewed_at, r.id
+                """
+            ),
+            review_params,
+        ).mappings().all()
+        for row in review_rows:
+            reviews_by_claim.setdefault(str(row["claim_id"]), []).append(
+                review_row(row)
+            )
+
+    return {
+        snapshot_id: build_bundle(
+            snapshot_id,
+            tuple(citation_ids_by_snapshot[snapshot_id]),
+            claims_by_snapshot[snapshot_id],
+            [
+                review
+                for claim in claims_by_snapshot[snapshot_id]
+                for review in reviews_by_claim.get(claim.claim_id, [])
+            ],
+        )
+        for snapshot_id in ordered_snapshot_ids
+    }
+
+
 def build_bundle(
     snapshot_id: str,
     citation_ids: tuple[str, ...],
@@ -1849,6 +2059,10 @@ def build_bundle(
             source_segment_id=item.source_segment_id,
             source_start=item.source_start,
             source_end=item.source_end,
+            review_case_id=item.review_case_id,
+            reviewer_role=item.reviewer_role,
+            review_case_status=item.review_case_status,
+            review_case_purpose=item.review_case_purpose,
         )
         for item in reviews
     )
@@ -1913,9 +2127,14 @@ def get_citation_support(
     snapshot_id: str,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
 ) -> CitationSupportBundleResponse:
     return CitationSupportBundleResponse(
-        data=CITATION_SUPPORT_REPOSITORY.get_bundle(tenant_id, snapshot_id),
+        data=CITATION_SUPPORT_REPOSITORY.get_bundle(
+            tenant_id, snapshot_id, authenticated_actor
+        ),
         meta=response_meta(trace_id),
     )
 
@@ -1964,10 +2183,13 @@ def get_fact_accuracy(
     snapshot_id: str,
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
 ) -> FactAccuracyBundleResponse:
     return FactAccuracyBundleResponse(
         data=CITATION_SUPPORT_REPOSITORY.get_fact_accuracy_bundle(
-            tenant_id, snapshot_id
+            tenant_id, snapshot_id, authenticated_actor
         ),
         meta=response_meta(trace_id),
     )

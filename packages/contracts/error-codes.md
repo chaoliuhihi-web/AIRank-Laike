@@ -86,6 +86,11 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CITATION_CAPTURE_URL_INVALID` | 409 | Provider 返回的引用 URL 缺失或不符合安全抓取格式 |
 | `CITATION_SUPPORT_EVIDENCE_INVALID` | 409 | 支持度审核未绑定匹配的不可变来源、片段或精确字符边界 |
 | `FACT_ACCURACY_EVIDENCE_INVALID` | 409 | 事实准确性裁决未绑定当前已审核事实、有效来源与精确原文边界，或声明类型不属于品牌/竞品事实 |
+| `EVIDENCE_REVIEW_CASE_NOT_FOUND` | 404 | 双人证据复核任务不存在或不属于当前租户 |
+| `EVIDENCE_REVIEW_CASE_EXISTS` | 409 | 同一目标、证据基础和用途已经存在复核任务 |
+| `EVIDENCE_REVIEW_CASE_FINAL` | 409 | 复核任务已一致通过或完成裁决，不能继续追加普通决定 |
+| `EVIDENCE_REVIEW_LABEL_INVALID` | 409 | 决定标签不属于该引用支持或事实准确性任务的允许集合 |
+| `EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN` | 409 | 第二复核人或裁决人必须与之前的审核人不同 |
 | `SOURCE_REGISTRY_ENTRY_NOT_FOUND` | 404 | 引用域名未出现在当前租户项目的真实 Citation 中，不能凭空创建来源分类 |
 | `SOURCE_CLASSIFICATION_VERSION_CONFLICT` | 409 | 来源分类的当前版本已变化，必须刷新并显式 supersede 最新人工复核版本 |
 

@@ -6,6 +6,8 @@ from enum import Enum
 import re
 from statistics import fmean
 
+from .review_quality import FINAL_REVIEW_STATUSES
+
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -89,6 +91,10 @@ class FactAccuracyReview:
     source_current: bool = False
     no_open_conflict: bool = False
     exact_boundary_verified: bool = False
+    review_case_id: str | None = None
+    reviewer_role: str = "single"
+    review_case_status: str = "single_review"
+    review_case_purpose: str = "single_review"
 
     def __post_init__(self) -> None:
         if not self.rationale.strip():
@@ -125,7 +131,7 @@ class FactAccuracyReview:
             raise ValueError("fact accuracy review requires an exact source boundary")
 
     @property
-    def commercially_verified(self) -> bool:
+    def evidence_verified(self) -> bool:
         return (
             self.evidence_grade
             == FactAccuracyEvidenceGrade.APPROVED_FACT_SOURCE_BOUNDARY
@@ -134,6 +140,17 @@ class FactAccuracyReview:
             and self.source_current
             and self.no_open_conflict
             and self.exact_boundary_verified
+        )
+
+    @property
+    def commercially_verified(self) -> bool:
+        return (
+            self.evidence_verified
+            and self.verdict.decisive
+            and self.review_case_id is not None
+            and self.reviewer_role in {"secondary", "adjudicator"}
+            and self.review_case_status in FINAL_REVIEW_STATUSES
+            and self.review_case_purpose == "production"
         )
 
 
@@ -166,8 +183,14 @@ def calculate_fact_accuracy_metrics(
         claim for claim in claims if claim.claim_kind.eligible_for_fact_accuracy
     )
     factual_ids = {claim.id for claim in factual_claims}
+    benchmark_reviews = tuple(
+        review for review in reviews if review.review_case_purpose == "benchmark"
+    )
     latest_by_claim: dict[str, FactAccuracyReview] = {}
-    for review in sorted(reviews, key=lambda item: (item.reviewed_at, item.id)):
+    for review in sorted(
+        (item for item in reviews if item.review_case_purpose != "benchmark"),
+        key=lambda item: (item.reviewed_at, item.id),
+    ):
         if review.claim_id in factual_ids:
             latest_by_claim[review.claim_id] = review
     current = tuple(latest_by_claim.values())
@@ -185,6 +208,10 @@ def calculate_fact_accuracy_metrics(
         limitations.append("fact_claims_unreviewed")
     if current and len(verified) < len(current):
         limitations.append("provisional_or_stale_fact_reviews_excluded")
+        if any(review.review_case_status not in FINAL_REVIEW_STATUSES for review in current):
+            limitations.append("fact_accuracy_independent_review_required")
+    if benchmark_reviews:
+        limitations.append("benchmark_reviews_excluded_from_commercial_metrics")
     if any(
         review.verdict == FactAccuracyVerdict.INSUFFICIENT_EVIDENCE
         for review in current

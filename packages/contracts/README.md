@@ -30,6 +30,11 @@ M1 已冻结的 API schema：
 - `asset_bundle_response.schema.json`
 - `report_list_response.schema.json`
 - `download_receipt_response.schema.json`
+- `fact_accuracy_bundle_response.schema.json`
+- `evidence_review_case_response.schema.json`
+- `evidence_review_queue_response.schema.json`
+
+双人证据复核契约同时服务引用支持与事实准确性：第一审核、第二审核和第三人裁决账号必须互不相同；待终结任务对其他审核人隐藏既有标签与依据。`production` 任务只有双人一致或完成裁决后才能进入商业指标，`benchmark` 任务只计算一致率与 Cohen's kappa。当前门禁要求至少 20 个已完成双人样本且 kappa 不低于 0.80。
 
 后续领域 schema：
 

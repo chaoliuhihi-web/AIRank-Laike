@@ -65,7 +65,20 @@ from apps.api.question_routes import (
     QuestionObservationImportRequest,
     QuestionReviewRequest,
 )
+from apps.api.citation_support_routes import (
+    CitationClaimCreateRequest,
+    CitationSupportReviewCreateRequest,
+    FactAccuracyReviewCreateRequest,
+    MySQLCitationSupportRepository,
+)
+from apps.api.evidence_review_routes import (
+    CitationReviewCaseCreateRequest,
+    EvidenceReviewDecisionRequest,
+    FactReviewCaseCreateRequest,
+    MySQLEvidenceReviewRepository,
+)
 from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
+from airank_domain.measurement import sha256_text
 from airank_provider_gateway import (
     HealthState,
     ImplementationStatus,
@@ -99,7 +112,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0024"
+EXPECTED_ALEMBIC_HEAD = "20260808_0025"
 
 
 def require_real_flag(flag: str) -> None:
@@ -165,7 +178,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 64
+        assert table_count == 65
         assert conn.execute(
             text(
                 """
@@ -2108,7 +2121,7 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         manifest_bytes = storage.get_bytes(object_metadata["object_key"])
         assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
         manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "airank.report-evidence-packet.v3"
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v4"
         assert manifest["counts"]["samples"] == 6
         assert manifest["counts"]["citations"] == 6
         assert sum(
@@ -3737,6 +3750,370 @@ def test_real_yudao_login_permission_and_capability_probe() -> None:
     assert results["yudao_auth"].status == CapabilityStatus.READY
     assert results["yudao_tenant_user"].status == CapabilityStatus.READY
     assert results["yudao_auth"].metadata["http_status"] == "200"
+
+
+def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_review_quality_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+    citation_repo = MySQLCitationSupportRepository(database_url())
+    review_repo = MySQLEvidenceReviewRepository(database_url())
+    knowledge_repo = MySQLKnowledgeRepository(database_url())
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-review-quality.example.com",
+                brand_name_hint="AIRank Review Quality",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="AIRank 的证据结论如何保证复核质量？",
+                status="confirmed",
+                recommended_providers=["qianwen"],
+            ),
+        )
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                name="Independent evidence review integration",
+                repetitions=3,
+                collector_surfaces=["api"],
+                provider_scope=["qianwen"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+        task = scan_repo.list_tasks(tenant_id, run.run_id)[0]
+        snapshot_id = f"snapshot_review_{uuid4().hex[:12]}"
+        citation_id = f"citation_review_{uuid4().hex[:12]}"
+        capture_id = f"capture_review_{uuid4().hex[:12]}"
+        segment_id = f"segment_review_{uuid4().hex[:12]}"
+        object_id = f"object_review_{uuid4().hex[:12]}"
+        capture_job_id = f"job_review_{uuid4().hex[:12]}"
+        answer_text = "AIRank 支持独立双人证据复核。"
+        source_text = "AIRank 支持独立双人证据复核。所有结论保留审核历史。"
+        captured_at = datetime.now(timezone.utc)
+        answer_sha256 = sha256_text(answer_text)
+        source_sha256 = sha256_text(source_text)
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_answer_snapshots (
+                      id, tenant_id, project_id, run_id, task_id, question_id,
+                      provider, cohort_type, prompt_version_id, sample_index,
+                      session_id, collector_surface, evidence_level, sample_status,
+                      answer_text, answer_sha256, raw_response_sha256,
+                      brand_mentioned, brand_rank, mention_class,
+                      target_entity_mentions_json, competitor_mentions_json,
+                      sentiment, confidence, model_name, search_enabled,
+                      external_trace_id, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
+                      'qianwen', :cohort_type, :prompt_version_id, :sample_index,
+                      :session_id, 'api', 'provider_api_search_unverified', 'valid',
+                      :answer_text, :answer_sha256, :raw_response_sha256,
+                      1, 1, 'recommended', JSON_ARRAY('AIRank'), JSON_ARRAY(),
+                      'positive', NULL, 'qwen-review-fixture', 0,
+                      'integration-review-request', :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": snapshot_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": run.run_id,
+                    "task_id": task.task_id,
+                    "question_id": task.question_id,
+                    "cohort_type": task.cohort_type,
+                    "prompt_version_id": task.prompt_version_id,
+                    "sample_index": task.sample_index,
+                    "session_id": task.session_id,
+                    "answer_text": answer_text,
+                    "answer_sha256": answer_sha256,
+                    "raw_response_sha256": "a" * 64,
+                    "created_at": captured_at,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_source_citations (
+                      id, tenant_id, project_id, snapshot_id, citation_order,
+                      title, url, host, source_type, cited_text, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :snapshot_id, 1,
+                      '独立复核说明', 'https://evidence.example.com/review-quality',
+                      'evidence.example.com', 'provider_native', :cited_text, :created_at
+                    )
+                    """
+                ),
+                {"id": citation_id, "tenant_id": tenant_id, "project_id": project.project_id, "snapshot_id": snapshot_id, "cited_text": source_text, "created_at": captured_at},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_async_jobs (
+                      id, tenant_id, project_id, job_type, status,
+                      payload_json, created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'citation.capture', 'completed',
+                      JSON_OBJECT('integration_test', TRUE), :created_at, :created_at
+                    )
+                    """
+                ),
+                {"id": capture_job_id, "tenant_id": tenant_id, "project_id": project.project_id, "created_at": captured_at},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_object_refs (
+                      id, tenant_id, project_id, object_type, object_uri,
+                      content_type, byte_size, sha256, metadata_json, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'citation_source_page',
+                      :object_uri, 'text/html', :byte_size, :sha256,
+                      :metadata_json, :created_at
+                    )
+                    """
+                ),
+                {"id": object_id, "tenant_id": tenant_id, "project_id": project.project_id, "object_uri": f"local://review-quality/{object_id}", "byte_size": len(source_text.encode("utf-8")), "sha256": source_sha256, "metadata_json": json.dumps({"kind": "citation_source_page", "citation_id": citation_id, "capture_id": capture_id}, ensure_ascii=False), "created_at": captured_at},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_citation_source_captures (
+                      id, tenant_id, project_id, citation_id, job_id,
+                      idempotency_key, request_sha256, requested_url, final_url,
+                      status, capture_version, evidence_grade, response_status,
+                      content_type, response_bytes, content_sha256,
+                      visible_text_sha256, raw_object_ref_id, connected_ip,
+                      redirect_count, requested_by, started_at, completed_at,
+                      created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :citation_id, :job_id,
+                      :idempotency_key, :request_sha256, :url, :url,
+                      'completed', 'airank.citation-source-capture.v1',
+                      'source_page_dns_pinned', 200, 'text/html', :response_bytes,
+                      :content_sha256, :content_sha256, :raw_object_ref_id,
+                      '93.184.216.34', 0, 'integration-capture', :at, :at, :at, :at
+                    )
+                    """
+                ),
+                {"id": capture_id, "tenant_id": tenant_id, "project_id": project.project_id, "citation_id": citation_id, "job_id": capture_job_id, "idempotency_key": f"capture-{uuid4().hex}", "request_sha256": "b" * 64, "url": "https://evidence.example.com/review-quality", "response_bytes": len(source_text.encode("utf-8")), "content_sha256": source_sha256, "raw_object_ref_id": object_id, "at": captured_at},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_citation_source_segments (
+                      id, tenant_id, project_id, capture_id, segment_index,
+                      source_start, source_end, segment_text, segment_sha256, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :capture_id, 0,
+                      0, :source_end, :segment_text, :segment_sha256, :created_at
+                    )
+                    """
+                ),
+                {"id": segment_id, "tenant_id": tenant_id, "project_id": project.project_id, "capture_id": capture_id, "source_end": len(source_text), "segment_text": source_text, "segment_sha256": source_sha256, "created_at": captured_at},
+            )
+
+        citation_claim = citation_repo.create_claim(
+            tenant_id,
+            snapshot_id,
+            CitationClaimCreateRequest(
+                answer_start=0,
+                answer_end=len(answer_text),
+                extraction_method="manual",
+                claim_kind="unclassified",
+                created_by="integration-claim-reviewer",
+            ),
+        )
+        citation_case = review_repo.create_citation_case(
+            tenant_id,
+            project.project_id,
+            CitationReviewCaseCreateRequest(
+                claim_id=citation_claim.claim_id,
+                purpose="benchmark",
+                review=CitationSupportReviewCreateRequest(
+                    citation_id=citation_id,
+                    support_label="supports",
+                    evidence_grade="source_page_snapshot",
+                    source_excerpt=source_text,
+                    source_content_sha256=source_sha256,
+                    source_object_ref_id=object_id,
+                    source_capture_id=capture_id,
+                    source_segment_id=segment_id,
+                    source_start=0,
+                    source_end=len(source_text),
+                    rationale="第一审核人独立核对不可变来源页面。",
+                    review_method="human",
+                    reviewed_by="reviewer-1",
+                ),
+            ),
+            "mysql-citation-review-case",
+            "reviewer-1",
+            "trace-review-primary",
+        )
+        assert citation_case.status == "awaiting_secondary"
+        with pytest.raises(StarletteHTTPException) as self_review:
+            review_repo.submit_decision(
+                tenant_id,
+                citation_case.case_id,
+                EvidenceReviewDecisionRequest(label="supports", rationale="不能自审。", reviewed_by="reviewer-1"),
+                "reviewer-1",
+                "trace-review-self",
+            )
+        assert self_review.value.detail["code"] == "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"
+
+        disputed = review_repo.submit_decision(
+            tenant_id,
+            citation_case.case_id,
+            EvidenceReviewDecisionRequest(label="contradicts", rationale="第二审核人独立判断为矛盾。", reviewed_by="reviewer-2"),
+            "reviewer-2",
+            "trace-review-secondary",
+        )
+        assert disputed.status == "disputed"
+        adjudicated = review_repo.submit_decision(
+            tenant_id,
+            citation_case.case_id,
+            EvidenceReviewDecisionRequest(label="supports", rationale="第三审核人依据精确原文裁决支持。", reviewed_by="reviewer-3"),
+            "reviewer-3",
+            "trace-review-adjudicator",
+        )
+        assert adjudicated.status == "adjudicated"
+        assert adjudicated.consensus_label == "supports"
+        citation_metrics = citation_repo.get_bundle(tenant_id, snapshot_id).metrics
+        assert citation_metrics.commercially_verified_review_count == 0
+        assert citation_metrics.citation_support_rate is None
+        assert "benchmark_reviews_excluded_from_commercial_metrics" in citation_metrics.known_limitations
+
+        fact_source = knowledge_repo.create_source(
+            tenant_id,
+            project.project_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key="review-quality-fact-source",
+                source_type="official_website",
+                title="AIRank 独立复核事实",
+                content_text=source_text,
+                source_uri="https://airank-review-quality.example.com/facts",
+                authority_level="official",
+                risk_level="low",
+            ),
+        )
+        proposed = knowledge_repo.propose_fact(
+            tenant_id,
+            project.project_id,
+            FactProposalRequest(
+                title="独立双人复核能力",
+                fact_text=answer_text,
+                source_ids=[fact_source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration-fact-author",
+            ),
+        )
+        approved = knowledge_repo.review_revision(
+            tenant_id,
+            project.project_id,
+            proposed.revision_id,
+            FactRevisionReviewRequest(action="approved", reviewed_by="integration-fact-approver"),
+        )
+        assert approved.status == "approved"
+        fact_claim = citation_repo.create_claim(
+            tenant_id,
+            snapshot_id,
+            CitationClaimCreateRequest(
+                answer_start=0,
+                answer_end=len(answer_text),
+                extraction_method="manual",
+                claim_kind="brand_fact",
+                subject_entity_text="AIRank",
+                created_by="integration-fact-claim-reviewer",
+            ),
+        )
+        fact_case = review_repo.create_fact_case(
+            tenant_id,
+            project.project_id,
+            FactReviewCaseCreateRequest(
+                claim_id=fact_claim.claim_id,
+                purpose="production",
+                review=FactAccuracyReviewCreateRequest(
+                    verdict="accurate",
+                    fact_revision_id=approved.revision_id,
+                    rationale="第一审核人核对审核事实与精确来源边界。",
+                    review_method="human",
+                    reviewed_by="fact-reviewer-1",
+                ),
+            ),
+            "mysql-fact-review-case",
+            "fact-reviewer-1",
+            "trace-fact-primary",
+        )
+        before_fact = citation_repo.get_fact_accuracy_bundle(tenant_id, snapshot_id).metrics
+        assert before_fact.fact_accuracy is None
+        with pytest.raises(StarletteHTTPException) as invalid_frozen_label:
+            review_repo.submit_decision(
+                tenant_id,
+                fact_case.case_id,
+                EvidenceReviewDecisionRequest(
+                    label="insufficient_evidence",
+                    rationale="不得在冻结事实证据仍存在时改成无证据。",
+                    reviewed_by="fact-reviewer-2",
+                ),
+                "fact-reviewer-2",
+                "trace-fact-invalid-label",
+            )
+        assert invalid_frozen_label.value.detail["code"] == "EVIDENCE_REVIEW_LABEL_INVALID"
+        assert (
+            invalid_frozen_label.value.detail["details"]["reason"]
+            == "label_conflicts_with_frozen_evidence"
+        )
+        fact_complete = review_repo.submit_decision(
+            tenant_id,
+            fact_case.case_id,
+            EvidenceReviewDecisionRequest(label="accurate", rationale="第二审核人独立核验后同意。", reviewed_by="fact-reviewer-2"),
+            "fact-reviewer-2",
+            "trace-fact-secondary",
+        )
+        assert fact_complete.status == "agreed"
+        after_fact = citation_repo.get_fact_accuracy_bundle(tenant_id, snapshot_id).metrics
+        assert after_fact.commercially_verified_claim_count == 1
+        assert after_fact.fact_accuracy == 1.0
+
+        queue = review_repo.list_cases(
+            tenant_id, project.project_id, snapshot_id, "quality-auditor"
+        )
+        assert queue.benchmark_quality.independently_reviewed_case_count == 1
+        assert queue.benchmark_quality.disagreement_count == 1
+        assert queue.benchmark_quality.adjudicated_count == 1
+        assert queue.benchmark_quality.benchmark_ready is False
+        assert queue.production_quality.finalized_case_count == 1
+
+        with engine.connect() as conn:
+            audit_types = set(
+                conn.execute(
+                    text("SELECT event_type FROM airank_audit_events WHERE tenant_id=:tenant_id AND entity_type='evidence_review_case'"),
+                    {"tenant_id": tenant_id},
+                ).scalars().all()
+            )
+            case_count = conn.execute(
+                text("SELECT COUNT(*) FROM airank_evidence_review_cases WHERE tenant_id=:tenant_id"),
+                {"tenant_id": tenant_id},
+            ).scalar_one()
+        assert case_count == 2
+        assert {"evidence_review.case_created", "evidence_review.decision_submitted"} <= audit_types
+    finally:
+        cleanup_tenant(engine, tenant_id)
 
 
 def request_json(

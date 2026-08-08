@@ -10,7 +10,7 @@ from typing import Any
 from .source_registry import normalize_source_host
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v3"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v4"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -32,6 +32,33 @@ METRIC_FORMULAS: dict[str, str] = {
 
 class ReportEvidencePacketError(ValueError):
     """The stored report cannot produce a customer-deliverable evidence packet."""
+
+
+def _validate_independent_commercial_review(
+    review: dict[str, Any], *, index_name: str
+) -> None:
+    if review.get("commercially_verified") is not True:
+        return
+    if review.get("evidence_verified") is not True:
+        raise ReportEvidencePacketError(
+            f"{index_name} commercial review lacks verified evidence"
+        )
+    if not review.get("review_case_id"):
+        raise ReportEvidencePacketError(
+            f"{index_name} commercial review lacks an independent review case"
+        )
+    if review.get("reviewer_role") not in {"secondary", "adjudicator"}:
+        raise ReportEvidencePacketError(
+            f"{index_name} commercial review lacks an independent final reviewer"
+        )
+    if review.get("review_case_status") not in {"agreed", "adjudicated"}:
+        raise ReportEvidencePacketError(
+            f"{index_name} commercial review case is not final"
+        )
+    if review.get("review_case_purpose") != "production":
+        raise ReportEvidencePacketError(
+            f"{index_name} benchmark review cannot enter commercial metrics"
+        )
 
 
 @dataclass(frozen=True)
@@ -330,6 +357,20 @@ def build_report_evidence_packet(
                 raise ReportEvidencePacketError(
                     f"sample_index {metric_name} does not match metrics for run {run_id}"
                 )
+        support_values = [
+            float(item["citation_support_score"])
+            for item in valid_samples
+            if item.get("citation_support_score") is not None
+        ]
+        expected_citation_support = (
+            round(sum(support_values) / len(support_values), 6)
+            if support_values
+            else None
+        )
+        if run_metrics.get("citation_support") != expected_citation_support:
+            raise ReportEvidencePacketError(
+                f"sample_index citation_support does not match metrics for run {run_id}"
+            )
         for item in valid_samples:
             if (
                 not item.get("snapshot_id")
@@ -350,10 +391,97 @@ def build_report_evidence_packet(
     snapshot_ids = {str(item["snapshot_id"]) for item in sample_index if item.get("snapshot_id")}
     if any(str(item.get("snapshot_id") or "") not in snapshot_ids for item in citation_index):
         raise ReportEvidencePacketError("citation_index references an unknown snapshot")
+    support_values_by_snapshot: dict[str, list[float]] = {}
     for item in citation_index:
         cited_text_sha256 = item.get("cited_text_sha256")
         if cited_text_sha256 is not None and not SHA256_RE.fullmatch(str(cited_text_sha256)):
             raise ReportEvidencePacketError("citation_index contains an invalid cited text hash")
+        support_reviews = item.get("support_reviews", [])
+        if not isinstance(support_reviews, list):
+            raise ReportEvidencePacketError("citation_index contains invalid support reviews")
+        for review in support_reviews:
+            if not isinstance(review, dict):
+                raise ReportEvidencePacketError("citation_index contains an invalid support review")
+            review_sha256 = review.get("review_record_sha256")
+            review_payload = {
+                key: value
+                for key, value in review.items()
+                if key != "review_record_sha256"
+            }
+            if (
+                not SHA256_RE.fullmatch(str(review_sha256 or ""))
+                or canonical_json_sha256(review_payload) != review_sha256
+            ):
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid support review hash"
+                )
+            if not SHA256_RE.fullmatch(str(review.get("claim_sha256") or "")):
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid support claim hash"
+                )
+            support_start = review.get("answer_start")
+            support_end = review.get("answer_end")
+            if (
+                not isinstance(support_start, int)
+                or not isinstance(support_end, int)
+                or support_start < 0
+                or support_end <= support_start
+            ):
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid support claim boundary"
+                )
+            _validate_independent_commercial_review(
+                review, index_name="citation_index"
+            )
+            if review.get("commercially_verified") is not True:
+                continue
+            if review.get("evidence_grade") != "source_page_snapshot":
+                raise ReportEvidencePacketError(
+                    "citation_index commercial review lacks a source page snapshot"
+                )
+            for key in (
+                "source_object_ref_id",
+                "source_capture_id",
+                "source_segment_id",
+            ):
+                if not review.get(key):
+                    raise ReportEvidencePacketError(
+                        f"citation_index commercial review is missing {key}"
+                    )
+            if not SHA256_RE.fullmatch(
+                str(review.get("source_content_sha256") or "")
+            ):
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid source content hash"
+                )
+            source_start = review.get("source_start")
+            source_end = review.get("source_end")
+            if (
+                not isinstance(source_start, int)
+                or not isinstance(source_end, int)
+                or source_start < 0
+                or source_end <= source_start
+            ):
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid support source boundary"
+                )
+            label = review.get("support_label")
+            if label not in {"supports", "contradicts", "insufficient"}:
+                raise ReportEvidencePacketError(
+                    "citation_index contains an invalid support label"
+                )
+            support_values_by_snapshot.setdefault(
+                str(item.get("snapshot_id") or ""), []
+            ).append(1.0 if label == "supports" else 0.0)
+
+    for sample in sample_index:
+        snapshot_id = str(sample.get("snapshot_id") or "")
+        values = support_values_by_snapshot.get(snapshot_id, [])
+        expected_support = round(sum(values) / len(values), 6) if values else None
+        if sample.get("citation_support_score") != expected_support:
+            raise ReportEvidencePacketError(
+                f"citation support evidence does not match sample {snapshot_id}"
+            )
     if any(
         str(item.get("snapshot_id") or "") not in snapshot_ids
         for item in fact_accuracy_index
@@ -381,6 +509,9 @@ def build_report_evidence_packet(
         ):
             raise ReportEvidencePacketError("fact_accuracy_index contains an invalid review hash")
         if review.get("commercially_verified") is True:
+            _validate_independent_commercial_review(
+                review, index_name="fact_accuracy_index"
+            )
             for digest_key in (
                 "fact_revision_sha256",
                 "source_content_sha256",

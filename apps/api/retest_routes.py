@@ -371,23 +371,42 @@ class MySQLRetestRepository:
         if not rows:
             raise _conflict("RETEST_COMPARE_RUN_REQUIRED", {"run_id": run_id, "reason": "no_samples"})
         try:
-            from .citation_support_routes import load_fact_accuracy_bundles_from_connection
+            from .citation_support_routes import (
+                load_citation_support_bundles_from_connection,
+                load_fact_accuracy_bundles_from_connection,
+            )
         except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
             from citation_support_routes import (  # type: ignore[no-redef]
+                load_citation_support_bundles_from_connection,
                 load_fact_accuracy_bundles_from_connection,
             )
         row_records = [dict(row) for row in rows]
+        snapshot_ids = [
+            str(row["sample_id"]) for row in row_records if row.get("sample_id")
+        ]
+        citation_bundles = load_citation_support_bundles_from_connection(
+            conn,
+            tenant_id,
+            snapshot_ids,
+        )
         fact_bundles = load_fact_accuracy_bundles_from_connection(
             conn,
             tenant_id,
-            [str(row["sample_id"]) for row in row_records if row.get("sample_id")],
+            snapshot_ids,
         )
         for row in row_records:
-            bundle = fact_bundles.get(str(row.get("sample_id") or ""))
-            metrics = bundle.metrics if bundle else None
-            row["fact_claim_count"] = metrics.factual_claim_count if metrics else 0
-            row["fact_reviewed_claim_count"] = metrics.decisive_claim_count if metrics else 0
-            row["fact_accuracy"] = metrics.fact_accuracy if metrics else None
+            snapshot_id = str(row.get("sample_id") or "")
+            citation_bundle = citation_bundles.get(snapshot_id)
+            row["citation_support_score"] = (
+                citation_bundle.metrics.citation_support_rate
+                if citation_bundle
+                else None
+            )
+            fact_bundle = fact_bundles.get(snapshot_id)
+            fact_metrics = fact_bundle.metrics if fact_bundle else None
+            row["fact_claim_count"] = fact_metrics.factual_claim_count if fact_metrics else 0
+            row["fact_reviewed_claim_count"] = fact_metrics.decisive_claim_count if fact_metrics else 0
+            row["fact_accuracy"] = fact_metrics.fact_accuracy if fact_metrics else None
         samples = tuple(_measurement_sample(row) for row in row_records)
         signature = tuple(_sample_signature(row) for row in row_records)
         evidence_manifests = tuple(_sample_evidence_manifest(row) for row in row_records)
@@ -442,6 +461,11 @@ def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
         mention_class=mention_class,
         brand_rank=row.get("brand_rank") if status == SampleStatus.VALID else None,
         citation_count=int(row.get("citation_count") or 0),
+        citation_support_score=(
+            float(row["citation_support_score"])
+            if row.get("citation_support_score") is not None
+            else None
+        ),
         fact_claim_count=int(row.get("fact_claim_count") or 0),
         fact_reviewed_claim_count=int(row.get("fact_reviewed_claim_count") or 0),
         fact_accuracy=(
