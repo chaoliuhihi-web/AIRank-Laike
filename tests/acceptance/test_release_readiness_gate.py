@@ -216,4 +216,5 @@ def test_release_checks_can_append_browser_provider_gate(monkeypatch: pytest.Mon
 
     checks = release_readiness.release_checks(require_optional_capabilities=False, require_browser_providers=True)
 
+    assert any(check.name == "provider gateway tests" for check in checks)
     assert checks[-1].name == "browser provider readiness"
