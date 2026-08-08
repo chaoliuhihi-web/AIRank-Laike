@@ -24,7 +24,13 @@ from apps.api.provider_scan import (
     provider_execution_mode,
     strip_prompt_echo,
 )
-from airank_provider_gateway import ProviderCitation, ProviderResult, ProviderUsage, UsagePrecision
+from airank_provider_gateway import (
+    ProviderCitation,
+    ProviderGatewayError,
+    ProviderResult,
+    ProviderUsage,
+    UsagePrecision,
+)
 
 
 class FakeLocator:
@@ -269,6 +275,79 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
     assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}
     assert result.raw_metadata["route_id"] == "qianwen-primary"
+
+
+def test_api_provider_empty_answer_preserves_upstream_response_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upstream = {
+        "id": "request_empty_1",
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning_content": "still reasoning"},
+            }
+        ],
+    }
+
+    class FakeSettings:
+        model = "kimi-k3"
+        endpoint_host = "api.moonshot.cn"
+
+        @staticmethod
+        def configuration_fingerprint(_provider: str) -> str:
+            return "f" * 64
+
+    class FakeGateway:
+        @staticmethod
+        def generate(_provider: str, _prompt: str, *, request_context=None) -> ProviderResult:
+            raise ProviderGatewayError(
+                "kimi",
+                "PROVIDER_EMPTY_RESPONSE",
+                "provider returned an empty answer",
+                raw_response=upstream,
+                provider_request_id="request_empty_1",
+                duration_ms=1234,
+                attempt_count=1,
+                usage=ProviderUsage(total_tokens=4096, precision=UsagePrecision.EXACT),
+                route_id="kimi:default",
+                configuration_fingerprint="f" * 64,
+                endpoint_host="api.moonshot.cn",
+                model="kimi-k3",
+                request_contract={
+                    "max_tokens": 4096,
+                    "max_tokens_field": "max_completion_tokens",
+                    "temperature": None,
+                    "reasoning_effort": "low",
+                },
+            )
+
+        @staticmethod
+        def settings(_provider: str) -> FakeSettings:
+            return FakeSettings()
+
+    monkeypatch.setattr("apps.api.provider_scan.get_api_gateway", lambda: FakeGateway())
+
+    with pytest.raises(ProviderCallError) as captured:
+        call_api_provider_for_brand_rank(
+            provider="kimi",
+            brand_name="AIRank",
+            website_url="https://airank.example",
+            industry="GEO",
+            competitor_names=[],
+            question_text="企业 GEO 工具有哪些？",
+            cohort_type="blind",
+            session_id="session_empty_1",
+            prompt_version_id="prompt_v_1",
+        )
+
+    metadata = captured.value.public_metadata
+    assert metadata["provider_request_id"] == "request_empty_1"
+    assert metadata["provider_raw_response"] == upstream
+    assert metadata["duration_ms"] == 1234
+    assert metadata["attempt_count"] == 1
+    assert metadata["usage"]["total_tokens"] == 4096
+    assert metadata["request_contract"]["reasoning_effort"] == "low"
 
 
 def test_provider_answer_parser_extracts_rank_from_browser_text() -> None:

@@ -51,6 +51,14 @@ class MySQLProviderOperations:
             for manifest in manifests:
                 routes = resolve_provider_routes(manifest, self.env)
                 settings = routes[0].settings
+                max_tokens_field = (
+                    "max_output_tokens"
+                    if manifest.request_kind == "responses_web_search"
+                    else manifest.max_tokens_field
+                )
+                fingerprint = settings.configuration_fingerprint(
+                    manifest.provider, routes[0].route_id
+                )
                 public_manifest = {
                     "provider": manifest.provider,
                     "label": manifest.label,
@@ -58,6 +66,12 @@ class MySQLProviderOperations:
                     "collection_mode": manifest.collection_mode,
                     "endpoint_host": settings.endpoint_host,
                     "model": settings.model,
+                    "request_defaults": {
+                        "max_tokens": settings.max_tokens,
+                        "max_tokens_field": max_tokens_field,
+                        "temperature": settings.temperature,
+                        "reasoning_effort": settings.reasoning_effort,
+                    },
                     "capabilities": {
                         "web_search": manifest.capabilities.web_search,
                         "citations": manifest.capabilities.citations,
@@ -72,11 +86,15 @@ class MySQLProviderOperations:
                         for model, lifecycle in manifest.lifecycle.items()
                     },
                 }
-                manifest_json = json.dumps(public_manifest, ensure_ascii=False, sort_keys=True)
-                manifest_version = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()[:16]
-                fingerprint = settings.configuration_fingerprint(
-                    manifest.provider, routes[0].route_id
+                manifest_json = json.dumps(
+                    {
+                        **public_manifest,
+                        "configuration_fingerprint": fingerprint,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
                 )
+                manifest_version = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()[:16]
                 conn.execute(
                     text(
                         """
@@ -95,12 +113,14 @@ class MySQLProviderOperations:
                         INSERT INTO airank_provider_manifests (
                           provider_key, manifest_version, label, implementation_status,
                           collection_mode, endpoint_host, model_name, capabilities_json,
-                          lifecycle_json, configuration_fingerprint, is_current, created_at
+                          lifecycle_json, request_defaults_json, configuration_fingerprint,
+                          is_current, created_at
                         )
                         VALUES (
                           :provider_key, :manifest_version, :label, :implementation_status,
                           :collection_mode, :endpoint_host, :model_name, :capabilities_json,
-                          :lifecycle_json, :configuration_fingerprint, 1, :created_at
+                          :lifecycle_json, :request_defaults_json, :configuration_fingerprint,
+                          1, :created_at
                         )
                         ON DUPLICATE KEY UPDATE
                           label = VALUES(label),
@@ -110,6 +130,7 @@ class MySQLProviderOperations:
                           model_name = VALUES(model_name),
                           capabilities_json = VALUES(capabilities_json),
                           lifecycle_json = VALUES(lifecycle_json),
+                          request_defaults_json = VALUES(request_defaults_json),
                           configuration_fingerprint = VALUES(configuration_fingerprint),
                           is_current = 1
                         """
@@ -124,17 +145,30 @@ class MySQLProviderOperations:
                         "model_name": settings.model,
                         "capabilities_json": json.dumps(public_manifest["capabilities"], sort_keys=True),
                         "lifecycle_json": json.dumps(public_manifest["lifecycle"], sort_keys=True),
+                        "request_defaults_json": json.dumps(
+                            public_manifest["request_defaults"], sort_keys=True
+                        ),
                         "configuration_fingerprint": fingerprint,
                         "created_at": now,
                     },
                 )
                 for route in routes:
+                    route_fingerprint = route.settings.configuration_fingerprint(
+                        manifest.provider, route.route_id
+                    )
                     route_public = {
                         "provider": manifest.provider,
                         "route_id": route.route_id,
                         "priority": route.priority,
                         "endpoint_host": route.settings.endpoint_host,
                         "model": route.settings.model,
+                        "request_contract": {
+                            "max_tokens": route.settings.max_tokens,
+                            "max_tokens_field": max_tokens_field,
+                            "temperature": route.settings.temperature,
+                            "reasoning_effort": route.settings.reasoning_effort,
+                        },
+                        "configuration_fingerprint": route_fingerprint,
                     }
                     route_json = json.dumps(
                         route_public, ensure_ascii=False, sort_keys=True
@@ -142,9 +176,6 @@ class MySQLProviderOperations:
                     route_version = hashlib.sha256(
                         route_json.encode("utf-8")
                     ).hexdigest()[:16]
-                    route_fingerprint = route.settings.configuration_fingerprint(
-                        manifest.provider, route.route_id
-                    )
                     conn.execute(
                         text(
                             """
@@ -164,16 +195,17 @@ class MySQLProviderOperations:
                             """
                             INSERT INTO airank_provider_routes (
                               provider_key, route_id, route_version, priority,
-                              endpoint_host, model_name,
+                              endpoint_host, model_name, request_contract_json,
                               configuration_fingerprint, is_current, created_at
                             ) VALUES (
                               :provider_key, :route_id, :route_version, :priority,
-                              :endpoint_host, :model_name,
+                              :endpoint_host, :model_name, :request_contract_json,
                               :configuration_fingerprint, 1, :created_at
                             ) ON DUPLICATE KEY UPDATE
                               priority=VALUES(priority),
                               endpoint_host=VALUES(endpoint_host),
                               model_name=VALUES(model_name),
+                              request_contract_json=VALUES(request_contract_json),
                               configuration_fingerprint=VALUES(configuration_fingerprint),
                               is_current=1
                             """
@@ -185,6 +217,9 @@ class MySQLProviderOperations:
                             "priority": route.priority,
                             "endpoint_host": route.settings.endpoint_host,
                             "model_name": route.settings.model,
+                            "request_contract_json": json.dumps(
+                                route_public["request_contract"], sort_keys=True
+                            ),
                             "configuration_fingerprint": route_fingerprint,
                             "created_at": now,
                         },

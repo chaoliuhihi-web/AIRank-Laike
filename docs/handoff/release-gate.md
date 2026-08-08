@@ -803,3 +803,29 @@ Limitations and blockers:
 Decision:
 
 - Source-governed customer evidence is no longer a report-integration gap. The artifact channel remains `partial`, and AIRank remains commercial `NO-GO` until the external production and measurement gates pass.
+
+## 2026-08-08 Four-Provider API Repetition and Kimi K3 Contract Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- One confirmed blind question ran on one API collector surface with 3 isolated sessions per Provider. Qianwen, Doubao, Kimi and DeepSeek all completed 3/3: 12 tasks, 12 valid AnswerSnapshots, 12 EvidenceSnapshots, 12 successful attempts, 12 Provider request audits, 12 real request IDs and 12 exact usage events.
+- All 12 valid answers did not mention the test brand. They remained in the effective denominator, producing an observed 0% mention/recommendation result rather than being deleted or relabeled as failures.
+- `airank.measurement-quality.v4` passed 24/24 checks with `publishable=true`; API evidence completeness was 12/12. The quality report still lists missing Provider citations, unevaluated citation support, unregistered fact claims and unevaluated fact accuracy as explicit limitations.
+- Kimi K3 now follows the official request contract: `max_completion_tokens=4096`, fixed temperature omitted, and `reasoning_effort=low`. Three repeated calls ended with `finish_reason=stop` and retained answer content, reasoning content, request IDs and exact usage.
+- An HTTP-success/empty-answer response now retains its upstream raw payload, request ID, usage, finish metadata, duration and request contract as immutable failure evidence. It cannot enter the valid-sample denominator, while billable usage still enters the usage ledger.
+- Alembic `20260808_0022` persists versioned manifest defaults and route-level effective request contracts. Configuration fingerprints participate in version identity, so credential rotation or request-parameter changes append history instead of overwriting an old audit join. Every request audit in the accepted batch matched a Provider manifest through its configuration fingerprint. Credential-pattern scans found zero matches in 54 tenant-scoped database tables and 687 workspace files.
+- A clean Python 3.11 environment imports the API with the declared Playwright dependency; both Python 3.9 compatibility regression and Python 3.11 release-runtime regression are executed in the final gate.
+- Python 3.9.6 and clean Python 3.11.15 regressions both passed `383 passed, 27 skipped`; Python 3.11 real MySQL integration passed `25 passed, 2 skipped`, including key-rotation history and failed-call usage accounting. The separate release-gate database upgraded from Alembic `0019` to `0022` successfully. Node 24.13.1 production build passed and `npm audit --audit-level=high` found zero vulnerabilities.
+
+Limitations and blockers:
+
+- This is Provider API evidence, not Consumer Web/App evidence. Consumer L3 remains `0/4`, and API search status is kept separate from browser screenshots and source panels.
+- The accepted batch contains no Provider-native citations, so it does not prove citation support or fact accuracy. It also does not prove any intervention caused a brand-visibility change.
+- The Kimi credential used for local acceptance appeared in conversation history and must be rotated before production. DeepSeek `v3.2` remains behind a model-sunset migration gate; `v4-pro` requires account quota.
+- Production Yudao, HTTPS S3/MinIO, customer publishing credentials, real elapsed T+7/T+14/T+30 evidence and the full brand-to-customer-report browser E2E remain open.
+
+Decision:
+
+- The four-platform same-cohort API repetition gap is closed within its declared evidence scope. AIRank remains commercial `NO-GO` until Consumer and production delivery gates pass.

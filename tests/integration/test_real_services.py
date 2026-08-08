@@ -32,7 +32,7 @@ from apps.api.main import (
     run_brand_check,
     scan_dispatch_mode,
 )
-from apps.api.provider_scan import ProviderScanResult, ProviderUnavailable
+from apps.api.provider_scan import ProviderCallError, ProviderScanResult, ProviderUnavailable
 from apps.api.delivery_routes import (
     ContentReviewRequest,
     MySQLDeliveryRepository,
@@ -92,7 +92,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0021"
+EXPECTED_ALEMBIC_HEAD = "20260808_0022"
 
 
 def require_real_flag(flag: str) -> None:
@@ -166,6 +166,26 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 WHERE table_schema=DATABASE()
                   AND table_name='airank_provider_request_audits'
                   AND column_name='route_id'
+                """
+            )
+        ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_routes'
+                  AND column_name='request_contract_json'
+                """
+            )
+        ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_manifests'
+                  AND column_name='request_defaults_json'
                 """
             )
         ).scalar_one() == 1
@@ -1408,14 +1428,60 @@ def test_real_mysql_failed_scan_remains_quality_auditable(
     project_repo = MySQLProjectRepository(database_url())
     scan_repo = MySQLScanRepository(database_url())
 
-    def blocked_provider(**_kwargs: Any) -> ProviderScanResult:
-        raise ProviderUnavailable("qianwen", "captcha required")
+    def failed_provider(**_kwargs: Any) -> ProviderScanResult:
+        raise ProviderCallError(
+            "qianwen",
+            "provider returned an empty answer",
+            error_code="PROVIDER_EMPTY_RESPONSE",
+            public_metadata={
+                "capture_mode": "provider_api",
+                "collector_surface": "api",
+                "evidence_level": "provider_api_search_unverified",
+                "model_name": "qwen-integration-empty",
+                "endpoint_host": "dashscope.aliyuncs.com",
+                "configuration_fingerprint": "f" * 64,
+                "prompt_sha256": "a" * 64,
+                "route_id": "qianwen:default",
+                "provider_request_id": "request-empty-integration-1",
+                "duration_ms": 4321,
+                "attempt_count": 2,
+                "usage": {
+                    "input_tokens": 12,
+                    "output_tokens": 4096,
+                    "total_tokens": 4108,
+                    "precision": "exact",
+                    "source": "provider_response",
+                },
+                "request_contract": {
+                    "max_tokens": 4096,
+                    "max_tokens_field": "max_tokens",
+                    "temperature": 0.2,
+                    "reasoning_effort": None,
+                },
+                "provider_raw_response": {
+                    "id": "request-empty-integration-1",
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": "", "reasoning_content": "still reasoning"},
+                        }
+                    ],
+                    "usage": {"total_tokens": 4108},
+                },
+            },
+        )
 
     monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
-    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "browser")
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "api")
+    monkeypatch.setenv("QIANWEN_API_KEY", "integration-test-secret-never-persisted")
+    monkeypatch.setenv(
+        "QIANWEN_API_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    )
+    monkeypatch.setenv("QIANWEN_MODEL", "qwen-integration-empty")
     monkeypatch.setenv("AIRANK_OBJECT_STORAGE_DRIVER", "local")
     monkeypatch.setenv("AIRANK_OBJECT_STORAGE_ROOT", str(tmp_path / "objects"))
-    monkeypatch.setattr("apps.api.main.call_provider_for_brand_rank", blocked_provider)
+    monkeypatch.setattr("apps.api.main.call_api_provider_for_brand_rank", failed_provider)
 
     try:
         project = project_repo.create_project(
@@ -1441,7 +1507,7 @@ def test_real_mysql_failed_scan_remains_quality_auditable(
                 project_id=project.project_id,
                 name="Failed run quality audit",
                 repetitions=1,
-                collector_surfaces=["web"],
+                collector_surfaces=["api"],
                 provider_scope=["qianwen"],
                 question_scope={"mode": "selected", "question_ids": [question.question_id]},
             ),
@@ -1454,7 +1520,6 @@ def test_real_mysql_failed_scan_remains_quality_auditable(
         )
         assert dispatch is not None
         assert dispatch.status == "failed"
-
         quality = MySQLRetestRepository(database_url()).get_quality_report(
             tenant_id,
             project.project_id,
@@ -1464,9 +1529,48 @@ def test_real_mysql_failed_scan_remains_quality_auditable(
             check for check in quality["checks"] if check["code"] == "run_status_publishable"
         )
         assert quality["publishable"] is False
-        assert quality["metrics"]["blocked_sample_count"] == 1
+        assert quality["metrics"]["failed_sample_count"] == 1
+        assert quality["metrics"]["blocked_sample_count"] == 0
         assert run_status_check["status"] == "blocked"
         assert run_status_check["actual"] == "failed"
+        with engine.connect() as conn:
+            audit = conn.execute(
+                text(
+                    """
+                    SELECT provider_request_id, attempt_count, duration_ms, metadata_json
+                    FROM airank_provider_request_audits
+                    WHERE tenant_id=:tenant_id AND run_id=:run_id AND outcome='failed'
+                    """
+                ),
+                {"tenant_id": tenant_id, "run_id": run.run_id},
+            ).mappings().one()
+            usage = conn.execute(
+                text(
+                    """
+                    SELECT total_tokens, precision_status
+                    FROM airank_provider_usage_events
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id},
+            ).mappings().one()
+            evidence = conn.execute(
+                text(
+                    """
+                    SELECT raw_response_json
+                    FROM airank_evidence_snapshots
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project.project_id},
+            ).scalar_one()
+        assert audit["provider_request_id"] == "request-empty-integration-1"
+        assert audit["attempt_count"] == 2
+        assert audit["duration_ms"] == 4321
+        assert "request_contract" in str(audit["metadata_json"])
+        assert usage == {"total_tokens": 4108, "precision_status": "exact"}
+        assert "request-empty-integration-1" in str(evidence)
+        assert "still reasoning" in str(evidence)
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -2438,7 +2542,7 @@ def test_real_mysql_provider_route_manifests_are_public_and_versioned() -> None:
                 text(
                     """
                     SELECT route_id, priority, endpoint_host, model_name,
-                           configuration_fingerprint, is_current
+                           request_contract_json, configuration_fingerprint, is_current
                     FROM airank_provider_routes
                     WHERE provider_key=:provider_key AND route_id=:route_id
                     """
@@ -2449,6 +2553,7 @@ def test_real_mysql_provider_route_manifests_are_public_and_versioned() -> None:
         assert first["model_name"] == "route-model-v1"
         assert len(str(first["configuration_fingerprint"])) == 64
         assert bool(first["is_current"]) is True
+        assert '"max_tokens": 4096' in str(first["request_contract_json"])
         assert "secret-route-value-never-persisted" not in json.dumps(
             dict(first), default=str
         )
@@ -2479,6 +2584,41 @@ def test_real_mysql_provider_route_manifests_are_public_and_versioned() -> None:
         assert len(versions) == 2
         assert sum(bool(row["is_current"]) for row in versions) == 1
         assert next(row["model_name"] for row in versions if row["is_current"]) == "route-model-v2"
+
+        env["ROUTE_TEST_PRIMARY_KEY"] = "rotated-secret-route-value-never-persisted"
+        operations.sync_manifests([manifest])
+        with engine.connect() as conn:
+            route_versions = conn.execute(
+                text(
+                    """
+                    SELECT model_name, configuration_fingerprint, is_current
+                    FROM airank_provider_routes
+                    WHERE provider_key=:provider_key AND route_id=:route_id
+                    ORDER BY created_at, route_version
+                    """
+                ),
+                {"provider_key": provider, "route_id": route_id},
+            ).mappings().all()
+            manifest_versions = conn.execute(
+                text(
+                    """
+                    SELECT configuration_fingerprint, is_current
+                    FROM airank_provider_manifests
+                    WHERE provider_key=:provider_key
+                    ORDER BY created_at, manifest_version
+                    """
+                ),
+                {"provider_key": provider},
+            ).mappings().all()
+        assert len(route_versions) == 3
+        assert len({str(row["configuration_fingerprint"]) for row in route_versions}) == 3
+        assert sum(bool(row["is_current"]) for row in route_versions) == 1
+        assert len(manifest_versions) == 3
+        assert len({str(row["configuration_fingerprint"]) for row in manifest_versions}) == 3
+        assert sum(bool(row["is_current"]) for row in manifest_versions) == 1
+        assert "rotated-secret-route-value-never-persisted" not in json.dumps(
+            [dict(row) for row in route_versions + manifest_versions], default=str
+        )
     finally:
         with engine.begin() as conn:
             conn.execute(

@@ -84,6 +84,19 @@ def test_provider_operations_migration_has_no_plaintext_credential_column() -> N
     assert "api_key" not in control_migration
     assert "secret" not in control_migration
 
+    request_contract_migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0022_provider_request_contracts.py"
+    ).read_text(encoding="utf-8")
+    assert "request_defaults_json" in request_contract_migration
+    assert "request_contract_json" in request_contract_migration
+    assert "api_key" not in request_contract_migration
+    assert "secret" not in request_contract_migration
+
 
 def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() -> None:
     provider_scan = (ROOT / "apps" / "api" / "provider_scan.py").read_text(encoding="utf-8")

@@ -317,6 +317,24 @@ def call_api_provider_for_brand_rank(
                 ),
                 "route_id": exc.route_id,
                 "capture_mode": "provider_api",
+                "request_contract": dict(
+                    exc.request_contract or gateway.request_contract(provider)
+                ),
+                "provider_request_id": exc.provider_request_id,
+                "duration_ms": exc.duration_ms,
+                "attempt_count": exc.attempt_count,
+                "usage": (
+                    {
+                        "input_tokens": exc.usage.input_tokens,
+                        "output_tokens": exc.usage.output_tokens,
+                        "total_tokens": exc.usage.total_tokens,
+                        "precision": exc.usage.precision.value,
+                        "source": exc.usage.source,
+                    }
+                    if exc.usage is not None
+                    else None
+                ),
+                "provider_raw_response": exc.raw_response,
             },
         ) from exc
 
@@ -378,6 +396,7 @@ def call_api_provider_for_brand_rank(
             "endpoint_host": api_result.endpoint_host,
             "configuration_fingerprint": api_result.configuration_fingerprint,
             "route_id": api_result.route_id,
+            "request_contract": dict(api_result.request_contract),
             "source_extraction": "provider_native_payload",
             "provider_raw_response": api_result.raw_response,
         },

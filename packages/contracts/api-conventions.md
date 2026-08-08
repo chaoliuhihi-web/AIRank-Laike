@@ -116,6 +116,8 @@ scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`cancel
 
 每个已完成 ScanRun 可通过 `GET /api/v1/projects/{project_id}/scan-runs/{run_id}/quality-report` 重算 `airank.measurement-quality.v4`。响应使用 `measurement_quality_report_response.schema.json`，执行基础样本与分采集面证据检查；未提及必须保留在有效分母。每个问题、Provider、Cohort、采集面和模型口径必须有至少 3 个独立 sample index 和 session；单次样本或重用会话必须 `publishable=false`。每个样本都必须有独立 Evidence Manifest，且 `surface/evidence_level` 必须与任务一致：API 要求请求元数据、追踪 ID 和 Provider 请求审计；Web/App 除要求不可变截图对象与 SHA-256 外，采集器还必须确认进入全新会话，并明确来源面板 `captured/not_present`，有引用时还要绑定不可变来源面板对象；App 另需设备/App 环境元数据 hash；manual_import 另需导入源 hash。任一阻断检查失败时 `publishable=false`，报告只能保存为 `quality_blocked`，下载接口返回 `409 REPORT_QUALITY_BLOCKED`。
 
+Provider 请求参数属于测量口径的一部分。每次 API 调用必须把实际 `max_tokens`、上游字段名、temperature 和 reasoning effort 写入请求审计 metadata，并通过 `configuration_fingerprint` 关联版本化 Provider manifest/route；`20260808_0022` 把 manifest 默认值和 route 实际请求契约分别保存为 JSON，不保存密钥。配置指纹必须参与版本 ID，凭证轮换或请求参数变化只能追加版本，不得覆盖历史审计关联。HTTP 成功但最终回答为空时，原始上游响应、request ID、usage、终止元数据、时长和请求契约仍须进入失败 EvidenceSnapshot，样本状态保持 `failed` 且不得进入有效分母；如果上游已经返回 usage，则失败调用也必须进入用量账本。模型专属固定参数不得用一个全局默认覆盖；例如 Kimi K3 使用 `max_completion_tokens`、省略固定 temperature 并显式记录 reasoning effort。
+
 客户交付使用不可变证据包，而不是仅记录“下载成功”：
 
 ```text

@@ -12,6 +12,8 @@ def build_request(
     model: str,
     prompt: str,
     max_tokens: int,
+    temperature: float | None,
+    reasoning_effort: str | None,
     *,
     include_web_search: bool = True,
 ) -> dict[str, Any]:
@@ -19,18 +21,22 @@ def build_request(
         request: dict[str, Any] = {
             "model": model,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            "temperature": 0.2,
             "max_output_tokens": max_tokens,
         }
+        if temperature is not None:
+            request["temperature"] = temperature
         if include_web_search:
             request["tools"] = [{"type": "web_search"}]
         return request
     request: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": max_tokens,
+        manifest.max_tokens_field: max_tokens,
     }
+    if temperature is not None:
+        request["temperature"] = temperature
+    if reasoning_effort is not None:
+        request["reasoning_effort"] = reasoning_effort
     if manifest.request_kind == "chat_completions_search":
         request.update(
             {

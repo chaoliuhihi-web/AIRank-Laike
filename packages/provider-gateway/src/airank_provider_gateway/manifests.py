@@ -58,6 +58,10 @@ PROVIDER_MANIFESTS: dict[str, ProviderManifest] = {
         request_kind="chat_completions",
         capabilities=ProviderCapabilities(web_search=True, citations=True),
         allowed_endpoint_hosts=("api.moonshot.cn",),
+        max_tokens_default=4096,
+        max_tokens_field="max_completion_tokens",
+        temperature_default=None,
+        reasoning_effort_default="low",
     ),
     "deepseek": ProviderManifest(
         provider="deepseek",

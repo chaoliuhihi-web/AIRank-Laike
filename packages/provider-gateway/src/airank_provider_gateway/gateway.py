@@ -304,6 +304,11 @@ class ProviderGateway:
         manifest = self._manifest(provider)
         return self._routes(manifest)[0].settings
 
+    def request_contract(self, provider: str) -> Mapping[str, Any]:
+        manifest = self._manifest(provider)
+        settings = self._routes(manifest)[0].settings
+        return self._request_contract(manifest, settings)
+
     def _routes(self, manifest: ProviderManifest) -> tuple[ResolvedProviderRoute, ...]:
         routes = resolve_provider_routes(manifest, self.env)
         controlled = self.route_policy.apply_routes(manifest.provider, routes)
@@ -367,7 +372,14 @@ class ProviderGateway:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {settings.api_key}",
         }
-        request_payload = build_request(manifest, settings.model, prompt, settings.max_tokens)
+        request_payload = build_request(
+            manifest,
+            settings.model,
+            prompt,
+            settings.max_tokens,
+            settings.temperature,
+            settings.reasoning_effort,
+        )
         limiter = self._limiters.setdefault(canonical, self._build_limiter(canonical))
         last_error: ProviderGatewayError | None = None
         capacity_lease: ProviderCapacityLease | None = None
@@ -398,6 +410,12 @@ class ProviderGateway:
                                     canonical,
                                     "PROVIDER_EMPTY_RESPONSE",
                                     "provider returned an empty answer",
+                                    raw_response=response.data,
+                                    provider_request_id=request_id,
+                                    duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+                                    attempt_count=attempt,
+                                    usage=usage,
+                                    request_contract=self._request_contract(manifest, settings),
                                 )
                             completed_at = datetime.now(timezone.utc)
                             self.circuit.success(canonical, configuration_fingerprint)
@@ -420,6 +438,7 @@ class ProviderGateway:
                                 endpoint_host=settings.endpoint_host,
                                 configuration_fingerprint=configuration_fingerprint,
                                 route_id=route.route_id,
+                                request_contract=self._request_contract(manifest, settings),
                             )
                             self._audit(result, "success")
                             return result
@@ -431,6 +450,12 @@ class ProviderGateway:
                                 retryable=exc.retryable,
                                 status_code=exc.status_code,
                                 provider_code=exc.provider_code,
+                                raw_response=exc.raw_response,
+                                provider_request_id=exc.provider_request_id,
+                                duration_ms=exc.duration_ms,
+                                attempt_count=exc.attempt_count,
+                                usage=exc.usage,
+                                request_contract=exc.request_contract,
                             )
                             self.circuit.failure(
                                 canonical,
@@ -487,6 +512,8 @@ class ProviderGateway:
                 settings.model,
                 prompt,
                 settings.max_tokens,
+                settings.temperature,
+                settings.reasoning_effort,
                 include_web_search=False,
             )
             return (
@@ -644,6 +671,23 @@ class ProviderGateway:
         return ProviderLimiter(qps=qps, concurrency=concurrency)
 
     @staticmethod
+    def _request_contract(
+        manifest: ProviderManifest,
+        settings: ProviderSettings,
+    ) -> Mapping[str, Any]:
+        max_tokens_field = (
+            "max_output_tokens"
+            if manifest.request_kind == "responses_web_search"
+            else manifest.max_tokens_field
+        )
+        return {
+            "max_tokens": settings.max_tokens,
+            "max_tokens_field": max_tokens_field,
+            "temperature": settings.temperature,
+            "reasoning_effort": settings.reasoning_effort,
+        }
+
+    @staticmethod
     def _evidence_grade(manifest: ProviderManifest, search_used: bool | None) -> str:
         if not manifest.capabilities.web_search:
             return "provider_api_without_web_search"
@@ -691,6 +735,12 @@ class ProviderGateway:
             configuration_fingerprint=fingerprint,
             endpoint_host=route.settings.endpoint_host,
             model=route.settings.model,
+            raw_response=error.raw_response,
+            provider_request_id=error.provider_request_id,
+            duration_ms=error.duration_ms,
+            attempt_count=error.attempt_count,
+            usage=error.usage,
+            request_contract=ProviderGateway._request_contract(manifest, route.settings),
         )
 
     def _audit(self, result: ProviderResult, outcome: str) -> None:
@@ -707,6 +757,7 @@ class ProviderGateway:
                 "attempt_count": result.attempt_count,
                 "evidence_grade": result.evidence_grade,
                 "usage_precision": result.usage.precision.value,
+                "request_contract": dict(result.request_contract),
                 "outcome": outcome,
                 "configuration_fingerprint": result.configuration_fingerprint,
             }
@@ -727,6 +778,14 @@ class ProviderGateway:
                 "error_code": error.code,
                 "provider_code": error.provider_code,
                 "retryable": error.retryable,
+                "request_id_present": bool(error.provider_request_id),
+                "duration_ms": error.duration_ms,
+                "attempt_count": error.attempt_count,
+                "usage_precision": error.usage.precision.value if error.usage else "unknown",
+                "request_contract": dict(
+                    error.request_contract
+                    or self._request_contract(get_manifest(provider), settings)
+                ),
                 "outcome": "failed",
                 "configuration_fingerprint": settings.configuration_fingerprint(
                     provider, route.route_id

@@ -273,6 +273,12 @@ def test_qianwen_generation_preserves_request_id_search_evidence_citation_and_us
     assert transport.calls[0]["payload"]["enable_search"] is True
     assert "Authorization" not in audits[0]
     assert audits[0]["request_id_present"] is True
+    assert audits[0]["request_contract"] == {
+        "max_tokens": 4096,
+        "max_tokens_field": "max_tokens",
+        "temperature": 0.2,
+        "reasoning_effort": None,
+    }
 
 
 def test_doubao_responses_payload_and_output_parser() -> None:
@@ -317,6 +323,78 @@ def test_doubao_responses_payload_and_output_parser() -> None:
     assert result.evidence_grade == "provider_api_with_web_search"
     assert result.citations[0].title == "证据 A"
     assert transport.calls[0]["payload"]["tools"] == [{"type": "web_search"}]
+
+
+def test_kimi_k3_uses_official_reasoning_and_completion_contract() -> None:
+    transport = FakeTransport(
+        [
+            HttpResponse(
+                status=200,
+                headers={"x-request-id": "req_kimi_1"},
+                data={"id": "req_kimi_1", "choices": [{"message": {"content": "Kimi 回答"}}]},
+            )
+        ]
+    )
+    env = {
+        "KIMI_API_KEY": "secret",
+        "KIMI_API_URL": "https://kimi.example.test/v1/chat/completions",
+        "KIMI_MODEL": "kimi-k3",
+        "AIRANK_PROVIDER_QPS": "100",
+        "AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS": "true",
+    }
+    gateway = ProviderGateway(env=env, transport=transport)
+
+    result = gateway.generate("kimi", "测试")
+
+    assert result.answer_text == "Kimi 回答"
+    assert transport.calls[0]["payload"]["max_completion_tokens"] == 4096
+    assert "max_tokens" not in transport.calls[0]["payload"]
+    assert "temperature" not in transport.calls[0]["payload"]
+    assert transport.calls[0]["payload"]["reasoning_effort"] == "low"
+    assert result.request_contract == {
+        "max_tokens": 4096,
+        "max_tokens_field": "max_completion_tokens",
+        "temperature": None,
+        "reasoning_effort": "low",
+    }
+    default_fingerprint = gateway.settings("kimi").configuration_fingerprint("kimi")
+    overridden = ProviderGateway(
+        env={**env, "KIMI_REASONING_EFFORT": "high"},
+        transport=FakeTransport([]),
+    )
+    assert overridden.settings("kimi").reasoning_effort == "high"
+    assert overridden.settings("kimi").configuration_fingerprint("kimi") != default_fingerprint
+
+
+def test_empty_provider_response_preserves_upstream_failure_evidence() -> None:
+    upstream = {
+        "id": "req_empty_1",
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning_content": "still reasoning"},
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 4096, "total_tokens": 4106},
+    }
+    transport = FakeTransport([HttpResponse(status=200, headers={}, data=upstream)])
+
+    with pytest.raises(ProviderGatewayError) as captured:
+        ProviderGateway(env=qianwen_env(), transport=transport).generate("qianwen", "测试")
+
+    error = captured.value
+    assert error.code == "PROVIDER_EMPTY_RESPONSE"
+    assert error.provider_request_id == "req_empty_1"
+    assert error.raw_response == upstream
+    assert error.attempt_count == 1
+    assert error.usage is not None
+    assert error.usage.total_tokens == 4106
+    assert error.request_contract == {
+        "max_tokens": 4096,
+        "max_tokens_field": "max_tokens",
+        "temperature": 0.2,
+        "reasoning_effort": None,
+    }
 
 
 def test_doubao_falls_back_without_search_when_account_has_not_opened_tool() -> None:

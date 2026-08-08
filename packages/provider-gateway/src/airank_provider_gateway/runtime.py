@@ -21,6 +21,8 @@ class ProviderSettings:
     model: str
     disabled: bool
     max_tokens: int
+    temperature: float | None
+    reasoning_effort: str | None
     allowed_endpoint_hosts: tuple[str, ...]
     allow_custom_endpoint: bool
 
@@ -31,12 +33,34 @@ class ProviderSettings:
         values = env if env is not None else os.environ
         provider_prefix = manifest.provider.upper()
         raw_max_tokens = values.get(f"{provider_prefix}_MAX_TOKENS") or values.get(
-            "AIRANK_PROVIDER_MAX_TOKENS", "4096"
+            "AIRANK_PROVIDER_MAX_TOKENS", str(manifest.max_tokens_default)
         )
         try:
             max_tokens = max(1, min(int(raw_max_tokens), 32768))
         except ValueError:
-            max_tokens = 4096
+            max_tokens = manifest.max_tokens_default
+        raw_temperature = values.get(f"{provider_prefix}_TEMPERATURE") or values.get(
+            "AIRANK_PROVIDER_TEMPERATURE"
+        )
+        if raw_temperature is None or not str(raw_temperature).strip():
+            temperature = manifest.temperature_default
+        else:
+            try:
+                temperature = float(raw_temperature)
+                if not 0 <= temperature <= 2:
+                    raise ValueError
+            except (TypeError, ValueError):
+                temperature = manifest.temperature_default
+        raw_reasoning_effort = values.get(f"{provider_prefix}_REASONING_EFFORT") or values.get(
+            "AIRANK_PROVIDER_REASONING_EFFORT"
+        )
+        reasoning_effort = (
+            str(raw_reasoning_effort).strip().lower()
+            if raw_reasoning_effort is not None and str(raw_reasoning_effort).strip()
+            else manifest.reasoning_effort_default
+        )
+        if reasoning_effort not in {None, "low", "high", "max"}:
+            reasoning_effort = manifest.reasoning_effort_default
         return cls(
             endpoint=str(values.get(manifest.endpoint_env) or manifest.endpoint_default).strip(),
             api_key=str(values.get(manifest.key_env) or "").strip(),
@@ -44,6 +68,8 @@ class ProviderSettings:
             disabled=str(values.get(manifest.disabled_env) or "false").strip().lower()
             in {"1", "true", "yes"},
             max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
             allowed_endpoint_hosts=manifest.allowed_endpoint_hosts,
             allow_custom_endpoint=str(
                 values.get("AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS") or "false"
@@ -74,7 +100,7 @@ class ProviderSettings:
 
     def configuration_fingerprint(self, provider: str, route_id: str = "default") -> str:
         payload = {
-            "contract": "airank.provider-config.v2",
+            "contract": "airank.provider-config.v3",
             "provider": provider,
             "route_id": route_id,
             "endpoint": self.endpoint,
@@ -82,6 +108,8 @@ class ProviderSettings:
             "disabled": self.disabled,
             "key_digest": hashlib.sha256(self.api_key.encode("utf-8")).hexdigest(),
             "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "reasoning_effort": self.reasoning_effort,
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

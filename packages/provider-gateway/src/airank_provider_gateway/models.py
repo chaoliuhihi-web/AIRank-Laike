@@ -67,6 +67,10 @@ class ProviderManifest:
     request_kind: str
     capabilities: ProviderCapabilities
     allowed_endpoint_hosts: tuple[str, ...]
+    max_tokens_default: int = 4096
+    max_tokens_field: str = "max_tokens"
+    temperature_default: float | None = 0.2
+    reasoning_effort_default: str | None = None
     auth_probe_path: str = "/models"
     lifecycle: Mapping[str, ModelLifecycle] = field(default_factory=dict)
 
@@ -106,6 +110,7 @@ class ProviderResult:
     endpoint_host: str
     configuration_fingerprint: str
     route_id: str = "default"
+    request_contract: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,12 @@ class ProviderGatewayError(RuntimeError):
         configuration_fingerprint: str | None = None,
         endpoint_host: str | None = None,
         model: str | None = None,
+        raw_response: Mapping[str, Any] | None = None,
+        provider_request_id: str | None = None,
+        duration_ms: int | None = None,
+        attempt_count: int | None = None,
+        usage: ProviderUsage | None = None,
+        request_contract: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
@@ -148,3 +159,9 @@ class ProviderGatewayError(RuntimeError):
         self.configuration_fingerprint = configuration_fingerprint
         self.endpoint_host = endpoint_host
         self.model = model
+        self.raw_response = raw_response
+        self.provider_request_id = provider_request_id
+        self.duration_ms = duration_ms
+        self.attempt_count = attempt_count
+        self.usage = usage
+        self.request_contract = request_contract

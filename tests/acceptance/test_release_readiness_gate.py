@@ -13,6 +13,14 @@ import release_readiness  # noqa: E402
 from release_readiness import capability_blockers  # noqa: E402
 
 
+def test_api_requirements_include_browser_provider_runtime() -> None:
+    requirements = (ROOT / "apps" / "api" / "requirements-dev.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "playwright>=1.58.0,<2.0.0" in requirements
+
+
 def test_release_readiness_blocks_required_dev_only_capabilities() -> None:
     blockers, warnings = capability_blockers(
         [

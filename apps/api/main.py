@@ -3404,6 +3404,8 @@ def complete_mysql_real_brand_scan(
             continue
         except ProviderCallError as exc:
             code, blocked = classify_provider_call_failure(exc)
+            provider_metadata = dict(exc.public_metadata)
+            captured_provider_response = provider_metadata.pop("provider_raw_response", None)
             failures.append(
                 {
                     **row,
@@ -3415,7 +3417,8 @@ def complete_mysql_real_brand_scan(
                     "provider_error_code": exc.error_code,
                     "upstream_error_code": exc.provider_code,
                     "retryable": exc.retryable,
-                    "provider_metadata": exc.public_metadata,
+                    "provider_metadata": provider_metadata,
+                    "captured_provider_response": captured_provider_response,
                 }
             )
             continue
@@ -3811,6 +3814,7 @@ def complete_mysql_real_brand_scan(
                                 "search_used": result.raw_metadata.get("search_used"),
                                 "source_extraction": result.raw_metadata.get("source_extraction"),
                                 "route_id": result.raw_metadata.get("route_id"),
+                                "request_contract": result.raw_metadata.get("request_contract"),
                             },
                             ensure_ascii=False,
                         ),
@@ -4172,25 +4176,26 @@ def complete_mysql_real_brand_scan(
                     provider_metadata.get("prompt_sha256"),
                 )
                 if all(required_audit_values):
+                    failure_provider_audit_id = f"provider_audit_{uuid4().hex[:12]}"
                     conn.execute(
                         text(
                             """
                             INSERT INTO airank_provider_request_audits (
                               id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
                               provider_key, route_id, model_name, endpoint_host, configuration_fingerprint,
-                              prompt_sha256, outcome, attempt_count, error_code,
-                              provider_error_code, requested_at, completed_at, metadata_json
+                              provider_request_id, prompt_sha256, outcome, attempt_count, duration_ms,
+                              error_code, provider_error_code, requested_at, completed_at, metadata_json
                             )
                             VALUES (
                               :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
                               :provider_key, :route_id, :model_name, :endpoint_host, :configuration_fingerprint,
-                              :prompt_sha256, 'failed', :attempt_count, :error_code,
-                              :provider_error_code, :requested_at, :completed_at, :metadata_json
+                              :provider_request_id, :prompt_sha256, 'failed', :attempt_count, :duration_ms,
+                              :error_code, :provider_error_code, :requested_at, :completed_at, :metadata_json
                             )
                             """
                         ),
                         {
-                            "id": f"provider_audit_{uuid4().hex[:12]}",
+                            "id": failure_provider_audit_id,
                             "tenant_id": tenant_id,
                             "project_id": project.project_id,
                             "run_id": run.run_id,
@@ -4201,8 +4206,10 @@ def complete_mysql_real_brand_scan(
                             "model_name": provider_metadata["model_name"],
                             "endpoint_host": provider_metadata["endpoint_host"],
                             "configuration_fingerprint": provider_metadata["configuration_fingerprint"],
+                            "provider_request_id": provider_metadata.get("provider_request_id"),
                             "prompt_sha256": provider_metadata["prompt_sha256"],
-                            "attempt_count": 1,
+                            "attempt_count": int(provider_metadata.get("attempt_count") or 1),
+                            "duration_ms": provider_metadata.get("duration_ms"),
                             "error_code": failure.get("provider_error_code") or failure["error_code"],
                             "provider_error_code": failure.get("upstream_error_code"),
                             "requested_at": failure["started_at"],
@@ -4211,10 +4218,43 @@ def complete_mysql_real_brand_scan(
                                 {
                                     "retryable": bool(failure.get("retryable")),
                                     "route_id": provider_metadata.get("route_id"),
+                                    "request_contract": provider_metadata.get("request_contract"),
                                 }, ensure_ascii=False
                             ),
                         },
                     )
+                    failure_usage = provider_metadata.get("usage")
+                    if isinstance(failure_usage, dict):
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO airank_provider_usage_events (
+                                  id, tenant_id, project_id, request_audit_id,
+                                  provider_key, model_name, input_tokens, output_tokens,
+                                  total_tokens, precision_status, usage_source, occurred_at
+                                )
+                                VALUES (
+                                  :id, :tenant_id, :project_id, :request_audit_id,
+                                  :provider_key, :model_name, :input_tokens, :output_tokens,
+                                  :total_tokens, :precision_status, :usage_source, :occurred_at
+                                )
+                                """
+                            ),
+                            {
+                                "id": f"provider_usage_{uuid4().hex[:12]}",
+                                "tenant_id": tenant_id,
+                                "project_id": project.project_id,
+                                "request_audit_id": failure_provider_audit_id,
+                                "provider_key": failure["provider"],
+                                "model_name": provider_metadata["model_name"],
+                                "input_tokens": failure_usage.get("input_tokens"),
+                                "output_tokens": failure_usage.get("output_tokens"),
+                                "total_tokens": failure_usage.get("total_tokens"),
+                                "precision_status": failure_usage.get("precision") or "unknown",
+                                "usage_source": failure_usage.get("source") or "provider_response",
+                                "occurred_at": failure["finished_at"],
+                            },
+                        )
             conn.execute(
                 text(
                     """

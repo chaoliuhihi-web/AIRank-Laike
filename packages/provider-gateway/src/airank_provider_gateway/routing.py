@@ -20,6 +20,8 @@ _ALLOWED_ROUTE_FIELDS = {
     "model",
     "key_env",
     "max_tokens",
+    "temperature",
+    "reasoning_effort",
 }
 
 
@@ -76,7 +78,23 @@ def resolve_provider_routes(
             max_tokens = int(item.get("max_tokens", default_settings.max_tokens))
         except (TypeError, ValueError) as exc:
             raise _invalid_routes(manifest) from exc
-        if not -10_000 <= priority <= 10_000 or not 1 <= max_tokens <= 32_768:
+        raw_temperature = item.get("temperature", default_settings.temperature)
+        if raw_temperature is None:
+            temperature = None
+        else:
+            try:
+                temperature = float(raw_temperature)
+            except (TypeError, ValueError) as exc:
+                raise _invalid_routes(manifest) from exc
+        reasoning_effort = item.get("reasoning_effort", default_settings.reasoning_effort)
+        if reasoning_effort is not None:
+            reasoning_effort = str(reasoning_effort).strip().lower()
+        if (
+            not -10_000 <= priority <= 10_000
+            or not 1 <= max_tokens <= 32_768
+            or (temperature is not None and not 0 <= temperature <= 2)
+            or reasoning_effort not in {None, "low", "high", "max"}
+        ):
             raise _invalid_routes(manifest)
         routes.append(
             ResolvedProviderRoute(
@@ -88,6 +106,8 @@ def resolve_provider_routes(
                     model=model,
                     disabled=default_settings.disabled,
                     max_tokens=max_tokens,
+                    temperature=temperature,
+                    reasoning_effort=reasoning_effort,
                     allowed_endpoint_hosts=default_settings.allowed_endpoint_hosts,
                     allow_custom_endpoint=default_settings.allow_custom_endpoint,
                 ),
