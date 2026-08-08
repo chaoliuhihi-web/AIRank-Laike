@@ -17,9 +17,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airank_evidence import ObjectStorage, ObjectStorageError, build_object_storage_from_env
 
+try:
+    from .retest_routes import MySQLRetestRepository, _comparison_data
+except ImportError:  # pragma: no cover - supports direct uvicorn execution.
+    from retest_routes import MySQLRetestRepository, _comparison_data  # type: ignore[no-redef]
+
 
 TRACE_HEADER = "X-AIRank-Trace-Id"
-EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v1"
+EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v2"
 MAX_PROJECT_ENTITIES = 10_000
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -107,7 +112,10 @@ class EvidenceIntegrityAuditData(BaseModel):
     audit_id: str
     tenant_id: str
     project_id: str
-    policy_version: Literal["airank.evidence-integrity.v1"]
+    policy_version: Literal[
+        "airank.evidence-integrity.v1",
+        "airank.evidence-integrity.v2",
+    ]
     scope: Literal["project"]
     status: IntegrityStatus
     entity_count: int
@@ -332,6 +340,11 @@ class MySQLEvidenceIntegrityRepository:
         "airank_knowledge_segments",
         "airank_fact_revisions",
         "airank_object_refs",
+        "airank_scan_runs",
+        "airank_scan_tasks",
+        "airank_reports",
+        "airank_retest_runs",
+        "airank_retest_observation_windows",
     )
 
     def __init__(
@@ -571,6 +584,8 @@ class MySQLEvidenceIntegrityRepository:
             "airank_knowledge_source_contents",
             "airank_knowledge_segments",
             "airank_fact_revisions",
+            "airank_scan_runs",
+            "airank_reports",
         )
         entity_counts = {
             table_name: int(
@@ -581,6 +596,8 @@ class MySQLEvidenceIntegrityRepository:
                         + (
                             " AND object_type <> 'report_evidence_packet'"
                             if table_name == "airank_object_refs"
+                            else " AND deleted_at IS NULL"
+                            if table_name in {"airank_scan_runs", "airank_reports"}
                             else ""
                         )
                     ),
@@ -675,6 +692,26 @@ class MySQLEvidenceIntegrityRepository:
             ),
             params,
         ).mappings().all()
+        scan_run_rows = conn.execute(
+            text(
+                "SELECT r.id, r.status, r.metrics_json, COUNT(t.id) AS actual_task_count "
+                "FROM airank_scan_runs r "
+                "LEFT JOIN airank_scan_tasks t "
+                "ON t.tenant_id=r.tenant_id AND t.project_id=r.project_id AND t.run_id=r.id "
+                "WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id "
+                "AND r.deleted_at IS NULL GROUP BY r.id, r.status, r.metrics_json ORDER BY r.id"
+            ),
+            params,
+        ).mappings().all()
+        report_rows = conn.execute(
+            text(
+                "SELECT id, report_type, status, run_id, retest_run_id, metrics_json, "
+                "report_sha256, evidence_index_json, generated_at "
+                "FROM airank_reports WHERE tenant_id=:tenant_id AND project_id=:project_id "
+                "AND deleted_at IS NULL ORDER BY id"
+            ),
+            params,
+        ).mappings().all()
 
         findings: list[EvidenceIntegrityFindingData] = []
         object_payloads: dict[str, bytes] = {}
@@ -733,7 +770,294 @@ class MySQLEvidenceIntegrityRepository:
                     timestamp=timestamp,
                 )
             )
+        for row in scan_run_rows:
+            findings.append(self._verify_scan_run_metrics(row, timestamp))
+        for row in report_rows:
+            findings.append(
+                self._verify_report_derived_state(
+                    conn,
+                    tenant_id,
+                    project_id,
+                    row,
+                    timestamp,
+                )
+            )
         return findings
+
+    @staticmethod
+    def _verify_scan_run_metrics(
+        row: Mapping[str, Any], timestamp: datetime
+    ) -> EvidenceIntegrityFindingData:
+        run_id = str(row["id"])
+        metrics = json_value(row["metrics_json"], {})
+        stored_task_count = metrics.get("task_count") if isinstance(metrics, dict) else None
+        actual_task_count = int(row["actual_task_count"])
+        rebuilt_basis = {"task_count": actual_task_count}
+        stored_basis = {"task_count": stored_task_count}
+        rebuilt_sha = canonical_json_sha256(rebuilt_basis)
+        stored_sha = canonical_json_sha256(stored_basis)
+        valid_stored_count = (
+            isinstance(stored_task_count, int)
+            and not isinstance(stored_task_count, bool)
+            and stored_task_count >= 0
+        )
+        status: FindingStatus = (
+            "verified"
+            if valid_stored_count and stored_task_count == actual_task_count
+            else "hash_mismatch"
+        )
+        return _finding(
+            entity_type="scan_run_metrics",
+            entity_id=run_id,
+            status=status,
+            expected_sha256=rebuilt_sha,
+            actual_sha256=stored_sha,
+            created_at=timestamp,
+            details={
+                "run_status": str(row["status"]),
+                "stored_task_count": stored_task_count,
+                "rebuilt_task_count": actual_task_count,
+                "derivation_policy": "airank.scan-run-task-count.v1",
+            },
+        )
+
+    @staticmethod
+    def _retest_delivery_basis(value: Mapping[str, Any]) -> dict[str, Any]:
+        keys = (
+            "window_id",
+            "window_label",
+            "baseline_run_id",
+            "compare_run_id",
+            "comparable",
+            "mismatch_reasons",
+            "confidence",
+            "baseline_metrics",
+            "compare_metrics",
+            "metric_deltas",
+            "conclusion",
+            "attribution_policy",
+            "report_status",
+            "baseline_quality",
+            "compare_quality",
+            "known_limitations",
+            "evidence_refs",
+        )
+        return {key: value.get(key) for key in keys}
+
+    def _verify_report_derived_state(
+        self,
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        row: Mapping[str, Any],
+        timestamp: datetime,
+    ) -> EvidenceIntegrityFindingData:
+        report_id = str(row["id"])
+        report_type = str(row["report_type"] or "")
+        if report_type != "retest":
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=(
+                    str(row["report_sha256"]).lower()
+                    if row.get("report_sha256")
+                    else None
+                ),
+                created_at=timestamp,
+                details={
+                    "reason": "report_derivation_not_supported",
+                    "report_type": report_type or None,
+                    "stored_status": str(row["status"] or ""),
+                },
+            )
+
+        stored_report_sha = str(row["report_sha256"] or "").lower()
+        stored_metrics = json_value(row["metrics_json"], {})
+        evidence_index = json_value(row["evidence_index_json"], {})
+        retest_run_id = str(row["retest_run_id"] or "")
+        if (
+            not SHA256_RE.fullmatch(stored_report_sha)
+            or not isinstance(stored_metrics, dict)
+            or not isinstance(evidence_index, dict)
+            or not retest_run_id
+        ):
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=stored_report_sha or None,
+                created_at=timestamp,
+                details={
+                    "reason": "report_derivation_provenance_missing",
+                    "has_metrics": isinstance(stored_metrics, dict) and bool(stored_metrics),
+                    "has_evidence_index": isinstance(evidence_index, dict) and bool(evidence_index),
+                    "has_retest_run_id": bool(retest_run_id),
+                    "has_report_sha256": bool(SHA256_RE.fullmatch(stored_report_sha)),
+                },
+            )
+
+        provenance = conn.execute(
+            text(
+                "SELECT rr.baseline_run_id AS rr_baseline_run_id, "
+                "rr.compare_run_id AS rr_compare_run_id, rr.summary_json, "
+                "rr.observation_window_id, w.id, w.window_label, w.package_id, "
+                "w.baseline_run_id, w.compare_run_id, w.result_json "
+                "FROM airank_retest_runs rr "
+                "JOIN airank_retest_observation_windows w "
+                "ON w.tenant_id=rr.tenant_id AND w.id=rr.observation_window_id "
+                "WHERE rr.tenant_id=:tenant_id AND rr.project_id=:project_id AND rr.id=:retest_run_id"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "retest_run_id": retest_run_id,
+            },
+        ).mappings().first()
+        if provenance is None:
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=stored_report_sha,
+                created_at=timestamp,
+                details={"reason": "retest_run_or_window_provenance_missing"},
+            )
+
+        baseline_run_id = str(evidence_index.get("baseline_run_id") or "")
+        compare_run_id = str(evidence_index.get("compare_run_id") or "")
+        provenance_ids_match = bool(
+            baseline_run_id
+            and compare_run_id
+            and baseline_run_id == str(provenance["rr_baseline_run_id"] or "")
+            and compare_run_id == str(provenance["rr_compare_run_id"] or "")
+            and baseline_run_id == str(provenance["baseline_run_id"] or "")
+            and compare_run_id == str(provenance["compare_run_id"] or "")
+        )
+        if not provenance_ids_match:
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=stored_report_sha,
+                created_at=timestamp,
+                details={"reason": "retest_run_provenance_mismatch"},
+            )
+
+        try:
+            baseline = MySQLRetestRepository._load_run(
+                conn, tenant_id, project_id, baseline_run_id
+            )
+            compare = MySQLRetestRepository._load_run(
+                conn, tenant_id, project_id, compare_run_id
+            )
+            from airank_score.quality import build_measurement_quality_report
+
+            rebuilt = _comparison_data(
+                window=dict(provenance),
+                baseline_run_id=baseline_run_id,
+                compare_run_id=compare_run_id,
+                baseline_quality=build_measurement_quality_report(
+                    run_id=baseline_run_id,
+                    samples=baseline.samples,
+                    signatures=baseline.signature,
+                    evidence_manifests=baseline.evidence_manifests,
+                    run_status=baseline.run_status,
+                ),
+                compare_quality=build_measurement_quality_report(
+                    run_id=compare_run_id,
+                    samples=compare.samples,
+                    signatures=compare.signature,
+                    evidence_manifests=compare.evidence_manifests,
+                    run_status=compare.run_status,
+                ),
+                baseline_signature=baseline.signature,
+                compare_signature=compare.signature,
+                completed_at=as_utc(row["generated_at"]),
+            )
+        except StarletteHTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=stored_report_sha,
+                created_at=timestamp,
+                details={
+                    "reason": "report_rebuild_source_unavailable",
+                    "error_code": detail.get("code"),
+                },
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            return _finding(
+                entity_type="report_derived_state",
+                entity_id=report_id,
+                status="metadata_invalid",
+                expected_sha256=None,
+                actual_sha256=stored_report_sha,
+                created_at=timestamp,
+                details={
+                    "reason": "report_rebuild_failed",
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+        rebuilt_record = rebuilt.model_dump(mode="json")
+        rebuilt_basis = self._retest_delivery_basis(rebuilt_record)
+        stored_basis = self._retest_delivery_basis(stored_metrics)
+        rebuilt_basis_sha = canonical_json_sha256(rebuilt_basis)
+        stored_basis_sha = canonical_json_sha256(stored_basis)
+        window_result = json_value(provenance["result_json"], {})
+        retest_summary = json_value(provenance["summary_json"], {})
+        window_matches = (
+            isinstance(window_result, dict)
+            and canonical_json_sha256(self._retest_delivery_basis(window_result))
+            == rebuilt_basis_sha
+        )
+        retest_summary_matches = (
+            isinstance(retest_summary, dict)
+            and canonical_json_sha256(self._retest_delivery_basis(retest_summary))
+            == rebuilt_basis_sha
+        )
+        stored_metrics_match = stored_basis_sha == rebuilt_basis_sha
+        report_hash_matches = stored_report_sha == rebuilt.report_sha256
+        report_status_matches = str(row["status"] or "") == rebuilt.report_status
+        status: FindingStatus = (
+            "verified"
+            if all(
+                (
+                    stored_metrics_match,
+                    report_hash_matches,
+                    report_status_matches,
+                    window_matches,
+                    retest_summary_matches,
+                )
+            )
+            else "hash_mismatch"
+        )
+        return _finding(
+            entity_type="report_derived_state",
+            entity_id=report_id,
+            status=status,
+            expected_sha256=rebuilt.report_sha256,
+            actual_sha256=stored_report_sha,
+            created_at=timestamp,
+            details={
+                "derivation_policy": "airank.retest-report-rebuild.v1",
+                "stored_metrics_match": stored_metrics_match,
+                "report_hash_matches": report_hash_matches,
+                "report_status_matches": report_status_matches,
+                "window_result_matches": window_matches,
+                "retest_summary_matches": retest_summary_matches,
+                "rebuilt_basis_sha256": rebuilt_basis_sha,
+                "stored_basis_sha256": stored_basis_sha,
+            },
+        )
 
     def _verify_object(
         self, row: Mapping[str, Any], timestamp: datetime

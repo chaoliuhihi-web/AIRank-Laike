@@ -57,7 +57,7 @@ from apps.api.knowledge_routes import (
 )
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
-from apps.api.retest_routes import MySQLRetestRepository
+from apps.api.retest_routes import MySQLRetestRepository, _comparison_data
 from apps.api.report_packet import MySQLReportEvidencePacketRepository
 from apps.api.question_routes import (
     MySQLQuestionGovernanceRepository,
@@ -79,6 +79,7 @@ from apps.api.evidence_review_routes import (
 )
 from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
 from airank_domain.measurement import sha256_text
+from airank_score.quality import build_measurement_quality_report
 from airank_provider_gateway import (
     HealthState,
     ImplementationStatus,
@@ -2061,40 +2062,147 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         assert baseline_quality["publishable"] is True
         assert compare_quality["publishable"] is True
         assert baseline_quality["metrics"]["not_mentioned_count"] == 3
-        metrics = {
-            "report_status": "generated",
-            "baseline_quality": baseline_quality,
-            "compare_quality": compare_quality,
-            "baseline_metrics": baseline_quality["metrics"],
-            "compare_metrics": compare_quality["metrics"],
-            "metric_deltas": {"mention_rate": 1.0, "recommendation_rate": 0.0},
-            "known_limitations": sorted(
-                set(baseline_quality["known_limitations"] + compare_quality["known_limitations"])
-            ),
-            "attribution_policy": "observational_non_causal.v1",
-            "confidence": "low",
-            "conclusion": "同口径样本观察到变化，但不能据此证明因果。",
-        }
-        evidence_index = {
-            "baseline_run_id": runs[0].run_id,
-            "compare_run_id": runs[1].run_id,
-            "evidence_refs": [f"scan_run:{runs[0].run_id}", f"scan_run:{runs[1].run_id}"],
-        }
         report_id = f"report_packet_it_{uuid4().hex[:12]}"
-        report_sha256 = hashlib.sha256(
-            json.dumps(metrics, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        ).hexdigest()
+        retest_run_id = f"retest_packet_it_{uuid4().hex[:12]}"
+        window_id = f"window_packet_it_{uuid4().hex[:12]}"
+        asset_id = f"asset_packet_it_{uuid4().hex[:12]}"
+        package_id = f"package_packet_it_{uuid4().hex[:12]}"
         with engine.begin() as conn:
+            baseline = MySQLRetestRepository._load_run(
+                conn, tenant_id, project.project_id, runs[0].run_id
+            )
+            compare = MySQLRetestRepository._load_run(
+                conn, tenant_id, project.project_id, runs[1].run_id
+            )
+            result = _comparison_data(
+                window={
+                    "id": window_id,
+                    "window_label": "T+7",
+                    "package_id": package_id,
+                },
+                baseline_run_id=runs[0].run_id,
+                compare_run_id=runs[1].run_id,
+                baseline_quality=build_measurement_quality_report(
+                    run_id=runs[0].run_id,
+                    samples=baseline.samples,
+                    signatures=baseline.signature,
+                    evidence_manifests=baseline.evidence_manifests,
+                    run_status=baseline.run_status,
+                ),
+                compare_quality=build_measurement_quality_report(
+                    run_id=runs[1].run_id,
+                    samples=compare.samples,
+                    signatures=compare.signature,
+                    evidence_manifests=compare.evidence_manifests,
+                    run_status=compare.run_status,
+                ),
+                baseline_signature=baseline.signature,
+                compare_signature=compare.signature,
+                completed_at=captured_at,
+            ).model_copy(
+                update={"retest_run_id": retest_run_id, "report_id": report_id}
+            )
+            result_json = result.model_dump(mode="json")
+            evidence_index = {
+                "package_id": package_id,
+                "window_id": window_id,
+                "baseline_run_id": runs[0].run_id,
+                "compare_run_id": runs[1].run_id,
+                "evidence_refs": result.evidence_refs,
+            }
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_content_assets (
+                      id, tenant_id, project_id, asset_type, title, body_md, status
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'fact_page',
+                      '证据包复测占位资产', '仅用于真实 MySQL 门禁。', 'approved'
+                    )
+                    """
+                ),
+                {"id": asset_id, "tenant_id": tenant_id, "project_id": project.project_id},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_publish_packages (
+                      id, tenant_id, project_id, asset_id, channel, status
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :asset_id, 'export', 'published'
+                    )
+                    """
+                ),
+                {
+                    "id": package_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "asset_id": asset_id,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_retest_observation_windows (
+                      id, tenant_id, project_id, package_id, baseline_run_id,
+                      window_label, due_at, status, compare_run_id, result_json,
+                      completed_at, created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :package_id, :baseline_run_id,
+                      'T+7', :completed_at, 'completed', :compare_run_id, :result_json,
+                      :completed_at, :completed_at, :completed_at
+                    )
+                    """
+                ),
+                {
+                    "id": window_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "package_id": package_id,
+                    "baseline_run_id": runs[0].run_id,
+                    "compare_run_id": runs[1].run_id,
+                    "result_json": json.dumps(result_json, ensure_ascii=False),
+                    "completed_at": captured_at,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_retest_runs (
+                      id, tenant_id, project_id, package_id, observation_window_id,
+                      baseline_run_id, compare_run_id, comparison_contract_version,
+                      created_by, status, summary_json, started_at, finished_at,
+                      created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :package_id, :window_id,
+                      :baseline_run_id, :compare_run_id, 'airank.retest-comparison.v1',
+                      'integration_reporter', 'completed', :summary_json,
+                      :completed_at, :completed_at, :completed_at, :completed_at
+                    )
+                    """
+                ),
+                {
+                    "id": retest_run_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "package_id": package_id,
+                    "window_id": window_id,
+                    "baseline_run_id": runs[0].run_id,
+                    "compare_run_id": runs[1].run_id,
+                    "summary_json": json.dumps(result_json, ensure_ascii=False),
+                    "completed_at": captured_at,
+                },
+            )
             conn.execute(
                 text(
                     """
                     INSERT INTO airank_reports (
                       id, tenant_id, project_id, report_type, title, status,
-                      run_id, metrics_json, report_sha256, evidence_index_json,
+                      run_id, retest_run_id, metrics_json, report_sha256, evidence_index_json,
                       generated_by, generated_at
                     ) VALUES (
                       :id, :tenant_id, :project_id, 'retest',
-                      'T+7 GEO 复测证据包集成报告', 'generated', :run_id,
+                      'T+7 GEO 复测证据包集成报告', :status, :run_id, :retest_run_id,
                       :metrics_json, :report_sha256, :evidence_index_json,
                       'integration_reporter', :generated_at
                     )
@@ -2105,8 +2213,10 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
                     "tenant_id": tenant_id,
                     "project_id": project.project_id,
                     "run_id": runs[1].run_id,
-                    "metrics_json": json.dumps(metrics, ensure_ascii=False),
-                    "report_sha256": report_sha256,
+                    "retest_run_id": retest_run_id,
+                    "status": result.report_status,
+                    "metrics_json": json.dumps(result_json, ensure_ascii=False),
+                    "report_sha256": result.report_sha256,
                     "evidence_index_json": json.dumps(evidence_index),
                     "generated_at": captured_at,
                 },
@@ -2131,7 +2241,7 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         manifest_bytes = storage.get_bytes(object_metadata["object_key"])
         assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
         manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "airank.report-evidence-packet.v5"
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v6"
         assert manifest["evidence_integrity"]["status"] == "passed"
         assert manifest["counts"]["samples"] == 6
         assert manifest["counts"]["citations"] == 6

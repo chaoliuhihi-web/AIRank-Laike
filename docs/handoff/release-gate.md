@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v5` | v4 测量质量门禁 + `airank.evidence-integrity.v1` 项目全库巡检、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、巡检 manifest、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3/v4 只读兼容，HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v6` | v4 测量质量门禁 + `airank.evidence-integrity.v2` 项目源证据与派生状态重建、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、巡检 manifest、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3/v4/v5 只读兼容，HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -899,3 +899,26 @@ Limitations and blockers:
 Decision:
 
 - Project evidence integrity is now a hard customer-delivery gate rather than an informal assumption. AIRank remains commercial `NO-GO` until the external production, Consumer, human-quality and longitudinal-observation gates pass.
+
+## 2026-08-08 Derived Metric Rebuild and Packet v6 Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- `airank.evidence-integrity.v2` preserves all v1 source checks and deterministically rebuilds every ScanRun `task_count` from its ScanTask rows.
+- Retest report verification reloads the baseline and comparison runs from task, Answer/EvidenceSnapshot, Provider request-audit, citation and final production-review state. It rebuilds both v4 quality reports, comparison metrics, report SHA-256/status, ObservationWindow result and RetestRun summary instead of trusting stored report JSON.
+- A source failure, metric drift, report hash/status drift, provenance mismatch or unsupported report type is persisted as a blocking entity-level finding. Packet generation returns `409 REPORT_EVIDENCE_INTEGRITY_BLOCKED`; an old report hash cannot substitute for recomputation.
+- New customer artifacts use `airank.report-evidence-packet.v6` and bind the v2 audit manifest. Historical v1/v2/v3/v4/v5 packets remain read-only; v5 means a v1 source audit and does not claim derived-state rebuilding.
+- Contract fixtures now create two real runs with three independent API samples each and derive their reports through the production quality/comparison code. A drift test mutates the report conclusion/hash and a ScanRun task count and proves both `report_derived_state` and `scan_run_metrics` blockers are recorded.
+- Full regression passed `434 passed, 30 skipped`; real MySQL integration passed `28 passed, 2 skipped`.
+- A real MySQL project completed the v2 audit with 39/39 entities verified and zero blockers. The Evidence Center identifies the source-plus-derived scope, policy and manifest without static scores; desktop and 390×844 mobile QA had no page-level overflow and zero console warnings/errors.
+
+Limitations and blockers:
+
+- Deterministic rebuilding currently covers ScanRun task counts and Retest reports. Other derived entity families fail closed or remain outside this gate; projects above the 10,000-entity cap still need partitioned audit execution.
+- Production Yudao authentication, production HTTPS S3/MinIO, Consumer Web/App L3, real customer reviewer benchmark, customer publishing credentials, elapsed T+7/T+14/T+30 evidence, Kimi credential rotation and DeepSeek model migration remain open.
+
+Decision:
+
+- AIRank now proves that supported customer-report numbers match their stored raw evidence at delivery time. This closes the known Retest report-drift path, but AIRank remains commercial `NO-GO` until external production, Consumer, human-quality and longitudinal-observation gates pass.

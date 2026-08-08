@@ -325,7 +325,8 @@ class MySQLRetestRepository:
             """), {"id": result.report_id, "tenant_id": tenant_id, "project_id": window["project_id"], "title": f"{window['window_label']} GEO 复测观察报告", "report_status": result.report_status, "compare_run_id": payload.compare_run_id, "retest_run_id": result.retest_run_id, "metrics_json": json.dumps(result_json, ensure_ascii=False), "report_sha256": result.report_sha256, "evidence_index_json": json.dumps(evidence_index, ensure_ascii=False), "generated_by": payload.completed_by, "generated_at": completed_at})
         return result
 
-    def _load_run(self, conn: Any, tenant_id: str, project_id: str, run_id: str) -> RunEvidence:
+    @staticmethod
+    def _load_run(conn: Any, tenant_id: str, project_id: str, run_id: str) -> RunEvidence:
         run = conn.execute(text("""
             SELECT id, status FROM airank_scan_runs
             WHERE tenant_id=:tenant_id AND project_id=:project_id

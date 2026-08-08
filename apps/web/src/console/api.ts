@@ -113,7 +113,7 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4" | "airank.report-evidence-packet.v5";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4" | "airank.report-evidence-packet.v5" | "airank.report-evidence-packet.v6";
   status: "ready";
   object_ref_id: string;
   integrity_audit_id: string | null;
@@ -360,7 +360,7 @@ export type EvidenceIntegrityAudit = {
   audit_id: string;
   tenant_id: string;
   project_id: string;
-  policy_version: "airank.evidence-integrity.v1";
+  policy_version: "airank.evidence-integrity.v1" | "airank.evidence-integrity.v2";
   scope: "project";
   status: "passed" | "blocked" | "failed";
   entity_count: number;

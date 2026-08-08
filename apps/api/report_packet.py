@@ -59,6 +59,7 @@ class ReportEvidencePacketData(BaseModel):
         "airank.report-evidence-packet.v3",
         "airank.report-evidence-packet.v4",
         "airank.report-evidence-packet.v5",
+        "airank.report-evidence-packet.v6",
     ]
     status: Literal["ready"]
     object_ref_id: str

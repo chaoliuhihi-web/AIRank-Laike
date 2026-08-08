@@ -37,14 +37,18 @@ def test_project_integrity_audit_is_persistent_drillable_and_report_blocking() -
         "knowledge_segment",
         "fact_revision",
         "object_ref",
+        "scan_run_metrics",
+        "report_derived_state",
     ):
         assert entity_type in routes
+    assert 'POLICY_VERSION = "airank.evidence-integrity.v2"' in routes
+    assert '"airank.retest-report-rebuild.v1"' in routes
     assert "MAX_PROJECT_ENTITIES = 10_000" in routes
     assert "source_boundary_mismatch" in routes
     assert "no_evidence_entities" in routes
     assert '"REPORT_EVIDENCE_INTEGRITY_BLOCKED"' in report
     assert "integrity_audit=integrity_manifest" in report
-    assert 'REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v5"' in packet
+    assert 'REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v6"' in packet
     assert '"evidence_integrity"' in packet
 
 
@@ -54,9 +58,9 @@ def test_evidence_center_exposes_real_integrity_state_without_static_scores() ->
 
     assert "fetchLatestEvidenceIntegrityAudit" in api
     assert "runEvidenceIntegrityAudit" in api
-    assert "证据全库完整性" in page
+    assert "证据与派生指标完整性" in page
     assert "verified_count" in page
     assert "blocking_finding_count" in page
     assert "manifest_sha256" in page
-    assert "系统不会用对象存在或单条读取成功冒充全库完整" in page
+    assert "旧报告 hash" in page
     assert "Math.random() * 100" not in page

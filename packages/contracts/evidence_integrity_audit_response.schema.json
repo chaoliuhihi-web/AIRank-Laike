@@ -53,7 +53,9 @@
         "audit_id": { "type": "string", "pattern": "^integrity_audit_[0-9a-f]{20}$" },
         "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
         "project_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "policy_version": { "const": "airank.evidence-integrity.v1" },
+        "policy_version": {
+          "enum": ["airank.evidence-integrity.v1", "airank.evidence-integrity.v2"]
+        },
         "scope": { "const": "project" },
         "status": { "enum": ["passed", "blocked", "failed"] },
         "entity_count": { "type": "integer", "minimum": 1 },

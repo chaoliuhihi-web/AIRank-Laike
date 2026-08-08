@@ -2655,10 +2655,10 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
-      <Panel title="证据全库完整性">
+      <Panel title="证据与派生指标完整性">
         <div className="integrity-audit-head">
           <p className="rail-caption">
-            按项目逐条复验原始回答、Provider 原始响应、引用抓取与精确边界、知识正文、事实修订和对象存储。任何缺失或篡改都会阻断新客户证据包。
+            按项目逐条复验原始回答、Provider 原始响应、引用边界、知识与对象存储，并从不可变任务重算 ScanRun 任务数和复测报告。原始证据缺失或派生指标漂移都会阻断新客户证据包。
           </p>
           <button
             className="airank-console-primary-button"
@@ -2669,9 +2669,9 @@ function EvidencePage() {
             {integrityAuditRunning ? "正在逐条校验…" : "执行全库巡检"}
           </button>
         </div>
-        {integrityAuditError && <DataStateCard title="证据完整性巡检失败" desc={integrityAuditError} tone="danger" />}
+        {integrityAuditError && <DataStateCard title="证据与指标巡检失败" desc={integrityAuditError} tone="danger" />}
         {!integrityAudit && !integrityAuditError ? (
-          <DataStateCard title="尚未执行项目级完整性巡检" desc="生成客户证据包前必须执行；系统不会用对象存在或单条读取成功冒充全库完整。" tone="warning" />
+          <DataStateCard title="尚未执行项目级完整性巡检" desc="生成客户证据包前必须执行；系统不会用对象存在、旧报告 hash 或单条读取成功冒充证据与指标一致。" tone="warning" />
         ) : integrityAudit ? (
           <>
             <dl className="evidence-metadata integrity-audit-metrics">

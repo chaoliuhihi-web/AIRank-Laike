@@ -10,10 +10,10 @@ from typing import Any
 from .source_registry import normalize_source_host
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v5"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v6"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
-EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v1"
+EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v2"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 METRIC_FORMULAS: dict[str, str] = {

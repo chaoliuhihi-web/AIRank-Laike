@@ -20,7 +20,7 @@ NOW = datetime(2026, 5, 17, 13, 0, tzinfo=timezone.utc)
 
 def passed_integrity() -> dict[str, object]:
     return {
-        "policy_version": "airank.evidence-integrity.v1",
+        "policy_version": "airank.evidence-integrity.v2",
         "status": "passed",
         "entity_count": 9,
         "verified_count": 9,
@@ -549,7 +549,7 @@ def test_report_evidence_packet_binds_effective_source_governance_hashes() -> No
     )
 
     summary = packet.manifest["source_governance"]["summary"]
-    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v5"
+    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v6"
     assert summary["source_host_count"] == 1
     assert summary["authority_coverage_rate"] == 1.0
     assert summary["authority_summary_eligible"] is True
