@@ -97,7 +97,7 @@ def test_consumer_browser_classifies_login_url_before_sampling() -> None:
     page = FakeConversationPage(None)
     page.url = "https://provider.example.test/sign_in"
 
-    with pytest.raises(RuntimeError, match="requires login or human verification"):
+    with pytest.raises(RuntimeError, match="requires login"):
         begin_fresh_conversation(page)
 
 

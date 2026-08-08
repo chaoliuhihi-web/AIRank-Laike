@@ -926,10 +926,12 @@ def begin_fresh_conversation(page: Any) -> dict[str, Any]:
                 continue
     page_text = normalized_body_text(page)
     page_url = str(getattr(page, "url", "")).lower()
-    if looks_login_blocked(page_text) or any(
-        marker in page_url for marker in ("sign_in", "signin", "login")
-    ):
-        raise RuntimeError("web page requires login or human verification")
+    if looks_login_blocked(page_text):
+        if classify_login_blocker(page_text) == "captcha_required":
+            raise RuntimeError("web page requires captcha verification")
+        raise RuntimeError("web page requires login")
+    if any(marker in page_url for marker in ("sign_in", "signin", "login")):
+        raise RuntimeError("web page requires login")
     raise RuntimeError(
         "fresh conversation could not be verified; consumer sample was blocked"
     )
