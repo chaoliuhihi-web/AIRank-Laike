@@ -1167,3 +1167,24 @@ Decision:
 ### Decision
 
 - AIRank now has truthful delivery semantics and an immutable channel-attempt audit trail. It remains commercial `NO-GO` until a customer channel, production reviewer identity, reviewer-quality benchmark and existing infrastructure/Consumer gates pass.
+
+## Reviewer sync and notification strict release gate (2026-08-09)
+
+### Passed on clean synchronized commit
+
+- Clean commit `ef84cf2` was present on both GitHub and Gitee `main` and `codex/evidence-productization`; worktree, diff and tracked-runtime-artifact checks passed before the report was generated.
+- Production runtime floors passed with Python 3.11.15 and Node 24.14.0.
+- Tests passed: contracts 197, crawler-lite 6, acceptance 78, Scheduler 15, standalone Worker 41, score 16, evidence 48, outbound-security 23, Provider Gateway 26 and Xinghe adapter 10. Provider-native citation cases passed 7/7 and the 10 core Skills passed 30/30 evaluation cases.
+- The production Web build passed. Real MySQL integration passed `28 passed, 2 skipped`; offline migration SQL and real Alembic head `20260809_0030` passed.
+- The first strict run exposed that standalone Worker tests did not load the Xinghe adapter path. This was corrected in `apps/worker/pytest.ini` and runtime examples, committed independently, synchronized to both remotes, and then reverified as 41/41 passing. The failed run is not presented as a release pass.
+
+### External blockers retained by the gate
+
+- Production API authentication is not configured as required Yudao auth, and production HTTPS S3/MinIO is not configured.
+- Optional external Crawler, KB, creator-marketing, workflow-runner and Hermes capabilities remain `dev_only` under the strict optional-capability policy.
+- Consumer browser generation remains 0/4: Doubao and Kimi require login; Qianwen and DeepSeek require human verification/captcha. API evidence is not substituted for Consumer Web/App evidence.
+- No production Yudao reviewer directory or customer HTTPS notification Webhook was supplied. Kimi credential rotation, DeepSeek model migration, customer publishing credentials, the real 0/20 reviewer benchmark and elapsed T+7/T+14/T+30 evidence remain open.
+
+### Decision
+
+- The current engineering slice passes every executable strict check and closes the standalone Worker packaging defect. AIRank remains commercial `NO-GO` because the remaining failed gates require production/customer identities, infrastructure, channel endpoints or elapsed evidence.
