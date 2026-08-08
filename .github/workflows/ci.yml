@@ -24,6 +24,7 @@ jobs:
             if echo "$before" | grep -q '^0\+$'; then
               git show --check --pretty=format: --no-renames HEAD
             else
+              git cat-file -e "$before^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$before"
               git diff --check "$before" "${{ github.sha }}"
             fi
           fi
