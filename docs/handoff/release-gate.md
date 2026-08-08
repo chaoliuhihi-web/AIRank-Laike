@@ -1068,6 +1068,7 @@ Passed:
 - Real browser acceptance signed in as a secondary reviewer and exercised unassigned/overdue display, claim, peer-account invisibility, heartbeat, release, reclaim and evidence-bound drill-down. The detail showed the immutable answer, exact Claim, source text and second-review form. Public network responses contained no assignee identity.
 - Desktop 1543px and mobile 390×844 had no page-level horizontal overflow; all three assignment controls fit the mobile viewport. After completing the QA fixture, the fresh authenticated page had zero console warnings/errors. The isolated tenant was removed from all 61 tenant-scoped tables with zero rows remaining.
 - Full local regression passed `449 passed, 30 skipped`; contracts passed `189`; acceptance passed `76`; real MySQL integration passed `28 passed, 2 skipped`; the Node 24 production build passed.
+- The strict gate on clean commit `08b38f9` passed both remote `main` refs, all split suites, Web build, real MySQL, offline SQL and real Alembic `0027`. Its overall result remained correctly `BLOCKED` only on the declared production auth/storage, optional external capability and Consumer browser L3 requirements.
 
 Limitations and blockers:
 
