@@ -90,6 +90,7 @@
 80. 生产门禁不再接受隐式本地默认值：必须显式设置 `AIRANK_API_AUTH_ENFORCEMENT=required`、`AIRANK_AUTH_MODE=yudao` 和 `AIRANK_ENV=production`；对象存储必须为 `s3/minio`，禁止明文 HTTP 和 `AIRANK_S3_ALLOW_HTTP=true`。Capability Probe 的默认认证模式同步为 `yudao`，避免 release auth 检查显示通过、能力探针却按 dev fallback 解释同一环境。
 81. 使用本机私密 env 注入真实 Provider 凭证，在同一盲测问题、API 采集面下完成千问、豆包、DeepSeek 各 3 次独立 Worker 采样。结果为 9/9 Task completed、9/9 Sample valid、每平台 3 个不同 session、3 个原始响应 hash、3 个真实 trace、3 条请求审计和 1 个实际路由；9 条正常未提及全部保留在有效分母。`airank.measurement-quality.v4` 返回 `publishable=true`、0 个 blocked check。隔离租户和临时对象已清理，未输出或持久化任何密钥。
 82. 三平台报告的交付边界保持收敛：`known_limitations` 明确包含无 Provider 引用、引用支持度未评测和事实准确率未评测，因此本次只证明 API 可见度测量链可交付，不证明 Consumer Web/App 呈现、来源支持或品牌事实准确。将全局输出上限压到 256 曾导致豆包 `PROVIDER_EMPTY_RESPONSE`，最终使用 Provider 级上限（豆包 4096，千问/DeepSeek 256）复测通过；Provider 参数必须版本化并按平台门禁，不能用一个全局值粗暴覆盖。
+83. Provider 健康契约和前端体检页显式增加 `probe_level` 与 `generation_verified`：浏览器日常入口巡检只能标记 `l2_interaction`，API/发布门禁的真实生成才标记 `l3_generation`；前端分别展示“探测层级”和“生成验证”。这关闭了 L2 输入框可见却在页面写成 Provider ready 的语义漏洞。
 
 ## 验收证据
 
