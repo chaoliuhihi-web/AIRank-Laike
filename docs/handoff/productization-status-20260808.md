@@ -118,7 +118,7 @@
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `446 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `447 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -144,7 +144,7 @@
 - 公开来源自动同步浏览器验收：真实登录后在事实库导入客户授权的 `https://example.com/`，启用每天检查；首次 Worker 保存原始 HTML/可见正文双对象和运行元数据，页面显示 `changed`、当前 v2、旧 v1 stale、证据 hash；随后点击“立即检查”，第二次显示 `unchanged` 且版本仍为 v2。1024px 桌面端无页面级横向溢出，console `0 error / 0 warning`；8 条审计、2 个 run/job、2 个来源修订和 4 个对象引用随后精确清理为 0，两个内容文件移入隔离临时目录。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 最新严格上线门禁（项目级 reviewer inbox 代码与干净输入基线均为 `602ec00`）：工作树、GitHub/Gitee `main` 同步、diff、运行产物、Python 3.11.15、Node 24.14.0、187 个 contract、75 个 acceptance、7 个 scheduler、35 个 worker、48 个 evidence、23 个 outbound security、26 个 Provider Gateway、7/7 原生引用 benchmark、全部分包测试、10 个核心 Skill 30/30、Web 构建、真实 MySQL 28/2、离线 SQL 与真实 Alembic `0026` 均为 `PASS`；全量测试另为 446 passed / 30 skipped。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成仍为 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。项目级盲审待办、精确 Claim 绑定、千问原生来源选择、批量来源存证、API 四平台重复采样、v2 源证据与派生状态巡检、v7 可核验客户 ZIP、本地发布证据和工程门禁的通过不替代 Citation Support、Consumer Web/App、真实客户 benchmark 或生产站点门禁。
+- 最新严格上线门禁（服务端 reviewer inbox 游标代码与干净输入基线均为 `a63a192`）：工作树、GitHub/Gitee `main` 同步、diff、运行产物、Python 3.11.15、Node 24.14.0、188 个 contract、75 个 acceptance、7 个 scheduler、35 个 worker、48 个 evidence、23 个 outbound security、26 个 Provider Gateway、7/7 原生引用 benchmark、全部分包测试、10 个核心 Skill 30/30、Web 构建、真实 MySQL 28/2、离线 SQL 与真实 Alembic `0026` 均为 `PASS`；全量测试另为 447 passed / 30 skipped。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成仍为 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。项目级盲审待办及游标、精确 Claim 绑定、千问原生来源选择、批量来源存证、API 四平台重复采样、v2 源证据与派生状态巡检、v7 可核验客户 ZIP、本地发布证据和工程门禁的通过不替代 Citation Support、Consumer Web/App、真实客户 benchmark 或生产站点门禁。
 
 ## 下一实施顺序
 

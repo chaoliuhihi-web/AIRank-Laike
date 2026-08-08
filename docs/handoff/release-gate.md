@@ -1044,6 +1044,7 @@ Passed:
 - Isolated real MySQL acceptance created 14 actor-actionable benchmark cases: 2 adjudications and 12 secondary reviews. Page one returned 12, page two returned 2, all 14 IDs were unique, the first two were disputed, and no peer decision was visible.
 - Real browser acceptance loaded 12 then 14 unique cards through two HTTP 200 requests, opened the immutable answer and exact Claim, and exposed the existing evidence-bound adjudication controls. A React commit-timing defect that previously expanded the sample without scrolling to detail was fixed and reverified.
 - Desktop 1543px and mobile 390x844 had no page-level horizontal overflow; the clean authenticated page reported zero console warnings/errors. Cleanup deleted 83 isolated rows across 14 tables, left zero tenant rows, and created no temporary object directory.
+- The strict gate on clean commit `a63a192` passed both remote `main` refs, Python 3.11.15, Node 24.14.0, 188 contract tests, 75 acceptance tests, every package/worker/scheduler suite, 7/7 citation parser cases, 30/30 core Skill cases, the production Web build, real MySQL 28/2, offline SQL and real Alembic `0026`. External production and Consumer requirements correctly kept the overall result `BLOCKED`.
 
 Limitations and blockers:
 
