@@ -1245,12 +1245,14 @@ Decision:
 - Brand opportunities remain `blocked_evidence` until the source evidence gap is `ready_for_intervention`; derivation does not generate content. Citation support labels enter `ready_for_action` only after a production review case ends in independent `agreed/adjudicated` source-page evidence.
 - Contract/acceptance tests validate strict schemas, trusted actor override, explicit non-recommendation semantics and all four sources. Full local regression passes `493 passed, 31 skipped`; real MySQL passes `29 passed, 2 skipped`, including four-source creation, three immutable generations, stable page-rule persistence, clean-page exit, historical queries, idempotent replay and exact cleanup. Node 24.14.0 production build and production high-severity npm audit both pass.
 - The live browser project derives one real Doubao repeated non-mention opportunity from its existing governed gap. Repeated generation shows `0 new / 1 persisting / 0 not observed`, zero actionable and one evidence-blocked item; the action score is labeled “not recommendation rate”. The requested 390×844 viewport renders at the in-app browser's 312×675 content area with no page-level horizontal overflow and zero console warnings/errors.
+- The strict gate was executed on clean commit `89a0871`, with both GitHub/Gitee `main` refs matching. Runtime versions, 208 contract tests, 6 crawler-lite tests, 83 acceptance tests, 15 Scheduler tests, 41 standalone Worker tests, 16 score tests, 48 evidence tests, 23 outbound-security tests, 26 Provider Gateway tests, 10 Xinghe adapter tests, 7/7 native-citation cases, 30/30 core Skill cases, Web production build, real MySQL `29 passed, 2 skipped`, offline SQL and real Alembic head `20260809_0033` all pass.
 
 ### Still blocked
 
 - The live project still has no approved enterprise FactRevision, so the brand opportunity cannot become content-ready. No intervention content, external publication or recommendation outcome was produced.
 - Opportunity ownership, SLA/escalation, budget/effort estimates, dependency ordering and explicit human resolution/waiver events are not yet implemented. Citation-zero observations are deliberately not auto-interpreted as support gaps without a governed lifecycle.
 - Production Yudao authentication/directory, HTTPS object storage, customer notification and publishing endpoints, Consumer Web/App evidence, reviewer benchmark 0/20, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 customer evidence remain open.
+- The strict report remains `BLOCKED`: local filesystem storage is not production S3/MinIO; real Yudao permission endpoints are absent; optional Crawler/KB/content/workflow/Hermes capabilities are `dev_only`; Consumer browser L3 remains 0/4 because Doubao/Kimi require login and Qianwen/DeepSeek require human verification. Provider API success is not substituted for Consumer evidence.
 
 ### Decision
 
