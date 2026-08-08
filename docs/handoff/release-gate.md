@@ -604,7 +604,7 @@ Passed:
 - Every unpersisted slot in an expired run receives an immutable empty-answer AnswerSnapshot and EvidenceSnapshot with a raw-response SHA-256, task request metadata, explicit infrastructure capture mode and `provider_response_available=false`.
 - The console distinguishes “queued” from “completed”, routes new queued checks to Task Center, and polls runs/tasks for durable asynchronous progress.
 - Real browser QA observed the same Qianwen API task move from `queued` to `completed` via polling. Model `qwen3.6-plus`, a real Provider request ID, answer/raw-response SHA-256, linked request audit and immutable EvidenceSnapshot were all visible; the valid not-mentioned result remained in the denominator.
-- That QA exposed a false-positive quality gate: one successful sample was labeled deliverable even though repeat stability was unavailable. `airank.measurement-quality.v3` now adds a blocking independent-repetition check, requiring three distinct sample indexes and sessions for every question/Provider/Cohort/surface/model group. Single samples and reused sessions are non-publishable.
+- That QA exposed a false-positive quality gate: one successful sample was labeled deliverable even though repeat stability was unavailable. `airank.measurement-quality.v4` requires three distinct sample indexes and sessions for every question/Provider/Cohort/surface/model group, and Consumer Web/App evidence must additionally prove that the collector entered a fresh conversation. Single samples, reused sessions, and unverified Consumer conversations are non-publishable.
 - Internal Worker exceptions also fail every unpersisted task/job and create immutable failure snapshots before returning a terminal error; they cannot leave a failed run with queued tasks and missing evidence.
 - Full local regression passed `246 passed, 17 skipped`; real MySQL integration passed `15 passed, 2 skipped`; Web TypeScript/Vite build passed and npm reported zero known vulnerabilities. The Node patch-version warning remains open.
 
@@ -645,3 +645,25 @@ Blocking conditions:
 Decision:
 
 - The batch-crash evidence-loss blocker is closed. Provider reliability remains `partial`, and AIRank remains commercial `NO-GO` until the remaining external and production gates pass.
+
+## 2026-08-08 Consumer Conversation and L3 Readiness Gate
+
+Release Gate: BLOCKED / COMMERCIAL NO-GO
+
+Passed:
+
+- Consumer Web collection fails closed unless it can activate a visible new-conversation control and find a usable prompt input afterward. The verification record is preserved in request metadata.
+- `airank.measurement-quality.v4` adds verified Consumer conversation isolation and failed-run publishability checks. A failed ScanRun remains auditable but can never become a deliverable report.
+- Chinese slider-verification text is classified as CAPTCHA evidence instead of a model answer. Failure evidence retains the original-response hash, immutable screenshot reference and verified conversation-isolation metadata.
+- A real Qianwen Web submission reached an isolated new conversation and then produced a slider challenge. The durable MySQL path stored ScanRun `failed`, Task `SCAN_PROVIDER_BLOCKED`, Sample `blocked`, immutable screenshot/hash and a v4 non-publishable quality report. Validation data was removed afterward.
+- Production release checks now require explicit Yudao auth, `AIRANK_ENV=production`, S3/MinIO and encrypted object-storage transport. Local defaults no longer pass those individual checks.
+- Full regression: `319 passed, 22 skipped`; real MySQL integration: `20 passed, 2 skipped`; Web build passed using Node 24.14.0.
+
+Blocking conditions:
+
+- Consumer L3 readiness is `0/4`: Qianwen and DeepSeek require human verification; Doubao and Kimi require authenticated browser profiles.
+- Production Yudao and HTTPS S3/MinIO are not configured, remote `main` refs are not synchronized, and the complete four-platform customer-report E2E has not passed.
+
+Decision:
+
+- L2 input discovery is no longer counted as Provider readiness. AIRank remains a commercial `NO-GO` until L3 generation, production infrastructure and end-to-end delivery gates pass.

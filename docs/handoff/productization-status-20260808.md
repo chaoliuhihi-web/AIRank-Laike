@@ -72,7 +72,7 @@
 62. 浏览器真实 MySQL 验收使用一条有效且未提及的豆包 Web 样本：有效率为 100%、未提及正确计入分母、来源面板明确记录为“界面未呈现（已检查）”，但因截图对象缺失，质量报告仍为 `blocked`。证据中心展示具体阻断和 `web/consumer_web` 汇总；390px 有效视口无页面级溢出，console `0 error / 0 warning`。
 63. 扫描失败和阻塞不再只写任务错误：每个失败槽位创建空回答 AnswerSnapshot、不可变原始失败 EvidenceSnapshot、请求元数据和原始响应 SHA-256；Web 采集如已进入页面则把失败现场截图复制到内容寻址对象存储。登录/验证码/配额/鉴权等外部动作阻塞与超时、网络、上游、解析失败严格分开；两者都不计入品牌未提及分母。真实同批次验收完成“千问 API 有效未提及 + 千问 Web 超时失败”，失败样本可下钻到原始 hash 和截图对象，质量门禁的原始响应 hash 检查通过。
 64. 品牌检测在 MySQL 路径默认只创建真实任务并入队，API 不再同步占用请求线程执行整批 Provider 调用；只有显式 `AIRANK_SCAN_DISPATCH_MODE=inline` 可用于诊断。Worker 已改为每个采样槽独立领取、心跳和原子落证据，同批次不同槽可并行；运行指标只在全部槽终态后从持久化样本重算。`airank_scan_task_attempts` 记录 job、attempt、Worker lease、回答/证据 ID、请求 ID、时间和错误。崩溃只把结果未知的当前槽写为 `SCAN_TASK_LEASE_EXPIRED`/`unknown`，不会重放 Provider 或抹掉兄弟槽证据；证据中心可下钻 attempt 链。任务中心每 3 秒、批次列表每 5 秒刷新，不再把入队写成“检测完成”。
-65. 真实千问 Worker 浏览器验收发现“单次采样却显示可交付”的门禁假阳性；质量契约因此升级为 `airank.measurement-quality.v3`。每个问题/Provider/Cohort/采集面/模型口径必须至少有 3 个不同 sample index 与 3 个独立 session；单次采样和会话复用必须 `quality_blocked`。已完成的真实千问样本仍保留为 valid/未提及原始证据，但前端正确显示“样本证据不可作为客户报告交付”，不会因 API 调用成功而越过重复性门禁。
+65. 真实千问 Worker 浏览器验收发现“单次采样却显示可交付”的门禁假阳性；质量契约现已升级为 `airank.measurement-quality.v4`。每个问题/Provider/Cohort/采集面/模型口径必须至少有 3 个不同 sample index 与 3 个独立 session；Web/App 还必须由采集器确认进入全新会话。单次采样、会话复用和无法验证全新 Consumer 会话都必须 `quality_blocked`。已完成的真实样本仍保留原始证据，但不会因调用成功而越过重复性和隔离门禁。
 66. 任务级 Worker 与 attempt 台账完成真实千问和浏览器复验：`qwen3.6-plus` 返回真实 request ID，attempt #1 记录 job、起止时间、`succeeded` 和回答/证据 ID；证据中心可下钻。390×844 无页面级横向溢出，新登录态页面 console `0 error / 0 warning`。单样本仍被 v3 质量门阻断。隔离验收租户已清理为 0 行。全量本地测试 `247 passed, 17 skipped`，真实 MySQL `15 passed, 2 skipped`。
 67. 深入复核 `GEOFlow@1c1a361` 与 `GEORank@1df59ad` 的出站实现后，新增 AIRank 自有 `packages/outbound-security`。策略拒绝 URL 凭证、私网/保留地址、混合 DNS、IPv4-mapped/transition IPv6、未批准跳转、编码或超大响应；每次跳转重新解析并校验全部地址，实际 TCP 连接固定到已验证 IP，TLS SNI 与证书校验仍使用原始 hostname，跨 origin 自动剥离敏感 header。Publisher 与 Page Audit 已统一接入，不复制上游业务源码。
 68. 新增 `airank.page-extractability.v1`：安全抓取并提取 title、description、canonical、robots、H1、服务器可见正文、main/article 和 JSON-LD，输出 11 条逐规则证据、整改建议和独立 `technical_extractability_score`。Alembic `20260808_0012` 新增不可变 audit run/finding 表；API 创建任务后由 Worker 异步落库，支持幂等冲突和失败闭合。控制台明确写明“技术可提取性分不等于品牌推荐率”，无数据时不生成假分。
@@ -84,11 +84,15 @@
 74. 证据中心接入真实抓取和人工结论操作。浏览器以真实 `https://example.com/` 完成入队、Worker 抓取、对象存证、精确边界展示和复核；由于页面原文不支持 AIRank 的 GEO 断言，人工选择“证据不足”，页面正确显示 `1` 个可交付复核、支持率 `0%`、不足 `1`，没有把真实抓取成功伪造成正向支持。桌面与 390×844 移动视口通过，API 全链 200/201/202，临时数据库记录和对象已清理。
 75. Provider Gateway 新增数据库分布式 token bucket 和并发容量租约：按 Provider + 配置指纹隔离，跨 Worker 使用行锁原子领取，任务幂等键阻止重复占用；容量不足分别返回可重试的 QPS/并发错误，崩溃遗留租约由 TTL 回收。真实 MySQL 验证两个 Worker 并发竞争只能一个获得容量、过期租约恢复后在途计数保持一致；成功上游调用后的容量清理异常不会把成功改判为失败或触发重复计费。
 76. Provider Gateway 新增优先级多上游路由：配置只允许 endpoint/model、priority 和密钥环境变量名称，内联 `api_key/token/secret` 字段被拒绝；主路由网络、鉴权、模型、熔断、上游或路由容量故障可切换备用路由，但租户总配额耗尽和任务幂等冲突禁止切换。路由 manifest 版本、无密钥配置指纹和每次请求的 `route_id` 进入 MySQL 审计，证据中心可下钻所选路由；动态择优、管理 API 和长时压测尚未完成，状态保持 `partial`。
+77. Release gate 新增 Provider Gateway 独立测试项，19 项路由、故障转移、配额、熔断、容量和清理不重放测试必须显式通过。安装匹配 Playwright 的 Chromium 后，L2 页面探针曾观察到千问输入入口，豆包/Kimi 为 `login_required`、DeepSeek 为 `captcha_required`；该 L2 结果只说明页面可交互，不再被标记为生产就绪。
+78. Consumer 采集器现在必须主动点击可见且可用的“新建对话/New chat”控件，并把验证结果写入请求元数据；找不到新会话控件或点击后没有输入框时采样失败闭合。质量契约升级为 `airank.measurement-quality.v4`，共 24 项检查：Web/App 有效样本除不同 session ID 外还必须具备 `conversation_isolation_verified=true`；失败 ScanRun 允许生成审计报告，但 `run_status_publishable` 永远阻断发布。
+79. 千问 L3 真实提交证明 L2 输入入口存在并不代表可采样：匿名会话在提交后弹出滑块验证码。采集器已扩展中文滑块挑战识别，验证码文案不再被误当成短回答；`CAPTCHA_REQUIRED` 保留全新会话证明、失败现场截图和原始响应 hash。真实 MySQL Worker 验证结果为 ScanRun `failed`、Task `failed/SCAN_PROVIDER_BLOCKED`、Sample `blocked`，截图对象与 hash 均不可变，v4 质量报告可读取但 `publishable=false`；隔离租户与临时对象已清理。
+80. 生产门禁不再接受隐式本地默认值：必须显式设置 `AIRANK_API_AUTH_ENFORCEMENT=required`、`AIRANK_AUTH_MODE=yudao` 和 `AIRANK_ENV=production`；对象存储必须为 `s3/minio`，禁止明文 HTTP 和 `AIRANK_S3_ALLOW_HTTP=true`。Capability Probe 的默认认证模式同步为 `yudao`，避免 release auth 检查显示通过、能力探针却按 dev fallback 解释同一环境。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，12 sources / 64 rows / 21 GEO skills。
-- `.runtime/py312/bin/python -m pytest -q`：`311 passed, 21 skipped`；跳过项依赖未开启的真实外部服务，不计为通过。
+- `.runtime/py312/bin/python -m pytest -q`：`319 passed, 22 skipped`；其中新增的真实 MySQL 失败批次审计用例在普通套件中按开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - `cd apps/web && npm run build`：通过；Node 小版本存在升级告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -101,18 +105,18 @@
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
 - MySQL：Alembic `20260808_0016`；57 张 AIRank 表校验通过；新增不可变来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest 和请求 route 审计，既有引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt 继续通过。
-- 本地真实 MySQL integration：`19 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增来源页抓取落库、Provider 跨 Worker 容量竞争/TTL 回收、route manifest 版本化和无密钥持久化验证；既有引用 selection/support、页面审计、问题治理、Provider store、Publisher、扫描 attempt 与复测链继续纳入同一套测试。
+- 本地真实 MySQL integration：`20 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增失败 ScanRun 可审计但不可发布、来源页抓取落库、Provider 跨 Worker 容量竞争/TTL 回收、route manifest 版本化和无密钥持久化验证；既有引用 selection/support、页面审计、问题治理、Provider store、Publisher、扫描 attempt 与复测链继续纳入同一套测试。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 完整上线门禁：分包测试、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；总状态仍为 `BLOCKED`，真实阻塞为 GitHub/Gitee `main` 未同步、生产 Yudao 未配置、生产 HTTPS S3/MinIO 未验收、消费端浏览器 Provider `0/4`，以及当前本机 Python 3.9 / Node 20.18.2 低于生产运行时门禁。
+- 完整上线门禁：分包测试（含 Provider Gateway 19 项）、Web 构建、真实 MySQL、真实 MinIO 与 Alembic 均可通过；本轮用 Node 24.14.0 重跑 Web 构建通过。总状态仍为 `BLOCKED`：GitHub/Gitee `main` 未同步，生产 Yudao 与生产 HTTPS S3/MinIO 未配置；消费端 L3 真实生成当前 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。L2 入口发现不再计入就绪平台数。
 
 ## 下一实施顺序
 
 1. 轮换已在会话中暴露过的 Kimi 密钥，并使用同一版已确认问题在千问、豆包、Kimi、DeepSeek 上各执行至少 3 次独立采样；单次 L3 通路已验证，但完成同批次重复采样前四平台测量门禁保持 `partial`。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
-3. 为 Web/App 采集器补真实截图、来源面板、联网状态与区域证据，并与 API 样本并行展示和分口径报告；当前 API 证据等级不足以证明消费端真实呈现。
+3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
 4. 在已完成的来源页抓取、对象存证和精确边界基础上，补待复核队列、claim 细粒度框选、双人复核一致性与人工标注 benchmark；单人真实复核闭环已经通过，但不能替代生产质量抽检。
-5. 将当前单机 QPS/并发限制扩展为数据库分布式令牌桶，并补同能力多上游路由、长时崩溃恢复和负载压测；MySQL circuit/quota/probe 状态已接入。
+5. 在已完成数据库分布式容量租约与优先级多上游路由基础上，补动态择优、管理 API、长时崩溃恢复和负载压测；配额耗尽与幂等冲突继续禁止通过备用路由绕过。
 6. 补客户来源自动同步 worker、局部重嵌入和混合检索；不可变人工来源修订、旧事实失效和当前有效原文检索已完成，但不能把 `lexical_only` 包装成语义检索。
 7. 使用客户授权的 WordPress/HTTP 测试站点完成一次真实外部回执、截图、更新和撤回验收；适配器、attempt 消费与重试恢复已实现，但无外部账号时保持 `partial`。
 8. 按 Promotion Evidence Ledger 的 blocker 清单补真实队列、人工标注、Provider 引用和真实 T0/T+7 artifact；每项必须提交仓库内可校验路径与 SHA-256 后才能晋级 `ready`。
