@@ -18,6 +18,12 @@ from .citation_capture import (
 )
 
 from .lease import MySQLJobLeaseStore
+from .knowledge_sync import (
+    KnowledgeSyncWorkerError,
+    MySQLKnowledgeSyncExecutionRepository,
+    build_knowledge_sync_service,
+    run_next_knowledge_sync_job,
+)
 from .publisher import (
     MySQLPublishExecutionRepository,
     PublisherError,
@@ -34,11 +40,18 @@ from .scan import ScanWorkerError, run_next_real_scan_job
 
 
 JOB_TYPE_FILTERS: dict[str, set[str]] = {
-    "all": {"publish.package", "scan.provider", "page.audit", "citation.capture"},
+    "all": {
+        "publish.package",
+        "scan.provider",
+        "page.audit",
+        "citation.capture",
+        "knowledge.source.sync",
+    },
     "publish": {"publish.package"},
     "scan": {"scan.provider"},
     "page-audit": {"page.audit"},
     "citation-capture": {"citation.capture"},
+    "knowledge-sync": {"knowledge.source.sync"},
 }
 
 
@@ -118,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--job-type",
-        choices=("all", "publish", "scan", "page-audit", "citation-capture"),
+        choices=("all", "publish", "scan", "page-audit", "citation-capture", "knowledge-sync"),
         default="all",
         help="limit this process to one governed job family",
     )
@@ -177,15 +190,17 @@ def main() -> int:
     page_audit_service = build_page_audit_service()
     citation_capture_repository = MySQLCitationCaptureExecutionRepository(database_url)
     citation_capture_service = build_citation_capture_service()
+    knowledge_sync_repository = MySQLKnowledgeSyncExecutionRepository(database_url)
+    knowledge_sync_service = build_knowledge_sync_service()
     try:
         citation_object_storage = build_object_storage_from_env()
     except ObjectStorageError as exc:
-        if args.job_type in {"all", "citation-capture"}:
+        if args.job_type in {"all", "citation-capture", "knowledge-sync"}:
             print(
                 json.dumps(
                     {
                         "status": "blocked",
-                        "error_code": "CITATION_CAPTURE_STORAGE_NOT_CONFIGURED",
+                        "error_code": "EVIDENCE_STORAGE_NOT_CONFIGURED",
                         "error_type": type(exc).__name__,
                     }
                 )
@@ -201,6 +216,7 @@ def main() -> int:
         scan_result = None
         page_audit_result = None
         citation_capture_result = None
+        knowledge_sync_result = None
         try:
             if args.job_type in {"all", "publish"}:
                 receipt = run_next_publish_job(
@@ -229,6 +245,21 @@ def main() -> int:
                     store,
                     citation_capture_repository,
                     citation_capture_service,
+                    citation_object_storage,
+                    worker_id=worker_id,
+                )
+            if (
+                receipt is None
+                and scan_result is None
+                and page_audit_result is None
+                and citation_capture_result is None
+                and args.job_type in {"all", "knowledge-sync"}
+                and citation_object_storage is not None
+            ):
+                knowledge_sync_result = run_next_knowledge_sync_job(
+                    store,
+                    knowledge_sync_repository,
+                    knowledge_sync_service,
                     citation_object_storage,
                     worker_id=worker_id,
                 )
@@ -284,6 +315,19 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
+        except KnowledgeSyncWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             if receipt is not None:
                 print(
@@ -315,6 +359,8 @@ def main() -> int:
                         ensure_ascii=False,
                     )
                 )
+            elif knowledge_sync_result is not None:
+                print(json.dumps(knowledge_sync_result.to_record(), ensure_ascii=False))
             handled = any(
                 item is not None
                 for item in (
@@ -322,6 +368,7 @@ def main() -> int:
                     scan_result,
                     page_audit_result,
                     citation_capture_result,
+                    knowledge_sync_result,
                 )
             )
             if handled:

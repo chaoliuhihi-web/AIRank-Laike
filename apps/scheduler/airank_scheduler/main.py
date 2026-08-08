@@ -8,6 +8,7 @@ from typing import Mapping
 
 from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
 
+from .knowledge_sync import MySQLKnowledgeSyncScheduler
 from .retest import MySQLRetestScheduler
 
 
@@ -43,7 +44,7 @@ def resolve_scope(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="AIRank durable retest scheduler")
+    parser = argparse.ArgumentParser(description="AIRank durable retest and knowledge scheduler")
     parser.add_argument("--once", action="store_true", help="run one scheduler tick and exit")
     parser.add_argument("--dry-run", action="store_true", help="inspect due/ready windows without mutation")
     parser.add_argument("--tenant-id")
@@ -77,7 +78,19 @@ def main() -> int:
         window_id=window_id,
         scheduler_id=scheduler_id,
     )
+    knowledge_scheduler = MySQLKnowledgeSyncScheduler(
+        database_url,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id=scheduler_id,
+    )
     if args.dry_run:
+        retest_preview = scheduler.preview().to_record()
+        knowledge_preview = (
+            {"skipped": "window_id scope only"}
+            if window_id
+            else knowledge_scheduler.preview().to_record()
+        )
         print(
             json.dumps(
                 {
@@ -88,7 +101,8 @@ def main() -> int:
                         "window_id": window_id,
                         "global_scope": global_scope,
                     },
-                    **scheduler.preview().to_record(),
+                    "retest": retest_preview,
+                    "knowledge_sync": knowledge_preview,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -117,12 +131,18 @@ def main() -> int:
                 }
             )
         dispatched = scheduler.dispatch_due(limit=args.limit)
+        knowledge_dispatched = (
+            [] if window_id else knowledge_scheduler.dispatch_due(limit=args.limit)
+        )
         print(
             json.dumps(
                 {
                     "status": "tick_completed",
                     "finalized": finalized,
                     "dispatched": [item.to_record() for item in dispatched],
+                    "knowledge_sync_dispatched": [
+                        item.to_record() for item in knowledge_dispatched
+                    ],
                 },
                 ensure_ascii=False,
                 sort_keys=True,

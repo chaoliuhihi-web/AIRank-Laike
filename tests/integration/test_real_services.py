@@ -99,7 +99,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0023"
+EXPECTED_ALEMBIC_HEAD = "20260808_0024"
 
 
 def require_real_flag(flag: str) -> None:
@@ -165,7 +165,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 62
+        assert table_count == 64
         assert conn.execute(
             text(
                 """

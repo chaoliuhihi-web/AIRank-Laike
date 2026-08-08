@@ -101,6 +101,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_SUBJECT_BINDING_MISMATCH` | 409 | 事实主体与比较或解释任务声明的主体不一致 |
 | `FACT_SOURCE_STALE` | 409 | 事实来源已失效或过期 |
 | `KNOWLEDGE_SOURCE_NOT_FOUND` | 404 | KnowledgeSource 不存在 |
+| `KNOWLEDGE_SYNC_POLICY_NOT_FOUND` | 404 | 知识来源自动同步策略不存在 |
+| `KNOWLEDGE_SYNC_SOURCE_NOT_ELIGIBLE` | 409 | 来源不是 active 状态或缺少公开 HTTP(S) URL，不能启用自动同步 |
+| `KNOWLEDGE_SYNC_POLICY_EXISTS` | 409 | 该不可变来源链已经存在自动同步策略 |
+| `KNOWLEDGE_SYNC_POLICY_DISABLED` | 409 | 自动同步策略已暂停，不能创建新运行 |
+| `KNOWLEDGE_SYNC_ALREADY_ACTIVE` | 409 | 同一策略已有排队或运行中的检查，不能重复入队 |
+| `KNOWLEDGE_SYNC_VERSION_CONFLICT` | 409 | 更新使用的策略版本已过期，需要刷新后重试 |
 | `CONTENT_EVIDENCE_MISSING` | 409 | 内容引用的事实证据缺失、冲突或失效 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |

@@ -120,6 +120,12 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "FACT_SUBJECT_BINDING_MISMATCH": (409, "Fact subject binding does not match the comparison subject"),
     "FACT_SOURCE_STALE": (409, "Fact source is stale or expired"),
     "KNOWLEDGE_SOURCE_NOT_FOUND": (404, "KnowledgeSource not found"),
+    "KNOWLEDGE_SYNC_POLICY_NOT_FOUND": (404, "Knowledge source sync policy not found"),
+    "KNOWLEDGE_SYNC_SOURCE_NOT_ELIGIBLE": (409, "Knowledge source is not eligible for synchronization"),
+    "KNOWLEDGE_SYNC_POLICY_EXISTS": (409, "Knowledge source sync policy already exists"),
+    "KNOWLEDGE_SYNC_POLICY_DISABLED": (409, "Knowledge source sync policy is disabled"),
+    "KNOWLEDGE_SYNC_ALREADY_ACTIVE": (409, "Knowledge source sync policy already has an active run"),
+    "KNOWLEDGE_SYNC_VERSION_CONFLICT": (409, "Knowledge source sync policy version conflict"),
     "CONTENT_EVIDENCE_MISSING": (409, "Content evidence is missing or ineligible"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
@@ -5864,6 +5870,13 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from knowledge_routes import router as knowledge_router  # type: ignore[no-redef]
 
 app.include_router(knowledge_router)
+
+try:
+    from .knowledge_sync_routes import router as knowledge_sync_router
+except ImportError:  # pragma: no cover
+    from knowledge_sync_routes import router as knowledge_sync_router  # type: ignore[no-redef]
+
+app.include_router(knowledge_sync_router)
 
 try:
     from .delivery_routes import router as delivery_router

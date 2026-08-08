@@ -68,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createKnowledgeSyncPolicy,
   createPublishPackage,
   createComparisonContent,
   createExplainerContent,
@@ -94,6 +95,8 @@ import {
   fetchFacts,
   fetchInternalSkills,
   fetchKnowledgeGovernance,
+  fetchKnowledgeSyncPolicies,
+  fetchKnowledgeSyncRuns,
   fetchKnowledgeSources,
   fetchPageAudit,
   fetchPageAudits,
@@ -120,10 +123,12 @@ import {
   resolveFactConflict,
   saveKnowledgeSource,
   searchKnowledge,
+  triggerKnowledgeSync,
   reviewSourceRegistryEntry,
   runBrandCheck,
   storeAuthSession,
   updateProviderRoute,
+  updateKnowledgeSyncPolicy,
   type AuthSession,
   type AnswerSample,
   type AnswerSampleDetail,
@@ -143,6 +148,8 @@ import {
   type InternalSkill,
   type KnowledgeGovernance,
   type KnowledgeSearch,
+  type KnowledgeSyncPolicy,
+  type KnowledgeSyncRun,
   type PageAuditFinding,
   type PageAuditRun,
   type KnowledgeSource,
@@ -1447,6 +1454,10 @@ function FactsPage() {
   const { openPanel, notify } = useActionFeedback();
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [syncPolicies, setSyncPolicies] = useState<KnowledgeSyncPolicy[]>([]);
+  const [syncRuns, setSyncRuns] = useState<KnowledgeSyncRun[]>([]);
+  const [syncIntervals, setSyncIntervals] = useState<Record<string, number>>({});
+  const [syncAction, setSyncAction] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<FactConflict[]>([]);
   const [governance, setGovernance] = useState<KnowledgeGovernance | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1473,16 +1484,30 @@ function FactsPage() {
 
   const refreshKnowledge = useCallback(async (signal?: AbortSignal) => {
     if (!project.id) return;
-    const [nextFacts, nextSources, nextConflicts, nextGovernance] = await Promise.all([
+    const [nextFacts, nextSources, nextConflicts, nextGovernance, nextSyncPolicies, nextSyncRuns] = await Promise.all([
       fetchFacts(project.id, signal),
       fetchKnowledgeSources(project.id, signal),
       fetchFactConflicts(project.id, signal),
       fetchKnowledgeGovernance(project.id, signal),
+      fetchKnowledgeSyncPolicies(project.id, signal),
+      fetchKnowledgeSyncRuns(project.id, signal),
     ]);
     setFacts(nextFacts);
     setSources(nextSources);
     setConflicts(nextConflicts);
     setGovernance(nextGovernance);
+    setSyncPolicies(nextSyncPolicies);
+    setSyncRuns(nextSyncRuns);
+    setSyncIntervals((current) => {
+      const next = { ...current };
+      nextSources.forEach((source) => {
+        if (!next[source.source_id]) next[source.source_id] = 24;
+      });
+      nextSyncPolicies.forEach((policy) => {
+        next[policy.policy_id] = current[policy.policy_id] ?? policy.interval_hours;
+      });
+      return next;
+    });
     setLoadError(null);
   }, [project.id]);
 
@@ -1496,6 +1521,22 @@ function FactsPage() {
       });
     return () => controller.abort();
   }, [project.id, refreshKnowledge]);
+
+  useEffect(() => {
+    if (!project.id || !syncRuns.some((run) => ["queued", "running"].includes(run.status))) return;
+    const controller = new AbortController();
+    const timer = window.setInterval(() => {
+      refreshKnowledge(controller.signal).catch((error) => {
+        if (!controller.signal.aborted) {
+          setLoadError(error instanceof Error ? error.message : "来源同步状态刷新失败");
+        }
+      });
+    }, 1800);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [project.id, refreshKnowledge, syncRuns]);
 
   const approved = facts.filter((item) => item.status === "approved").length;
   const pending = facts.filter((item) => item.status === "proposed").length;
@@ -1614,6 +1655,67 @@ function FactsPage() {
       setKnowledgeSearchError(error instanceof Error ? error.message : "知识检索接口不可用");
     } finally {
       setSearchingKnowledge(false);
+    }
+  };
+
+  const enableSourceSync = async (source: KnowledgeSource) => {
+    if (!project.id || !source.source_uri) return;
+    setSyncAction(`create:${source.source_id}`);
+    try {
+      const policy = await createKnowledgeSyncPolicy(
+        project.id,
+        source.source_id,
+        syncIntervals[source.source_id] ?? 24,
+      );
+      notify({
+        title: "来源自动同步已启用",
+        desc: `${source.title} 的首次安全抓取已入队；内容变化只会追加新修订，不会覆盖旧证据。`,
+        tone: "success",
+      });
+      setSyncPolicies((items) => [policy, ...items.filter((item) => item.policy_id !== policy.policy_id)]);
+      await refreshKnowledge();
+    } catch (error) {
+      notify({ title: "自动同步未启用", desc: error instanceof Error ? error.message : "同步策略接口不可用", tone: "danger" });
+    } finally {
+      setSyncAction(null);
+    }
+  };
+
+  const triggerSourceSync = async (policy: KnowledgeSyncPolicy) => {
+    setSyncAction(`trigger:${policy.policy_id}`);
+    try {
+      const run = await triggerKnowledgeSync(policy.policy_id);
+      setSyncRuns((items) => [run, ...items.filter((item) => item.run_id !== run.run_id)]);
+      notify({ title: "来源检查已入队", desc: "Worker 将保存原始响应和可见正文对象，完成后再判断 unchanged 或 changed。", tone: "success" });
+    } catch (error) {
+      notify({ title: "来源检查未入队", desc: error instanceof Error ? error.message : "同步任务接口不可用", tone: "danger" });
+    } finally {
+      setSyncAction(null);
+    }
+  };
+
+  const updateSourceSync = async (policy: KnowledgeSyncPolicy, enabled: boolean) => {
+    setSyncAction(`update:${policy.policy_id}`);
+    try {
+      const intervalHours = syncIntervals[policy.policy_id] ?? policy.interval_hours;
+      const updated = await updateKnowledgeSyncPolicy(policy, {
+        enabled,
+        intervalHours,
+        reason: enabled
+          ? `运营人员启用自动同步并设置为每 ${intervalHours} 小时检查`
+          : "运营人员暂停自动同步，保留全部历史运行与来源修订",
+      });
+      setSyncPolicies((items) => items.map((item) => item.policy_id === updated.policy_id ? updated : item));
+      notify({
+        title: enabled ? "自动同步策略已更新" : "自动同步已暂停",
+        desc: enabled ? `后续按 ${intervalHours} 小时周期检查。` : "历史来源、对象和运行记录不会被删除。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "同步策略未更新", desc: error instanceof Error ? error.message : "同步策略接口不可用", tone: "danger" });
+      void refreshKnowledge().catch(() => undefined);
+    } finally {
+      setSyncAction(null);
     }
   };
 
@@ -1835,17 +1937,105 @@ function FactsPage() {
           <DataStateCard title="尚无来源" desc="事实必须能回到不可变原文和精确边界。" tone="warning" />
         ) : (
           <div className="gap-table">
-            {sources.map((source) => (
-              <div className="gap-row" key={source.source_id}>
-                <IconTile tone={source.status === "active" ? "success" : "warning"}><Link2 size={21} /></IconTile>
-                <div><strong>{source.title}</strong><span>{source.source_type} · {source.authority_level}</span></div>
-                <Badge tone={source.status === "active" ? "success" : "warning"}>{source.status}</Badge>
-                <strong>{source.segment_count} 段</strong>
-                <span>{source.valid_until ? `有效至 ${formatDateTime(source.valid_until)}` : "长期有效 · 无到期日"}</span>
-                <Badge tone="primary">v{source.revision_number}</Badge>
-                {source.status === "active" && <button className="table-action gap-row-action" type="button" onClick={() => openSourceEditor(source)}>更新来源</button>}
-              </div>
-            ))}
+            {sources.map((source) => {
+              const coveredBySync = syncPolicies.some((policy) => policy.current_source_id === source.source_id || policy.anchor_source_id === source.source_id);
+              return (
+                <div className="gap-row" key={source.source_id}>
+                  <IconTile tone={source.status === "active" ? "success" : "warning"}><Link2 size={21} /></IconTile>
+                  <div><strong>{source.title}</strong><span>{source.source_type} · {source.authority_level}</span></div>
+                  <Badge tone={source.status === "active" ? "success" : "warning"}>{source.status}</Badge>
+                  <strong>{source.segment_count} 段</strong>
+                  <span>{source.valid_until ? `有效至 ${formatDateTime(source.valid_until)}` : "长期有效 · 无到期日"}</span>
+                  <Badge tone="primary">v{source.revision_number}</Badge>
+                  <div className="gap-row-actions">
+                    {source.status === "active" && <button className="table-action" type="button" onClick={() => openSourceEditor(source)}>人工更新</button>}
+                    {source.status === "active" && source.source_uri && !coveredBySync && (
+                      <>
+                        <select
+                          aria-label={`${source.title} 自动同步周期`}
+                          value={syncIntervals[source.source_id] ?? 24}
+                          onChange={(event) => setSyncIntervals((items) => ({ ...items, [source.source_id]: Number(event.target.value) }))}
+                        >
+                          <option value={6}>每 6 小时</option>
+                          <option value={24}>每天</option>
+                          <option value={72}>每 3 天</option>
+                          <option value={168}>每周</option>
+                        </select>
+                        <button className="table-action" type="button" disabled={syncAction === `create:${source.source_id}`} onClick={() => void enableSourceSync(source)}>
+                          {syncAction === `create:${source.source_id}` ? "启用中…" : "自动同步"}
+                        </button>
+                      </>
+                    )}
+                    {coveredBySync && <Badge tone="success">已纳入同步</Badge>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+      <Panel title="公开来源自动同步">
+        <div className="knowledge-sync-intro">
+          <ShieldCheck size={20} />
+          <span>只抓取客户授权的公开 HTTP(S) 来源。DNS 固定、原始响应、可见正文、Hash 和运行元数据会被不可变保存；正文变化只追加新版本，并立即让依赖旧来源的事实失去生成资格。</span>
+        </div>
+        {syncPolicies.length === 0 ? (
+          <DataStateCard title="尚未启用来源自动同步" desc="在上方具有公开 URL 的 active 来源中选择周期。系统不会擅自发现或抓取未授权站点。" tone="warning" />
+        ) : (
+          <div className="knowledge-sync-list">
+            {syncPolicies.map((policy) => {
+              const currentSource = sources.find((source) => source.source_id === policy.current_source_id);
+              const latestRun = syncRuns.find((run) => run.policy_id === policy.policy_id);
+              const activeRun = syncRuns.find((run) => run.policy_id === policy.policy_id && ["queued", "running"].includes(run.status));
+              const statusTone: Tone = latestRun?.status === "changed" || latestRun?.status === "unchanged"
+                ? "success"
+                : latestRun?.status === "failed" || latestRun?.status === "blocked"
+                  ? "danger"
+                  : "warning";
+              return (
+                <article className="knowledge-sync-card" key={policy.policy_id}>
+                  <div className="knowledge-sync-card-head">
+                    <div>
+                      <strong>{currentSource?.title ?? policy.source_uri}</strong>
+                      <span>{policy.source_uri}</span>
+                    </div>
+                    <Badge tone={policy.enabled ? "success" : "muted"}>{policy.enabled ? "enabled" : "paused"}</Badge>
+                  </div>
+                  <dl>
+                    <div><dt>当前版本</dt><dd>{currentSource ? `v${currentSource.revision_number}` : policy.current_source_id}</dd></div>
+                    <div><dt>最近结果</dt><dd><Badge tone={statusTone}>{latestRun?.status ?? "等待首次运行"}</Badge></dd></div>
+                    <div><dt>最近检查</dt><dd>{policy.last_checked_at ? formatDateTime(policy.last_checked_at) : "尚未完成"}</dd></div>
+                    <div><dt>下次计划</dt><dd>{policy.enabled ? formatDateTime(policy.next_run_at) : "已暂停"}</dd></div>
+                    <div><dt>证据 Hash</dt><dd title={latestRun?.visible_text_sha256 ?? undefined}>{latestRun?.visible_text_sha256 ? `${latestRun.visible_text_sha256.slice(0, 12)}…` : "—"}</dd></div>
+                    <div><dt>对象存证</dt><dd>{latestRun?.raw_object_ref_id && latestRun?.text_object_ref_id ? "原始页 + 正文" : "等待完成"}</dd></div>
+                  </dl>
+                  {latestRun?.error_code && <p className="knowledge-sync-error">{latestRun.error_code} · {latestRun.error_message}</p>}
+                  <div className="knowledge-sync-actions">
+                    <label>
+                      <span>检查周期</span>
+                      <select
+                        value={syncIntervals[policy.policy_id] ?? policy.interval_hours}
+                        disabled={!policy.enabled || syncAction === `update:${policy.policy_id}`}
+                        onChange={(event) => setSyncIntervals((items) => ({ ...items, [policy.policy_id]: Number(event.target.value) }))}
+                      >
+                        <option value={6}>每 6 小时</option>
+                        <option value={24}>每天</option>
+                        <option value={72}>每 3 天</option>
+                        <option value={168}>每周</option>
+                      </select>
+                    </label>
+                    {policy.enabled && (
+                      <button className="outline-button" type="button" disabled={Boolean(activeRun) || syncAction === `trigger:${policy.policy_id}`} onClick={() => void triggerSourceSync(policy)}>
+                        {activeRun ? `${activeRun.status}…` : syncAction === `trigger:${policy.policy_id}` ? "入队中…" : "立即检查"}
+                      </button>
+                    )}
+                    <button className="airank-console-primary-button" type="button" disabled={syncAction === `update:${policy.policy_id}`} onClick={() => void updateSourceSync(policy, !policy.enabled || (syncIntervals[policy.policy_id] ?? policy.interval_hours) !== policy.interval_hours)}>
+                      {syncAction === `update:${policy.policy_id}` ? "保存中…" : !policy.enabled ? "重新启用" : (syncIntervals[policy.policy_id] ?? policy.interval_hours) !== policy.interval_hours ? "保存周期" : "暂停同步"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </Panel>

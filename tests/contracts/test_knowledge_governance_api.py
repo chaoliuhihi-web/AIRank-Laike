@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 import pytest
 
-from apps.api import delivery_routes, knowledge_routes
+from apps.api import delivery_routes, knowledge_routes, knowledge_sync_routes
 from apps.api.main import app
 
 
@@ -16,6 +16,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
     monkeypatch.setattr(
         delivery_routes, "DELIVERY_REPOSITORY", delivery_routes.InMemoryDeliveryRepository()
+    )
+    monkeypatch.setattr(
+        knowledge_sync_routes,
+        "KNOWLEDGE_SYNC_REPOSITORY",
+        knowledge_sync_routes.InMemoryKnowledgeSyncRepository(),
     )
     return TestClient(app)
 
@@ -72,6 +77,161 @@ def test_source_import_is_content_addressed_segmented_and_idempotent(client: Tes
     assert first.json()["data"]["segment_count"] >= 1
     assert replay.json()["data"]["source_id"] == first.json()["data"]["source_id"]
     assert replay.json()["data"]["idempotent_replay"] is True
+
+
+def test_knowledge_source_sync_policy_is_versioned_idempotent_and_fail_closed(client: TestClient) -> None:
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    created = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/sync-policies",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "idempotency_key": "knowledge-sync-policy-0001",
+            "interval_hours": 24,
+            "created_by": "operator_1",
+        },
+    )
+    replay = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/sync-policies",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "idempotency_key": "knowledge-sync-policy-0001",
+            "interval_hours": 24,
+            "created_by": "operator_1",
+        },
+    )
+    policy_id = created.json()["data"]["policy_id"]
+    runs = client.get(
+        "/api/v1/projects/project_1/knowledge-source-sync-runs",
+        headers={"tenant-id": "tenant_1"},
+    )
+    active_replay = client.post(
+        f"/api/v1/knowledge-source-sync-policies/{policy_id}/runs",
+        headers={"tenant-id": "tenant_1"},
+        json={"idempotency_key": "knowledge-sync-manual-0001", "requested_by": "operator_1"},
+    )
+    stale_update = client.patch(
+        f"/api/v1/knowledge-source-sync-policies/{policy_id}",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "expected_version": 2,
+            "enabled": False,
+            "interval_hours": 48,
+            "reason": "stale version must fail",
+            "updated_by": "operator_1",
+        },
+    )
+    disabled = client.patch(
+        f"/api/v1/knowledge-source-sync-policies/{policy_id}",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "expected_version": 1,
+            "enabled": False,
+            "interval_hours": 48,
+            "reason": "pause customer-authorized source checks",
+            "updated_by": "operator_1",
+        },
+    )
+    blocked_trigger = client.post(
+        f"/api/v1/knowledge-source-sync-policies/{policy_id}/runs",
+        headers={"tenant-id": "tenant_1"},
+        json={"idempotency_key": "knowledge-sync-manual-0002", "requested_by": "operator_1"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["data"]["enabled"] is True
+    assert replay.status_code == 201
+    assert replay.json()["data"]["policy_id"] == policy_id
+    assert replay.json()["data"]["idempotent_replay"] is True
+    assert runs.status_code == 200 and len(runs.json()["data"]) == 1
+    assert runs.json()["data"][0]["status"] == "queued"
+    assert active_replay.status_code == 409
+    assert active_replay.json()["error"]["code"] == "KNOWLEDGE_SYNC_ALREADY_ACTIVE"
+    assert stale_update.status_code == 409
+    assert stale_update.json()["error"]["code"] == "KNOWLEDGE_SYNC_VERSION_CONFLICT"
+    assert disabled.status_code == 200
+    assert disabled.json()["data"]["enabled"] is False
+    assert disabled.json()["data"]["version"] == 2
+    assert blocked_trigger.status_code == 409
+    assert blocked_trigger.json()["error"]["code"] == "KNOWLEDGE_SYNC_POLICY_DISABLED"
+
+
+def test_knowledge_source_without_public_url_cannot_enable_sync(client: TestClient) -> None:
+    payload = source_payload() | {
+        "idempotency_key": "source-no-url-0001",
+        "source_uri": None,
+    }
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=payload,
+    ).json()["data"]
+
+    response = client.post(
+        f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/sync-policies",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "idempotency_key": "knowledge-sync-policy-no-url",
+            "interval_hours": 24,
+            "created_by": "operator_1",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "KNOWLEDGE_SYNC_SOURCE_NOT_ELIGIBLE"
+
+
+def test_manual_sync_idempotency_is_scoped_to_policy(client: TestClient) -> None:
+    first_source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    second_source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload()
+        | {
+            "idempotency_key": "source-import-policy-scope-0002",
+            "title": "AIRank 公开帮助页",
+            "source_uri": "https://airank.example/help",
+            "content_text": "AIRank 公开帮助页。",
+        },
+    ).json()["data"]
+    policy_ids = []
+    for index, source in enumerate((first_source, second_source), start=1):
+        created = client.post(
+            f"/api/v1/projects/project_1/knowledge-sources/{source['source_id']}/sync-policies",
+            headers={"tenant-id": "tenant_1"},
+            json={
+                "idempotency_key": f"knowledge-sync-policy-scope-000{index}",
+                "interval_hours": 24,
+                "created_by": "operator_1",
+            },
+        )
+        assert created.status_code == 201
+        policy_ids.append(created.json()["data"]["policy_id"])
+
+    repository = knowledge_sync_routes.KNOWLEDGE_SYNC_REPOSITORY
+    assert isinstance(repository, knowledge_sync_routes.InMemoryKnowledgeSyncRepository)
+    for key, run in list(repository.runs.items()):
+        repository.runs[key] = run.model_copy(update={"status": "unchanged"})
+
+    triggered = [
+        client.post(
+            f"/api/v1/knowledge-source-sync-policies/{policy_id}/runs",
+            headers={"tenant-id": "tenant_1"},
+            json={"idempotency_key": "same-manual-request-key", "requested_by": "operator_1"},
+        )
+        for policy_id in policy_ids
+    ]
+
+    assert [response.status_code for response in triggered] == [201, 201]
+    assert triggered[0].json()["data"]["run_id"] != triggered[1].json()["data"]["run_id"]
+    assert triggered[1].json()["data"]["idempotent_replay"] is False
 
 
 def test_fact_without_evidence_cannot_be_approved(client: TestClient) -> None:

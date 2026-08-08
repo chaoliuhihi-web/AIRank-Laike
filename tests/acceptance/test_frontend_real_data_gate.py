@@ -35,6 +35,11 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
         "fetchPublishAttempts",
         "createPublishPackage",
         "recordPublicationEvidence",
+        "fetchKnowledgeSyncPolicies",
+        "fetchKnowledgeSyncRuns",
+        "createKnowledgeSyncPolicy",
+        "triggerKnowledgeSync",
+        "updateKnowledgeSyncPolicy",
         "fetchRetestWindows",
         "fetchReports",
     ):
@@ -69,6 +74,9 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "客户站点凭证只允许由 Worker 安全注入" in app_source
     assert "published_url" in api_source
     assert "baseline_run_id" in api_source
+    assert "公开来源自动同步" in app_source
+    assert "内容变化只会追加新修订" in app_source
+    assert "系统不会擅自发现或抓取未授权站点" in app_source
     route_source = (ROOT / "apps" / "web" / "src" / "console" / "routes" / "console-routes.ts").read_text(encoding="utf-8")
     assert 'path: "/console/page-audit"' in route_source
     assert 'label: "官网可提取性"' in route_source

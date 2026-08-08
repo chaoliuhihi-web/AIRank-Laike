@@ -165,6 +165,57 @@ export type KnowledgeSourceInput = {
   valid_until?: string;
 };
 
+export type KnowledgeSyncPolicy = {
+  policy_id: string;
+  tenant_id: string;
+  project_id: string;
+  anchor_source_id: string;
+  current_source_id: string;
+  source_uri: string;
+  interval_hours: number;
+  enabled: boolean;
+  version: number;
+  next_run_at: string;
+  last_run_id: string | null;
+  last_status: "unchanged" | "changed" | "failed" | "blocked" | null;
+  last_checked_at: string | null;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type KnowledgeSyncRun = {
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  policy_id: string;
+  source_before_id: string;
+  source_after_id: string | null;
+  job_id: string;
+  status: "queued" | "running" | "unchanged" | "changed" | "failed" | "blocked";
+  requested_url: string;
+  final_url: string | null;
+  evidence_grade: string | null;
+  response_status: number | null;
+  content_type: string | null;
+  response_bytes: number | null;
+  raw_content_sha256: string | null;
+  visible_text_sha256: string | null;
+  raw_object_ref_id: string | null;
+  text_object_ref_id: string | null;
+  connected_ip: string | null;
+  redirect_count: number | null;
+  error_code: string | null;
+  error_message: string | null;
+  scheduled_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  idempotent_replay: boolean;
+};
+
 export type KnowledgeSearchResult = {
   rank: number;
   segment_id: string;
@@ -1281,6 +1332,14 @@ export function fetchKnowledgeSources(projectId: string, signal?: AbortSignal): 
   return fetchData(`/api/v1/projects/${projectId}/knowledge-sources`, "trc_web_sources", signal);
 }
 
+export function fetchKnowledgeSyncPolicies(projectId: string, signal?: AbortSignal): Promise<KnowledgeSyncPolicy[]> {
+  return fetchData(`/api/v1/projects/${projectId}/knowledge-source-sync-policies`, "trc_web_knowledge_sync_policies", signal);
+}
+
+export function fetchKnowledgeSyncRuns(projectId: string, signal?: AbortSignal): Promise<KnowledgeSyncRun[]> {
+  return fetchData(`/api/v1/projects/${projectId}/knowledge-source-sync-runs?limit=100`, "trc_web_knowledge_sync_runs", signal);
+}
+
 export function fetchPageAudits(projectId: string, signal?: AbortSignal): Promise<PageAuditRun[]> {
   return fetchData(`/api/v1/projects/${projectId}/page-audits`, "trc_web_page_audits", signal);
 }
@@ -1328,6 +1387,76 @@ export async function saveKnowledgeSource(
   }
   const payload = (await response.json()) as { data: KnowledgeSource };
   return payload.data;
+}
+
+export async function createKnowledgeSyncPolicy(
+  projectId: string,
+  sourceId: string,
+  intervalHours: number,
+): Promise<KnowledgeSyncPolicy> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge-sources/${encodeURIComponent(sourceId)}/sync-policies`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_knowledge_sync_create") },
+      body: JSON.stringify({
+        idempotency_key: `knowledge-sync-policy-${sourceId}-${randomPart}`,
+        interval_hours: intervalHours,
+        created_by: session?.user.userId ?? "console-operator",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Knowledge sync policy request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: KnowledgeSyncPolicy }).data;
+}
+
+export async function updateKnowledgeSyncPolicy(
+  policy: KnowledgeSyncPolicy,
+  input: { enabled: boolean; intervalHours: number; reason: string },
+): Promise<KnowledgeSyncPolicy> {
+  const session = getStoredAuthSession();
+  const response = await fetch(
+    `/api/v1/knowledge-source-sync-policies/${encodeURIComponent(policy.policy_id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_knowledge_sync_update") },
+      body: JSON.stringify({
+        expected_version: policy.version,
+        enabled: input.enabled,
+        interval_hours: input.intervalHours,
+        reason: input.reason,
+        updated_by: session?.user.userId ?? "console-operator",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Knowledge sync policy update failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: KnowledgeSyncPolicy }).data;
+}
+
+export async function triggerKnowledgeSync(policyId: string): Promise<KnowledgeSyncRun> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/knowledge-source-sync-policies/${encodeURIComponent(policyId)}/runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_knowledge_sync_trigger") },
+      body: JSON.stringify({
+        idempotency_key: `knowledge-sync-manual-${policyId}-${randomPart}`,
+        requested_by: session?.user.userId ?? "console-operator",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Knowledge sync trigger failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: KnowledgeSyncRun }).data;
 }
 
 export function searchKnowledge(projectId: string, query: string, signal?: AbortSignal): Promise<KnowledgeSearch> {
