@@ -354,9 +354,27 @@ class MySQLRetestRepository:
         """), {"tenant_id": tenant_id, "project_id": project_id, "run_id": run_id}).mappings().all()
         if not rows:
             raise _conflict("RETEST_COMPARE_RUN_REQUIRED", {"run_id": run_id, "reason": "no_samples"})
-        samples = tuple(_measurement_sample(dict(row)) for row in rows)
-        signature = tuple(_sample_signature(dict(row)) for row in rows)
-        evidence_manifests = tuple(_sample_evidence_manifest(dict(row)) for row in rows)
+        try:
+            from .citation_support_routes import load_fact_accuracy_bundles_from_connection
+        except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+            from citation_support_routes import (  # type: ignore[no-redef]
+                load_fact_accuracy_bundles_from_connection,
+            )
+        row_records = [dict(row) for row in rows]
+        fact_bundles = load_fact_accuracy_bundles_from_connection(
+            conn,
+            tenant_id,
+            [str(row["sample_id"]) for row in row_records if row.get("sample_id")],
+        )
+        for row in row_records:
+            bundle = fact_bundles.get(str(row.get("sample_id") or ""))
+            metrics = bundle.metrics if bundle else None
+            row["fact_claim_count"] = metrics.factual_claim_count if metrics else 0
+            row["fact_reviewed_claim_count"] = metrics.decisive_claim_count if metrics else 0
+            row["fact_accuracy"] = metrics.fact_accuracy if metrics else None
+        samples = tuple(_measurement_sample(row) for row in row_records)
+        signature = tuple(_sample_signature(row) for row in row_records)
+        evidence_manifests = tuple(_sample_evidence_manifest(row) for row in row_records)
         return RunEvidence(
             project_id=project_id,
             samples=samples,
@@ -408,6 +426,13 @@ def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
         mention_class=mention_class,
         brand_rank=row.get("brand_rank") if status == SampleStatus.VALID else None,
         citation_count=int(row.get("citation_count") or 0),
+        fact_claim_count=int(row.get("fact_claim_count") or 0),
+        fact_reviewed_claim_count=int(row.get("fact_reviewed_claim_count") or 0),
+        fact_accuracy=(
+            float(row["fact_accuracy"])
+            if row.get("fact_accuracy") is not None
+            else None
+        ),
         failure_code=None if status == SampleStatus.VALID else (row.get("error_code") or "sample_missing"),
     )
 

@@ -113,7 +113,7 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2";
   status: "ready";
   object_ref_id: string;
   content_url: string;
@@ -126,6 +126,8 @@ export type ReportEvidencePacket = {
   summary: {
     sample_count: number;
     citation_count: number;
+    fact_claim_count: number;
+    fact_accuracy_review_count: number;
     evidence_object_count: number;
     known_limitation_count: number;
   };
@@ -341,6 +343,8 @@ export type CitationSupportBundle = {
     claim_sha256: string;
     extraction_method: "manual" | "ai_assisted";
     extractor_version: string;
+    claim_kind: "unclassified" | "brand_fact" | "competitor_fact" | "general_fact" | "opinion";
+    subject_entity_text: string | null;
     created_by: string;
     created_at: string;
   }>;
@@ -373,6 +377,47 @@ export type CitationSupportBundle = {
     contradicts_count: number;
     insufficient_count: number;
     citation_support_rate: number | null;
+    known_limitations: string[];
+  };
+};
+
+export type FactAccuracyBundle = {
+  snapshot_id: string;
+  claims: CitationSupportBundle["claims"];
+  reviews: Array<{
+    review_id: string;
+    claim_id: string;
+    verdict: "accurate" | "inaccurate" | "outdated" | "insufficient_evidence";
+    evidence_grade: "approved_fact_source_boundary" | "no_approved_fact";
+    fact_revision_id: string | null;
+    knowledge_source_id: string | null;
+    knowledge_segment_id: string | null;
+    fact_revision_sha256: string | null;
+    source_content_sha256: string | null;
+    quoted_text: string | null;
+    quoted_text_sha256: string | null;
+    source_start: number | null;
+    source_end: number | null;
+    rationale: string;
+    review_method: "human" | "ai_assisted";
+    reviewed_by: string;
+    reviewed_at: string;
+    supersedes_review_id: string | null;
+    commercially_verified: boolean;
+    idempotent_replay: boolean;
+  }>;
+  metrics: {
+    registered_claim_count: number;
+    factual_claim_count: number;
+    reviewed_claim_count: number;
+    commercially_verified_claim_count: number;
+    decisive_claim_count: number;
+    accurate_count: number;
+    inaccurate_count: number;
+    outdated_count: number;
+    insufficient_evidence_count: number;
+    evaluation_coverage_rate: number | null;
+    fact_accuracy: number | null;
     known_limitations: string[];
   };
 };
@@ -1279,6 +1324,10 @@ export async function createCitationClaim(
   snapshotId: string,
   answerStart: number,
   answerEnd: number,
+  input?: {
+    claimKind?: CitationSupportBundle["claims"][number]["claim_kind"];
+    subjectEntityText?: string;
+  },
 ): Promise<CitationSupportBundle["claims"][number]> {
   const session = getStoredAuthSession();
   const response = await fetch(`/api/v1/samples/${encodeURIComponent(snapshotId)}/citation-claims`, {
@@ -1288,6 +1337,8 @@ export async function createCitationClaim(
       answer_start: answerStart,
       answer_end: answerEnd,
       extraction_method: "manual",
+      claim_kind: input?.claimKind ?? "unclassified",
+      subject_entity_text: input?.subjectEntityText?.trim() || undefined,
       created_by: session?.user.userId ?? "console-operator",
     }),
   });
@@ -1295,6 +1346,45 @@ export async function createCitationClaim(
     throw new Error(await readErrorMessage(response, `Citation claim request failed with ${response.status}`));
   }
   return ((await response.json()) as { data: CitationSupportBundle["claims"][number] }).data;
+}
+
+export function fetchFactAccuracy(snapshotId: string, signal?: AbortSignal): Promise<FactAccuracyBundle> {
+  return fetchData(`/api/v1/samples/${snapshotId}/fact-accuracy`, "trc_web_fact_accuracy", signal);
+}
+
+export async function createFactAccuracyReview(
+  claimId: string,
+  input: {
+    verdict: FactAccuracyBundle["reviews"][number]["verdict"];
+    factRevisionId?: string;
+    rationale: string;
+  },
+): Promise<FactAccuracyBundle["reviews"][number]> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const headers = {
+    ...buildApiHeaders("trc_web_fact_accuracy_review"),
+    "Content-Type": "application/json",
+    "Idempotency-Key": `fact-accuracy-${claimId}-${randomPart}`,
+  };
+  const response = await fetch(
+    `/api/v1/answer-claims/${encodeURIComponent(claimId)}/fact-accuracy-reviews`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        verdict: input.verdict,
+        fact_revision_id: input.factRevisionId,
+        rationale: input.rationale,
+        review_method: "human",
+        reviewed_by: session?.user.userId ?? "console-reviewer",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact accuracy review failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: FactAccuracyBundle["reviews"][number] }).data;
 }
 
 export async function createCitationSourceCapture(citationId: string): Promise<CitationSourceCapture> {
@@ -1635,7 +1725,7 @@ export async function recordDownloadReceipt(packet: ReportEvidencePacket): Promi
 
 export async function createReportEvidencePacket(reportId: string): Promise<ReportEvidencePacket> {
   const headers = buildApiHeaders("trc_web_report_packet");
-  headers["Idempotency-Key"] = `report-packet-${reportId}-v1`;
+  headers["Idempotency-Key"] = `report-packet-${reportId}-v2`;
   const response = await fetch(`/api/v1/reports/${reportId}/evidence-packets`, {
     method: "POST",
     headers,

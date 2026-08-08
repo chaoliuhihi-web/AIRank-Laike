@@ -85,6 +85,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CITATION_CAPTURE_NOT_FOUND` | 404 | 引用来源抓取不存在或不属于当前租户 |
 | `CITATION_CAPTURE_URL_INVALID` | 409 | Provider 返回的引用 URL 缺失或不符合安全抓取格式 |
 | `CITATION_SUPPORT_EVIDENCE_INVALID` | 409 | 支持度审核未绑定匹配的不可变来源、片段或精确字符边界 |
+| `FACT_ACCURACY_EVIDENCE_INVALID` | 409 | 事实准确性裁决未绑定当前已审核事实、有效来源与精确原文边界，或声明类型不属于品牌/竞品事实 |
 
 ## 事实和内容
 

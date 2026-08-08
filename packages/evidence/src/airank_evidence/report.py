@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v1"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v2"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -23,7 +23,7 @@ METRIC_FORMULAS: dict[str, str] = {
     "stability": "mean(modal_outcome_count / repeated_group_sample_count)",
     "citation_recall_rate": "valid_samples_with_provider_citation / valid_sample_count",
     "citation_support": "mean(reviewed_citation_support_score)",
-    "fact_accuracy": "mean(evaluated_fact_accuracy_score)",
+    "fact_accuracy": "accurate_commercially_verified_fact_claim_count / factual_claim_count; emitted only at complete decisive coverage",
 }
 
 
@@ -69,6 +69,7 @@ def build_report_evidence_packet(
     report_record: dict[str, Any],
     sample_index: list[dict[str, Any]],
     citation_index: list[dict[str, Any]],
+    fact_accuracy_index: list[dict[str, Any]],
     evidence_object_index: list[dict[str, Any]],
 ) -> ReportEvidencePacket:
     """Build a deterministic, immutable manifest without copying raw answer bodies."""
@@ -144,6 +145,98 @@ def build_report_evidence_packet(
         cited_text_sha256 = item.get("cited_text_sha256")
         if cited_text_sha256 is not None and not SHA256_RE.fullmatch(str(cited_text_sha256)):
             raise ReportEvidencePacketError("citation_index contains an invalid cited text hash")
+    if any(
+        str(item.get("snapshot_id") or "") not in snapshot_ids
+        for item in fact_accuracy_index
+    ):
+        raise ReportEvidencePacketError("fact_accuracy_index references an unknown snapshot")
+    for item in fact_accuracy_index:
+        if item.get("claim_kind") not in {"brand_fact", "competitor_fact"}:
+            raise ReportEvidencePacketError("fact_accuracy_index contains a non-factual claim")
+        if not SHA256_RE.fullmatch(str(item.get("claim_sha256") or "")):
+            raise ReportEvidencePacketError("fact_accuracy_index contains an invalid claim hash")
+        start = item.get("answer_start")
+        end = item.get("answer_end")
+        if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start:
+            raise ReportEvidencePacketError("fact_accuracy_index contains an invalid answer boundary")
+        review = item.get("latest_review")
+        if review is None:
+            continue
+        if not isinstance(review, dict):
+            raise ReportEvidencePacketError("fact_accuracy_index contains an invalid review")
+        review_sha256 = review.get("review_record_sha256")
+        review_payload = {key: value for key, value in review.items() if key != "review_record_sha256"}
+        if (
+            not SHA256_RE.fullmatch(str(review_sha256 or ""))
+            or canonical_json_sha256(review_payload) != review_sha256
+        ):
+            raise ReportEvidencePacketError("fact_accuracy_index contains an invalid review hash")
+        if review.get("commercially_verified") is True:
+            for digest_key in (
+                "fact_revision_sha256",
+                "source_content_sha256",
+                "quoted_text_sha256",
+            ):
+                if not SHA256_RE.fullmatch(str(review.get(digest_key) or "")):
+                    raise ReportEvidencePacketError(
+                        f"fact_accuracy_index contains an invalid {digest_key}"
+                    )
+            source_start = review.get("source_start")
+            source_end = review.get("source_end")
+            if (
+                not isinstance(source_start, int)
+                or not isinstance(source_end, int)
+                or source_start < 0
+                or source_end <= source_start
+            ):
+                raise ReportEvidencePacketError(
+                    "fact_accuracy_index contains an invalid source boundary"
+                )
+
+    snapshot_run = {
+        str(item["snapshot_id"]): str(item["run_id"])
+        for item in sample_index
+        if item.get("snapshot_id")
+    }
+    for run_id, run_metrics in run_metric_pairs:
+        run_claims = [
+            item
+            for item in fact_accuracy_index
+            if snapshot_run.get(str(item.get("snapshot_id") or "")) == run_id
+        ]
+        decisive = [
+            item
+            for item in run_claims
+            if isinstance(item.get("latest_review"), dict)
+            and item["latest_review"].get("commercially_verified") is True
+            and item["latest_review"].get("verdict")
+            in {"accurate", "inaccurate", "outdated"}
+        ]
+        expected_fact_accuracy = (
+            round(
+                sum(
+                    item["latest_review"].get("verdict") == "accurate"
+                    for item in decisive
+                )
+                / len(run_claims),
+                6,
+            )
+            if run_claims and len(decisive) == len(run_claims)
+            else None
+        )
+        expected_fact_metrics = {
+            "fact_claim_count": len(run_claims),
+            "fact_reviewed_claim_count": len(decisive),
+            "fact_accuracy_coverage_rate": (
+                round(len(decisive) / len(run_claims), 6) if run_claims else None
+            ),
+            "fact_accuracy": expected_fact_accuracy,
+        }
+        for metric_name, expected_value in expected_fact_metrics.items():
+            if run_metrics.get(metric_name) != expected_value:
+                raise ReportEvidencePacketError(
+                    f"fact_accuracy_index {metric_name} does not match metrics for run {run_id}"
+                )
     for item in evidence_object_index:
         if not item.get("object_ref_id") or not SHA256_RE.fullmatch(str(item.get("sha256") or "")):
             raise ReportEvidencePacketError("evidence_object_index contains an invalid object hash")
@@ -216,10 +309,15 @@ def build_report_evidence_packet(
         "evidence_index": evidence_index,
         "sample_index": sample_index,
         "citation_index": citation_index,
+        "fact_accuracy_index": fact_accuracy_index,
         "evidence_object_index": evidence_object_index,
         "counts": {
             "samples": len(sample_index),
             "citations": len(citation_index),
+            "fact_claims": len(fact_accuracy_index),
+            "fact_accuracy_reviews": sum(
+                item.get("latest_review") is not None for item in fact_accuracy_index
+            ),
             "evidence_objects": len(evidence_object_index),
             "known_limitations": len(known_limitations),
         },

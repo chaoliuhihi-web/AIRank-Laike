@@ -71,6 +71,7 @@ import {
   createCitationClaim,
   createCitationSourceCapture,
   createCitationSupportReview,
+  createFactAccuracyReview,
   createPageAudit,
   downloadReportEvidencePacket,
   fetchQuestionObservationBatches,
@@ -85,6 +86,7 @@ import {
   fetchCitationSourceCaptures,
   fetchEvidenceObject,
   fetchFactConflicts,
+  fetchFactAccuracy,
   fetchFacts,
   fetchInternalSkills,
   fetchKnowledgeGovernance,
@@ -127,6 +129,7 @@ import {
   type CitationSupportBundle,
   type CitationSourceCapture,
   type FactConflict,
+  type FactAccuracyBundle,
   type GovernedContentAsset,
   type FactRevision,
   type InternalSkill,
@@ -212,7 +215,16 @@ const qualityLimitationLabels: Record<string, string> = {
   valid_samples_have_no_provider_citations: "有效样本没有 Provider 原生引用",
   citation_support_not_evaluated: "引用支持度尚未评测",
   fact_accuracy_not_evaluated: "事实准确率尚未评测",
+  fact_claims_not_registered: "尚未登记可核验的品牌或竞品事实声明",
+  fact_accuracy_incomplete_coverage: "事实声明尚未完成全量、确定性人工核验",
   repeat_stability_unavailable: "重复采样稳定性不可用",
+};
+const factAccuracyLimitationLabels: Record<string, string> = {
+  fact_claims_not_registered: "尚未从回答中登记品牌或竞品事实声明",
+  fact_claims_unreviewed: "存在尚未审核的事实声明",
+  provisional_or_stale_fact_reviews_excluded: "AI 辅助、过期来源、旧事实版本或冲突审核已排除",
+  fact_accuracy_contains_insufficient_evidence: "存在缺少已审核事实来源的声明",
+  fact_accuracy_incomplete_coverage: "只有全部事实声明完成确定性人工核验后才输出准确率",
 };
 const citationSupportLimitationLabels: Record<string, string> = {
   selected_citations_have_no_answer_claims: "原生引用尚未绑定回答中的具体断言",
@@ -1828,6 +1840,16 @@ function EvidencePage() {
   const [citationCaptures, setCitationCaptures] = useState<Record<string, CitationSourceCapture[]>>({});
   const [citationAction, setCitationAction] = useState<string | null>(null);
   const [citationActionError, setCitationActionError] = useState<string | null>(null);
+  const [factAccuracy, setFactAccuracy] = useState<FactAccuracyBundle | null>(null);
+  const [factAccuracyError, setFactAccuracyError] = useState<string | null>(null);
+  const [factAction, setFactAction] = useState<string | null>(null);
+  const [facts, setFacts] = useState<FactRevision[]>([]);
+  const [factClaimText, setFactClaimText] = useState("");
+  const [factClaimKind, setFactClaimKind] = useState<"brand_fact" | "competitor_fact">("brand_fact");
+  const [factSubject, setFactSubject] = useState("");
+  const [factClaimId, setFactClaimId] = useState("");
+  const [factRevisionId, setFactRevisionId] = useState("");
+  const [factRationale, setFactRationale] = useState("人工核对回答声明、当前审核事实与原始来源边界。");
 
   useEffect(() => {
     if (!project.id) return;
@@ -1946,6 +1968,34 @@ function EvidencePage() {
   }, [selected?.snapshot_id]);
 
   useEffect(() => {
+    if (!selected?.snapshot_id || !project.id) {
+      setFactAccuracy(null);
+      setFactAccuracyError(null);
+      setFacts([]);
+      return;
+    }
+    const controller = new AbortController();
+    Promise.all([
+      fetchFactAccuracy(selected.snapshot_id, controller.signal),
+      fetchFacts(project.id, controller.signal),
+    ])
+      .then(([bundle, factRows]) => {
+        setFactAccuracy(bundle);
+        setFacts(factRows.filter((fact) => fact.eligible_for_generation));
+        setFactClaimId((current) => bundle.claims.some((claim) => claim.claim_id === current) ? current : bundle.claims.find((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact")?.claim_id || "");
+        setFactRevisionId((current) => factRows.some((fact) => fact.revision_id === current && fact.eligible_for_generation) ? current : factRows.find((fact) => fact.eligible_for_generation)?.revision_id || "");
+        setFactAccuracyError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setFactAccuracy(null);
+        setFacts([]);
+        setFactAccuracyError(error instanceof Error ? error.message : "事实准确性接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id, selected?.snapshot_id]);
+
+  useEffect(() => {
     const citations = selected?.citations ?? [];
     if (citations.length === 0) {
       setCitationCaptures({});
@@ -2000,6 +2050,16 @@ function EvidencePage() {
     if (!selected?.snapshot_id) return;
     setCitationSupport(await fetchCitationSupport(selected.snapshot_id));
   };
+  const refreshFactAccuracy = async () => {
+    if (!selected?.snapshot_id) return;
+    const bundle = await fetchFactAccuracy(selected.snapshot_id);
+    setFactAccuracy(bundle);
+    setFactClaimId((current) => bundle.claims.some((claim) => claim.claim_id === current) ? current : bundle.claims.find((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact")?.claim_id || "");
+  };
+  const refreshQuality = async () => {
+    if (!project.id || !selectedRunId) return;
+    setQuality(await fetchMeasurementQuality(project.id, selectedRunId));
+  };
   const registerFullAnswerClaim = async () => {
     if (!selected || selected.sample_status !== "valid" || !selected.answer_text.trim()) return;
     setCitationAction("claim");
@@ -2011,6 +2071,71 @@ function EvidencePage() {
       setCitationActionError(error instanceof Error ? error.message : "回答断言登记失败");
     } finally {
       setCitationAction(null);
+    }
+  };
+  const registerFactClaim = async () => {
+    if (!selected || selected.sample_status !== "valid") return;
+    const claimText = factClaimText.trim();
+    const subject = factSubject.trim();
+    const answerStart = selected.answer_text.indexOf(claimText);
+    if (!claimText || answerStart < 0) {
+      setFactAccuracyError("请粘贴回答中原样存在的完整事实句，系统必须保存精确回答边界。");
+      return;
+    }
+    if (selected.answer_text.indexOf(claimText, answerStart + claimText.length) >= 0) {
+      setFactAccuracyError("该文本在回答中出现多次，请扩大选择范围，使事实声明边界唯一。");
+      return;
+    }
+    if (!subject) {
+      setFactAccuracyError("请填写该事实声明对应的品牌、产品或竞品实体。");
+      return;
+    }
+    setFactAction("register");
+    setFactAccuracyError(null);
+    try {
+      const claim = await createCitationClaim(
+        selected.snapshot_id,
+        answerStart,
+        answerStart + claimText.length,
+        { claimKind: factClaimKind, subjectEntityText: subject },
+      );
+      setFactClaimId(claim.claim_id);
+      setFactClaimText("");
+      await Promise.all([refreshFactAccuracy(), refreshCitationSupport(), refreshQuality()]);
+    } catch (error) {
+      setFactAccuracyError(error instanceof Error ? error.message : "事实声明登记失败");
+    } finally {
+      setFactAction(null);
+    }
+  };
+  const reviewFactClaim = async (
+    verdict: "accurate" | "inaccurate" | "outdated" | "insufficient_evidence",
+  ) => {
+    if (!factClaimId) {
+      setFactAccuracyError("请先选择一条事实声明。");
+      return;
+    }
+    if (verdict !== "insufficient_evidence" && !factRevisionId) {
+      setFactAccuracyError("确定性裁决必须绑定当前已审核、可公开且有原文边界的事实版本。");
+      return;
+    }
+    if (!factRationale.trim()) {
+      setFactAccuracyError("请填写人工核验依据。");
+      return;
+    }
+    setFactAction(`review:${verdict}`);
+    setFactAccuracyError(null);
+    try {
+      await createFactAccuracyReview(factClaimId, {
+        verdict,
+        factRevisionId: verdict === "insufficient_evidence" ? undefined : factRevisionId,
+        rationale: factRationale.trim(),
+      });
+      await Promise.all([refreshFactAccuracy(), refreshQuality()]);
+    } catch (error) {
+      setFactAccuracyError(error instanceof Error ? error.message : "事实准确性审核失败");
+    } finally {
+      setFactAction(null);
     }
   };
   const startCitationCapture = async (citationId: string) => {
@@ -2153,6 +2278,60 @@ function EvidencePage() {
               <div><dt>证据等级</dt><dd>{selected.evidence_level}</dd></div>
               <div><dt>Provider 路由</dt><dd>{selectedRouteId || "历史样本未记录"}</dd></div>
             </dl>
+          </Panel>
+          <Panel title="事实准确性 · 人工证据审核">
+            {factAccuracyError && <DataStateCard title="事实准确性操作失败" desc={factAccuracyError} tone="danger" />}
+            {factAccuracy && (
+              <>
+                <p className="rail-caption">
+                  准确率只统计品牌/竞品事实声明；必须由人工绑定当前审核事实与精确来源边界。AI 辅助、证据不足、旧版本和冲突事实不会进入商业指标。
+                </p>
+                <dl className="evidence-metadata fact-accuracy-metrics">
+                  <div><dt>可交付准确率</dt><dd>{factAccuracy.metrics.fact_accuracy === null ? "待完成全量核验" : `${Math.round(factAccuracy.metrics.fact_accuracy * 100)}%`}</dd></div>
+                  <div><dt>确定性覆盖</dt><dd>{factAccuracy.metrics.evaluation_coverage_rate === null ? "无事实声明" : `${Math.round(factAccuracy.metrics.evaluation_coverage_rate * 100)}%`}</dd></div>
+                  <div><dt>事实声明 / 确定性审核</dt><dd>{factAccuracy.metrics.factual_claim_count} / {factAccuracy.metrics.decisive_claim_count}</dd></div>
+                  <div><dt>准确 / 不准确 / 过期</dt><dd>{factAccuracy.metrics.accurate_count} / {factAccuracy.metrics.inaccurate_count} / {factAccuracy.metrics.outdated_count}</dd></div>
+                </dl>
+                {factAccuracy.metrics.known_limitations.length > 0 && (
+                  <DataStateCard
+                    title="事实准确率仍有限制"
+                    desc={factAccuracy.metrics.known_limitations.map((item) => factAccuracyLimitationLabels[item] ?? item).join(" · ")}
+                    tone="warning"
+                  />
+                )}
+                {selected.sample_status === "valid" && (
+                  <div className="fact-accuracy-form">
+                    <label className="fact-accuracy-wide">回答中的事实原句<textarea rows={3} value={factClaimText} onChange={(event) => setFactClaimText(event.target.value)} placeholder="从上方不可变回答复制一条完整、唯一的事实句" /></label>
+                    <label>声明类型<select value={factClaimKind} onChange={(event) => setFactClaimKind(event.target.value as "brand_fact" | "competitor_fact")}><option value="brand_fact">品牌事实</option><option value="competitor_fact">竞品事实</option></select></label>
+                    <label>主体实体<input value={factSubject} onChange={(event) => setFactSubject(event.target.value)} placeholder="品牌、产品或竞品名" /></label>
+                    <button className="outline-button fact-accuracy-wide" type="button" disabled={factAction === "register"} onClick={() => void registerFactClaim()}>{factAction === "register" ? "登记中" : "按精确回答边界登记"}</button>
+                  </div>
+                )}
+                {factAccuracy.metrics.factual_claim_count > 0 && (
+                  <div className="fact-review-workbench">
+                    <label>事实声明<select value={factClaimId} onChange={(event) => setFactClaimId(event.target.value)}>{factAccuracy.claims.filter((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact").map((claim) => <option value={claim.claim_id} key={claim.claim_id}>{claim.subject_entity_text || "未命名实体"} · {claim.claim_text.slice(0, 48)}</option>)}</select></label>
+                    <label>审核事实版本<select value={factRevisionId} onChange={(event) => setFactRevisionId(event.target.value)}><option value="">请选择当前已审核事实</option>{facts.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>#{fact.revision_number} {fact.title} · {fact.fact_text.slice(0, 42)}</option>)}</select></label>
+                    <label>人工核验依据<textarea rows={2} value={factRationale} onChange={(event) => setFactRationale(event.target.value)} /></label>
+                    {facts.length === 0 && <DataStateCard title="没有可绑定的审核事实" desc="请先在事实知识库添加来源并审核事实。缺少证据时只能记录“证据不足”，不能推断准确或错误。" tone="warning" />}
+                    <div className="citation-review-actions">
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("accurate")}>人工确认准确</button>
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("inaccurate")}>人工确认不准确</button>
+                      <button type="button" className="table-action" disabled={!factRevisionId || factAction !== null} onClick={() => void reviewFactClaim("outdated")}>人工确认已过期</button>
+                      <button type="button" className="table-action" disabled={factAction !== null} onClick={() => void reviewFactClaim("insufficient_evidence")}>证据不足</button>
+                    </div>
+                  </div>
+                )}
+                {factAccuracy.metrics.factual_claim_count > 0 && (
+                  <ol className="evidence-citations fact-accuracy-claims">
+                    {factAccuracy.claims.filter((claim) => claim.claim_kind === "brand_fact" || claim.claim_kind === "competitor_fact").map((claim) => {
+                      const reviews = factAccuracy.reviews.filter((review) => review.claim_id === claim.claim_id);
+                      const latest = reviews[reviews.length - 1];
+                      return <li key={claim.claim_id}><strong>{claim.claim_text}</strong><span>{claim.claim_kind === "brand_fact" ? "品牌事实" : "竞品事实"} · {claim.subject_entity_text || "主体未记录"} · 回答边界 {claim.answer_start}–{claim.answer_end}</span>{latest ? <span><Badge tone={latest.commercially_verified ? latest.verdict === "accurate" ? "success" : "danger" : "warning"}>{latest.verdict}</Badge> {latest.commercially_verified ? `证据 ${latest.fact_revision_sha256?.slice(0, 12)}…` : "当前审核不进入商业指标"}</span> : <span>尚未审核</span>}</li>;
+                    })}
+                  </ol>
+                )}
+              </>
+            )}
           </Panel>
           <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>
             {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc={selected.sample_status === "valid" ? "无引用是有效证据状态，不补造来源。" : "任务未产生有效回答，不把空引用误写成有效证据结论。"} tone="warning" /> : (

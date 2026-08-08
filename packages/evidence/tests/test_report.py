@@ -11,6 +11,7 @@ from airank_evidence import (
     build_report_conclusion,
     build_report_evidence_packet,
 )
+from airank_evidence.report import canonical_json_sha256
 
 
 NOW = datetime(2026, 5, 17, 13, 0, tzinfo=timezone.utc)
@@ -96,11 +97,19 @@ def publishable_report_record() -> dict:
                 "total_sample_count": 1,
                 "valid_sample_count": 1,
                 "not_mentioned_count": 1,
+                "fact_claim_count": 0,
+                "fact_reviewed_claim_count": 0,
+                "fact_accuracy_coverage_rate": None,
+                "fact_accuracy": None,
             },
             "compare_metrics": {
                 "total_sample_count": 1,
                 "valid_sample_count": 1,
                 "not_mentioned_count": 0,
+                "fact_claim_count": 0,
+                "fact_reviewed_claim_count": 0,
+                "fact_accuracy_coverage_rate": None,
+                "fact_accuracy": None,
             },
             "metric_deltas": {"mention_rate": 0.083333},
             "known_limitations": ["citation_support_not_evaluated"],
@@ -150,12 +159,14 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         report_record=publishable_report_record(),
         sample_index=sample_index,
         citation_index=citation_index,
+        fact_accuracy_index=[],
         evidence_object_index=object_index,
     )
     replay = build_report_evidence_packet(
         report_record=publishable_report_record(),
         sample_index=sample_index,
         citation_index=citation_index,
+        fact_accuracy_index=[],
         evidence_object_index=object_index,
     )
 
@@ -170,6 +181,8 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
     assert first.manifest["counts"] == {
         "samples": 2,
         "citations": 1,
+        "fact_claims": 0,
+        "fact_accuracy_reviews": 0,
         "evidence_objects": 1,
         "known_limitations": 1,
     }
@@ -218,5 +231,83 @@ def test_report_evidence_packet_rejects_ineligible_report(mutator, message: str)
                 },
             ],
             citation_index=[],
+            fact_accuracy_index=[],
             evidence_object_index=[],
         )
+
+
+def test_report_evidence_packet_binds_fact_review_hash_and_metrics() -> None:
+    report = publishable_report_record()
+    report["metrics"]["compare_metrics"].update(
+        {
+            "fact_claim_count": 1,
+            "fact_reviewed_claim_count": 1,
+            "fact_accuracy_coverage_rate": 1.0,
+            "fact_accuracy": 1.0,
+        }
+    )
+    samples = [
+        {
+            "task_id": "task_1",
+            "run_id": "scan_baseline",
+            "snapshot_id": "snap_1",
+            "sample_status": "valid",
+            "mention_class": "not_mentioned",
+            "answer_sha256": "3" * 64,
+            "raw_response_sha256": "5" * 64,
+            "evidence_snapshot_id": "evidence_1",
+            "collector_surface": "web",
+        },
+        {
+            "task_id": "task_2",
+            "run_id": "scan_compare",
+            "snapshot_id": "snap_2",
+            "sample_status": "valid",
+            "mention_class": "recommended",
+            "answer_sha256": "6" * 64,
+            "raw_response_sha256": "7" * 64,
+            "evidence_snapshot_id": "evidence_2",
+            "collector_surface": "web",
+        },
+    ]
+    review = {
+        "review_id": "review_1",
+        "verdict": "accurate",
+        "evidence_grade": "approved_fact_source_boundary",
+        "fact_revision_id": "revision_1",
+        "knowledge_source_id": "source_1",
+        "knowledge_segment_id": "segment_1",
+        "fact_revision_sha256": "8" * 64,
+        "source_content_sha256": "9" * 64,
+        "quoted_text_sha256": "a" * 64,
+        "source_start": 4,
+        "source_end": 12,
+        "review_method": "human",
+        "reviewed_by": "reviewer_1",
+        "reviewed_at": "2026-08-08T12:00:00+00:00",
+        "supersedes_review_id": None,
+        "commercially_verified": True,
+    }
+    review["review_record_sha256"] = canonical_json_sha256(review)
+    packet = build_report_evidence_packet(
+        report_record=report,
+        sample_index=samples,
+        citation_index=[],
+        fact_accuracy_index=[
+            {
+                "claim_id": "claim_1",
+                "snapshot_id": "snap_2",
+                "claim_kind": "brand_fact",
+                "claim_sha256": "b" * 64,
+                "answer_start": 0,
+                "answer_end": 8,
+                "subject_entity_text": "AIRank",
+                "latest_review": review,
+            }
+        ],
+        evidence_object_index=[],
+    )
+
+    assert packet.manifest["counts"]["fact_claims"] == 1
+    assert packet.manifest["counts"]["fact_accuracy_reviews"] == 1
+    assert packet.manifest["fact_accuracy_index"][0]["latest_review"]["review_record_sha256"] == review["review_record_sha256"]

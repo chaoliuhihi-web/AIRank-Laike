@@ -20,7 +20,12 @@
         "report_id": { "type": "string", "minLength": 1, "maxLength": 64 },
         "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
         "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
-        "schema_version": { "const": "airank.report-evidence-packet.v1" },
+        "schema_version": {
+          "enum": [
+            "airank.report-evidence-packet.v1",
+            "airank.report-evidence-packet.v2"
+          ]
+        },
         "status": { "const": "ready" },
         "object_ref_id": { "type": "string", "pattern": "^object_[0-9a-f]{24}$" },
         "content_url": { "type": "string", "pattern": "^/api/v1/evidence-objects/[A-Za-z0-9_-]+/content$" },
@@ -32,11 +37,17 @@
         "created_at": { "type": "string", "format": "date-time" },
         "summary": {
           "type": "object",
-          "required": ["sample_count", "citation_count", "evidence_object_count", "known_limitation_count"],
+          "required": [
+            "sample_count", "citation_count", "fact_claim_count",
+            "fact_accuracy_review_count", "evidence_object_count",
+            "known_limitation_count"
+          ],
           "additionalProperties": false,
           "properties": {
             "sample_count": { "type": "integer", "minimum": 1 },
             "citation_count": { "type": "integer", "minimum": 0 },
+            "fact_claim_count": { "type": "integer", "minimum": 0 },
+            "fact_accuracy_review_count": { "type": "integer", "minimum": 0 },
             "evidence_object_count": { "type": "integer", "minimum": 0 },
             "known_limitation_count": { "type": "integer", "minimum": 0 }
           }

@@ -210,6 +210,8 @@ class MeasurementSample:
     brand_rank: int | None = None
     citation_count: int = 0
     citation_support_score: float | None = None
+    fact_claim_count: int = 0
+    fact_reviewed_claim_count: int = 0
     fact_accuracy: float | None = None
     failure_code: str | None = None
 
@@ -236,6 +238,17 @@ class MeasurementSample:
             raise ValueError("brand_rank must be positive")
         if self.citation_count < 0:
             raise ValueError("citation_count cannot be negative")
+        if self.fact_claim_count < 0 or self.fact_reviewed_claim_count < 0:
+            raise ValueError("fact claim counts cannot be negative")
+        if self.fact_reviewed_claim_count > self.fact_claim_count:
+            raise ValueError("reviewed fact claims cannot exceed registered fact claims")
+        if self.fact_accuracy is not None and (
+            self.fact_claim_count == 0
+            or self.fact_reviewed_claim_count != self.fact_claim_count
+        ):
+            raise ValueError(
+                "fact_accuracy requires complete reviewed fact claim coverage"
+            )
         for field_name, value in (
             ("citation_support_score", self.citation_support_score),
             ("fact_accuracy", self.fact_accuracy),

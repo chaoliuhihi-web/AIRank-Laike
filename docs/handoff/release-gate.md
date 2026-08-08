@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v1` | v4 质量门禁、公式/限制/风险、sample/citation/object index、内容寻址 SHA-256、packet 级 download receipt；HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v2` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/object index、内容寻址 SHA-256、packet 级 download receipt；历史 v1 只读兼容，HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -713,3 +713,26 @@ Limitations and blockers:
 Decision:
 
 - AIRank now has a tamper-evident JSON delivery artifact for qualified reports. It is not commercially launchable until the external production and observation gates pass.
+
+## 2026-08-08 Fact Accuracy Evidence Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Answer claims now distinguish citation-support claims from brand and competitor factual claims, with subject entity, exact immutable answer boundaries and claim hash.
+- Alembic `20260808_0019` adds append-only fact-accuracy reviews. Commercially eligible reviews require a current, approved, human-reviewed, public/redacted FactRevision, a current source, no open conflict and an exact excerpt boundary inside the source segment.
+- `accurate`, `inaccurate`, `outdated` and `insufficient` remain distinct. `insufficient` does not bind a fabricated FactRevision, and fact accuracy is only calculated when every registered brand/competitor factual claim has a decisive current review.
+- Superseding or invalidating a fact/source preserves historical reviews while automatically removing them from current metrics. AI-derived labels cannot overwrite the raw claim or human review history.
+- Retest reports and `airank.report-evidence-packet.v2` recompute fact claim count, review coverage and accuracy from current MySQL evidence. The packet stores hashes and boundaries, not copied answer/source bodies; historical v1 packets remain readable.
+- The Evidence Center supports exact claim registration and human verdicts. Desktop and 390x844 browser QA completed the path, showed 100% only for the isolated 1/1 QA fact, kept the run blocked for missing repetition/citations, then removed the QA project. Reloading the real project preserved all nine valid not-mentioned samples and reported zero console errors.
+- Full local regression passed `354 passed, 25 skipped`; real MySQL integration passed `23 passed, 2 skipped`. They cover exact boundaries, idempotency, audit, recalculation, packet hash validation and stale-evidence invalidation. Node 24 TypeScript/Vite build and the high-severity npm audit passed with zero known vulnerabilities.
+
+Limitations and blockers:
+
+- A production double-review queue, labeled inter-reviewer benchmark and customer-reviewed fact dataset remain incomplete; the capability therefore stays `partial`.
+- Four-platform same-cohort repetition, Provider-native citation support, Consumer Web/App L3, production Yudao, HTTPS object storage, customer publishing credentials and T0/T+7/T+14/T+30 observation evidence remain open.
+
+Decision:
+
+- The previous fact-accuracy placeholder is replaced by a traceable human-evidence workflow. AIRank remains commercial `NO-GO` until the external production, reviewer-quality and observation gates pass.

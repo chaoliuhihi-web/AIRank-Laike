@@ -10,6 +10,15 @@ from .citation_support import (
     calculate_citation_support_metrics,
 )
 from .evidence_snapshot import EvidenceSnapshot
+from .fact_accuracy import (
+    AnswerClaimKind,
+    FactAccuracyClaim,
+    FactAccuracyEvidenceGrade,
+    FactAccuracyMetrics,
+    FactAccuracyReview,
+    FactAccuracyVerdict,
+    calculate_fact_accuracy_metrics,
+)
 from .gap import generate_gap_from_citations
 from .object_storage import (
     FilesystemObjectStorage,
@@ -31,11 +40,13 @@ from .report import (
     build_report_conclusion,
     build_report_evidence_packet,
     canonical_json_bytes,
+    canonical_json_sha256,
 )
 from .snapshot import AnswerSnapshot, SourceCitation
 
 __all__ = [
     "AnswerSnapshot",
+    "AnswerClaimKind",
     "CitationClaim",
     "CitationSupportEvidenceGrade",
     "CitationSupportLabel",
@@ -45,6 +56,11 @@ __all__ = [
     "ProviderPayloadError",
     "EvidenceReport",
     "EvidenceSnapshot",
+    "FactAccuracyClaim",
+    "FactAccuracyEvidenceGrade",
+    "FactAccuracyMetrics",
+    "FactAccuracyReview",
+    "FactAccuracyVerdict",
     "FilesystemObjectStorage",
     "ObjectStorageError",
     "ObjectStorage",
@@ -58,10 +74,12 @@ __all__ = [
     "StoredObject",
     "build_object_storage_from_env",
     "calculate_citation_support_metrics",
+    "calculate_fact_accuracy_metrics",
     "sha256_bytes",
     "build_report_conclusion",
     "build_report_evidence_packet",
     "canonical_json_bytes",
+    "canonical_json_sha256",
     "fact_source_ref_from_citation",
     "generate_gap_from_citations",
 ]

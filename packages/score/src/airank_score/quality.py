@@ -466,7 +466,14 @@ def build_measurement_quality_report(
         limitations.append("valid_samples_have_no_provider_citations")
     if valid_samples and not any(item.citation_support_score is not None for item in valid_samples):
         limitations.append("citation_support_not_evaluated")
-    if valid_samples and not any(item.fact_accuracy is not None for item in valid_samples):
+    if valid_samples and metrics.fact_claim_count == 0:
+        limitations.append("fact_claims_not_registered")
+    if (
+        metrics.fact_claim_count > 0
+        and metrics.fact_reviewed_claim_count < metrics.fact_claim_count
+    ):
+        limitations.append("fact_accuracy_incomplete_coverage")
+    if valid_samples and metrics.fact_accuracy is None:
         limitations.append("fact_accuracy_not_evaluated")
     if metrics.stability is None:
         limitations.append("repeat_stability_unavailable")
@@ -486,6 +493,10 @@ def build_measurement_quality_report(
                 "mention_class": item.mention_class.value,
                 "brand_rank": item.brand_rank,
                 "citation_count": item.citation_count,
+                "citation_support_score": item.citation_support_score,
+                "fact_claim_count": item.fact_claim_count,
+                "fact_reviewed_claim_count": item.fact_reviewed_claim_count,
+                "fact_accuracy": item.fact_accuracy,
                 "failure_code": item.failure_code,
             }
             for item in sample_list

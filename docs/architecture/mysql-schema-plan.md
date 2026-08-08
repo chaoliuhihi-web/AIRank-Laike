@@ -43,6 +43,7 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_source_citations` | 回答引用和来源归因 | 是 |
 | `airank_answer_claims` | 回答内具体断言、精确字符边界和回答 hash | 是 |
 | `airank_citation_support_reviews` | 断言—引用支持/矛盾/不足的追加式人工复核 | 是 |
+| `airank_fact_accuracy_reviews` | 品牌/竞品事实声明与当前 FactRevision、来源片段精确边界的追加式人工裁决 | 是 |
 | `airank_citation_source_captures` | 引用来源页不可变抓取、网络元数据与双对象引用 | 是 |
 | `airank_citation_source_segments` | 来源正文确定性切片与精确字符边界 | 是 |
 | `airank_page_audit_runs` | 官网技术可提取性运行、原始响应摘要、规则版本与独立技术分 | 是 |
@@ -54,6 +55,7 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_publish_packages` | 发布包导出、发布 URL、状态 | 是 |
 | `airank_retest_runs` | 复测批次和增长对比 | 是 |
 | `airank_reports` | 高管报告和诊断报告 | 是 |
+| `airank_report_evidence_packets` | 通过质量门禁后的不可变、内容寻址客户证据包版本 | 是 |
 | `airank_object_refs` | 网页快照、报告、证据包等对象引用 | 是 |
 | `airank_async_jobs` | worker 任务状态 | 是 |
 | `airank_outbox_events` | M2 事件分发 outbox，用于异步链路解耦 | 否 |
@@ -153,8 +155,9 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_scan_task_attempts` | `tenant_id` | `project_id` | 按 run/task 下钻 Worker attempt、未知结果、回答/证据关联 | `uk_airank_scan_attempt_number`、`idx_airank_scan_attempt_run`、`idx_airank_scan_attempt_job` 覆盖 |
 | `airank_answer_snapshots` | `tenant_id` | `project_id` | 按 run/question 查回答，按品牌出现和排名统计 | `idx_airank_snapshots_run_question`、`idx_airank_snapshots_brand_rank` 覆盖 |
 | `airank_source_citations` | `tenant_id` | `project_id` | 按 snapshot 回溯引用，按 host 做来源统计 | `idx_airank_citations_snapshot`、`idx_airank_citations_host` 覆盖 |
-| `airank_answer_claims` | `tenant_id` | `project_id` | 按回答下钻断言、按边界/hash 幂等登记 | `uk_airank_answer_claim_boundary`、`idx_airank_answer_claim_project` 覆盖 |
+| `airank_answer_claims` | `tenant_id` | `project_id` | 按回答下钻断言、按边界/hash/声明类型幂等登记，区分引用断言与品牌/竞品事实声明 | `uk_airank_answer_claim_boundary`、`idx_airank_answer_claim_project`、`idx_airank_answer_claim_fact_kind` 覆盖 |
 | `airank_citation_support_reviews` | `tenant_id` | `project_id` | 按 claim/citation 读取追加历史，按证据等级统计可交付支持度 | `idx_airank_citation_support_claim`、`idx_airank_citation_support_project` 覆盖 |
+| `airank_fact_accuracy_reviews` | `tenant_id` | `project_id` | 按 claim 读取不可变裁决历史，复核事实/来源版本、hash 与精确边界，按幂等键防重复 | claim/project/fact/source/idempotency 索引覆盖；事实或来源失效后旧裁决保留但退出商业指标 |
 | `airank_citation_source_captures` | `tenant_id` | `project_id` | 按 citation 回溯抓取历史，按状态领取/排障 | citation、status、idempotency、job 索引覆盖 |
 | `airank_citation_source_segments` | `tenant_id` | `project_id` | 按 capture 和 segment index 重建完整正文、校验精确审核边界 | capture/index 唯一索引覆盖 |
 | `airank_page_audit_runs` | `tenant_id` | `project_id` | 项目页面审计历史、按状态领取/回查、幂等创建 | `uk_airank_page_audit_idempotency`、`uk_airank_page_audit_job`、`idx_airank_page_audit_project`、`idx_airank_page_audit_status` 覆盖 |

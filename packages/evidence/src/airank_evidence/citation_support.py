@@ -8,6 +8,8 @@ from statistics import fmean
 
 from airank_domain.measurement import sha256_text
 
+from .fact_accuracy import AnswerClaimKind
+
 
 class CitationSupportLabel(str, Enum):
     SUPPORTS = "supports"
@@ -33,6 +35,8 @@ class CitationClaim:
     answer_sha256: str
     created_by: str
     created_at: datetime
+    claim_kind: AnswerClaimKind = AnswerClaimKind.UNCLASSIFIED
+    subject_entity_text: str | None = None
 
     @classmethod
     def from_answer(
@@ -47,6 +51,8 @@ class CitationClaim:
         answer_end: int,
         created_by: str,
         created_at: datetime,
+        claim_kind: AnswerClaimKind = AnswerClaimKind.UNCLASSIFIED,
+        subject_entity_text: str | None = None,
     ) -> "CitationClaim":
         if answer_start < 0 or answer_end <= answer_start or answer_end > len(answer_text):
             raise ValueError("citation claim requires a valid answer boundary")
@@ -64,6 +70,8 @@ class CitationClaim:
             answer_sha256=sha256_text(answer_text.strip()),
             created_by=created_by,
             created_at=created_at,
+            claim_kind=claim_kind,
+            subject_entity_text=subject_entity_text,
         )
 
     def verify_answer(self, answer_text: str) -> bool:

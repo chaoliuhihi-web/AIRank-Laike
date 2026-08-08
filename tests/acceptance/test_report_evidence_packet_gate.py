@@ -35,9 +35,10 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "pass" in migration
 
     for required in (
-        "airank.report-evidence-packet.v1",
+        "airank.report-evidence-packet.v2",
         "sample_index",
         "citation_index",
+        "fact_accuracy_index",
         "evidence_object_index",
         "known_limitations",
         "METRIC_FORMULAS",
@@ -54,6 +55,8 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "REPORT_EVIDENCE_MISSING" in repository
     assert "INTEGRATION_CAPABILITY_BLOCKED" in repository
     assert "report.evidence_packet_created" in repository
+    assert "review_record_sha256" in repository
+    assert "_find_latest_for_report" in repository
     assert "content-addressed" not in repository  # behavior is implemented, not claimed in a response
     assert "/evidence-packets" in api
     assert "Idempotency-Key" in api

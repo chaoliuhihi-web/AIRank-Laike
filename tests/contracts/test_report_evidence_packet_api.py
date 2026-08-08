@@ -56,7 +56,7 @@ def packet_data(tenant_id: str, report_id: str, created_by: str) -> ReportEviden
         report_id=report_id,
         tenant_id=tenant_id,
         project_id="project_report",
-        schema_version="airank.report-evidence-packet.v1",
+        schema_version="airank.report-evidence-packet.v2",
         status="ready",
         object_ref_id="object_" + "2" * 24,
         content_url="/api/v1/evidence-objects/object_" + "2" * 24 + "/content",
@@ -69,6 +69,8 @@ def packet_data(tenant_id: str, report_id: str, created_by: str) -> ReportEviden
         summary=ReportEvidencePacketSummary(
             sample_count=24,
             citation_count=5,
+            fact_claim_count=3,
+            fact_accuracy_review_count=2,
             evidence_object_count=4,
             known_limitation_count=1,
         ),
@@ -201,6 +203,15 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         )
         """,
         """
+        CREATE TABLE airank_answer_claims (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          snapshot_id VARCHAR(64), claim_text TEXT, answer_start INT, answer_end INT,
+          answer_sha256 CHAR(64), claim_sha256 CHAR(64), extraction_method VARCHAR(32),
+          extractor_version VARCHAR(64), claim_kind VARCHAR(32),
+          subject_entity_text VARCHAR(512), created_by VARCHAR(128), created_at DATETIME
+        )
+        """,
+        """
         CREATE TABLE airank_citation_source_captures (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           citation_id VARCHAR(64), status VARCHAR(32), evidence_grade VARCHAR(64),
@@ -252,11 +263,19 @@ def quality_payload(*, publishable: bool = True) -> dict:
             "total_sample_count": 1,
             "valid_sample_count": 1,
             "not_mentioned_count": 1,
+            "fact_claim_count": 0,
+            "fact_reviewed_claim_count": 0,
+            "fact_accuracy_coverage_rate": None,
+            "fact_accuracy": None,
         },
         "compare_metrics": {
             "total_sample_count": 1,
             "valid_sample_count": 1,
             "not_mentioned_count": 0,
+            "fact_claim_count": 0,
+            "fact_reviewed_claim_count": 0,
+            "fact_accuracy_coverage_rate": None,
+            "fact_accuracy": None,
         },
         "metric_deltas": {"mention_rate": 1.0},
         "known_limitations": ["fact_accuracy_not_evaluated"],
@@ -421,6 +440,55 @@ def test_mysql_report_packet_rejects_idempotency_key_reuse(tmp_path: Path) -> No
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_latest_packet_keeps_historical_v1_downloadable(tmp_path: Path) -> None:
+    repository = MySQLReportEvidencePacketRepository(
+        "sqlite+pysqlite:///:memory:",
+        object_storage=FilesystemObjectStorage(tmp_path / "objects"),
+    )
+    create_packet_tables(repository)
+    seed_publishable_report(repository)
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_object_refs VALUES (
+                  'object_111111111111111111111111', 'tenant_report', 'project_report',
+                  'report_evidence_packet', 'file:///historical-v1.json', 'application/json',
+                  128, :sha256, '{}', '2026-08-08 11:00:00'
+                )
+                """
+            ),
+            {"sha256": "1" * 64},
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_report_evidence_packets VALUES (
+                  'report_packet_11111111111111111111', 'tenant_report', 'project_report',
+                  'report_real', 'airank.report-evidence-packet.v1', :report_sha256,
+                  :source_sha256, 'object_111111111111111111111111', :content_sha256,
+                  128, :summary_json, 'historical-v1-key', 'historical-reporter',
+                  '2026-08-08 11:00:00'
+                )
+                """
+            ),
+            {
+                "report_sha256": "8" * 64,
+                "source_sha256": "2" * 64,
+                "content_sha256": "1" * 64,
+                "summary_json": json.dumps(
+                    {"samples": 2, "citations": 1, "evidence_objects": 0, "known_limitations": 1}
+                ),
+            },
+        )
+
+    latest = repository.get_latest("tenant_report", "report_real")
+
+    assert latest.schema_version == "airank.report-evidence-packet.v1"
+    assert latest.summary.fact_claim_count == 0
+    assert latest.summary.fact_accuracy_review_count == 0
 
 
 def test_in_memory_report_packet_repository_fails_closed() -> None:

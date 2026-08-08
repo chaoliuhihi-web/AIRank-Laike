@@ -15,7 +15,7 @@
 5. 删除固定解析置信度和文本出现顺序排名；加入品牌、别名、公司名、产品名实体识别。
 6. AnswerSnapshot 支持无引用有效回答；原始响应、回答、截图使用 SHA-256，浏览器截图按内容寻址。
 7. Citation 只保存回答区可见且能与回答文本关联的真实外部链接；不再创建“Provider 原始回答”伪引用。
-8. 增加可重算指标：有效样本率、提及率、明确推荐率、Top1/3/5、条件 Top3、稳定性、引用召回、引用支持和事实准确率占位状态。
+8. 增加可重算指标：有效样本率、提及率、明确推荐率、Top1/3/5、条件 Top3、稳定性、引用召回、引用支持、事实声明覆盖率和完整覆盖后的事实准确率；缺声明、缺裁决或只有证据不足时保持明确限制状态。
 9. 无真实证据时，Console/资产包/报告返回明确空状态；不生成演示数字、完成度、报告、事实或发布包。
 10. 新增 Alembic 迁移并在临时 MySQL 空库真实执行通过；临时库验收后已删除。
 11. 建立 `packages/skills` 内部 Skill Registry；首批 8 个 Skill 均包含版本、分类、输入输出 schema、依赖、Provider 要求、证据等级、事实/失败政策、rubric、eval case、状态和可执行 entrypoint。
@@ -94,11 +94,12 @@
 84. Provider Gateway 新增审计路由控制面：`20260808_0017` 保存当前启停/优先级与追加式变更事件，不保存凭证；管理 API 需要可信 `airank:provider:admin` 权限、变更理由和乐观锁版本，拒绝伪造权限、密钥入参、过期版本和停用最后一路。API/Worker 每次生成前热读取控制状态，无需重启；设置中心展示真实 24 小时请求数、成功率、延迟、Token/成本来源字段并允许受控变更。自动按实时指标择优和长时压力测试尚未完成，整体仍为 `partial`。
 85. 重新检查 `yaojingang` 账号 13 个公开仓库，既有 10 个锁定上游 HEAD 均未变化；新增 fork `haidian@707b4b6`。代码级复核确认其候选来源草稿、用途限制、AI 咨询评审不得覆盖确定性 gate、离线评审包和 eligibility 前置空白评分表值得借鉴，已作为 3 条 `reference_only` 能力进入矩阵；不把城市设计业务、素材或无许可证源码带入 AIRank。
 86. 吸收 `haidian` 离线评审包方法并重建为 AIRank 自有客户证据包：`20260808_0018` 新增不可变 `airank_report_evidence_packets`；`airank.report-evidence-packet.v1` 保存质量门禁、公式、风险、限制、样本/引用/对象索引与内容 hash，不复制原始回答正文。只有 v4 基线/复测门禁、报告 hash、基线/对比 run 和完整样本索引同时有效才生成；无数据库/对象存储、质量阻断、旧报告、缺样本或 API 请求审计缺失均失败关闭。控制台按“生成包→下载对象→浏览器 SHA-256 复验→绑定 packet/hash 的下载回执”执行。真实 MySQL 使用 2 个同口径 run、6 个独立 API 样本验证通过，3 个正常未提及样本保留在包内。HTML/PDF/Word、数字签名和正式评分表仍为后续 `partial`。
+87. 完成事实准确率正式证据链：`20260808_0019` 新增追加式 `airank_fact_accuracy_reviews`，AnswerClaim 区分引用声明与品牌/竞品事实声明并保存主体、精确回答边界和 hash。人工裁决只能绑定当前有效、人工审核、可披露、无开放冲突且精确落到 KnowledgeSegment 原文边界的事实修订；事实/来源失效后历史裁决保留但自动退出当前指标。`accurate/inaccurate/outdated/insufficient` 分开统计，只有完整决定性覆盖才计算事实准确率。复测报告从 MySQL 批量重算，客户证据包升级为 `airank.report-evidence-packet.v2` 并加入不复制原文的事实证据索引，历史 v1 仍可读取。证据中心完成桌面和 390×844 浏览器真实点击闭环，随后清理隔离 QA 项目；恢复原项目后 9 条正常未提及仍全部保留，console 为 0 error。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：`339 passed, 24 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：`354 passed, 25 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：8 Skill / 24 cases / 24 passed / 0 promotion eligible / 8 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -111,8 +112,8 @@
 - 最新三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；缺少 Provider 引用、引用支持度和事实准确率继续作为限制项展示。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260808_0018`；60 张 AIRank 表校验通过；新增不可变客户报告证据包表，审计 Provider 路由控制与变更事件表，以及既有不可变来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest、请求 route 审计、引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt 继续通过。
-- 本地真实 MySQL integration：`22 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增客户证据包完整往返、packet/hash/可信操作者绑定下载回执，以及既有路由控制热更新、失败 ScanRun、来源页抓取、Provider 跨 Worker 容量竞争/TTL 回收、引用、页面审计、问题治理、Publisher、扫描 attempt 与复测链继续纳入同一套测试。
+- MySQL：Alembic `20260808_0019`；61 张 AIRank 表校验通过；新增追加式事实准确率裁决表和不可变客户报告证据包表，审计 Provider 路由控制与变更事件表，以及既有不可变来源页 capture/segment、分布式 Provider capacity state/lease、版本化 route manifest、请求 route 审计、引用复核、页面审计、观察来源 provenance、PII 阻断和扫描 attempt 继续通过。
+- 本地真实 MySQL integration：`23 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增事实声明/裁决、当前事实失效、事实指标重算和 v2 证据包 hash 往返，并继续覆盖 packet/hash/可信操作者绑定下载回执、路由控制热更新、失败 ScanRun、来源页抓取、Provider 跨 Worker 容量竞争/TTL 回收、引用、页面审计、问题治理、Publisher、扫描 attempt 与复测链。
 - 报表中心浏览器复验：真实项目当前没有合格报告时显示“尚无客户报告”，不生成趋势或增长数字；“生成老板报告”被明确门禁阻断并提示不会伪造任务成功。1024px 桌面视口无页面级横向溢出，console `0 error / 0 warning`。
 - 来源版本浏览器验收：真实 MySQL 项目从 v1 更新到 v2，v1 保留为 `stale`、旧事实显示 `source_stale`；v2 独有原文返回精确边界与 hash，v1 独有词返回“当前有效来源无匹配”。1543px 桌面和 390×844 移动端均无页面级横向溢出，console `0 error / 0 warning`；同时修复底部使用指南按钮挤压正文导致中文逐字竖排的问题。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。

@@ -17,12 +17,15 @@ from airank_evidence import (
     ReportEvidencePacketError,
     build_object_storage_from_env,
     build_report_evidence_packet,
+    canonical_json_sha256,
 )
 
 
 class ReportEvidencePacketSummary(BaseModel):
     sample_count: int
     citation_count: int
+    fact_claim_count: int
+    fact_accuracy_review_count: int
     evidence_object_count: int
     known_limitation_count: int
 
@@ -32,7 +35,10 @@ class ReportEvidencePacketData(BaseModel):
     report_id: str
     tenant_id: str
     project_id: str
-    schema_version: Literal["airank.report-evidence-packet.v1"]
+    schema_version: Literal[
+        "airank.report-evidence-packet.v1",
+        "airank.report-evidence-packet.v2",
+    ]
     status: Literal["ready"]
     object_ref_id: str
     content_url: str
@@ -136,7 +142,12 @@ class MySQLReportEvidencePacketRepository:
                 return self._packet_data(existing, replay=True)
             report_row = self._load_report(conn, tenant_id, report_id)
             report_record = self._report_record(report_row)
-            sample_index, citation_index, object_index = self._load_evidence_indices(
+            (
+                sample_index,
+                citation_index,
+                fact_accuracy_index,
+                object_index,
+            ) = self._load_evidence_indices(
                 conn,
                 tenant_id,
                 report_row["project_id"],
@@ -148,6 +159,7 @@ class MySQLReportEvidencePacketRepository:
                 report_record=report_record,
                 sample_index=sample_index,
                 citation_index=citation_index,
+                fact_accuracy_index=fact_accuracy_index,
                 evidence_object_index=object_index,
             )
         except ReportEvidencePacketError as exc:
@@ -304,7 +316,7 @@ class MySQLReportEvidencePacketRepository:
     def get_latest(self, tenant_id: str, report_id: str) -> ReportEvidencePacketData:
         with self._engine.begin() as conn:
             self._load_report(conn, tenant_id, report_id)
-            row = self._find_for_report(conn, tenant_id, report_id)
+            row = self._find_latest_for_report(conn, tenant_id, report_id)
         if row is None:
             raise StarletteHTTPException(
                 status_code=404,
@@ -358,13 +370,18 @@ class MySQLReportEvidencePacketRepository:
         tenant_id: str,
         project_id: str,
         evidence_index: Any,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
         if not isinstance(evidence_index, dict):
-            return [], [], []
+            return [], [], [], []
         baseline_run_id = str(evidence_index.get("baseline_run_id") or "")
         compare_run_id = str(evidence_index.get("compare_run_id") or "")
         if not baseline_run_id or not compare_run_id:
-            return [], [], []
+            return [], [], [], []
         params = {
             "tenant_id": tenant_id,
             "project_id": project_id,
@@ -525,6 +542,75 @@ class MySQLReportEvidencePacketRepository:
             for row in citation_rows
         ]
 
+        try:
+            from .citation_support_routes import load_fact_accuracy_bundles_from_connection
+        except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+            from citation_support_routes import (  # type: ignore[no-redef]
+                load_fact_accuracy_bundles_from_connection,
+            )
+        snapshot_ids = [
+            str(item["snapshot_id"])
+            for item in samples
+            if item.get("snapshot_id")
+        ]
+        fact_bundles = load_fact_accuracy_bundles_from_connection(
+            conn,
+            tenant_id,
+            snapshot_ids,
+        )
+        fact_accuracy_index: list[dict[str, Any]] = []
+        for snapshot_id in snapshot_ids:
+            bundle = fact_bundles.get(snapshot_id)
+            if bundle is None:
+                continue
+            for claim in bundle.claims:
+                if claim.claim_kind not in {"brand_fact", "competitor_fact"}:
+                    continue
+                claim_reviews = sorted(
+                    (
+                        review
+                        for review in bundle.reviews
+                        if review.claim_id == claim.claim_id
+                    ),
+                    key=lambda review: (review.reviewed_at, review.review_id),
+                )
+                latest = claim_reviews[-1] if claim_reviews else None
+                latest_review: dict[str, Any] | None = None
+                if latest is not None:
+                    latest_review = {
+                        "review_id": latest.review_id,
+                        "verdict": latest.verdict,
+                        "evidence_grade": latest.evidence_grade,
+                        "fact_revision_id": latest.fact_revision_id,
+                        "knowledge_source_id": latest.knowledge_source_id,
+                        "knowledge_segment_id": latest.knowledge_segment_id,
+                        "fact_revision_sha256": latest.fact_revision_sha256,
+                        "source_content_sha256": latest.source_content_sha256,
+                        "quoted_text_sha256": latest.quoted_text_sha256,
+                        "source_start": latest.source_start,
+                        "source_end": latest.source_end,
+                        "review_method": latest.review_method,
+                        "reviewed_by": latest.reviewed_by,
+                        "reviewed_at": _iso_value(latest.reviewed_at),
+                        "supersedes_review_id": latest.supersedes_review_id,
+                        "commercially_verified": latest.commercially_verified,
+                    }
+                    latest_review["review_record_sha256"] = canonical_json_sha256(
+                        latest_review
+                    )
+                fact_accuracy_index.append(
+                    {
+                        "claim_id": claim.claim_id,
+                        "snapshot_id": claim.snapshot_id,
+                        "claim_kind": claim.claim_kind,
+                        "claim_sha256": claim.claim_sha256,
+                        "answer_start": claim.answer_start,
+                        "answer_end": claim.answer_end,
+                        "subject_entity_text": claim.subject_entity_text,
+                        "latest_review": latest_review,
+                    }
+                )
+
         linked_object_ids: set[str] = set()
         for sample in samples:
             linked_object_ids.update(
@@ -565,7 +651,7 @@ class MySQLReportEvidencePacketRepository:
             for row in object_rows
             if str(row["id"]) in linked_object_ids
         ]
-        return samples, citations, objects
+        return samples, citations, fact_accuracy_index, objects
 
     def _insert_object_ref(
         self,
@@ -630,6 +716,13 @@ class MySQLReportEvidencePacketRepository:
             },
         )
 
+    def _find_latest_for_report(self, conn: Any, tenant_id: str, report_id: str) -> Any:
+        return self._packet_query(
+            conn,
+            "p.tenant_id=:tenant_id AND p.report_id=:report_id",
+            {"tenant_id": tenant_id, "report_id": report_id},
+        )
+
     @staticmethod
     def _packet_query(conn: Any, where_clause: str, params: dict[str, Any]) -> Any:
         return conn.execute(
@@ -668,6 +761,8 @@ class MySQLReportEvidencePacketRepository:
             summary=ReportEvidencePacketSummary(
                 sample_count=int(summary.get("samples", 0)),
                 citation_count=int(summary.get("citations", 0)),
+                fact_claim_count=int(summary.get("fact_claims", 0)),
+                fact_accuracy_review_count=int(summary.get("fact_accuracy_reviews", 0)),
                 evidence_object_count=int(summary.get("evidence_objects", 0)),
                 known_limitation_count=int(summary.get("known_limitations", 0)),
             ),

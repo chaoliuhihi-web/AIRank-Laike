@@ -26,6 +26,9 @@ class CohortMetrics:
     stability: float | None
     citation_recall_rate: float
     citation_support: float | None
+    fact_claim_count: int
+    fact_reviewed_claim_count: int
+    fact_accuracy_coverage_rate: float | None
     fact_accuracy: float | None
 
     def to_record(self) -> dict[str, int | float | None]:
@@ -61,6 +64,8 @@ def calculate_cohort_metrics(samples: Iterable[MeasurementSample]) -> CohortMetr
 
     support_values = [sample.citation_support_score for sample in valid if sample.citation_support_score is not None]
     fact_values = [sample.fact_accuracy for sample in valid if sample.fact_accuracy is not None]
+    fact_claim_count = sum(sample.fact_claim_count for sample in valid)
+    fact_reviewed_claim_count = sum(sample.fact_reviewed_claim_count for sample in valid)
     citation_samples = sum(sample.citation_count > 0 for sample in valid)
 
     return CohortMetrics(
@@ -80,6 +85,13 @@ def calculate_cohort_metrics(samples: Iterable[MeasurementSample]) -> CohortMetr
         stability=calculate_repeat_stability(valid),
         citation_recall_rate=rate(citation_samples, denominator),
         citation_support=round(fmean(support_values), 6) if support_values else None,
+        fact_claim_count=fact_claim_count,
+        fact_reviewed_claim_count=fact_reviewed_claim_count,
+        fact_accuracy_coverage_rate=(
+            rate(fact_reviewed_claim_count, fact_claim_count)
+            if fact_claim_count
+            else None
+        ),
         fact_accuracy=round(fmean(fact_values), 6) if fact_values else None,
     )
 

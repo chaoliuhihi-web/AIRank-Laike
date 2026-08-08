@@ -124,7 +124,16 @@ GET  /api/v1/reports/{report_id}/evidence-packets/latest
 GET  /api/v1/evidence-objects/{object_ref_id}/content
 ```
 
-生成接口必须携带 `Idempotency-Key`，操作者来自认证上下文。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。证据包采用内容寻址保存，包含公式、限制项、风险、样本/引用/对象索引和文件哈希，但不复制原始回答正文；原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
+生成接口必须携带 `Idempotency-Key`，操作者来自认证上下文。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。当前新包使用 `airank.report-evidence-packet.v2`，采用内容寻址保存，包含公式、限制项、风险、样本/引用/事实准确性/对象索引和文件哈希，但不复制原始回答正文；事实索引保存声明与回答边界、当前审核裁决、FactRevision/KnowledgeSource/KnowledgeSegment 引用及原文边界 hash，并与报告中的声明数、确定性覆盖率和准确率复算一致。历史 v1 包仍可下载，但新建时不会冒充 v2。原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
+
+事实准确性审核接口：
+
+```text
+GET  /api/v1/samples/{snapshot_id}/fact-accuracy
+POST /api/v1/answer-claims/{claim_id}/fact-accuracy-reviews
+```
+
+GET 响应使用 `fact_accuracy_bundle_response.schema.json`，POST 请求使用 `fact_accuracy_review_request.schema.json` 并要求 `Idempotency-Key`。只有 `brand_fact` 与 `competitor_fact` 进入分母；`accurate/inaccurate/outdated` 必须由人工绑定当前已审核、公开或脱敏、未过期、无冲突的 FactRevision 及有效来源精确原文边界。`insufficient_evidence` 保留为证据缺口，不得按错误计分。只有全部事实声明都完成当前、确定性人工核验时才输出 `fact_accuracy`；事实或来源失效后旧审核自动退出商业指标，但不可变审核记录保留。
 
 ## M3 事实审核契约
 
@@ -152,6 +161,8 @@ GET /api/v1/projects/{project_id}/asset-bundle
 - 创建 publish package
 - 生成报告
 - 发起 retest
+- 创建事实准确性审核
+- 生成报告证据包
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
 

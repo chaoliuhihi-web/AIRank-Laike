@@ -20,6 +20,9 @@ def metrics(*, valid: int, total: int, mention: float, recommend: float) -> Coho
         stability=0.8,
         citation_recall_rate=0.2,
         citation_support=None,
+        fact_claim_count=0,
+        fact_reviewed_claim_count=0,
+        fact_accuracy_coverage_rate=None,
         fact_accuracy=None,
     )
 

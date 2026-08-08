@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/fact_accuracy_review_request.schema.json",
+  "title": "AIRank Fact Accuracy Review Request",
+  "type": "object",
+  "required": ["verdict", "rationale", "reviewed_by"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "enum": ["accurate", "inaccurate", "outdated", "insufficient_evidence"]
+    },
+    "fact_revision_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+    "rationale": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "review_method": { "enum": ["human", "ai_assisted"], "default": "human" },
+    "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 64 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "verdict": { "const": "insufficient_evidence" } },
+        "required": ["verdict"]
+      },
+      "then": {
+        "properties": { "fact_revision_id": { "type": "null" } }
+      },
+      "else": {
+        "required": ["fact_revision_id"],
+        "properties": { "fact_revision_id": { "type": "string", "minLength": 1, "maxLength": 64 } }
+      }
+    }
+  ]
+}

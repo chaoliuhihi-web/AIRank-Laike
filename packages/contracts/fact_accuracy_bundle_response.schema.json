@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/fact_accuracy_bundle_response.schema.json",
+  "title": "AIRank Fact Accuracy Bundle Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["snapshot_id", "claims", "reviews", "metrics"],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "claims": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/claim" }
+        },
+        "reviews": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/review" }
+        },
+        "metrics": { "$ref": "#/$defs/metrics" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "required": [
+        "claim_id", "snapshot_id", "claim_text", "answer_start", "answer_end",
+        "answer_sha256", "claim_sha256", "extraction_method", "extractor_version",
+        "claim_kind", "subject_entity_text", "created_by", "created_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "snapshot_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "claim_text": { "type": "string", "minLength": 1 },
+        "answer_start": { "type": "integer", "minimum": 0 },
+        "answer_end": { "type": "integer", "minimum": 1 },
+        "answer_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "claim_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "extraction_method": { "enum": ["manual", "ai_assisted"] },
+        "extractor_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "claim_kind": { "enum": ["unclassified", "brand_fact", "competitor_fact", "general_fact", "opinion"] },
+        "subject_entity_text": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+        "created_by": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "review_id", "claim_id", "verdict", "evidence_grade", "fact_revision_id",
+        "knowledge_source_id", "knowledge_segment_id", "fact_revision_sha256",
+        "source_content_sha256", "quoted_text", "quoted_text_sha256", "source_start",
+        "source_end", "rationale", "review_method", "reviewed_by", "reviewed_at",
+        "supersedes_review_id", "commercially_verified", "idempotent_replay"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "review_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "verdict": { "enum": ["accurate", "inaccurate", "outdated", "insufficient_evidence"] },
+        "evidence_grade": { "enum": ["approved_fact_source_boundary", "no_approved_fact"] },
+        "fact_revision_id": { "type": ["string", "null"] },
+        "knowledge_source_id": { "type": ["string", "null"] },
+        "knowledge_segment_id": { "type": ["string", "null"] },
+        "fact_revision_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "source_content_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "quoted_text": { "type": ["string", "null"] },
+        "quoted_text_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "source_start": { "type": ["integer", "null"], "minimum": 0 },
+        "source_end": { "type": ["integer", "null"], "minimum": 1 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "review_method": { "enum": ["human", "ai_assisted"] },
+        "reviewed_by": { "type": "string", "minLength": 1 },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "supersedes_review_id": { "type": ["string", "null"] },
+        "commercially_verified": { "type": "boolean" },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "registered_claim_count", "factual_claim_count", "reviewed_claim_count",
+        "commercially_verified_claim_count", "decisive_claim_count", "accurate_count",
+        "inaccurate_count", "outdated_count", "insufficient_evidence_count",
+        "evaluation_coverage_rate", "fact_accuracy", "known_limitations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "registered_claim_count": { "type": "integer", "minimum": 0 },
+        "factual_claim_count": { "type": "integer", "minimum": 0 },
+        "reviewed_claim_count": { "type": "integer", "minimum": 0 },
+        "commercially_verified_claim_count": { "type": "integer", "minimum": 0 },
+        "decisive_claim_count": { "type": "integer", "minimum": 0 },
+        "accurate_count": { "type": "integer", "minimum": 0 },
+        "inaccurate_count": { "type": "integer", "minimum": 0 },
+        "outdated_count": { "type": "integer", "minimum": 0 },
+        "insufficient_evidence_count": { "type": "integer", "minimum": 0 },
+        "evaluation_coverage_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "fact_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "known_limitations": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

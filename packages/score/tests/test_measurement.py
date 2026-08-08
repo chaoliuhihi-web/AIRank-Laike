@@ -97,3 +97,36 @@ def test_failed_and_blocked_samples_are_not_effective_answers() -> None:
     assert metrics.valid_sample_rate == 0
     assert metrics.mention_rate == 0
     assert metrics.stability is None
+
+
+def test_fact_accuracy_reports_claim_coverage_separately_from_accuracy() -> None:
+    samples = [
+        MeasurementSample(
+            sample_id="sample_fact_1",
+            question_id="question_1",
+            context=context(1),
+            status=SampleStatus.VALID,
+            answer_text="AIRank 支持重复采样。",
+            mention_class=MentionClass.MENTIONED,
+            fact_claim_count=2,
+            fact_reviewed_claim_count=2,
+            fact_accuracy=0.5,
+        ),
+        MeasurementSample(
+            sample_id="sample_fact_2",
+            question_id="question_1",
+            context=context(2),
+            status=SampleStatus.VALID,
+            answer_text="AIRank 支持证据下钻。",
+            mention_class=MentionClass.MENTIONED,
+            fact_claim_count=1,
+            fact_reviewed_claim_count=0,
+        ),
+    ]
+
+    metrics = calculate_cohort_metrics(samples)
+
+    assert metrics.fact_claim_count == 3
+    assert metrics.fact_reviewed_claim_count == 2
+    assert metrics.fact_accuracy_coverage_rate == 0.666667
+    assert metrics.fact_accuracy == 0.5

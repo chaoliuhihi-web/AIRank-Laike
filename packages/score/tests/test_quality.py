@@ -66,10 +66,45 @@ def test_quality_report_keeps_not_mentioned_in_valid_denominator() -> None:
     assert report.metrics.not_mentioned_count == 3
     assert report.metrics.mention_rate == 0
     assert "valid_samples_have_no_provider_citations" in report.known_limitations
+    assert "fact_claims_not_registered" in report.known_limitations
+    assert "fact_accuracy_not_evaluated" in report.known_limitations
     assert len(report.data_sha256) == 64
     assert len(report.report_sha256) == 64
     assert report.surface_evidence[0].evidence_complete_count == 3
     assert report.surface_evidence[0].blocker_count == 0
+
+
+def test_quality_report_hashes_fact_accuracy_and_exposes_partial_coverage() -> None:
+    samples = list(sample(index) for index in range(1, 4))
+    samples[0] = MeasurementSample(
+        **{
+            **samples[0].__dict__,
+            "fact_claim_count": 1,
+            "fact_reviewed_claim_count": 1,
+            "fact_accuracy": 1.0,
+        }
+    )
+    samples[1] = MeasurementSample(
+        **{
+            **samples[1].__dict__,
+            "fact_claim_count": 1,
+            "fact_reviewed_claim_count": 0,
+        }
+    )
+    report = build_measurement_quality_report(
+        run_id="run_fact_coverage",
+        samples=tuple(samples),
+        signatures=tuple(
+            f"question_1|qianwen|blind|api|{index}" for index in range(1, 4)
+        ),
+        evidence_manifests=tuple(api_evidence(index) for index in range(1, 4)),
+    )
+
+    assert report.metrics.fact_claim_count == 2
+    assert report.metrics.fact_reviewed_claim_count == 1
+    assert report.metrics.fact_accuracy_coverage_rate == 0.5
+    assert report.metrics.fact_accuracy == 1.0
+    assert "fact_accuracy_incomplete_coverage" in report.known_limitations
 
 
 def test_quality_report_blocks_single_sample_even_when_evidence_is_complete() -> None:

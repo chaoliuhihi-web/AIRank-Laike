@@ -141,6 +141,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CITATION_CAPTURE_URL_INVALID": (409, "Citation source URL is invalid"),
     "CITATION_CLAIM_NOT_FOUND": (404, "Citation claim not found"),
     "CITATION_SUPPORT_EVIDENCE_INVALID": (409, "Citation support evidence is invalid"),
+    "FACT_ACCURACY_EVIDENCE_INVALID": (409, "Fact accuracy evidence is invalid"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
