@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T10:33:23+08:00
+Generated: 2026-08-08T10:35:34+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -43,7 +43,7 @@ Status: PASS
 Status: BLOCKED
 
 ```text
-local HEAD df1f646d95979aa97a0110113ca1e7a1ed9771ee does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD 298aaa309f82a17b6df3fb83db93cf35399a221d does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## gitee main ref
@@ -51,7 +51,7 @@ local HEAD df1f646d95979aa97a0110113ca1e7a1ed9771ee does not match origin main 4
 Status: BLOCKED
 
 ```text
-local HEAD df1f646d95979aa97a0110113ca1e7a1ed9771ee does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD 298aaa309f82a17b6df3fb83db93cf35399a221d does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## diff check
@@ -138,7 +138,7 @@ tests/contracts/test_scan_run_api_contract.py: 25 warnings
     cursor.execute(statement, parameters)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-145 passed, 27 warnings in 1.12s
+145 passed, 27 warnings in 1.14s
 ```
 
 ## crawler lite tests
@@ -156,7 +156,7 @@ Status: PASS
 
 ```text
 .....................................................                    [100%]
-53 passed in 0.50s
+53 passed in 0.51s
 ```
 
 ## worker tests
@@ -171,7 +171,7 @@ tests/test_async_job_lease.py: 73 warnings
     cursor.execute(statement, parameters)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-25 passed, 73 warnings in 0.13s
+25 passed, 73 warnings in 0.14s
 ```
 
 ## score tests
@@ -198,7 +198,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.03s
+23 passed in 0.02s
 ```
 
 ## provider gateway tests
@@ -243,7 +243,7 @@ computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
 dist/assets/index-C5thYdsS.css   59.90 kB │ gzip:  10.22 kB
 dist/assets/index-r9Lfqui9.js   329.40 kB │ gzip: 100.74 kB
-✓ built in 698ms
+✓ built in 704ms
 ```
 
 ## real integration tests
@@ -252,7 +252,7 @@ Status: PASS
 
 ```text
 ....s................s                                                   [100%]
-20 passed, 2 skipped in 2.38s
+20 passed, 2 skipped in 2.45s
 ```
 
 ## alembic offline sql
@@ -300,7 +300,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -311,7 +311,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -322,7 +322,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -337,7 +337,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -348,7 +348,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -359,7 +359,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -370,7 +370,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -381,7 +381,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:32:19.219398+00:00",
+    "checked_at": "2026-08-08T02:34:37.887712+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -417,9 +417,9 @@ Status: BLOCKED
       "url": "https://www.doubao.com/chat/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
       "headless": true,
-      "blocker_code": "captcha_required",
-      "reason": "web page requires login or human verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/06/064b57668f62f13d092184ffdd32a2c2924266c9dcda1eb74c07606639659eba.png"
+      "blocker_code": "login_required",
+      "reason": "web page requires login",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/ee/ee6d6f54c60b74702e95c79621b327699146e56cee9747bfa82fc69180f4fbf9.png"
     },
     {
       "provider": "qianwen",
@@ -430,7 +430,7 @@ Status: BLOCKED
       "headless": true,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/7e/7eb2b46f2111376e3464e902bb163205c670b6d732d09db1217af7ec0dca2b81.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/80/803d5cd9eb5d40b7c3d9a04acbf2ff632cdb1ecdace31aa0e2041d8f3d2f2856.png"
     },
     {
       "provider": "kimi",
@@ -439,9 +439,9 @@ Status: BLOCKED
       "url": "https://www.kimi.com/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
       "headless": true,
-      "blocker_code": "captcha_required",
-      "reason": "web page requires login or human verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/28/28d45b4b5a6fa5b08d4cb2a019ba0c57292801bf1670f6d17ba761ea64e25e1b.png"
+      "blocker_code": "login_required",
+      "reason": "web page requires login",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/fe/fe146de7c143f428c0c4104dee50cc8f88a5a4da180d5810374d9e433f8f79c0.png"
     },
     {
       "provider": "deepseek",
@@ -451,17 +451,17 @@ Status: BLOCKED
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
       "headless": true,
       "blocker_code": "captcha_required",
-      "reason": "web page requires login or human verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/7d/7d3d384b65672028342e974b77187077e7e7e57f893dc14b8da3cf94da07287f.png"
+      "reason": "web page requires captcha verification",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/d3/d3af0e75029b77acda8cd7a761c831880da9db6ae9c0dfe8ed3948f6f1aac2eb.png"
     }
   ]
 }
 
 Warnings:
-- doubao=blocked (web page requires login or human verification)
+- doubao=blocked (web page requires login)
 - qianwen=blocked (web page returned login or human verification text instead of an answer)
-- kimi=blocked (web page requires login or human verification)
-- deepseek=blocked (web page requires login or human verification)
+- kimi=blocked (web page requires login)
+- deepseek=blocked (web page requires captcha verification)
 
 Blockers:
 - browser_provider_ready=0/4
