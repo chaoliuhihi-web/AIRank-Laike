@@ -143,9 +143,10 @@ POST /api/v1/answer-claims/{claim_id}/fact-accuracy-reviews
 POST /api/v1/projects/{project_id}/evidence-review-cases/fact-accuracy
 POST /api/v1/evidence-review-cases/{case_id}/decisions
 GET  /api/v1/projects/{project_id}/evidence-review-cases
+GET  /api/v1/projects/{project_id}/evidence-review-inbox?limit=12&cursor=...
 ```
 
-GET 响应使用 `fact_accuracy_bundle_response.schema.json`；旧单人 POST 仅保留兼容与历史取证，不进入商业指标。生产审核必须通过 evidence review case 创建第一审核，再由不同账号盲审；不一致时由第三个不同账号裁决。只有 `brand_fact` 与 `competitor_fact` 进入分母；`accurate/inaccurate/outdated` 必须由人工绑定当前已审核、公开或脱敏、未过期、无冲突的 FactRevision 及有效来源精确原文边界。`insufficient_evidence` 保留为证据缺口，不得按错误计分。只有全部事实声明都完成当前、确定性、最终 `production` 双人审核时才输出 `fact_accuracy`；事实或来源失效后旧审核自动退出商业指标，但不可变审核记录保留。`benchmark` 至少需要 20 个独立双人样本、全部终结且 Cohen's kappa 不低于 0.80 才通过审核质量门禁；benchmark 结论永不进入客户指标。
+GET 响应使用 `fact_accuracy_bundle_response.schema.json`；项目质量队列使用 `evidence_review_queue_response.schema.json`，当前审核人的有界待办使用 `evidence_review_inbox_response.schema.json`。inbox 只查询服务端判定为 `submit_secondary/adjudicate` 的任务，裁决优先、同优先级按最早创建顺序，使用不透明 seek cursor 而不是不稳定 offset；无效 cursor 返回 `422 EVIDENCE_REVIEW_CURSOR_INVALID`。旧单人 POST 仅保留兼容与历史取证，不进入商业指标。生产审核必须通过 evidence review case 创建第一审核，再由不同账号盲审；不一致时由第三个不同账号裁决。只有 `brand_fact` 与 `competitor_fact` 进入分母；`accurate/inaccurate/outdated` 必须由人工绑定当前已审核、公开或脱敏、未过期、无冲突的 FactRevision 及有效来源精确原文边界。`insufficient_evidence` 保留为证据缺口，不得按错误计分。只有全部事实声明都完成当前、确定性、最终 `production` 双人审核时才输出 `fact_accuracy`；事实或来源失效后旧审核自动退出商业指标，但不可变审核记录保留。`benchmark` 至少需要 20 个独立双人样本、全部终结且 Cohen's kappa 不低于 0.80 才通过审核质量门禁；benchmark 结论永不进入客户指标。
 
 ## M3 事实审核契约
 

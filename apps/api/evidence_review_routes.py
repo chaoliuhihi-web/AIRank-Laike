@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from base64 import b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from datetime import datetime, timezone
 import json
 import os
@@ -167,6 +169,21 @@ class EvidenceReviewQueueResponse(BaseModel):
     meta: dict[str, str]
 
 
+class EvidenceReviewInboxData(BaseModel):
+    project_id: str
+    cases: list[EvidenceReviewCaseData]
+    actionable_count: int
+    awaiting_secondary_count: int
+    adjudication_count: int
+    limit: int
+    next_cursor: Optional[str]
+
+
+class EvidenceReviewInboxResponse(BaseModel):
+    data: EvidenceReviewInboxData
+    meta: dict[str, str]
+
+
 class EvidenceReviewRepository(Protocol):
     def create_citation_case(
         self,
@@ -204,6 +221,15 @@ class EvidenceReviewRepository(Protocol):
         snapshot_id: Optional[str],
         actor: str,
     ) -> EvidenceReviewQueueData: ...
+
+    def list_inbox(
+        self,
+        tenant_id: str,
+        project_id: str,
+        actor: str,
+        limit: int,
+        cursor: Optional[str],
+    ) -> EvidenceReviewInboxData: ...
 
 
 def evidence_basis_for_citation(
@@ -488,6 +514,47 @@ class InMemoryEvidenceReviewRepository:
                 and (snapshot_id is None or value["snapshot_id"] == snapshot_id)
             ]
             return build_queue(project_id, snapshot_id, cases, actor)
+
+    def list_inbox(
+        self,
+        tenant_id: str,
+        project_id: str,
+        actor: str,
+        limit: int,
+        cursor: Optional[str],
+    ) -> EvidenceReviewInboxData:
+        cursor_key = decode_review_inbox_cursor(cursor) if cursor else None
+        with self.lock:
+            actionable = [
+                value
+                for value in self.cases.values()
+                if value["tenant_id"] == tenant_id
+                and value["project_id"] == project_id
+                and case_data_from_mapping(value, actor).next_action
+                in {"submit_secondary", "adjudicate"}
+            ]
+            actionable.sort(key=review_inbox_cursor_key)
+            page_candidates = [
+                value
+                for value in actionable
+                if cursor_key is None or review_inbox_cursor_key(value) > cursor_key
+            ]
+            page = page_candidates[: limit + 1]
+            has_more = len(page) > limit
+            returned = page[:limit]
+            return EvidenceReviewInboxData(
+                project_id=project_id,
+                cases=[case_data_from_mapping(value, actor) for value in returned],
+                actionable_count=len(actionable),
+                awaiting_secondary_count=sum(
+                    str(value["status"]) == "awaiting_secondary" for value in actionable
+                ),
+                adjudication_count=sum(
+                    str(value["status"]) == "disputed" for value in actionable
+                ),
+                limit=limit,
+                next_cursor=(encode_review_inbox_cursor(returned[-1]) if has_more else None),
+            )
 
     def _replay(self, tenant_id: str, project_id: str, key: str, request_hash: str, actor: str) -> Optional[EvidenceReviewCaseData]:
         item = self.idempotency.get((tenant_id, project_id, key))
@@ -910,6 +977,104 @@ class MySQLEvidenceReviewRepository:
             cases = [self._case_mapping(conn, row) for row in rows]
             return build_queue(project_id, snapshot_id, cases, actor)
 
+    def list_inbox(
+        self,
+        tenant_id: str,
+        project_id: str,
+        actor: str,
+        limit: int,
+        cursor: Optional[str],
+    ) -> EvidenceReviewInboxData:
+        cursor_key = decode_review_inbox_cursor(cursor) if cursor else None
+        eligibility = """
+          c.status IN ('awaiting_secondary', 'disputed')
+          AND NOT EXISTS (
+            SELECT 1 FROM airank_citation_support_reviews citation_review
+            WHERE citation_review.tenant_id=c.tenant_id
+              AND citation_review.review_case_id=c.id
+              AND citation_review.reviewed_by=:actor
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM airank_fact_accuracy_reviews fact_review
+            WHERE fact_review.tenant_id=c.tenant_id
+              AND fact_review.review_case_id=c.id
+              AND fact_review.reviewed_by=:actor
+          )
+        """
+        cursor_clause = ""
+        params: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "actor": actor,
+            "row_limit": limit + 1,
+        }
+        if cursor_key is not None:
+            cursor_clause = """
+              AND (
+                (CASE WHEN c.status='disputed' THEN 0 ELSE 1 END) > :cursor_priority
+                OR (
+                  (CASE WHEN c.status='disputed' THEN 0 ELSE 1 END) = :cursor_priority
+                  AND c.created_at > :cursor_created_at
+                )
+                OR (
+                  (CASE WHEN c.status='disputed' THEN 0 ELSE 1 END) = :cursor_priority
+                  AND c.created_at = :cursor_created_at
+                  AND c.id > :cursor_case_id
+                )
+              )
+            """
+            params.update(
+                cursor_priority=cursor_key[0],
+                cursor_created_at=datetime.fromtimestamp(
+                    cursor_key[1] / 1_000_000, tz=timezone.utc
+                ).replace(tzinfo=None),
+                cursor_case_id=cursor_key[2],
+            )
+        with self.engine.begin() as conn:
+            counts = conn.execute(
+                text(
+                    f"""
+                    SELECT COUNT(*) AS actionable_count,
+                           SUM(CASE WHEN c.status='awaiting_secondary' THEN 1 ELSE 0 END)
+                             AS awaiting_secondary_count,
+                           SUM(CASE WHEN c.status='disputed' THEN 1 ELSE 0 END)
+                             AS adjudication_count
+                    FROM airank_evidence_review_cases c
+                    WHERE c.tenant_id=:tenant_id AND c.project_id=:project_id
+                      AND {eligibility}
+                    """
+                ),
+                params,
+            ).mappings().one()
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT c.* FROM airank_evidence_review_cases c
+                    WHERE c.tenant_id=:tenant_id AND c.project_id=:project_id
+                      AND {eligibility}
+                      {cursor_clause}
+                    ORDER BY CASE WHEN c.status='disputed' THEN 0 ELSE 1 END,
+                             c.created_at ASC, c.id ASC
+                    LIMIT :row_limit
+                    """
+                ),
+                params,
+            ).mappings().all()
+            has_more = len(rows) > limit
+            returned = rows[:limit]
+            cases = [self._case_mapping(conn, row) for row in returned]
+            return EvidenceReviewInboxData(
+                project_id=project_id,
+                cases=[case_data_from_mapping(case, actor) for case in cases],
+                actionable_count=int(counts["actionable_count"] or 0),
+                awaiting_secondary_count=int(counts["awaiting_secondary_count"] or 0),
+                adjudication_count=int(counts["adjudication_count"] or 0),
+                limit=limit,
+                next_cursor=(
+                    encode_review_inbox_cursor(returned[-1]) if has_more else None
+                ),
+            )
+
     def _insert_case(self, conn: Any, **values: Any) -> None:
         actor = values.pop("actor")
         try:
@@ -1151,6 +1316,49 @@ def case_data_from_mapping(case: Mapping[str, Any], actor: str) -> EvidenceRevie
     )
 
 
+def review_inbox_cursor_key(case: Mapping[str, Any]) -> tuple[int, int, str]:
+    priority = 0 if str(case["status"]) == "disputed" else 1
+    created_at = citation_routes._utc_datetime(case["created_at"])
+    created_micros = int(created_at.timestamp() * 1_000_000)
+    return priority, created_micros, str(case.get("case_id") or case.get("id"))
+
+
+def encode_review_inbox_cursor(case: Mapping[str, Any]) -> str:
+    priority, created_micros, case_id = review_inbox_cursor_key(case)
+    payload = json.dumps(
+        [1, priority, created_micros, case_id],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def decode_review_inbox_cursor(cursor: str) -> tuple[int, int, str]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(
+            b64decode(f"{cursor}{padding}", altchars=b"-_", validate=True).decode("utf-8")
+        )
+        if (
+            not isinstance(payload, list)
+            or len(payload) != 4
+            or payload[0] != 1
+            or payload[1] not in {0, 1}
+            or not isinstance(payload[2], int)
+            or payload[2] < 0
+            or not isinstance(payload[3], str)
+            or not payload[3]
+            or len(payload[3]) > 64
+        ):
+            raise ValueError("invalid cursor payload")
+        return int(payload[1]), int(payload[2]), payload[3]
+    except (Base64Error, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise StarletteHTTPException(
+            status_code=422,
+            detail={"code": "EVIDENCE_REVIEW_CURSOR_INVALID"},
+        ) from exc
+
+
 def pair_from_case(case: Mapping[str, Any]) -> IndependentReviewPair:
     decisions = [decision_data(item) for item in case.get("decisions", [])]
     primary = next((item.label for item in decisions if item.reviewer_role == "primary"), None)
@@ -1267,6 +1475,27 @@ def list_evidence_review_cases(
     return EvidenceReviewQueueResponse(
         data=EVIDENCE_REVIEW_REPOSITORY.list_cases(
             tenant_id, project_id, snapshot_id, actor
+        ),
+        meta=response_meta(trace_id),
+    )
+
+
+@router.get(
+    "/projects/{project_id}/evidence-review-inbox",
+    response_model=EvidenceReviewInboxResponse,
+)
+def list_evidence_review_inbox(
+    project_id: str,
+    limit: int = Query(default=12, ge=1, le=50),
+    cursor: Optional[str] = Query(default=None, min_length=1, max_length=512),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+) -> EvidenceReviewInboxResponse:
+    actor = trusted_actor("console-reviewer", authenticated_actor)
+    return EvidenceReviewInboxResponse(
+        data=EVIDENCE_REVIEW_REPOSITORY.list_inbox(
+            tenant_id, project_id, actor, limit, cursor
         ),
         meta=response_meta(trace_id),
     )

@@ -158,6 +158,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "EVIDENCE_REVIEW_CASE_NOT_FOUND": (404, "Evidence review case was not found"),
     "EVIDENCE_REVIEW_CASE_EXISTS": (409, "An evidence review case already exists for this evidence basis"),
     "EVIDENCE_REVIEW_CASE_FINAL": (409, "Evidence review case is already final"),
+    "EVIDENCE_REVIEW_CURSOR_INVALID": (422, "Evidence review inbox cursor is invalid"),
     "EVIDENCE_REVIEW_LABEL_INVALID": (409, "Evidence review label is invalid for this case"),
     "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN": (409, "Independent review requires a different reviewer"),
     "SOURCE_REGISTRY_ENTRY_NOT_FOUND": (404, "Citation source registry entry not found"),

@@ -590,6 +590,16 @@ export type EvidenceReviewQueue = {
   benchmark_quality: ReviewQualityMetrics;
 };
 
+export type EvidenceReviewInbox = {
+  project_id: string;
+  cases: EvidenceReviewCase[];
+  actionable_count: number;
+  awaiting_secondary_count: number;
+  adjudication_count: number;
+  limit: number;
+  next_cursor: string | null;
+};
+
 export type CitationSourceCapture = {
   capture_id: string;
   tenant_id: string;
@@ -1720,6 +1730,20 @@ export function fetchEvidenceReviewCases(
   return fetchData(
     `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-cases${query}`,
     "trc_web_evidence_review_queue",
+    signal,
+  );
+}
+
+export function fetchEvidenceReviewInbox(
+  projectId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+): Promise<EvidenceReviewInbox> {
+  const params = new URLSearchParams({ limit: "12" });
+  if (cursor) params.set("cursor", cursor);
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-inbox?${params.toString()}`,
+    "trc_web_evidence_review_inbox",
     signal,
   );
 }

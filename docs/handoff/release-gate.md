@@ -1031,3 +1031,25 @@ Limitations and blockers:
 Decision:
 
 - Review work is now discoverable without weakening blind review, but AIRank remains commercial `NO-GO` until reviewer quality, production infrastructure, Consumer collection and longitudinal evidence pass their gates.
+
+## 2026-08-09 Reviewer Inbox Cursor Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- The project reviewer inbox now has its own versioned response contract and an opaque seek cursor. MySQL filters to actor-actionable `awaiting_secondary` and `disputed` cases, excludes every case in which the current trusted actor already made either a citation or fact decision, and caps pages at 50 rows.
+- Ordering is deterministic: disputed adjudications first, then oldest creation time and case ID. The cursor carries only the versioned ordering anchor; malformed or non-canonical Base64 input fails with `422 EVIDENCE_REVIEW_CURSOR_INVALID`.
+- The full project case endpoint remains unpaginated for quality statistics and Cohen's kappa. Pagination therefore does not change benchmark denominators or hide completed cases from the measurement gate.
+- Isolated real MySQL acceptance created 14 actor-actionable benchmark cases: 2 adjudications and 12 secondary reviews. Page one returned 12, page two returned 2, all 14 IDs were unique, the first two were disputed, and no peer decision was visible.
+- Real browser acceptance loaded 12 then 14 unique cards through two HTTP 200 requests, opened the immutable answer and exact Claim, and exposed the existing evidence-bound adjudication controls. A React commit-timing defect that previously expanded the sample without scrolling to detail was fixed and reverified.
+- Desktop 1543px and mobile 390x844 had no page-level horizontal overflow; the clean authenticated page reported zero console warnings/errors. Cleanup deleted 83 isolated rows across 14 tables, left zero tenant rows, and created no temporary object directory.
+
+Limitations and blockers:
+
+- This is dynamic queue discovery, not persistent ownership. Reviewer assignment, team routing, SLA/escalation, workload locking and sampling policy remain `partial`.
+- The real customer benchmark remains 0/20 and kappa remains unavailable. Engineering fixtures and the 14 QA cases do not satisfy the customer labeling gate.
+
+Decision:
+
+- Large reviewer queues can now be traversed without weakening blind review or distorting quality statistics. AIRank remains commercial `NO-GO` until reviewer quality, production infrastructure, Consumer collection and longitudinal evidence pass their gates.

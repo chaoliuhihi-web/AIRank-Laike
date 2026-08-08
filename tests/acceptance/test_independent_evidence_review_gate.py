@@ -32,6 +32,7 @@ def test_independent_review_has_storage_contract_and_blind_workflow() -> None:
         '"/projects/{project_id}/evidence-review-cases/fact-accuracy"',
         '"/evidence-review-cases/{case_id}/decisions"',
         '"/projects/{project_id}/evidence-review-cases"',
+        '"/projects/{project_id}/evidence-review-inbox"',
     ):
         assert route in routes
     assert "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN" in routes
@@ -77,7 +78,8 @@ def test_commercial_metrics_and_report_require_final_production_peer_review() ->
     assert "单人预审永远不会直接进入客户指标" in page
     assert "benchmark_quality_passed" in page
     assert "我的独立复核待办" in page
-    assert "fetchEvidenceReviewCases(project.id, undefined" in page
-    assert 'reviewCase.next_action === "submit_secondary" || reviewCase.next_action === "adjudicate"' in page
+    assert "fetchEvidenceReviewInbox(project.id, undefined" in page
+    assert "reviewInbox.next_cursor" in page
+    assert "争议裁决优先、同优先级按最早创建顺序" in page
     assert "必须先打开原始样本、精确 Claim 和不可变来源" in page
     assert "打开证据样本" in page

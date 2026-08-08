@@ -89,6 +89,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | `EVIDENCE_REVIEW_CASE_NOT_FOUND` | 404 | 双人证据复核任务不存在或不属于当前租户 |
 | `EVIDENCE_REVIEW_CASE_EXISTS` | 409 | 同一目标、证据基础和用途已经存在复核任务 |
 | `EVIDENCE_REVIEW_CASE_FINAL` | 409 | 复核任务已一致通过或完成裁决，不能继续追加普通决定 |
+| `EVIDENCE_REVIEW_CURSOR_INVALID` | 422 | 独立复核待办游标无法解码、版本不受支持或字段非法 |
 | `EVIDENCE_REVIEW_LABEL_INVALID` | 409 | 决定标签不属于该引用支持或事实准确性任务的允许集合 |
 | `EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN` | 409 | 第二复核人或裁决人必须与之前的审核人不同 |
 | `SOURCE_REGISTRY_ENTRY_NOT_FOUND` | 404 | 引用域名未出现在当前租户项目的真实 Citation 中，不能凭空创建来源分类 |

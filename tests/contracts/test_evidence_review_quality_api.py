@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import timedelta
 import json
 from pathlib import Path
 
@@ -152,6 +154,102 @@ def test_single_review_is_hidden_from_peer_and_cannot_enter_support_rate(client:
     )
     assert rejected.status_code == 409
     assert rejected.json()["error"]["code"] == "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"
+
+
+def test_actor_inbox_is_blind_prioritized_and_cursor_paginated(
+    client: TestClient, repositories
+) -> None:
+    _, review_repo = repositories
+    claim_id = create_claim(client)
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-cases/citation-support",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "reviewer-1",
+            "Idempotency-Key": "review-inbox-priority-case",
+        },
+        json=citation_case_payload(claim_id, purpose="benchmark"),
+    ).json()["data"]
+    disputed = client.post(
+        f"/api/v1/evidence-review-cases/{created['case_id']}/decisions",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-2"},
+        json={
+            "label": "contradicts",
+            "rationale": "第二审核人与第一审核人结论不同。",
+            "reviewed_by": "spoofed",
+        },
+    ).json()["data"]
+    assert disputed["status"] == "disputed"
+
+    disputed_case = review_repo.cases[created["case_id"]]
+    awaiting_case = deepcopy(disputed_case)
+    awaiting_case_id = "evidence_review_case_inbox_awaiting"
+    awaiting_case.update(
+        case_id=awaiting_case_id,
+        status="awaiting_secondary",
+        evidence_basis_sha256="c" * 64,
+        consensus_label=None,
+        decisions=[awaiting_case["decisions"][0]],
+        created_at=awaiting_case["created_at"] - timedelta(days=1),
+        finalized_by=None,
+        finalized_at=None,
+    )
+    review_repo.cases[awaiting_case_id] = awaiting_case
+
+    participated_case = deepcopy(awaiting_case)
+    participated_case_id = "evidence_review_case_inbox_participated"
+    participated_case.update(
+        case_id=participated_case_id,
+        evidence_basis_sha256="d" * 64,
+        decisions=[
+            participated_case["decisions"][0].model_copy(
+                update={"reviewed_by": "reviewer-3"}
+            )
+        ],
+    )
+    review_repo.cases[participated_case_id] = participated_case
+
+    first = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox?limit=1",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    )
+    assert first.status_code == 200
+    validate_contract("evidence_review_inbox_response.schema.json", first.json())
+    first_data = first.json()["data"]
+    assert first_data["actionable_count"] == 2
+    assert first_data["awaiting_secondary_count"] == 1
+    assert first_data["adjudication_count"] == 1
+    assert first_data["cases"][0]["status"] == "disputed"
+    assert first_data["cases"][0]["next_action"] == "adjudicate"
+    assert first_data["cases"][0]["visible_decisions"] == []
+    assert first_data["next_cursor"]
+
+    second = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox",
+        params={"limit": 1, "cursor": first_data["next_cursor"]},
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    )
+    assert second.status_code == 200
+    validate_contract("evidence_review_inbox_response.schema.json", second.json())
+    second_data = second.json()["data"]
+    assert [item["case_id"] for item in second_data["cases"]] == [awaiting_case_id]
+    assert second_data["cases"][0]["next_action"] == "submit_secondary"
+    assert second_data["next_cursor"] is None
+
+    invalid = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox?cursor=not-a-cursor",
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "EVIDENCE_REVIEW_CURSOR_INVALID"
+
+    tampered = client.get(
+        "/api/v1/projects/project_1/evidence-review-inbox",
+        params={"cursor": f"{first_data['next_cursor']}$"},
+        headers={"tenant-id": "tenant_1", "X-AIRank-User-Id": "reviewer-3"},
+    )
+    assert tampered.status_code == 422
+    assert tampered.json()["error"]["code"] == "EVIDENCE_REVIEW_CURSOR_INVALID"
 
 
 def test_two_distinct_matching_reviewers_finalize_commercial_support(client: TestClient) -> None:

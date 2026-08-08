@@ -94,6 +94,7 @@ import {
   fetchEvidenceObject,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
+  fetchEvidenceReviewInbox,
   fetchFactConflicts,
   fetchFactAccuracy,
   fetchFacts,
@@ -150,6 +151,7 @@ import {
   type FactConflict,
   type FactAccuracyBundle,
   type EvidenceReviewCase,
+  type EvidenceReviewInbox,
   type EvidenceReviewQueue,
   type EvidenceIntegrityAudit,
   type GovernedContentAsset,
@@ -2098,6 +2100,7 @@ const EVIDENCE_CITATION_INITIAL_LIMIT = 20;
 function EvidencePage() {
   const { project } = useConsoleOverview();
   const answerTextRef = useRef<HTMLDivElement>(null);
+  const sampleDetailScrollTargetRef = useRef<string | null>(null);
   const [runs, setRuns] = useState<ScanRun[]>([]);
   const [samples, setSamples] = useState<AnswerSample[]>([]);
   const [sampleSummary, setSampleSummary] = useState({
@@ -2138,8 +2141,9 @@ function EvidencePage() {
   const [factRationale, setFactRationale] = useState("人工核对回答声明、当前审核事实与原始来源边界。");
   const [reviewQueue, setReviewQueue] = useState<EvidenceReviewQueue | null>(null);
   const [reviewQueueError, setReviewQueueError] = useState<string | null>(null);
-  const [reviewInbox, setReviewInbox] = useState<EvidenceReviewQueue | null>(null);
+  const [reviewInbox, setReviewInbox] = useState<EvidenceReviewInbox | null>(null);
   const [reviewInboxError, setReviewInboxError] = useState<string | null>(null);
+  const [reviewInboxLoadingMore, setReviewInboxLoadingMore] = useState(false);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [reviewPurpose, setReviewPurpose] = useState<"production" | "benchmark">("production");
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { label: string; rationale: string }>>({});
@@ -2163,6 +2167,15 @@ function EvidencePage() {
     validUntil: "",
     supersedesRevisionId: "",
   });
+
+  useEffect(() => {
+    if (!selected?.snapshot_id || sampleDetailScrollTargetRef.current !== selected.snapshot_id) return;
+    sampleDetailScrollTargetRef.current = null;
+    const animationFrame = window.requestAnimationFrame(() => {
+      document.getElementById("evidence-sample-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [selected?.snapshot_id]);
 
   useEffect(() => {
     if (!project.id) {
@@ -2191,7 +2204,7 @@ function EvidencePage() {
       return;
     }
     const controller = new AbortController();
-    fetchEvidenceReviewCases(project.id, undefined, controller.signal)
+    fetchEvidenceReviewInbox(project.id, undefined, controller.signal)
       .then((queue) => {
         setReviewInbox(queue);
         setReviewInboxError(null);
@@ -2459,10 +2472,30 @@ function EvidencePage() {
   const refreshReviewInbox = async () => {
     if (!project.id) return;
     try {
-      setReviewInbox(await fetchEvidenceReviewCases(project.id));
+      setReviewInbox(await fetchEvidenceReviewInbox(project.id));
       setReviewInboxError(null);
     } catch (error) {
       setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办刷新失败");
+    }
+  };
+  const loadMoreReviewInbox = async () => {
+    if (!project.id || !reviewInbox?.next_cursor || reviewInboxLoadingMore) return;
+    setReviewInboxLoadingMore(true);
+    setReviewInboxError(null);
+    try {
+      const next = await fetchEvidenceReviewInbox(project.id, reviewInbox.next_cursor);
+      setReviewInbox((current) => {
+        if (!current) return next;
+        const existing = new Set(current.cases.map((reviewCase) => reviewCase.case_id));
+        return {
+          ...next,
+          cases: [...current.cases, ...next.cases.filter((reviewCase) => !existing.has(reviewCase.case_id))],
+        };
+      });
+    } catch (error) {
+      setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办翻页失败");
+    } finally {
+      setReviewInboxLoadingMore(false);
     }
   };
   const refreshQuality = async () => {
@@ -2735,10 +2768,12 @@ function EvidencePage() {
     }
   };
   const openReviewCaseSample = async (reviewCase: EvidenceReviewCase) => {
-    await openSample(reviewCase.snapshot_id);
-    window.requestAnimationFrame(() => {
+    if (selected?.snapshot_id === reviewCase.snapshot_id) {
       document.getElementById("evidence-sample-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+      return;
+    }
+    sampleDetailScrollTargetRef.current = reviewCase.snapshot_id;
+    await openSample(reviewCase.snapshot_id);
   };
   const openSourceReview = (entry: SourceRegistryEntry) => {
     const current = entry.current_revision;
@@ -2846,11 +2881,7 @@ function EvidencePage() {
   const completedCitationCaptureCount = selected?.citations.filter(
     (citation) => citationCaptures[citation.citation_id]?.[0]?.status === "completed",
   ).length ?? 0;
-  const actionableReviewCases = reviewInbox?.cases.filter(
-    (reviewCase) => reviewCase.next_action === "submit_secondary" || reviewCase.next_action === "adjudicate",
-  ) ?? [];
-  const secondaryReviewInboxCount = actionableReviewCases.filter((reviewCase) => reviewCase.next_action === "submit_secondary").length;
-  const adjudicationReviewInboxCount = actionableReviewCases.filter((reviewCase) => reviewCase.next_action === "adjudicate").length;
+  const actionableReviewCases = reviewInbox?.cases ?? [];
 
   return (
     <>
@@ -2859,7 +2890,7 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
-      <Panel title={`我的独立复核待办 · ${actionableReviewCases.length}`}>
+      <Panel title={`我的独立复核待办 · ${reviewInbox?.actionable_count ?? 0}`}>
         <p className="rail-caption">
           这里按当前登录账号从整个项目汇总可执行的第二审核与第三人裁决。队列不会显示其他审核人的未终结标签；必须先打开原始样本、精确 Claim 和不可变来源，再在样本内提交决定。
         </p>
@@ -2867,16 +2898,16 @@ function EvidencePage() {
         {reviewInbox && (
           <>
             <dl className="evidence-metadata review-inbox-metrics">
-              <div><dt>当前账号可执行</dt><dd>{actionableReviewCases.length}</dd></div>
-              <div><dt>等待第二审核</dt><dd>{secondaryReviewInboxCount}</dd></div>
-              <div><dt>等待第三人裁决</dt><dd>{adjudicationReviewInboxCount}</dd></div>
-              <div><dt>项目全部 case</dt><dd>{reviewInbox.cases.length}</dd></div>
+              <div><dt>当前账号可执行</dt><dd>{reviewInbox.actionable_count}</dd></div>
+              <div><dt>等待第二审核</dt><dd>{reviewInbox.awaiting_secondary_count}</dd></div>
+              <div><dt>等待第三人裁决</dt><dd>{reviewInbox.adjudication_count}</dd></div>
+              <div><dt>当前已加载</dt><dd>{reviewInbox.cases.length} / {reviewInbox.actionable_count}</dd></div>
             </dl>
             {actionableReviewCases.length === 0 ? (
               <DataStateCard title="当前账号没有可执行复核" desc="可能尚未建立复核 case，或当前账号已参与这些任务；独立审核必须切换到未参与的可信账号。" tone="warning" />
             ) : (
               <div className="review-inbox-list">
-                {actionableReviewCases.slice(0, 12).map((reviewCase) => (
+                {actionableReviewCases.map((reviewCase) => (
                   <article className="review-inbox-card" key={reviewCase.case_id}>
                     <div>
                       <strong>{reviewCase.review_kind === "citation_support" ? "引用支持" : "事实准确性"} · {reviewCase.next_action === "adjudicate" ? "第三人裁决" : "第二人复核"}</strong>
@@ -2891,7 +2922,14 @@ function EvidencePage() {
                 ))}
               </div>
             )}
-            {actionableReviewCases.length > 12 && <small className="review-inbox-overflow">当前先显示 12/{actionableReviewCases.length} 条；请优先完成已展示任务，后续任务不会被删除。</small>}
+            {reviewInbox.next_cursor && (
+              <div className="review-inbox-pagination">
+                <small>服务端每页最多返回 {reviewInbox.limit} 条；争议裁决优先、同优先级按最早创建顺序。</small>
+                <button className="table-action" type="button" disabled={reviewInboxLoadingMore} onClick={() => void loadMoreReviewInbox()}>
+                  {reviewInboxLoadingMore ? "加载中" : `继续加载（${reviewInbox.cases.length}/${reviewInbox.actionable_count}）`}
+                </button>
+              </div>
+            )}
           </>
         )}
       </Panel>

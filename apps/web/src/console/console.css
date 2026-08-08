@@ -2083,6 +2083,19 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.review-inbox-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.review-inbox-pagination small {
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
 .review-purpose-control {
   display: grid;
   gap: 6px;
@@ -2104,6 +2117,14 @@ button:disabled {
   }
 
   .review-inbox-card .table-action {
+    width: 100%;
+  }
+
+  .review-inbox-pagination {
+    display: grid;
+  }
+
+  .review-inbox-pagination .table-action {
     width: 100%;
   }
 }
