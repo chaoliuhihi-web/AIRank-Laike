@@ -42,7 +42,11 @@ def test_registry_contains_versioned_core_skills_with_complete_contracts() -> No
     assert set(SKILL_RUNNERS) == CORE_SKILL_IDS
     assert {manifest.status for manifest in manifests} == {"partial"}
     for manifest in manifests:
-        assert manifest.version == ("1.2.0" if manifest.skill_id == "research.intent-miner" else "1.0.0")
+        expected_version = {
+            "research.intent-miner": "1.2.0",
+            "intervention.page-blueprint": "1.1.0",
+        }.get(manifest.skill_id, "1.0.0")
+        assert manifest.version == expected_version
         assert manifest.fact_policy
         assert manifest.failure_policy
         assert manifest.quality_rubric
@@ -132,6 +136,110 @@ def test_intent_miner_requires_observation_reference_before_marking_query_observ
     assert observed["observed_query"] is True
     assert observed["provenance_records"][0]["occurrence_count"] == 6
     assert all(item["question_text"] != "伪造观察问题?" for item in output["questions"])
+
+
+def test_page_blueprint_binds_every_claim_to_exact_source_evidence() -> None:
+    fact_text = "AIRank 支持私有化部署。"
+    output = run_skill(
+        "intervention.page-blueprint",
+        {
+            "asset_type": "faq",
+            "title": "AIRank 部署能力 FAQ",
+            "direction": "不得把这段编辑说明复制到正文",
+            "facts": [
+                {
+                    "fact_id": "fact_1",
+                    "revision_id": "revision_1",
+                    "title": "部署能力",
+                    "fact_text": fact_text,
+                    "status": "approved",
+                    "eligible_for_generation": True,
+                    "support_ids": ["support_1"],
+                    "evidence": [
+                        {
+                            "source_id": "source_1",
+                            "source_sha256": "a" * 64,
+                            "source_start": 12,
+                            "source_end": 12 + len(fact_text),
+                            "quoted_text": fact_text,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert output["status"] == "draft"
+    assert output["skill_version"] == "1.1.0"
+    assert output["blueprint_sha256"]
+    assert output["title"] == "部署能力｜事实问答页"
+    assert "AIRank 部署能力 FAQ" not in output["body_md"]
+    assert output["claim_bindings"] == [
+        {
+            "claim_text": fact_text,
+            "claim_sha256": output["claim_bindings"][0]["claim_sha256"],
+            "fact_id": "fact_1",
+            "fact_revision_id": "revision_1",
+            "support_ids": ["support_1"],
+            "source_id": "source_1",
+            "source_sha256": "a" * 64,
+            "source_start": 12,
+            "source_end": 12 + len(fact_text),
+        }
+    ]
+    assert "不得把这段编辑说明复制到正文" not in output["body_md"]
+    assert output["structured_data"]["@type"] == "FAQPage"
+    assert all(section["fact_revision_ids"] for section in output["sections"])
+    assert all(section["support_ids"] for section in output["sections"])
+
+
+def test_page_blueprint_rejects_invalid_source_boundary_without_generating_prose() -> None:
+    output = run_skill(
+        "intervention.page-blueprint",
+        {
+            "asset_type": "fact_page",
+            "title": "事实页",
+            "facts": [
+                {
+                    "fact_id": "fact_2",
+                    "revision_id": "revision_2",
+                    "fact_text": "事实正文",
+                    "status": "approved",
+                    "eligible_for_generation": True,
+                    "support_ids": ["support_2"],
+                    "evidence": [
+                        {
+                            "source_id": "source_2",
+                            "source_sha256": "b" * 64,
+                            "source_start": 0,
+                            "source_end": 2,
+                            "quoted_text": "事实正文",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert output["status"] == "needs_evidence"
+    assert output["body_md"] == ""
+    assert output["sections"] == []
+    assert output["missing_fact_ids"] == ["fact_2"]
+    assert output["missing_evidence"][0]["reasons"] == ["exact_source_boundary_missing"]
+
+
+def test_page_blueprint_requires_an_editorial_brief_title() -> None:
+    output = run_skill(
+        "intervention.page-blueprint",
+        {
+            "asset_type": "fact_page",
+            "title": "",
+            "facts": [],
+        },
+    )
+
+    assert output["status"] == "needs_evidence"
+    assert any("title_missing" in item["reasons"] for item in output["missing_evidence"])
 
 
 def test_retest_report_blocks_non_comparable_cohorts() -> None:

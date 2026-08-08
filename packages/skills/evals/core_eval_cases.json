@@ -89,14 +89,14 @@
       "skill_id": "intervention.page-blueprint",
       "case_id": "holdout-approved-blueprint",
       "suite": "holdout",
-      "input": { "facts": [{ "fact_id": "fact_4", "status": "approved", "support_ids": ["support_4"] }] },
-      "expected": { "status": "draft" }
+      "input": { "asset_type": "faq", "title": "AIRank 部署能力 FAQ", "direction": "面向采购者解释部署方式", "facts": [{ "fact_id": "fact_4", "revision_id": "revision_4", "title": "部署能力", "fact_text": "AIRank 支持私有化部署。", "status": "approved", "eligible_for_generation": true, "support_ids": ["support_4"], "evidence": [{ "source_id": "source_4", "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "source_start": 10, "source_end": 25, "quoted_text": "AIRank 支持私有化部署。" }] }] },
+      "expected": { "status": "draft", "skill_version": "1.1.0" }
     },
     {
       "skill_id": "intervention.page-blueprint",
       "case_id": "adversarial-empty-facts",
       "suite": "adversarial",
-      "input": { "facts": [] },
+      "input": { "asset_type": "fact_page", "title": "空白事实页", "facts": [] },
       "expected": { "status": "needs_evidence", "missing_fact_ids": [], "sections": [] }
     },
     {

@@ -121,17 +121,81 @@
     },
     {
       "skill_id": "intervention.page-blueprint",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "category": "intervention",
-      "input_schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "required": ["facts"], "properties": { "facts": { "type": "array", "items": { "type": "object" } } } },
-      "output_schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "required": ["status", "sections"], "properties": { "status": { "type": "string" }, "sections": { "type": "array" }, "missing_fact_ids": { "type": "array" } } },
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["asset_type", "title", "facts"],
+        "properties": {
+          "asset_type": { "enum": ["fact_page", "product_page", "faq", "comparison_page", "case_page", "research_page", "json_ld", "llms_txt"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "direction": { "type": "string", "maxLength": 1000 },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["fact_id", "revision_id", "fact_text", "status", "eligible_for_generation", "support_ids", "evidence"],
+              "properties": {
+                "fact_id": { "type": "string", "minLength": 1 },
+                "revision_id": { "type": "string", "minLength": 1 },
+                "title": { "type": "string" },
+                "fact_text": { "type": "string", "minLength": 1 },
+                "status": { "type": "string" },
+                "eligible_for_generation": { "type": "boolean" },
+                "conflict_status": { "type": "string" },
+                "valid_until": { "type": ["string", "null"], "format": "date-time" },
+                "support_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "required": ["source_id", "source_sha256", "source_start", "source_end", "quoted_text"],
+                    "properties": {
+                      "source_id": { "type": "string", "minLength": 1 },
+                      "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                      "source_start": { "type": "integer", "minimum": 0 },
+                      "source_end": { "type": "integer", "minimum": 1 },
+                      "quoted_text": { "type": "string", "minLength": 1 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["skill_id", "skill_version", "status", "asset_type", "title", "sections", "missing_fact_ids", "missing_evidence", "claim_bindings", "structured_data", "body_md"],
+        "properties": {
+          "skill_id": { "const": "intervention.page-blueprint" },
+          "skill_version": { "type": "string" },
+          "status": { "enum": ["draft", "needs_evidence"] },
+          "asset_type": { "type": "string" },
+          "title": { "type": "string" },
+          "editorial_brief_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "blueprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "sections": { "type": "array" },
+          "missing_fact_ids": { "type": "array" },
+          "missing_evidence": { "type": "array" },
+          "claim_bindings": { "type": "array" },
+          "structured_data": { "type": ["object", "null"] },
+          "body_md": { "type": "string" }
+        }
+      },
       "dependencies": ["FactAtom", "ClaimSupport", "ContentGap"],
       "provider_requirements": [],
       "evidence_level": ["approved_fact_support"],
-      "fact_policy": { "mode": "approved_only", "rule": "missing support returns needs_evidence instead of prose" },
-      "failure_policy": { "unapproved_fact": "needs_evidence", "empty_fact_set": "needs_evidence" },
-      "quality_rubric": [{ "key": "fact_binding", "threshold": "every generated section references approved fact/support ids" }],
-      "eval_cases": [{ "case_id": "reject-unapproved", "input": { "facts": [{ "fact_id": "fact_1", "status": "draft", "support_ids": [] }] }, "expected": { "status": "needs_evidence", "sections": [] } }],
+      "fact_policy": { "mode": "approved_exact_boundary_only", "rule": "every factual claim binds an eligible revision, ClaimSupport id, verified source hash, and exact source boundary; requested title and editorial direction only enter the brief hash while the public title is deterministically derived from approved fact metadata" },
+      "failure_policy": { "unapproved_fact": "needs_evidence", "expired_or_conflicted_fact": "needs_evidence", "source_integrity_failure": "needs_evidence", "missing_exact_boundary": "needs_evidence", "empty_fact_set": "needs_evidence" },
+      "quality_rubric": [
+        { "key": "fact_binding", "threshold": "every generated section references approved fact revision and support ids" },
+        { "key": "exact_boundary", "threshold": "every claim binding includes source SHA-256 and exact quoted boundary" }
+      ],
+      "eval_cases": [{ "case_id": "reject-unapproved", "input": { "asset_type": "fact_page", "title": "事实页", "facts": [{ "fact_id": "fact_1", "revision_id": "revision_1", "fact_text": "待审核事实", "status": "draft", "eligible_for_generation": false, "support_ids": ["support_1"], "evidence": [{ "source_id": "source_1", "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "source_start": 0, "source_end": 5, "quoted_text": "待审核事实" }] }] }, "expected": { "status": "needs_evidence", "sections": [] } }],
       "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["reviewed_content_quality_benchmark"] },
       "status": "partial",
       "entrypoint": "airank_skills.core:page_blueprint"

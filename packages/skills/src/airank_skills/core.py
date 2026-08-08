@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+import json
 import re
 from typing import Any
 from uuid import uuid4
@@ -234,21 +235,267 @@ def claim_verifier(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+PAGE_BLUEPRINT_VERSION = "1.1.0"
+PAGE_BLUEPRINT_ASSET_TYPES = {
+    "fact_page",
+    "product_page",
+    "faq",
+    "comparison_page",
+    "case_page",
+    "research_page",
+    "json_ld",
+    "llms_txt",
+}
+PAGE_BLUEPRINT_ASSET_LABELS = {
+    "fact_page": "企业事实证据页",
+    "product_page": "产品事实证据页",
+    "faq": "事实问答页",
+    "comparison_page": "证据比较页",
+    "case_page": "案例证据页",
+    "research_page": "研究证据页",
+    "json_ld": "结构化事实数据",
+    "llms_txt": "机器可读事实索引",
+}
+
+
+def _exact_blueprint_evidence(item: object, fact_text: str) -> bool:
+    if not isinstance(item, dict):
+        return False
+    quoted_text = str(item.get("quoted_text") or "")
+    try:
+        source_start = int(item.get("source_start"))
+        source_end = int(item.get("source_end"))
+    except (TypeError, ValueError):
+        return False
+    source_sha256 = str(item.get("source_sha256") or "")
+    return (
+        quoted_text == fact_text
+        and source_start >= 0
+        and source_end - source_start == len(quoted_text)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", source_sha256))
+        and bool(str(item.get("source_id") or "").strip())
+    )
+
+
+def _blueprint_missing_reasons(fact: dict[str, Any], now: datetime) -> list[str]:
+    reasons: list[str] = []
+    fact_text = str(fact.get("fact_text") or "").strip()
+    if fact.get("status") != "approved":
+        reasons.append("fact_not_approved")
+    if fact.get("eligible_for_generation") is not True:
+        reasons.append("fact_not_eligible")
+    if fact.get("conflict_status", "none") == "open":
+        reasons.append("open_conflict")
+    if not fact_text or not str(fact.get("revision_id") or "").strip():
+        reasons.append("fact_identity_or_text_missing")
+    if not fact.get("support_ids"):
+        reasons.append("claim_support_missing")
+    valid_until = fact.get("valid_until")
+    if valid_until:
+        try:
+            expires_at = datetime.fromisoformat(str(valid_until).replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= now:
+                reasons.append("fact_expired")
+        except ValueError:
+            reasons.append("fact_validity_invalid")
+    evidence = fact.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        reasons.append("source_evidence_missing")
+    else:
+        if not any(_exact_blueprint_evidence(item, fact_text) for item in evidence):
+            reasons.append("exact_source_boundary_missing")
+    return reasons
+
+
 def page_blueprint(payload: dict[str, Any]) -> dict[str, Any]:
-    facts = payload.get("facts", [])
-    if not facts:
-        return {"status": "needs_evidence", "missing_fact_ids": [], "sections": []}
-    unapproved = [fact for fact in facts if fact.get("status") != "approved" or not fact.get("support_ids")]
-    if unapproved:
-        return {"status": "needs_evidence", "missing_fact_ids": [fact.get("fact_id") for fact in unapproved], "sections": []}
-    return {
-        "status": "draft",
-        "sections": [
-            {"section_type": "summary", "fact_ids": [fact["fact_id"] for fact in facts]},
-            {"section_type": "evidence", "support_ids": sorted({support for fact in facts for support in fact["support_ids"]})},
-            {"section_type": "faq", "fact_ids": [fact["fact_id"] for fact in facts]},
-        ],
+    facts = [fact for fact in payload.get("facts", []) if isinstance(fact, dict)]
+    asset_type = str(payload.get("asset_type") or "fact_page").strip()
+    requested_title = str(payload.get("title") or "").strip()
+    direction = str(payload.get("direction") or "").strip()
+    now = datetime.now(timezone.utc)
+    missing_evidence = []
+    if asset_type not in PAGE_BLUEPRINT_ASSET_TYPES:
+        missing_evidence.append(
+            {"fact_id": None, "revision_id": None, "reasons": ["asset_type_unsupported"]}
+        )
+    if not requested_title:
+        missing_evidence.append(
+            {"fact_id": None, "revision_id": None, "reasons": ["title_missing"]}
+        )
+    for fact in facts:
+        reasons = _blueprint_missing_reasons(fact, now)
+        if reasons:
+            missing_evidence.append(
+                {
+                    "fact_id": fact.get("fact_id"),
+                    "revision_id": fact.get("revision_id"),
+                    "reasons": reasons,
+                }
+            )
+    if not facts or missing_evidence:
+        return {
+            "skill_id": "intervention.page-blueprint",
+            "skill_version": PAGE_BLUEPRINT_VERSION,
+            "status": "needs_evidence",
+            "asset_type": asset_type,
+            "title": requested_title,
+            "missing_fact_ids": [
+                item.get("fact_id") for item in missing_evidence if item.get("fact_id")
+            ],
+            "missing_evidence": missing_evidence,
+            "sections": [],
+            "claim_bindings": [],
+            "structured_data": None,
+            "body_md": "",
+        }
+
+    fact_title = re.sub(r"\s+", " ", str(facts[0].get("title") or "已核验事实")).strip()
+    public_title = f"{fact_title[:120]}｜{PAGE_BLUEPRINT_ASSET_LABELS[asset_type]}"
+    fact_ids = [str(fact["fact_id"]) for fact in facts]
+    revision_ids = [str(fact["revision_id"]) for fact in facts]
+    support_ids = sorted(
+        {str(support_id) for fact in facts for support_id in fact.get("support_ids", [])}
+    )
+    claim_bindings = []
+    evidence_lines = []
+    for fact in facts:
+        evidence = next(
+            item
+            for item in fact["evidence"]
+            if _exact_blueprint_evidence(item, str(fact["fact_text"]).strip())
+        )
+        claim_bindings.append(
+            {
+                "claim_text": str(fact["fact_text"]).strip(),
+                "claim_sha256": sha256_text(str(fact["fact_text"]).strip()),
+                "fact_id": str(fact["fact_id"]),
+                "fact_revision_id": str(fact["revision_id"]),
+                "support_ids": sorted(str(item) for item in fact["support_ids"]),
+                "source_id": str(evidence["source_id"]),
+                "source_sha256": str(evidence["source_sha256"]),
+                "source_start": int(evidence["source_start"]),
+                "source_end": int(evidence["source_end"]),
+            }
+        )
+        evidence_lines.append(
+            f"- `[Evidence:{evidence['source_id']}:{evidence['source_start']}-{evidence['source_end']}:{evidence['source_sha256']}]`"
+        )
+
+    summary = "本页面仅编排已审核、仍有效且具有精确原文边界的企业事实。"
+    sections = [
+        {
+            "section_id": "summary",
+            "section_type": "summary",
+            "heading": "证据范围",
+            "body_md": summary,
+            "fact_ids": fact_ids,
+            "fact_revision_ids": revision_ids,
+            "support_ids": support_ids,
+        }
+    ]
+    for index, fact in enumerate(facts, start=1):
+        sections.append(
+            {
+                "section_id": f"fact-{index}",
+                "section_type": "fact",
+                "heading": str(fact.get("title") or f"已核验事实 {index}"),
+                "body_md": str(fact["fact_text"]).strip(),
+                "fact_ids": [str(fact["fact_id"])],
+                "fact_revision_ids": [str(fact["revision_id"])],
+                "support_ids": sorted(str(item) for item in fact["support_ids"]),
+            }
+        )
+    sections.append(
+        {
+            "section_id": "evidence-index",
+            "section_type": "evidence",
+            "heading": "证据索引",
+            "body_md": "\n".join(evidence_lines),
+            "fact_ids": fact_ids,
+            "fact_revision_ids": revision_ids,
+            "support_ids": support_ids,
+        }
+    )
+    faq_entities = [
+        {
+            "@type": "Question",
+            "name": f"关于{str(fact.get('title') or f'事实 {index}')}可以确认什么？",
+            "acceptedAnswer": {
+                "@type": "Answer",
+                "text": str(fact["fact_text"]).strip(),
+            },
+        }
+        for index, fact in enumerate(facts, start=1)
+    ]
+    structured_data: Any = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage" if asset_type == "faq" else "WebPage",
+        "name": public_title,
+        "mainEntity": faq_entities,
     }
+    if asset_type == "faq":
+        sections.append(
+            {
+                "section_id": "faq",
+                "section_type": "faq",
+                "heading": "常见问题",
+                "body_md": "\n\n".join(
+                    f"### {item['name']}\n\n{item['acceptedAnswer']['text']}" for item in faq_entities
+                ),
+                "fact_ids": fact_ids,
+                "fact_revision_ids": revision_ids,
+                "support_ids": support_ids,
+            }
+        )
+
+    if asset_type == "json_ld":
+        body_md = "```json\n" + json.dumps(structured_data, ensure_ascii=False, indent=2) + "\n```"
+    elif asset_type == "llms_txt":
+        body_md = "\n".join(
+            [f"# {public_title}", summary, "", "## Verified facts"]
+            + [f"- {fact['fact_text']} [FactRevision:{fact['revision_id']}]" for fact in facts]
+            + ["", "## Evidence"]
+            + evidence_lines
+        )
+        structured_data = None
+    else:
+        body_lines = [f"# {public_title}", "", f"> {summary}"]
+        for section in sections[1:]:
+            body_lines.extend(["", f"## {section['heading']}", "", section["body_md"]])
+            if section["section_type"] == "fact":
+                body_lines.append(
+                    f"`[FactRevision:{section['fact_revision_ids'][0]}]`"
+                )
+        body_lines.extend(["", "发布前仍须通过内容风险扫描与人工审核。"])
+        body_md = "\n".join(body_lines)
+
+    blueprint = {
+        "skill_id": "intervention.page-blueprint",
+        "skill_version": PAGE_BLUEPRINT_VERSION,
+        "status": "draft",
+        "asset_type": asset_type,
+        "title": public_title,
+        "editorial_brief_sha256": sha256_text(
+            json.dumps(
+                {"requested_title": requested_title, "direction": direction},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        ),
+        "missing_fact_ids": [],
+        "missing_evidence": [],
+        "sections": sections,
+        "claim_bindings": claim_bindings,
+        "structured_data": structured_data,
+        "body_md": body_md,
+    }
+    blueprint["blueprint_sha256"] = sha256_text(
+        json.dumps(blueprint, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+    return blueprint
 
 
 def retest_report(payload: dict[str, Any]) -> dict[str, Any]:

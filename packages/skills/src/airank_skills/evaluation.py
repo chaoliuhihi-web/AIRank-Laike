@@ -169,8 +169,25 @@ def quality_rubric_failures(skill_id: str, output: Mapping[str, Any]) -> list[st
         if output.get("status") == "supported" and not output.get("support_ids"):
             failures.append("rubric.support_coverage: supported claim lacks ClaimSupport id")
     elif skill_id == "intervention.page-blueprint" and output.get("status") == "draft":
-        if not output.get("sections"):
+        sections = output.get("sections", [])
+        bindings = output.get("claim_bindings", [])
+        if not sections:
             failures.append("rubric.fact_binding: draft has no evidence-bound sections")
+        for section in sections:
+            if not section.get("fact_revision_ids") or not section.get("support_ids"):
+                failures.append("rubric.fact_binding: section lacks revision/support ids")
+                break
+        for binding in bindings:
+            source_sha256 = str(binding.get("source_sha256") or "")
+            if (
+                len(source_sha256) != 64
+                or int(binding.get("source_start", -1)) < 0
+                or int(binding.get("source_end", -1)) <= int(binding.get("source_start", -1))
+            ):
+                failures.append("rubric.exact_boundary: claim lacks exact source boundary")
+                break
+        if not bindings:
+            failures.append("rubric.exact_boundary: draft has no claim bindings")
     elif skill_id == "delivery.retest-report" and output.get("status") == "observed":
         conclusion = str(output.get("conclusion") or "")
         if not all(marker in conclusion for marker in ("观察", "可能", "不能据此证明因果")):

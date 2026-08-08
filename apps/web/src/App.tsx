@@ -68,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createGovernedContent,
   createCitationClaim,
   createCitationSourceCapture,
   createCitationSupportReview,
@@ -133,6 +134,7 @@ import {
   type FactConflict,
   type FactAccuracyBundle,
   type GovernedContentAsset,
+  type GovernedContentCreateInput,
   type FactRevision,
   type InternalSkill,
   type KnowledgeGovernance,
@@ -213,6 +215,16 @@ const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
 const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
 const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
 const assetCardIcons: LucideIcon[] = [FileText, Box, UsersRound, MessageCircle, Scale, Lightbulb, Code2, Workflow];
+const governedAssetTypes: Array<{ value: GovernedContentCreateInput["assetType"]; label: string }> = [
+  { value: "fact_page", label: "企业事实页" },
+  { value: "product_page", label: "产品与服务页" },
+  { value: "faq", label: "FAQ 页面" },
+  { value: "comparison_page", label: "竞品比较页" },
+  { value: "case_page", label: "案例页" },
+  { value: "research_page", label: "数据与研究页" },
+  { value: "json_ld", label: "JSON-LD" },
+  { value: "llms_txt", label: "llms.txt" },
+];
 const reportCardIcons: LucideIcon[] = [CalendarDays, NotebookTabs, Crown, FileChartColumn];
 const qualityLimitationLabels: Record<string, string> = {
   valid_samples_have_no_provider_citations: "有效样本没有 Provider 原生引用",
@@ -3154,8 +3166,14 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { openPanel, notify } = useActionFeedback();
   const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
   const [contentAssets, setContentAssets] = useState<GovernedContentAsset[]>([]);
+  const [facts, setFacts] = useState<FactRevision[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewingAssetId, setReviewingAssetId] = useState<string | null>(null);
+  const [creatingBlueprint, setCreatingBlueprint] = useState(false);
+  const [assetType, setAssetType] = useState<GovernedContentCreateInput["assetType"]>("fact_page");
+  const [assetTitle, setAssetTitle] = useState("企业事实证据页");
+  const [editorialDirection, setEditorialDirection] = useState("面向企业采购与技术评审，只陈述已审核事实。");
+  const [selectedFactRevisionIds, setSelectedFactRevisionIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!project.id) {
@@ -3166,20 +3184,67 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     Promise.all([
       fetchAssetBundle(project.id, controller.signal),
       fetchContentAssets(project.id, controller.signal),
+      fetchFacts(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets]) => {
+      .then(([nextBundle, nextAssets, nextFacts]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
+        setFacts(nextFacts);
+        const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
+        setSelectedFactRevisionIds((current) => current.filter((revisionId) => eligibleIds.has(revisionId)));
         setLoadError(null);
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
         setBundle(fallbackAssetBundle);
         setContentAssets([]);
+        setFacts([]);
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
   }, [project.id]);
+
+  const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
+
+  const toggleBlueprintFact = (revisionId: string) => {
+    setSelectedFactRevisionIds((current) => current.includes(revisionId)
+      ? current.filter((item) => item !== revisionId)
+      : [...current, revisionId]);
+  };
+
+  const submitBlueprint = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor) {
+      notify({ title: "无法生成页面蓝图", desc: "缺少项目或可信操作者身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    if (!assetTitle.trim() || !editorialDirection.trim() || selectedFactRevisionIds.length === 0) {
+      notify({ title: "证据输入不完整", desc: "请填写标题与编辑方向，并至少选择一条当前可用于生成的审核事实。", tone: "warning" });
+      return;
+    }
+    setCreatingBlueprint(true);
+    try {
+      const created = await createGovernedContent(project.id, {
+        assetType,
+        title: assetTitle.trim(),
+        direction: editorialDirection.trim(),
+        factRevisionIds: selectedFactRevisionIds,
+        createdBy: actor,
+      });
+      setContentAssets((current) => [created, ...current]);
+      setSelectedFactRevisionIds([]);
+      notify({
+        title: "证据绑定页面蓝图已生成",
+        desc: `${created.section_count} 个结构段、${created.claim_support_ids.length} 条精确证据支持；编辑方向未直接复制进公开正文。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "页面蓝图未生成", desc: error instanceof Error ? error.message : "内容生成接口不可用", tone: "danger" });
+    } finally {
+      setCreatingBlueprint(false);
+    }
+  };
 
   const reviewAsset = async (asset: GovernedContentAsset, action: "approved" | "rejected" | "changes_requested") => {
     const actor = getStoredAuthSession()?.user.userId;
@@ -3207,6 +3272,28 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
       {loadError && <DataStateCard title="内容资产读取失败" desc={loadError} tone="danger" />}
+      <Panel title="证据绑定页面蓝图">
+        <form className="content-blueprint-form" onSubmit={(event) => void submitBlueprint(event)}>
+          <label>产物类型<select value={assetType} onChange={(event) => setAssetType(event.target.value as GovernedContentCreateInput["assetType"])}>{governedAssetTypes.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+          <label>蓝图主题<input value={assetTitle} onChange={(event) => setAssetTitle(event.target.value)} maxLength={255} placeholder="例如：企业部署与审计能力" /><small>只进入 brief hash；公开标题由已审核事实和产物类型确定性生成。</small></label>
+          <label className="content-blueprint-wide">编辑方向<textarea rows={3} value={editorialDirection} onChange={(event) => setEditorialDirection(event.target.value)} maxLength={1000} /><small>只作为结构编排输入并保存 hash，不会直接复制为公开事实。</small></label>
+          <fieldset className="content-blueprint-facts">
+            <legend>选择当前可用于生成的审核事实</legend>
+            {eligibleFacts.length === 0 ? (
+              <DataStateCard title="没有可用事实" desc="事实必须已批准、当前有效、无开放冲突，并能定位到有效来源的精确原文边界。" tone="warning" />
+            ) : eligibleFacts.map((fact) => (
+              <label className="content-blueprint-fact" key={fact.revision_id}>
+                <input type="checkbox" checked={selectedFactRevisionIds.includes(fact.revision_id)} onChange={() => toggleBlueprintFact(fact.revision_id)} />
+                <span><strong>{fact.title}</strong><small>{fact.fact_text}</small><code>{fact.revision_id}</code></span>
+              </label>
+            ))}
+          </fieldset>
+          <div className="content-blueprint-actions">
+            <span>{eligibleFacts.length} 条可用 / {facts.length} 条事实；已选 {selectedFactRevisionIds.length} 条</span>
+            <button className="airank-console-primary-button" type="submit" disabled={creatingBlueprint || eligibleFacts.length === 0}>{creatingBlueprint ? "生成中…" : "生成证据绑定蓝图"}</button>
+          </div>
+        </form>
+      </Panel>
       <Panel title="证据绑定内容审校">
         {contentAssets.length === 0 ? (
           <DataStateCard title="尚无可审校内容" desc="只有审核通过且存在精确原文支持的事实，才能生成这里的内容资产。" tone="warning" />
@@ -3214,9 +3301,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <div className="content-review-list">
             {contentAssets.map((asset) => (
               <article className="content-review-item" key={asset.asset_id}>
-                <div className="content-review-head"><div><strong>{asset.title}</strong><span>{asset.asset_type} · {formatDateTime(asset.created_at)}</span></div><Badge tone={asset.status === "approved" ? "success" : asset.status === "rejected" ? "danger" : "warning"}>{asset.status}</Badge></div>
+                <div className="content-review-head"><div><strong>{asset.title}</strong><span>{asset.asset_type} · {asset.skill_id ? `${asset.skill_id}@${asset.skill_version}` : asset.generation_mode} · {formatDateTime(asset.created_at)}</span></div><Badge tone={asset.status === "approved" ? "success" : asset.status === "rejected" ? "danger" : "warning"}>{asset.status}</Badge></div>
                 <div className="content-review-body">{asset.body_md}</div>
-                <div className="content-review-proof"><span>{asset.fact_revision_ids.length} 个事实修订</span><span>{asset.claim_assertion_ids.length} 条主张</span><span>{asset.claim_support_ids.length} 条证据支持</span></div>
+                <div className="content-review-proof"><span>{asset.section_count} 个结构段</span><span>{asset.fact_revision_ids.length} 个事实修订</span><span>{asset.claim_assertion_ids.length} 条主张</span><span>{asset.claim_support_ids.length} 条证据支持</span>{asset.blueprint_sha256 ? <span>蓝图 {asset.blueprint_sha256.slice(0, 12)}…</span> : null}</div>
                 {asset.status === "draft" || asset.status === "changes_requested" ? (
                   <div className="fact-review-actions">
                     <button className="outline-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "changes_requested")}>要求修改</button>

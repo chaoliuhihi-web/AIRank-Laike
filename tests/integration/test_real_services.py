@@ -2997,7 +2997,10 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 idempotency_key="publish-source-it",
                 source_type="official_website",
                 title="AIRank 官方事实",
-                content_text="AIRank 提供带原始回答和引用证据的多平台 GEO 测量。",
+                content_text=(
+                    "AIRank 提供带原始回答和引用证据的多平台 GEO 测量。"
+                    "AIRank 的内容审校保留逐主张证据支持。"
+                ),
                 source_uri="https://airank-publish.example.com/facts",
                 authority_level="official",
                 risk_level="low",
@@ -3021,6 +3024,104 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
             fact.revision_id,
             FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
         )
+        second_fact = knowledge_repo.propose_fact(
+            tenant_id,
+            project.project_id,
+            FactProposalRequest(
+                title="逐主张审校",
+                fact_text="AIRank 的内容审校保留逐主张证据支持。",
+                source_ids=[source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration-test",
+            ),
+        )
+        knowledge_repo.review_revision(
+            tenant_id,
+            project.project_id,
+            second_fact.revision_id,
+            FactRevisionReviewRequest(action="approved", reviewed_by="integration-reviewer"),
+        )
+        original_source_text = (
+            "AIRank 提供带原始回答和引用证据的多平台 GEO 测量。"
+            "AIRank 的内容审校保留逐主张证据支持。"
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_knowledge_source_contents
+                    SET content_text = CONCAT(content_text, 'tampered')
+                    WHERE tenant_id=:tenant_id AND knowledge_source_id=:source_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "source_id": source.source_id},
+            )
+        with pytest.raises(StarletteHTTPException) as tampered_source:
+            knowledge_repo.create_governed_content(
+                tenant_id,
+                project.project_id,
+                GovernedContentCreateRequest(
+                    asset_type="fact_page",
+                    title="不得使用篡改来源",
+                    direction="来源完整性失败时不生成正文",
+                    fact_revision_ids=[fact.revision_id],
+                    created_by="integration-test",
+                ),
+            )
+        assert tampered_source.value.status_code == 409
+        assert tampered_source.value.detail["details"]["reason"] == "source_content_integrity_failed"
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_knowledge_source_contents
+                    SET content_text=:content_text
+                    WHERE tenant_id=:tenant_id AND knowledge_source_id=:source_id
+                    """
+                ),
+                {
+                    "content_text": original_source_text,
+                    "tenant_id": tenant_id,
+                    "source_id": source.source_id,
+                },
+            )
+        uncovered_asset = knowledge_repo.create_governed_content(
+            tenant_id,
+            project.project_id,
+            GovernedContentCreateRequest(
+                asset_type="fact_page",
+                title="AIRank 逐主张证据门禁",
+                direction="验证每条主张分别有证据",
+                fact_revision_ids=[fact.revision_id, second_fact.revision_id],
+                created_by="integration-test",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_claim_supports
+                    SET assertion_id = :covered_assertion_id
+                    WHERE tenant_id = :tenant_id AND id = :support_id
+                    """
+                ),
+                {
+                    "covered_assertion_id": uncovered_asset.claim_assertion_ids[0],
+                    "tenant_id": tenant_id,
+                    "support_id": uncovered_asset.claim_support_ids[1],
+                },
+            )
+        with pytest.raises(StarletteHTTPException) as uncovered_review:
+            delivery_repo.review_content(
+                tenant_id,
+                uncovered_asset.asset_id,
+                ContentReviewRequest(
+                    action="approved", reviewed_by="integration-reviewer"
+                ),
+            )
+        assert uncovered_review.value.status_code == 409
+        assert uncovered_review.value.detail["code"] == "CONTENT_EVIDENCE_MISSING"
         asset = knowledge_repo.create_governed_content(
             tenant_id,
             project.project_id,
@@ -3032,18 +3133,54 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 created_by="integration-test",
             ),
         )
+        with engine.connect() as conn:
+            stored_asset = conn.execute(
+                text(
+                    """
+                    SELECT body_md, content_sha256, metadata_json
+                    FROM airank_content_assets
+                    WHERE tenant_id=:tenant_id AND id=:asset_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "asset_id": asset.asset_id},
+            ).mappings().one()
+            exact_support = conn.execute(
+                text(
+                    """
+                    SELECT quoted_text, source_start, source_end
+                    FROM airank_claim_supports
+                    WHERE tenant_id=:tenant_id AND id=:support_id
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "support_id": asset.claim_support_ids[0],
+                },
+            ).mappings().one()
+        stored_metadata = stored_asset["metadata_json"]
+        if isinstance(stored_metadata, str):
+            stored_metadata = json.loads(stored_metadata)
+        assert "direction" not in stored_metadata
+        assert stored_asset["body_md"].startswith("# AIRank 产品能力｜企业事实证据页")
+        assert stored_metadata["blueprint_sha256"] == asset.blueprint_sha256
+        assert stored_metadata["editorial_brief_sha256"]
+        assert stored_metadata["claim_bindings"][0]["source_sha256"] == source.content_sha256
+        assert "只陈述审核通过的事实" not in stored_asset["body_md"]
+        assert hashlib.sha256(stored_asset["body_md"].encode("utf-8")).hexdigest() == stored_asset["content_sha256"]
+        assert exact_support["quoted_text"] == fact.fact_text
+        assert int(exact_support["source_end"]) - int(exact_support["source_start"]) == len(fact.fact_text)
         delivery_repo.review_content(
             tenant_id,
             asset.asset_id,
             ContentReviewRequest(action="approved", reviewed_by="integration-reviewer"),
         )
         listed_assets = knowledge_repo.list_governed_content(tenant_id, project.project_id)
-        assert len(listed_assets) == 1
-        assert listed_assets[0].asset_id == asset.asset_id
-        assert listed_assets[0].status == "approved"
-        assert listed_assets[0].fact_revision_ids == [fact.revision_id]
-        assert len(listed_assets[0].claim_assertion_ids) == 1
-        assert len(listed_assets[0].claim_support_ids) == 1
+        assert len(listed_assets) == 2
+        listed_asset = next(item for item in listed_assets if item.asset_id == asset.asset_id)
+        assert listed_asset.status == "approved"
+        assert listed_asset.fact_revision_ids == [fact.revision_id]
+        assert len(listed_asset.claim_assertion_ids) == 1
+        assert len(listed_asset.claim_support_ids) == 1
         package = delivery_repo.create_package(
             tenant_id,
             asset.asset_id,
@@ -3054,6 +3191,13 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 target_endpoint="https://publisher.example.test/v1/publish",
             ),
         )
+        exported = delivery_repo.get_export(tenant_id, package.package_id)
+        assert exported.manifest["contract_version"] == "airank.publish-snapshot.v2"
+        assert exported.manifest["blueprint_sha256"] == asset.blueprint_sha256
+        assert exported.manifest["generation_skill"] == {
+            "skill_id": "intervention.page-blueprint",
+            "version": "1.1.0",
+        }
         with engine.begin() as conn:
             conn.execute(
                 text(

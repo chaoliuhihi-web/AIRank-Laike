@@ -1354,6 +1354,132 @@ button:disabled {
   opacity: 0.58;
 }
 
+.content-blueprint-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.content-blueprint-form > label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--console-text);
+  font: 700 13px / 18px var(--console-font-family);
+}
+
+.content-blueprint-form input,
+.content-blueprint-form select,
+.content-blueprint-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--console-text-strong);
+  font: 600 14px / 20px var(--console-font-family);
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.content-blueprint-form > label input,
+.content-blueprint-form > label select {
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.content-blueprint-form textarea {
+  resize: vertical;
+  padding: 12px;
+}
+
+.content-blueprint-form input:focus,
+.content-blueprint-form select:focus,
+.content-blueprint-form textarea:focus {
+  border-color: var(--console-primary);
+  box-shadow: 0 0 0 3px rgba(68, 62, 253, 0.1);
+}
+
+.content-blueprint-form small {
+  color: var(--console-text-muted);
+  font: 600 12px / 18px var(--console-font-family);
+}
+
+.content-blueprint-wide,
+.content-blueprint-facts,
+.content-blueprint-actions {
+  grid-column: 1 / -1;
+}
+
+.content-blueprint-facts {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+}
+
+.content-blueprint-facts legend {
+  padding: 0 6px;
+  color: var(--console-text-strong);
+  font: 800 13px / 18px var(--console-font-family);
+}
+
+.content-blueprint-fact {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--console-border);
+  cursor: pointer;
+}
+
+.content-blueprint-fact:last-child {
+  border-bottom: 0;
+}
+
+.content-blueprint-fact input {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: var(--console-primary);
+}
+
+.content-blueprint-fact span,
+.content-blueprint-fact strong,
+.content-blueprint-fact small,
+.content-blueprint-fact code {
+  display: block;
+  min-width: 0;
+}
+
+.content-blueprint-fact strong {
+  color: var(--console-text-strong);
+  font: 800 13px / 19px var(--console-font-family);
+}
+
+.content-blueprint-fact small {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.content-blueprint-fact code {
+  margin-top: 5px;
+  color: var(--console-text-muted);
+  font: 600 11px / 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.content-blueprint-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
 .content-review-list {
   display: grid;
   gap: 14px;
@@ -3615,7 +3741,8 @@ button:disabled {
   .knowledge-search-form,
   .question-compiler-form,
   .question-observation-form,
-  .source-registry-form {
+  .source-registry-form,
+  .content-blueprint-form {
     grid-template-columns: 1fr;
   }
 
@@ -3629,6 +3756,24 @@ button:disabled {
   .source-registry-form-wide,
   .source-registry-form-actions {
     grid-column: auto;
+  }
+
+  .content-blueprint-wide,
+  .content-blueprint-facts,
+  .content-blueprint-actions {
+    grid-column: auto;
+  }
+
+  .content-blueprint-actions,
+  .content-review-head,
+  .fact-review-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .content-blueprint-actions > button,
+  .fact-review-actions > button {
+    width: 100%;
   }
 
   .knowledge-source-form-actions,

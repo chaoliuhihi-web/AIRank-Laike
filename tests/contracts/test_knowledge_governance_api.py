@@ -400,8 +400,13 @@ def test_content_generation_uses_only_approved_exact_source_facts(client: TestCl
     assert before_review.json()["error"]["code"] == "CONTENT_EVIDENCE_MISSING"
     assert generated.status_code == 201
     data = generated.json()["data"]
-    assert data["generation_mode"] == "approved_fact_template"
+    assert data["generation_mode"] == "evidence_bound_page_blueprint"
+    assert data["skill_id"] == "intervention.page-blueprint"
+    assert data["skill_version"] == "1.1.0"
+    assert len(data["blueprint_sha256"]) == 64
+    assert data["section_count"] == 3
     assert fact["revision_id"] in data["body_md"]
+    assert "面向企业采购者解释部署能力" not in data["body_md"]
     assert len(data["claim_assertion_ids"]) == 1
     assert len(data["claim_support_ids"]) == 1
     listed = client.get(
@@ -491,6 +496,12 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
     assert replay.json()["data"]["idempotent_replay"] is True
     assert exported.json()["data"]["content_sha256"] == package.json()["data"]["content_sha256"]
     assert exported.json()["data"]["manifest"]["immutable"] is True
+    assert exported.json()["data"]["manifest"]["contract_version"] == "airank.publish-snapshot.v2"
+    assert exported.json()["data"]["manifest"]["blueprint_sha256"] == asset["blueprint_sha256"]
+    assert exported.json()["data"]["manifest"]["generation_skill"] == {
+        "skill_id": "intervention.page-blueprint",
+        "version": "1.1.0",
+    }
     assert packages.status_code == 200
     assert [item["package_id"] for item in packages.json()["data"]] == [package.json()["data"]["package_id"]]
     assert attempts.status_code == 200
@@ -502,3 +513,126 @@ def test_high_risk_geo_guarantee_requires_audited_override() -> None:
     findings = delivery_routes.scan_content_risk("保证被豆包推荐，并确保收录。")
 
     assert any(item.code == "guaranteed_ai_recommendation" and item.severity == "high" for item in findings)
+
+
+def test_content_review_checks_title_and_each_assertion_support(
+    client: TestClient,
+) -> None:
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    first = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload([source["source_id"]]),
+    ).json()["data"]
+    second_payload = fact_payload([source["source_id"]]) | {
+        "title": "授权条件",
+        "fact_text": "该能力需要企业版授权。",
+    }
+    second = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=second_payload,
+    ).json()["data"]
+    for fact in (first, second):
+        client.patch(
+            f"/api/v1/projects/project_1/fact-revisions/{fact['revision_id']}/review",
+            headers={"tenant-id": "tenant_1"},
+            json={"action": "approved", "reviewed_by": "reviewer_1"},
+        )
+
+    risky_asset = client.post(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "asset_type": "fact_page",
+            "title": "保证被豆包推荐",
+            "direction": "只使用审核事实。",
+            "fact_revision_ids": [first["revision_id"]],
+            "created_by": "operator_1",
+        },
+    ).json()["data"]
+    repository = knowledge_routes.KNOWLEDGE_REPOSITORY
+    assert isinstance(repository, knowledge_routes.InMemoryKnowledgeRepository)
+    stored_risky_asset = repository.content_assets[("tenant_1", risky_asset["asset_id"])]
+    repository.content_assets[("tenant_1", risky_asset["asset_id"])] = (
+        stored_risky_asset.model_copy(update={"title": "保证被豆包推荐"})
+    )
+    risky_review = client.post(
+        f"/api/v1/content-assets/{risky_asset['asset_id']}/reviews",
+        headers={"tenant-id": "tenant_1"},
+        json={"action": "approved", "reviewed_by": "reviewer_2"},
+    )
+    assert risky_review.status_code == 409
+    assert risky_review.json()["error"]["code"] == "CONTENT_RISK_OVERRIDE_REQUIRED"
+
+    safe_asset = client.post(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "asset_type": "fact_page",
+            "title": "可验证能力说明",
+            "direction": "只使用审核事实。",
+            "fact_revision_ids": [first["revision_id"], second["revision_id"]],
+            "created_by": "operator_1",
+        },
+    ).json()["data"]
+    missing_support_id = safe_asset["claim_support_ids"][1]
+    repository.claim_support_links[("tenant_1", missing_support_id)] = safe_asset[
+        "claim_assertion_ids"
+    ][0]
+    uncovered_review = client.post(
+        f"/api/v1/content-assets/{safe_asset['asset_id']}/reviews",
+        headers={"tenant-id": "tenant_1"},
+        json={"action": "approved", "reviewed_by": "reviewer_2"},
+    )
+    assert uncovered_review.status_code == 409
+    assert uncovered_review.json()["error"]["code"] == "CONTENT_EVIDENCE_MISSING"
+
+
+def test_content_generation_fails_when_source_content_hash_no_longer_matches(
+    client: TestClient,
+) -> None:
+    source = client.post(
+        "/api/v1/projects/project_1/knowledge-sources",
+        headers={"tenant-id": "tenant_1"},
+        json=source_payload(),
+    ).json()["data"]
+    fact = client.post(
+        "/api/v1/projects/project_1/facts",
+        headers={"tenant-id": "tenant_1"},
+        json=fact_payload([source["source_id"]]),
+    ).json()["data"]
+    client.patch(
+        f"/api/v1/projects/project_1/fact-revisions/{fact['revision_id']}/review",
+        headers={"tenant-id": "tenant_1"},
+        json={"action": "approved", "reviewed_by": "reviewer_1"},
+    )
+    repository = knowledge_routes.KNOWLEDGE_REPOSITORY
+    assert isinstance(repository, knowledge_routes.InMemoryKnowledgeRepository)
+    repository.source_contents[("tenant_1", source["source_id"])] += "tampered"
+
+    generated = client.post(
+        "/api/v1/projects/project_1/content-assets",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "asset_type": "fact_page",
+            "title": "完整性失败测试",
+            "direction": "不得接受被篡改来源。",
+            "fact_revision_ids": [fact["revision_id"]],
+            "created_by": "operator_1",
+        },
+    )
+
+    assert generated.status_code == 409
+    assert generated.json()["error"]["code"] == "CONTENT_EVIDENCE_MISSING"
+    assert generated.json()["error"]["details"]["reason"] == "source_content_integrity_failed"
+
+
+def test_active_embedded_content_is_high_risk() -> None:
+    findings = delivery_routes.scan_content_risk("<script>alert('x')</script>")
+
+    assert any(item.code == "embedded_active_content" and item.severity == "high" for item in findings)

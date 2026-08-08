@@ -55,6 +55,7 @@ def scan_content_risk(body_md: str) -> list[RiskFinding]:
         ("absolute_ranking_claim", "high", r"(?:行业|全国|全球).{0,6}(?:第一|唯一|最强)", "绝对排名声明必须有独立同口径证据。"),
         ("unsupported_superlative", "medium", r"(?:最佳|领先|顶级|首屈一指)", "主观最高级表述需要额外证据或删除。"),
         ("competitor_attack", "high", r"(?:竞品|竞争对手).{0,12}(?:欺骗|最差|不可信)", "竞品贬损存在商业与合规风险。"),
+        ("embedded_active_content", "high", r"(?:<\s*(?:script|iframe|object|embed|style)\b|\bon\w+\s*=|javascript\s*:)", "内容包含可执行或嵌入式代码，发布前必须删除。"),
     )
     findings = []
     for code, severity, pattern, message in rules:
@@ -218,9 +219,17 @@ class InMemoryDeliveryRepository:
 
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData:
         asset = self._asset(tenant_id, asset_id)
-        findings = scan_content_risk(asset.body_md)
+        findings = scan_content_risk(f"{asset.title}\n{asset.body_md}")
         risk_level = _risk_level(findings)
-        fact_check_status = "passed" if asset.claim_support_ids and len(asset.claim_assertion_ids) == len(asset.claim_support_ids) else "failed"
+        support_links = getattr(knowledge_routes.KNOWLEDGE_REPOSITORY, "claim_support_links", {})
+        supported_assertions = {
+            support_links.get((tenant_id, support_id))
+            for support_id in asset.claim_support_ids
+        }
+        fact_check_status = "passed" if (
+            bool(asset.claim_assertion_ids)
+            and set(asset.claim_assertion_ids) == supported_assertions
+        ) else "failed"
         _assert_review_allowed(payload, fact_check_status, risk_level)
         data = ContentReviewData(review_id=f"review_{uuid4().hex[:12]}", tenant_id=tenant_id, project_id=asset.project_id, asset_id=asset_id, content_sha256=sha256_text(asset.body_md), action=payload.action, fact_check_status=fact_check_status, risk_level=risk_level, risk_findings=findings, override_reason=payload.override_reason, reviewed_by=payload.reviewed_by, reviewed_at=utc_now())
         self.reviews[(tenant_id, data.review_id)] = data
@@ -297,21 +306,38 @@ class MySQLDeliveryRepository:
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData:
         reviewed_at = utc_now()
         with self.engine.begin() as conn:
-            asset = conn.execute(text("SELECT id, project_id, body_md, content_sha256 FROM airank_content_assets WHERE tenant_id=:tenant_id AND id=:asset_id AND deleted_at IS NULL FOR UPDATE"), {"tenant_id": tenant_id, "asset_id": asset_id}).mappings().first()
+            asset = conn.execute(text("SELECT id, project_id, title, body_md, content_sha256 FROM airank_content_assets WHERE tenant_id=:tenant_id AND id=:asset_id AND deleted_at IS NULL FOR UPDATE"), {"tenant_id": tenant_id, "asset_id": asset_id}).mappings().first()
             if asset is None:
                 raise _not_found("ASSET_NOT_FOUND", {"asset_id": asset_id})
             body_md = asset["body_md"] or ""
             content_sha256 = sha256_text(body_md)
+            blueprint_integrity = not asset["content_sha256"] or asset["content_sha256"] == content_sha256
             claim_counts = conn.execute(text("""
-                SELECT COUNT(DISTINCT a.id) AS assertion_count,
-                       COUNT(DISTINCT CASE WHEN s.support_type='supports' THEN s.id END) AS support_count,
-                       COUNT(DISTINCT CASE WHEN s.support_type='contradicts' THEN s.id END) AS contradiction_count
-                FROM airank_claim_assertions a
-                LEFT JOIN airank_claim_supports s ON s.assertion_id=a.id AND s.tenant_id=a.tenant_id
-                WHERE a.tenant_id=:tenant_id AND a.asset_id=:asset_id AND a.status='verified'
+                SELECT COUNT(*) AS assertion_count,
+                       COALESCE(SUM(CASE WHEN assertion_status='verified' AND support_count > 0 THEN 1 ELSE 0 END), 0)
+                         AS supported_assertion_count,
+                       COALESCE(SUM(contradiction_count), 0) AS contradiction_count
+                FROM (
+                  SELECT a.id, a.status AS assertion_status,
+                         SUM(CASE WHEN s.support_type='supports' THEN 1 ELSE 0 END)
+                           AS support_count,
+                         SUM(CASE WHEN s.support_type='contradicts' THEN 1 ELSE 0 END)
+                           AS contradiction_count
+                  FROM airank_claim_assertions a
+                  LEFT JOIN airank_claim_supports s
+                    ON s.assertion_id=a.id AND s.tenant_id=a.tenant_id
+                  WHERE a.tenant_id=:tenant_id AND a.asset_id=:asset_id
+                  GROUP BY a.id, a.status
+                ) assertion_support
             """), {"tenant_id": tenant_id, "asset_id": asset_id}).mappings().one()
-            fact_check_status = "passed" if int(claim_counts["assertion_count"] or 0) > 0 and int(claim_counts["support_count"] or 0) >= int(claim_counts["assertion_count"] or 0) and int(claim_counts["contradiction_count"] or 0) == 0 else "failed"
-            findings = scan_content_risk(body_md)
+            assertion_count = int(claim_counts["assertion_count"] or 0)
+            fact_check_status = "passed" if (
+                blueprint_integrity
+                and assertion_count > 0
+                and int(claim_counts["supported_assertion_count"] or 0) == assertion_count
+                and int(claim_counts["contradiction_count"] or 0) == 0
+            ) else "failed"
+            findings = scan_content_risk(f"{asset['title']}\n{body_md}")
             risk_level = _risk_level(findings)
             _assert_review_allowed(payload, fact_check_status, risk_level)
             review_id = f"review_{uuid4().hex[:12]}"
@@ -519,11 +545,37 @@ def _snapshot_manifest(asset: Any, review: Any, payload: PublishPackageCreateReq
             return value.get(name)
         return getattr(value, name)
     body = get(asset, "body_md") or ""
+    metadata = get(asset, "metadata_json") if isinstance(asset, Mapping) else None
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata or "{}")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    blueprint_sha256 = (
+        metadata.get("blueprint_sha256")
+        if isinstance(asset, Mapping)
+        else getattr(asset, "blueprint_sha256", None)
+    )
+    skill_id = (
+        metadata.get("skill_id")
+        if isinstance(asset, Mapping)
+        else getattr(asset, "skill_id", None)
+    )
+    skill_version = (
+        metadata.get("skill_version")
+        if isinstance(asset, Mapping)
+        else getattr(asset, "skill_version", None)
+    )
     return {
-        "contract_version": "airank.publish-snapshot.v1",
+        "contract_version": "airank.publish-snapshot.v2",
         "asset_id": get(asset, "asset_id") if not isinstance(asset, Mapping) else asset.get("id"),
         "asset_type": get(asset, "asset_type"),
         "content_sha256": sha256_text(body),
+        "blueprint_sha256": blueprint_sha256,
+        "generation_skill": (
+            {"skill_id": skill_id, "version": skill_version}
+            if skill_id and skill_version
+            else None
+        ),
         "content_review_id": get(review, "review_id") if not isinstance(review, Mapping) else review.get("id"),
         "channel": payload.channel,
         "target_endpoint_host": urlparse(payload.target_endpoint).hostname if payload.target_endpoint else None,

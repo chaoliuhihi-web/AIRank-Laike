@@ -551,11 +551,23 @@ export type GovernedContentAsset = {
   title: string;
   body_md: string;
   status: "draft" | "approved" | "rejected" | "changes_requested";
-  generation_mode: "approved_fact_template";
+  generation_mode: "approved_fact_template" | "evidence_bound_page_blueprint";
+  skill_id: string | null;
+  skill_version: string | null;
+  blueprint_sha256: string | null;
+  section_count: number;
   fact_revision_ids: string[];
   claim_assertion_ids: string[];
   claim_support_ids: string[];
   created_at: string;
+};
+
+export type GovernedContentCreateInput = {
+  assetType: "fact_page" | "product_page" | "faq" | "comparison_page" | "case_page" | "research_page" | "json_ld" | "llms_txt";
+  title: string;
+  direction: string;
+  factRevisionIds: string[];
+  createdBy: string;
 };
 
 export type ContentReview = {
@@ -1607,6 +1619,30 @@ export async function fetchEvidenceObject(objectRefId: string, signal?: AbortSig
 
 export function fetchContentAssets(projectId: string, signal?: AbortSignal): Promise<GovernedContentAsset[]> {
   return fetchData(`/api/v1/projects/${projectId}/content-assets`, "trc_web_content_assets", signal);
+}
+
+export async function createGovernedContent(
+  projectId: string,
+  input: GovernedContentCreateInput,
+): Promise<GovernedContentAsset> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/content-assets`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_content_blueprint_create"),
+    },
+    body: JSON.stringify({
+      asset_type: input.assetType,
+      title: input.title,
+      direction: input.direction,
+      fact_revision_ids: input.factRevisionIds,
+      created_by: input.createdBy,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Content blueprint request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: GovernedContentAsset }).data;
 }
 
 export function fetchScanRuns(projectId: string, signal?: AbortSignal): Promise<ScanRun[]> {

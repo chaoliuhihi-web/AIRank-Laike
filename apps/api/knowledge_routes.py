@@ -16,6 +16,7 @@ from sqlalchemy import bindparam, create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airank_domain import segment_source_text, sha256_text
+from airank_skills import run_skill
 
 
 TRACE_HEADER = "X-AIRank-Trace-Id"
@@ -309,7 +310,11 @@ class GovernedContentData(BaseModel):
     title: str
     body_md: str
     status: Literal["draft", "approved", "rejected", "changes_requested"]
-    generation_mode: Literal["approved_fact_template"]
+    generation_mode: Literal["approved_fact_template", "evidence_bound_page_blueprint"]
+    skill_id: Optional[str] = None
+    skill_version: Optional[str] = None
+    blueprint_sha256: Optional[str] = None
+    section_count: int = 0
     fact_revision_ids: list[str]
     claim_assertion_ids: list[str]
     claim_support_ids: list[str]
@@ -324,6 +329,30 @@ class GovernedContentResponse(BaseModel):
 class GovernedContentListResponse(BaseModel):
     data: list[GovernedContentData]
     meta: dict[str, str]
+
+
+def _page_blueprint_or_error(payload: GovernedContentCreateRequest, facts: list[dict[str, Any]]) -> dict[str, Any]:
+    blueprint = run_skill(
+        "intervention.page-blueprint",
+        {
+            "asset_type": payload.asset_type,
+            "title": payload.title,
+            "direction": payload.direction,
+            "facts": facts,
+        },
+    )
+    if blueprint.get("status") != "draft" or not blueprint.get("body_md"):
+        raise StarletteHTTPException(
+            status_code=409,
+            detail={
+                "code": "CONTENT_EVIDENCE_MISSING",
+                "details": {
+                    "reason": "page_blueprint_needs_evidence",
+                    "missing_evidence": blueprint.get("missing_evidence", []),
+                },
+            },
+        )
+    return blueprint
 
 
 class KnowledgeRepository(Protocol):
@@ -353,6 +382,7 @@ class InMemoryKnowledgeRepository:
         self.facts: dict[tuple[str, str], FactRevisionData] = {}
         self.conflicts: dict[tuple[str, str], FactConflictData] = {}
         self.content_assets: dict[tuple[str, str], GovernedContentData] = {}
+        self.claim_support_links: dict[tuple[str, str], str] = {}
 
     def create_source(self, tenant_id: str, project_id: str, payload: KnowledgeSourceCreateRequest) -> KnowledgeSourceData:
         replay_key = (tenant_id, project_id, payload.idempotency_key)
@@ -668,6 +698,19 @@ class InMemoryKnowledgeRepository:
             revisions.append(revision)
             for source_id in revision.source_ids:
                 source_text = self.source_contents.get((tenant_id, source_id), "")
+                source = self.sources.get((tenant_id, source_id))
+                if source is None or sha256_text(source_text) != source.content_sha256:
+                    raise StarletteHTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "CONTENT_EVIDENCE_MISSING",
+                            "details": {
+                                "revision_id": revision_id,
+                                "reason": "source_content_integrity_failed",
+                                "source_id": source_id,
+                            },
+                        },
+                    )
                 start = source_text.find(revision.fact_text)
                 if start >= 0:
                     supports.append((revision, source_id, start, start + len(revision.fact_text)))
@@ -678,9 +721,55 @@ class InMemoryKnowledgeRepository:
         asset_id = f"asset_{uuid4().hex[:12]}"
         assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in revisions]
         support_ids = [f"support_{uuid4().hex[:12]}" for _ in supports]
-        body = _render_governed_draft(payload.title, payload.direction, revisions)
-        data = GovernedContentData(asset_id=asset_id, tenant_id=tenant_id, project_id=project_id, asset_type=payload.asset_type, title=payload.title, body_md=body, status="draft", generation_mode="approved_fact_template", fact_revision_ids=payload.fact_revision_ids, claim_assertion_ids=assertion_ids, claim_support_ids=support_ids, created_at=created_at)
+        blueprint = _page_blueprint_or_error(
+            payload,
+            [
+                {
+                    "fact_id": revision.fact_id,
+                    "revision_id": revision.revision_id,
+                    "title": revision.title,
+                    "fact_text": revision.fact_text,
+                    "status": revision.status,
+                    "eligible_for_generation": revision.eligible_for_generation,
+                    "valid_until": revision.valid_until.isoformat() if revision.valid_until else None,
+                    "conflict_status": "none",
+                    "support_ids": [support_id],
+                    "evidence": [
+                        {
+                            "source_id": source_id,
+                            "source_sha256": sha256_text(
+                                self.source_contents[(tenant_id, source_id)]
+                            ),
+                            "source_start": start,
+                            "source_end": end,
+                            "quoted_text": revision.fact_text,
+                        }
+                    ],
+                }
+                for (revision, source_id, start, end), support_id in zip(supports, support_ids)
+            ],
+        )
+        data = GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type=payload.asset_type,
+            title=blueprint["title"],
+            body_md=blueprint["body_md"],
+            status="draft",
+            generation_mode="evidence_bound_page_blueprint",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=payload.fact_revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
         self.content_assets[(tenant_id, asset_id)] = data
+        for assertion_id, support_id in zip(assertion_ids, support_ids):
+            self.claim_support_links[(tenant_id, support_id)] = assertion_id
         return data
 
     def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]:
@@ -1111,7 +1200,7 @@ class MySQLKnowledgeRepository:
                 exact_support = None
                 for source_id in source_ids:
                     source = conn.execute(text("""
-                        SELECT s.id, c.content_text
+                        SELECT s.id, s.content_sha256, c.content_text
                         FROM airank_knowledge_sources s
                         JOIN airank_knowledge_source_contents c ON c.knowledge_source_id=s.id
                         WHERE s.tenant_id=:tenant_id AND s.project_id=:project_id
@@ -1121,15 +1210,77 @@ class MySQLKnowledgeRepository:
                     """), {"tenant_id": tenant_id, "project_id": project_id, "source_id": source_id, "now": created_at}).mappings().first()
                     if source is None:
                         continue
+                    if sha256_text(source["content_text"]) != source["content_sha256"]:
+                        raise StarletteHTTPException(
+                            status_code=409,
+                            detail={
+                                "code": "CONTENT_EVIDENCE_MISSING",
+                                "details": {
+                                    "revision_id": row["revision_id"],
+                                    "reason": "source_content_integrity_failed",
+                                    "source_id": source_id,
+                                },
+                            },
+                        )
                     start = source["content_text"].find(row["fact_text"])
                     if start >= 0:
-                        exact_support = {"revision": row, "source_id": source_id, "start": start, "end": start + len(row["fact_text"])}
+                        exact_support = {
+                            "revision": row,
+                            "source_id": source_id,
+                            "source_sha256": source["content_sha256"],
+                            "start": start,
+                            "end": start + len(row["fact_text"]),
+                        }
                         break
                 if exact_support is None:
                     raise StarletteHTTPException(status_code=409, detail={"code": "CONTENT_EVIDENCE_MISSING", "details": {"revision_id": row["revision_id"], "reason": "exact_source_boundary_missing"}})
                 support_rows.append(exact_support)
             asset_id = f"asset_{uuid4().hex[:12]}"
-            body_md = _render_governed_draft(payload.title, payload.direction, ordered_rows)
+            assertion_ids = [f"claim_{uuid4().hex[:12]}" for _ in support_rows]
+            support_ids = [f"support_{uuid4().hex[:12]}" for _ in support_rows]
+            blueprint = _page_blueprint_or_error(
+                payload,
+                [
+                    {
+                        "fact_id": item["revision"]["fact_id"],
+                        "revision_id": item["revision"]["revision_id"],
+                        "title": item["revision"]["title"],
+                        "fact_text": item["revision"]["fact_text"],
+                        "status": item["revision"]["status"],
+                        "eligible_for_generation": True,
+                        "valid_until": (
+                            _as_utc(item["revision"]["valid_until"]).isoformat()
+                            if item["revision"]["valid_until"] is not None
+                            else None
+                        ),
+                        "conflict_status": "none",
+                        "support_ids": [support_id],
+                        "evidence": [
+                            {
+                                "source_id": item["source_id"],
+                                "source_sha256": item["source_sha256"],
+                                "source_start": item["start"],
+                                "source_end": item["end"],
+                                "quoted_text": item["revision"]["fact_text"],
+                            }
+                        ],
+                    }
+                    for item, support_id in zip(support_rows, support_ids)
+                ],
+            )
+            body_md = blueprint["body_md"]
+            asset_metadata = {
+                "generation_mode": "evidence_bound_page_blueprint",
+                "fact_revision_ids": payload.fact_revision_ids,
+                "created_by": payload.created_by,
+                "skill_id": blueprint["skill_id"],
+                "skill_version": blueprint["skill_version"],
+                "blueprint_sha256": blueprint["blueprint_sha256"],
+                "sections": blueprint["sections"],
+                "claim_bindings": blueprint["claim_bindings"],
+                "structured_data": blueprint["structured_data"],
+                "editorial_brief_sha256": blueprint["editorial_brief_sha256"],
+            }
             conn.execute(text("""
                 INSERT INTO airank_content_assets (
                   id, tenant_id, project_id, asset_type, title, body_md, content_sha256,
@@ -1138,14 +1289,10 @@ class MySQLKnowledgeRepository:
                   :id, :tenant_id, :project_id, :asset_type, :title, :body_md, :content_sha256,
                   'draft', :fact_atom_ids, :metadata_json, :created_at, :created_at
                 )
-            """), {"id": asset_id, "tenant_id": tenant_id, "project_id": project_id, "asset_type": payload.asset_type, "title": payload.title, "body_md": body_md, "content_sha256": sha256_text(body_md), "fact_atom_ids": json.dumps([row["fact_id"] for row in ordered_rows], ensure_ascii=False), "metadata_json": json.dumps({"generation_mode": "approved_fact_template", "direction": payload.direction, "fact_revision_ids": payload.fact_revision_ids, "created_by": payload.created_by}, ensure_ascii=False), "created_at": created_at})
-            assertion_ids: list[str] = []
-            support_ids: list[str] = []
-            for item in support_rows:
-                assertion_id = f"claim_{uuid4().hex[:12]}"
-                support_id = f"support_{uuid4().hex[:12]}"
-                assertion_ids.append(assertion_id)
-                support_ids.append(support_id)
+            """), {"id": asset_id, "tenant_id": tenant_id, "project_id": project_id, "asset_type": payload.asset_type, "title": blueprint["title"], "body_md": body_md, "content_sha256": sha256_text(body_md), "fact_atom_ids": json.dumps([row["fact_id"] for row in ordered_rows], ensure_ascii=False), "metadata_json": json.dumps(asset_metadata, ensure_ascii=False), "created_at": created_at})
+            for item, assertion_id, support_id in zip(
+                support_rows, assertion_ids, support_ids
+            ):
                 row = item["revision"]
                 conn.execute(text("""
                     INSERT INTO airank_claim_assertions (
@@ -1155,7 +1302,7 @@ class MySQLKnowledgeRepository:
                       :id, :tenant_id, :project_id, :asset_id, :claim_text, :claim_sha256,
                       'verified', :verified_by, :verified_at, :metadata_json, :created_at, :created_at
                     )
-                """), {"id": assertion_id, "tenant_id": tenant_id, "project_id": project_id, "asset_id": asset_id, "claim_text": row["fact_text"], "claim_sha256": sha256_text(row["fact_text"]), "verified_by": row["reviewed_by"] or payload.created_by, "verified_at": created_at, "metadata_json": json.dumps({"fact_revision_id": row["revision_id"], "generation_mode": "approved_fact_template"}, ensure_ascii=False), "created_at": created_at})
+                """), {"id": assertion_id, "tenant_id": tenant_id, "project_id": project_id, "asset_id": asset_id, "claim_text": row["fact_text"], "claim_sha256": sha256_text(row["fact_text"]), "verified_by": row["reviewed_by"] or payload.created_by, "verified_at": created_at, "metadata_json": json.dumps({"fact_revision_id": row["revision_id"], "generation_mode": "evidence_bound_page_blueprint", "blueprint_sha256": blueprint["blueprint_sha256"]}, ensure_ascii=False), "created_at": created_at})
                 conn.execute(text("""
                     INSERT INTO airank_claim_supports (
                       id, tenant_id, project_id, assertion_id, fact_revision_id,
@@ -1167,7 +1314,24 @@ class MySQLKnowledgeRepository:
                       :source_end, 1.0, :reviewed_by, :reviewed_at, :created_at
                     )
                 """), {"id": support_id, "tenant_id": tenant_id, "project_id": project_id, "assertion_id": assertion_id, "fact_revision_id": row["revision_id"], "knowledge_source_id": item["source_id"], "quoted_text": row["fact_text"], "source_start": item["start"], "source_end": item["end"], "reviewed_by": row["reviewed_by"] or payload.created_by, "reviewed_at": created_at, "created_at": created_at})
-        return GovernedContentData(asset_id=asset_id, tenant_id=tenant_id, project_id=project_id, asset_type=payload.asset_type, title=payload.title, body_md=body_md, status="draft", generation_mode="approved_fact_template", fact_revision_ids=payload.fact_revision_ids, claim_assertion_ids=assertion_ids, claim_support_ids=support_ids, created_at=created_at)
+        return GovernedContentData(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            asset_type=payload.asset_type,
+            title=blueprint["title"],
+            body_md=body_md,
+            status="draft",
+            generation_mode="evidence_bound_page_blueprint",
+            skill_id=blueprint["skill_id"],
+            skill_version=blueprint["skill_version"],
+            blueprint_sha256=blueprint["blueprint_sha256"],
+            section_count=len(blueprint["sections"]),
+            fact_revision_ids=payload.fact_revision_ids,
+            claim_assertion_ids=assertion_ids,
+            claim_support_ids=support_ids,
+            created_at=created_at,
+        )
 
     def list_governed_content(self, tenant_id: str, project_id: str) -> list[GovernedContentData]:
         with self.engine.begin() as conn:
@@ -1200,7 +1364,12 @@ class MySQLKnowledgeRepository:
                 assets.append(GovernedContentData(
                     asset_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"],
                     asset_type=row["asset_type"], title=row["title"], body_md=row["body_md"] or "",
-                    status=row["status"], generation_mode="approved_fact_template",
+                    status=row["status"],
+                    generation_mode=metadata.get("generation_mode") or "approved_fact_template",
+                    skill_id=metadata.get("skill_id"),
+                    skill_version=metadata.get("skill_version"),
+                    blueprint_sha256=metadata.get("blueprint_sha256"),
+                    section_count=len(metadata.get("sections") or []),
                     fact_revision_ids=list(metadata.get("fact_revision_ids") or []),
                     claim_assertion_ids=list(assertions), claim_support_ids=list(supports),
                     created_at=row["created_at"],
@@ -1405,16 +1574,6 @@ def derive_knowledge_governance(
         action_required_count=len(alerts),
         alerts=alerts,
     )
-
-
-def _render_governed_draft(title: str, direction: str, revisions: list[Any]) -> str:
-    lines = [f"# {title}", "", direction.strip(), "", "## 已核验事实"]
-    for index, revision in enumerate(revisions, start=1):
-        fact_text = revision.fact_text if isinstance(revision, FactRevisionData) else revision["fact_text"]
-        revision_id = revision.revision_id if isinstance(revision, FactRevisionData) else revision["revision_id"]
-        lines.append(f"{index}. {fact_text} `[FactRevision:{revision_id}]`")
-    lines.extend(["", "## 证据说明", "", "本文仅使用已通过人工审核且仍在有效期内的企业事实；发布前仍需内容风险审校。"])
-    return "\n".join(lines)
 
 
 def _not_found(code: str, details: dict[str, Any]) -> StarletteHTTPException:
