@@ -414,6 +414,11 @@ def release_checks(
             remove_database_urls=True,
         ),
         command_check("acceptance tests", "python3 -m pytest tests/acceptance -q", remove_database_urls=True),
+        command_check(
+            "scheduler tests",
+            "python3 -m pytest apps/scheduler/tests -q",
+            remove_database_urls=True,
+        ),
         command_check("worker tests", "cd apps/worker && python3 -m pytest -q", remove_database_urls=True),
         command_check("score tests", "cd packages/score && python3 -m pytest -q", remove_database_urls=True),
         command_check("evidence tests", "cd packages/evidence && python3 -m pytest -q", remove_database_urls=True),

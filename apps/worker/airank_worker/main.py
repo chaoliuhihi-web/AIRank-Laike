@@ -4,6 +4,9 @@ import argparse
 import json
 import os
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Mapping
 
 from airank_evidence import ObjectStorageError, build_object_storage_from_env
 
@@ -30,20 +33,111 @@ from .page_audit import (
 from .scan import ScanWorkerError, run_next_real_scan_job
 
 
+JOB_TYPE_FILTERS: dict[str, set[str]] = {
+    "all": {"publish.package", "scan.provider", "page.audit", "citation.capture"},
+    "publish": {"publish.package"},
+    "scan": {"scan.provider"},
+    "page-audit": {"page.audit"},
+    "citation-capture": {"citation.capture"},
+}
+
+
+class WorkerScopeError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class WorkerScope:
+    tenant_id: str | None
+    project_id: str | None
+    job_id: str | None
+    global_scope: bool
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            "tenant_id": self.tenant_id,
+            "project_id": self.project_id,
+            "job_id": self.job_id,
+            "global_scope": self.global_scope,
+        }
+
+
+def _clean(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _enabled(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_worker_scope(
+    args: argparse.Namespace,
+    env: Mapping[str, str] | None = None,
+) -> WorkerScope:
+    source = env or os.environ
+    tenant_id = _clean(args.tenant_id) or _clean(source.get("AIRANK_WORKER_TENANT_ID"))
+    project_id = _clean(args.project_id) or _clean(source.get("AIRANK_WORKER_PROJECT_ID"))
+    job_id = _clean(args.job_id) or _clean(source.get("AIRANK_WORKER_JOB_ID"))
+    if project_id and not tenant_id:
+        raise WorkerScopeError(
+            "WORKER_TENANT_SCOPE_REQUIRED",
+            "project scope requires an explicit tenant scope",
+        )
+    if tenant_id or project_id or job_id:
+        if args.allow_global_scope:
+            raise WorkerScopeError(
+                "WORKER_SCOPE_CONFLICT",
+                "global scope cannot be combined with tenant, project, or job scope",
+            )
+        return WorkerScope(tenant_id, project_id, job_id, False)
+    global_enabled = _enabled(source.get("AIRANK_WORKER_GLOBAL_SCOPE_ENABLED"))
+    if not args.allow_global_scope or not global_enabled:
+        raise WorkerScopeError(
+            "WORKER_SCOPE_REQUIRED",
+            "set a tenant/project/job scope, or explicitly enable and allow global scope",
+        )
+    return WorkerScope(None, None, None, True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AIRank governed background worker")
     parser.add_argument("--once", action="store_true", help="claim at most one eligible job and exit")
+    parser.add_argument("--drain", action="store_true", help="exit successfully when the scoped queue is empty")
+    parser.add_argument("--max-jobs", type=int, help="stop after processing this many scoped jobs")
+    parser.add_argument("--dry-run", action="store_true", help="inspect the scoped due queue without claiming jobs")
+    parser.add_argument("--tenant-id", help="limit claims and timeout recovery to one tenant")
+    parser.add_argument("--project-id", help="limit claims and timeout recovery to one project; requires tenant")
+    parser.add_argument("--job-id", help="limit execution to one exact async job")
+    parser.add_argument(
+        "--allow-global-scope",
+        action="store_true",
+        help="allow all tenants only when AIRANK_WORKER_GLOBAL_SCOPE_ENABLED=true",
+    )
     parser.add_argument(
         "--job-type",
         choices=("all", "publish", "scan", "page-audit", "citation-capture"),
         default="all",
-        help="limit this process to publish or scan jobs",
+        help="limit this process to one governed job family",
     )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.max_jobs is not None and args.max_jobs < 1:
+        print(json.dumps({"status": "blocked", "error_code": "WORKER_MAX_JOBS_INVALID"}))
+        return 2
+    if args.once and args.max_jobs not in {None, 1}:
+        print(json.dumps({"status": "blocked", "error_code": "WORKER_LIMIT_CONFLICT"}))
+        return 2
+    try:
+        scope = resolve_worker_scope(args)
+    except WorkerScopeError as exc:
+        print(json.dumps({"status": "blocked", "error_code": exc.code}))
+        return 2
     database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
     if not database_url:
         print(json.dumps({"status": "blocked", "error_code": "DATABASE_NOT_CONFIGURED"}))
@@ -53,7 +147,30 @@ def main() -> int:
         poll_seconds = max(0.25, float(os.getenv("AIRANK_WORKER_POLL_SECONDS") or 3))
     except ValueError:
         poll_seconds = 3.0
-    store = MySQLJobLeaseStore(database_url)
+    store = MySQLJobLeaseStore(
+        database_url,
+        tenant_id=scope.tenant_id,
+        project_id=scope.project_id,
+        job_id=scope.job_id,
+    )
+    if args.dry_run:
+        inspection = store.inspect_claimable(
+            datetime.now(timezone.utc),
+            job_types=JOB_TYPE_FILTERS[args.job_type],
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "dry_run",
+                    "scope": scope.to_record(),
+                    "job_type": args.job_type,
+                    **inspection.to_record(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     repository = MySQLPublishExecutionRepository(database_url)
     gateway = PublisherGateway()
     page_audit_repository = MySQLPageAuditExecutionRepository(database_url)
@@ -76,6 +193,9 @@ def main() -> int:
             return 2
         citation_object_storage = None
 
+    processed_count = 0
+    failed_count = 0
+    job_limit = 1 if args.once else args.max_jobs
     while True:
         receipt = None
         scan_result = None
@@ -113,6 +233,8 @@ def main() -> int:
                     worker_id=worker_id,
                 )
         except PublisherError as exc:
+            processed_count += 1
+            failed_count += 1
             print(
                 json.dumps(
                     {
@@ -123,9 +245,9 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
-            if args.once:
-                return 1
         except ScanWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
             print(
                 json.dumps(
                     {
@@ -136,9 +258,9 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
-            if args.once:
-                return 1
         except PageAuditWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
             print(
                 json.dumps(
                     {
@@ -149,9 +271,9 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
-            if args.once:
-                return 1
         except CitationCaptureWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
             print(
                 json.dumps(
                     {
@@ -162,8 +284,6 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
-            if args.once:
-                return 1
         else:
             if receipt is not None:
                 print(
@@ -195,8 +315,35 @@ def main() -> int:
                         ensure_ascii=False,
                     )
                 )
-            if args.once:
-                return 1 if scan_result is not None and scan_result.status == "failed" else 0
+            handled = any(
+                item is not None
+                for item in (
+                    receipt,
+                    scan_result,
+                    page_audit_result,
+                    citation_capture_result,
+                )
+            )
+            if handled:
+                processed_count += 1
+                if scan_result is not None and scan_result.status == "failed":
+                    failed_count += 1
+            elif args.once or args.drain or job_limit is not None:
+                print(
+                    json.dumps(
+                        {
+                            "status": "drained",
+                            "processed_count": processed_count,
+                            "failed_count": failed_count,
+                            "scope": scope.to_record(),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                return 1 if failed_count else 0
+        if job_limit is not None and processed_count >= job_limit:
+            return 1 if failed_count else 0
         time.sleep(poll_seconds)
 
 

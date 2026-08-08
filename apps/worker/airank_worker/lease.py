@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Iterable
@@ -18,11 +18,37 @@ from airank_domain import (
 from sqlalchemy import bindparam, create_engine, text
 
 
+@dataclass(frozen=True)
+class QueueInspection:
+    eligible_count: int
+    next_job_id: str | None
+    next_job_type: str | None
+    counts_by_job_type: dict[str, int]
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            "eligible_count": self.eligible_count,
+            "next_job_id": self.next_job_id,
+            "next_job_type": self.next_job_type,
+            "counts_by_job_type": dict(sorted(self.counts_by_job_type.items())),
+        }
+
+
 class InMemoryJobLeaseStore:
     """Small deterministic lease store used until MySQL persistence is wired."""
 
-    def __init__(self, jobs: Iterable[AsyncJob] | None = None) -> None:
+    def __init__(
+        self,
+        jobs: Iterable[AsyncJob] | None = None,
+        *,
+        tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
+    ) -> None:
         self._jobs: dict[str, AsyncJob] = {}
+        self._tenant_id = tenant_id
+        self._project_id = project_id
+        self._job_id = job_id
         for job in jobs or ():
             self.add(job)
 
@@ -44,8 +70,17 @@ class InMemoryJobLeaseStore:
         *,
         job_types: set[str] | None = None,
         tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
     ) -> AsyncJob | None:
-        self.sweep_timeouts(now, tenant_id=tenant_id, job_types=job_types)
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
+        self.sweep_timeouts(
+            now,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            job_id=job_id,
+            job_types=job_types,
+        )
         claimable = [
             job
             for job in self._jobs.values()
@@ -53,6 +88,8 @@ class InMemoryJobLeaseStore:
             and job.is_due(now)
             and (not job_types or job.job_type in job_types)
             and (tenant_id is None or job.tenant_id == tenant_id)
+            and (project_id is None or job.project_id == project_id)
+            and (job_id is None or job.id == job_id)
         ]
         if not claimable:
             return None
@@ -94,19 +131,67 @@ class InMemoryJobLeaseStore:
         now: datetime,
         *,
         tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
         job_types: set[str] | None = None,
     ) -> list[AsyncJob]:
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
         timed_out: list[AsyncJob] = []
         for job in list(self._jobs.values()):
             if (
                 job.is_timed_out(now)
                 and (tenant_id is None or job.tenant_id == tenant_id)
+                and (project_id is None or job.project_id == project_id)
+                and (job_id is None or job.id == job_id)
                 and (not job_types or job.job_type in job_types)
             ):
                 updated = timeout_job(job, now)
                 self._jobs[job.id] = updated
                 timed_out.append(updated)
         return timed_out
+
+    def inspect_claimable(
+        self,
+        now: datetime,
+        *,
+        job_types: set[str] | None = None,
+        tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
+    ) -> QueueInspection:
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
+        rows = [
+            job
+            for job in self._jobs.values()
+            if job.status == AsyncJobStatus.QUEUED
+            and job.is_due(now)
+            and (not job_types or job.job_type in job_types)
+            and (tenant_id is None or job.tenant_id == tenant_id)
+            and (project_id is None or job.project_id == project_id)
+            and (job_id is None or job.id == job_id)
+        ]
+        ordered = sorted(rows, key=lambda job: (job.priority, job.scheduled_at, job.id))
+        counts: dict[str, int] = {}
+        for job in rows:
+            counts[job.job_type] = counts.get(job.job_type, 0) + 1
+        return QueueInspection(
+            eligible_count=len(rows),
+            next_job_id=ordered[0].id if ordered else None,
+            next_job_type=ordered[0].job_type if ordered else None,
+            counts_by_job_type=counts,
+        )
+
+    def _scope(
+        self,
+        tenant_id: str | None,
+        project_id: str | None,
+        job_id: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        return (
+            tenant_id or self._tenant_id,
+            project_id or self._project_id,
+            job_id or self._job_id,
+        )
 
     def requeue_for_retry(self, job_id: str, now: datetime) -> AsyncJob:
         job = self._jobs[job_id]
@@ -174,8 +259,18 @@ def coerce_datetime(value: object) -> datetime:
 class MySQLJobLeaseStore:
     """Persistent lease store backed by the AIRank `airank_async_jobs` table."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
+    ) -> None:
         self._engine = create_engine(database_url, pool_pre_ping=True)
+        self._tenant_id = tenant_id
+        self._project_id = project_id
+        self._job_id = job_id
 
     def add(self, job: AsyncJob) -> None:
         with self._engine.begin() as conn:
@@ -220,9 +315,23 @@ class MySQLJobLeaseStore:
         *,
         job_types: set[str] | None = None,
         tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
     ) -> AsyncJob | None:
-        self.sweep_timeouts(now, tenant_id=tenant_id, job_types=job_types)
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
+        self.sweep_timeouts(
+            now,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            job_id=job_id,
+            job_types=job_types,
+        )
         with self._engine.begin() as conn:
+            lock_clause = (
+                "FOR UPDATE SKIP LOCKED"
+                if self._engine.dialect.name == "mysql"
+                else ""
+            )
             query = text(
                 """
                 SELECT *
@@ -231,11 +340,17 @@ class MySQLJobLeaseStore:
                   AND scheduled_at <= :now
                   {job_type_clause}
                   {tenant_clause}
+                  {project_clause}
+                  {job_clause}
                 ORDER BY priority ASC, scheduled_at ASC, id ASC
                 LIMIT 1
+                {lock_clause}
                 """.format(
                     job_type_clause="AND job_type IN :job_types" if job_types else "",
                     tenant_clause="AND tenant_id = :tenant_id" if tenant_id else "",
+                    project_clause="AND project_id = :project_id" if project_id else "",
+                    job_clause="AND id = :job_id" if job_id else "",
+                    lock_clause=lock_clause,
                 )
             )
             params: dict[str, object] = {"now": now}
@@ -244,6 +359,10 @@ class MySQLJobLeaseStore:
                 params["job_types"] = sorted(job_types)
             if tenant_id:
                 params["tenant_id"] = tenant_id
+            if project_id:
+                params["project_id"] = project_id
+            if job_id:
+                params["job_id"] = job_id
             row = conn.execute(
                 query,
                 params,
@@ -307,14 +426,23 @@ class MySQLJobLeaseStore:
         now: datetime,
         *,
         tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
         job_types: set[str] | None = None,
     ) -> list[AsyncJob]:
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
         with self._engine.begin() as conn:
             query = "SELECT * FROM airank_async_jobs WHERE status = 'running'"
             params: dict[str, object] = {}
             if tenant_id:
                 query += " AND tenant_id = :tenant_id"
                 params["tenant_id"] = tenant_id
+            if project_id:
+                query += " AND project_id = :project_id"
+                params["project_id"] = project_id
+            if job_id:
+                query += " AND id = :job_id"
+                params["job_id"] = job_id
             if job_types:
                 query += " AND job_type IN :job_types"
                 statement = text(query).bindparams(bindparam("job_types", expanding=True))
@@ -344,6 +472,66 @@ class MySQLJobLeaseStore:
                 )
                 timed_out.append(updated)
         return timed_out
+
+    def inspect_claimable(
+        self,
+        now: datetime,
+        *,
+        job_types: set[str] | None = None,
+        tenant_id: str | None = None,
+        project_id: str | None = None,
+        job_id: str | None = None,
+    ) -> QueueInspection:
+        tenant_id, project_id, job_id = self._scope(tenant_id, project_id, job_id)
+        clauses = ["status = 'queued'", "scheduled_at <= :now"]
+        params: dict[str, object] = {"now": now}
+        if job_types:
+            clauses.append("job_type IN :job_types")
+            params["job_types"] = sorted(job_types)
+        if tenant_id:
+            clauses.append("tenant_id = :tenant_id")
+            params["tenant_id"] = tenant_id
+        if project_id:
+            clauses.append("project_id = :project_id")
+            params["project_id"] = project_id
+        if job_id:
+            clauses.append("id = :job_id")
+            params["job_id"] = job_id
+        where_clause = " AND ".join(clauses)
+        statement = text(
+            f"""
+            SELECT id, job_type
+            FROM airank_async_jobs
+            WHERE {where_clause}
+            ORDER BY priority ASC, scheduled_at ASC, id ASC
+            """
+        )
+        if job_types:
+            statement = statement.bindparams(bindparam("job_types", expanding=True))
+        with self._engine.begin() as conn:
+            rows = conn.execute(statement, params).mappings().all()
+        counts: dict[str, int] = {}
+        for row in rows:
+            job_type = str(row["job_type"])
+            counts[job_type] = counts.get(job_type, 0) + 1
+        return QueueInspection(
+            eligible_count=len(rows),
+            next_job_id=str(rows[0]["id"]) if rows else None,
+            next_job_type=str(rows[0]["job_type"]) if rows else None,
+            counts_by_job_type=counts,
+        )
+
+    def _scope(
+        self,
+        tenant_id: str | None,
+        project_id: str | None,
+        job_id: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        return (
+            tenant_id or self._tenant_id,
+            project_id or self._project_id,
+            job_id or self._job_id,
+        )
 
     def requeue_for_retry(self, job_id: str, now: datetime) -> AsyncJob:
         job = self.get(job_id)

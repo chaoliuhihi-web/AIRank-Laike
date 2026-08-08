@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import json
 import os
 import threading
-from typing import Annotated, Any, Callable, Literal, Optional, Protocol
+from typing import Annotated, Any, Callable, Literal, Mapping, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
@@ -3256,6 +3256,25 @@ def persist_provider_failure_screenshot(
     )
 
 
+def resolve_task_question_text(
+    task: Mapping[str, Any],
+    current_questions: Mapping[str, str],
+    *,
+    fallback: str,
+) -> str:
+    """Use the immutable queued task prompt before any mutable question read model."""
+
+    task_request = parse_json_value(task.get("request_json"), {})
+    frozen = (
+        str(task_request.get("question_text") or "").strip()
+        if isinstance(task_request, Mapping)
+        else ""
+    )
+    if frozen:
+        return frozen
+    return current_questions.get(str(task.get("question_id") or ""), fallback)
+
+
 def complete_mysql_real_brand_scan(
     tenant_id: str,
     project: ProjectData,
@@ -3319,7 +3338,11 @@ def complete_mysql_real_brand_scan(
 
     for row in task_rows:
         provider = str(row["provider"])
-        question_text = question_by_id.get(str(row["question_id"]), f"{project.brand_name} 是否值得选择？")
+        question_text = resolve_task_question_text(
+            row,
+            question_by_id,
+            fallback=f"{project.brand_name} 是否值得选择？",
+        )
         task_started_at = utc_now()
         if progress_hook is not None:
             progress_hook(str(row["id"]), "provider_start")

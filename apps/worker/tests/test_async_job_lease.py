@@ -146,6 +146,40 @@ def test_claim_can_be_limited_to_handler_job_types() -> None:
     assert store.get("job_scan_first").status == AsyncJobStatus.QUEUED
 
 
+def test_in_memory_default_scope_limits_claim_timeout_and_preview() -> None:
+    due = AsyncJob(
+        id="job_scoped_due",
+        tenant_id="tenant_1",
+        project_id="project_1",
+        job_type="scan.provider",
+        scheduled_at=NOW,
+    )
+    other_project = AsyncJob(
+        id="job_other_project",
+        tenant_id="tenant_1",
+        project_id="project_2",
+        job_type="scan.provider",
+        scheduled_at=NOW,
+    )
+    store = InMemoryJobLeaseStore(
+        [due, other_project],
+        tenant_id="tenant_1",
+        project_id="project_1",
+    )
+
+    preview = store.inspect_claimable(NOW, job_types={"scan.provider"})
+    claimed = store.claim_next("scoped-worker", NOW, job_types={"scan.provider"})
+
+    assert preview.to_record() == {
+        "eligible_count": 1,
+        "next_job_id": "job_scoped_due",
+        "next_job_type": "scan.provider",
+        "counts_by_job_type": {"scan.provider": 1},
+    }
+    assert claimed is not None and claimed.id == "job_scoped_due"
+    assert store.get("job_other_project").status == AsyncJobStatus.QUEUED
+
+
 def test_in_memory_claim_can_be_deferred_without_spending_an_attempt() -> None:
     store = InMemoryJobLeaseStore(
         [AsyncJob(id="job_defer", tenant_id="tenant_1", job_type="scan.provider", scheduled_at=NOW)]
@@ -273,6 +307,42 @@ def test_mysql_lease_store_filters_job_type_before_claim() -> None:
     assert claimed is not None
     assert claimed.id == "job_db_publish"
     assert store.get("job_db_scan").status == AsyncJobStatus.QUEUED
+
+
+def test_mysql_lease_store_applies_tenant_project_and_exact_job_scope() -> None:
+    store = MySQLJobLeaseStore(
+        "sqlite+pysqlite:///:memory:",
+        tenant_id="tenant_1",
+        project_id="project_1",
+        job_id="job_db_scoped",
+    )
+    create_mysql_lease_table(store)
+    store.add(
+        AsyncJob(
+            id="job_db_scoped",
+            tenant_id="tenant_1",
+            project_id="project_1",
+            job_type="scan.provider",
+            scheduled_at=NOW,
+        )
+    )
+    store.add(
+        AsyncJob(
+            id="job_db_unscoped",
+            tenant_id="tenant_1",
+            project_id="project_1",
+            job_type="scan.provider",
+            scheduled_at=NOW,
+        )
+    )
+
+    preview = store.inspect_claimable(NOW, job_types={"scan.provider"})
+    claimed = store.claim_next("scoped-worker", NOW, job_types={"scan.provider"})
+
+    assert preview.eligible_count == 1
+    assert preview.next_job_id == "job_db_scoped"
+    assert claimed is not None and claimed.id == "job_db_scoped"
+    assert store.get("job_db_unscoped").status == AsyncJobStatus.QUEUED
 
 
 def test_mysql_lease_store_defers_redundant_claim_without_spending_attempt() -> None:

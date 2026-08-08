@@ -59,7 +59,7 @@ Run one publish job:
 
 ```bash
 PYTHONPATH=apps/worker:packages/domain/src:packages/crawler-lite/src:packages/outbound-security/src \
-  python3 -m airank_worker.main --once
+  python3 -m airank_worker.main --tenant-id tenant_id --job-type publish --once
 ```
 
 Omit `--once` for the polling process. A failed job records a structured attempt
@@ -70,7 +70,7 @@ Run one durable scan dispatch:
 ```bash
 PYTHONPATH=.:apps/worker:packages/domain/src:packages/evidence/src:packages/crawler-lite/src:packages/outbound-security/src:packages/provider-gateway/src:packages/score/src:packages/skills/src \
   AIRANK_DATABASE_URL="$AIRANK_DATABASE_URL" \
-  python3 -m airank_worker.main --job-type scan --once
+  python3 -m airank_worker.main --tenant-id tenant_id --project-id project_id --job-type scan --once
 ```
 
 Every `scan.provider` job owns exactly one versioned sampling slot. Multiple
@@ -85,8 +85,11 @@ outcome and linked evidence IDs. A timed-out call whose external outcome is
 unknown is never replayed automatically: only that slot receives
 `SCAN_TASK_LEASE_EXPIRED`, an empty-answer immutable failure snapshot and an
 `unknown` attempt. Requeuing an already-terminal job is an idempotent replay and
-does not call the Provider again. Dedicated workers/tests may pass a tenant
-scope; the production CLI processes all tenants.
+does not call the Provider again. The CLI is fail-closed unless a
+tenant/project/job scope is supplied. A global production worker requires both
+`AIRANK_WORKER_GLOBAL_SCOPE_ENABLED=true` and `--allow-global-scope`.
+`--dry-run` reports scoped counts and the next job ID without claiming or
+calling a Provider; `--drain` and `--max-jobs` provide bounded acceptance runs.
 
 ## M2 mock scan provider
 

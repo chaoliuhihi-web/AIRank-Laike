@@ -4,7 +4,7 @@
 
 状态：`partial / no-go for commercial launch`。
 
-已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”“同口径复测归因”后端切片，以及 API 认证边界、样本证据中心、任务中心、事实/内容审核 UI、真实 Provider 采样、统一安全出站、官网可提取性审计和引用来源页不可变存证；但同一轮四平台真实重复采样、生产 Yudao 认证、浏览器/App 高等级证据、真实外部发布和带项目数据的浏览器客户报告尚未全部通过，不得宣称商业可用。
+已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”“同口径复测归因”和安全持久复测调度后端切片，以及 API 认证边界、样本证据中心、任务中心、事实/内容审核 UI、真实 Provider 采样、统一安全出站、官网可提取性审计和引用来源页不可变存证；但同一轮四平台真实重复采样、生产 Yudao 认证、浏览器/App 高等级证据、真实外部发布、真实时间流逝后的观察窗口和带项目数据的浏览器客户报告尚未全部通过，不得宣称商业可用。
 
 ## 本轮已落地
 
@@ -95,6 +95,8 @@
 85. 重新检查 `yaojingang` 账号 13 个公开仓库，既有 10 个锁定上游 HEAD 均未变化；新增 fork `haidian@707b4b6`。代码级复核确认其候选来源草稿、用途限制、AI 咨询评审不得覆盖确定性 gate、离线评审包和 eligibility 前置空白评分表值得借鉴，已作为 3 条 `reference_only` 能力进入矩阵；不把城市设计业务、素材或无许可证源码带入 AIRank。
 86. 吸收 `haidian` 离线评审包方法并重建为 AIRank 自有客户证据包：`20260808_0018` 新增不可变 `airank_report_evidence_packets`；`airank.report-evidence-packet.v1` 保存质量门禁、公式、风险、限制、样本/引用/对象索引与内容 hash，不复制原始回答正文。只有 v4 基线/复测门禁、报告 hash、基线/对比 run 和完整样本索引同时有效才生成；无数据库/对象存储、质量阻断、旧报告、缺样本或 API 请求审计缺失均失败关闭。控制台按“生成包→下载对象→浏览器 SHA-256 复验→绑定 packet/hash 的下载回执”执行。真实 MySQL 使用 2 个同口径 run、6 个独立 API 样本验证通过，3 个正常未提及样本保留在包内。HTML/PDF/Word、数字签名和正式评分表仍为后续 `partial`。
 87. 完成事实准确率正式证据链：`20260808_0019` 新增追加式 `airank_fact_accuracy_reviews`，AnswerClaim 区分引用声明与品牌/竞品事实声明并保存主体、精确回答边界和 hash。人工裁决只能绑定当前有效、人工审核、可披露、无开放冲突且精确落到 KnowledgeSegment 原文边界的事实修订；事实/来源失效后历史裁决保留但自动退出当前指标。`accurate/inaccurate/outdated/insufficient` 分开统计，只有完整决定性覆盖才计算事实准确率。复测报告从 MySQL 批量重算，客户证据包升级为 `airank.report-evidence-packet.v2` 并加入不复制原文的事实证据索引，历史 v1 仍可读取。证据中心完成桌面和 390×844 浏览器真实点击闭环，随后清理隔离 QA 项目；恢复原项目后 9 条正常未提及仍全部保留，console 为 0 error。
+88. 深度吸收 `yao-geo-effect-monitor` 与 GEOFlow 的定时任务/恢复方法并重建为 AIRank 自有 `apps/scheduler`：T0 到期时只登记真实基线锚点，T+7/T+14/T+30 从基线任务冻结的 `request_json.question_text`、Prompt 版本、Provider、Cohort、surface、evidence level 与模型上下文克隆任务，并为每个样本创建全新 session；问题在基线后被编辑也不会改变复测问题。缺基线、缺任务或缺冻结 Prompt 时窗口明确 `blocked` 并保存追加式审计；终态比较仍走现有 v4 数据质量门禁和审慎归因。
+89. Worker 与 Scheduler 默认 fail-closed：租户、项目、精确 job/window 至少需要一个有效范围，项目范围必须绑定租户；全局多租户运行必须同时设置专用环境开关和 `--allow-global-scope`。Worker 新增调用外部服务前的只读 `--dry-run` 和有界 `--drain --max-jobs`。真实数据库预览发现 71 个到期 `scan.provider` 历史任务但没有领取；隔离真实 MySQL 调度测试验证 frozen Prompt、fresh session、精确 scope、幂等派发、失败复测 `quality_blocked` 和 `completed_with_limitations`。全量测试为 `368 passed, 26 skipped`，真实 MySQL integration 为 `24 passed, 2 skipped`。
 
 ## 验收证据
 
@@ -122,12 +124,12 @@
 
 ## 下一实施顺序
 
-1. 千问、豆包、DeepSeek 的 API 3 次独立采样已通过；轮换已在会话中暴露过的 Kimi 密钥并通过安全环境注入后，使用同一版问题补齐 Kimi 3 次采样，再合并为四平台同批次门禁。Kimi 完成前四平台测量状态保持 `partial`。
+1. 使用同一版问题、同一 Cohort 和隔离租户创建新的四平台批次；千问、豆包、Kimi、DeepSeek 各执行 3 次独立 API 采样并重新跑 v4 门禁。会话中暴露过的 Kimi 凭证只能作为本机验收运行时使用，生产上线前必须轮换；本机通过不解除生产轮换 blocker。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
 4. 在已完成的来源页抓取、对象存证和精确边界基础上，补待复核队列、claim 细粒度框选、双人复核一致性与人工标注 benchmark；单人真实复核闭环已经通过，但不能替代生产质量抽检。
 5. 在已完成数据库分布式容量租约与优先级多上游路由基础上，补动态择优、管理 API、长时崩溃恢复和负载压测；配额耗尽与幂等冲突继续禁止通过备用路由绕过。
 6. 补客户来源自动同步 worker、局部重嵌入和混合检索；不可变人工来源修订、旧事实失效和当前有效原文检索已完成，但不能把 `lexical_only` 包装成语义检索。
 7. 使用客户授权的 WordPress/HTTP 测试站点完成一次真实外部回执、截图、更新和撤回验收；适配器、attempt 消费与重试恢复已实现，但无外部账号时保持 `partial`。
-8. 按 Promotion Evidence Ledger 的 blocker 清单补真实队列、人工标注、Provider 引用和真实 T0/T+7 artifact；每项必须提交仓库内可校验路径与 SHA-256 后才能晋级 `ready`。
+8. 按 Promotion Evidence Ledger 的 blocker 清单补真实队列、人工标注、Provider 引用和真实时间流逝后的 T+7/T+14/T+30 artifact；自动调度器已通过合成到期时间的真实 MySQL 验证，但不能冒充客户观察证据。每项必须提交仓库内可校验路径与 SHA-256 后才能晋级 `ready`。
 9. 用四平台真实重复样本从新建品牌跑到客户报告，升级生产 Python 运行时，在生产 HTTPS S3/MinIO 环境复验对象读写与截图展示，并完成带数据的浏览器 E2E 和完整上线门禁后，才允许声明商业可用。

@@ -3,7 +3,7 @@
 本文档用于把 AIRank 来客交给开发、运维或客户技术团队部署上线。当前仓库分成两条部署线：
 
 - 官网宣传站：`AIRank素材/Web宣传/airank-design-grade-frontend`，当前已经可以作为官网上线候选版本。
-- AIRank SaaS 系统：`apps/web`、`apps/api`、`apps/worker`，用于后续控制台、API、扫描和报告主链路，必须通过 release gate 后再上线。
+- AIRank SaaS 系统：`apps/web`、`apps/api`、`apps/worker`、`apps/scheduler`，用于控制台、API、扫描、到期复测和报告主链路，必须通过 release gate 后再上线。
 
 ## 1. 下载代码
 
@@ -261,6 +261,7 @@ curl -I https://airank.net.cn/
 apps/web      控制台前端
 apps/api      FastAPI 产品 API
 apps/worker   扫描、归因、内容、报告等异步任务
+apps/scheduler 到期 T0/T+7/T+14/T+30 复测调度和终态报告触发
 MySQL         业务数据库
 对象存储       快照、证据包、报告文件
 ```

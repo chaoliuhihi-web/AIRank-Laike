@@ -65,7 +65,15 @@ class RetestWindowData(BaseModel):
     baseline_run_id: Optional[str]
     window_label: Literal["T0", "T+7", "T+14", "T+30"]
     due_at: datetime
-    status: Literal["scheduled", "running", "completed", "completed_with_limitations", "failed"]
+    status: Literal[
+        "scheduled",
+        "sampling",
+        "blocked",
+        "running",
+        "completed",
+        "completed_with_limitations",
+        "failed",
+    ]
     compare_run_id: Optional[str] = None
     completed_at: Optional[datetime] = None
 
@@ -249,6 +257,14 @@ class MySQLRetestRepository:
                     raise _conflict("STATE_CONFLICT", {"window_id": window_id, "compare_run_id": window["compare_run_id"]})
                 stored = _json_value(window["result_json"], {})
                 return RetestComparisonData.model_validate({**stored, "idempotent_replay": True})
+            if window["compare_run_id"] and window["compare_run_id"] != payload.compare_run_id:
+                raise _conflict(
+                    "STATE_CONFLICT",
+                    {
+                        "window_id": window_id,
+                        "compare_run_id": window["compare_run_id"],
+                    },
+                )
             baseline_run_id = window["baseline_run_id"]
             if not baseline_run_id:
                 raise _conflict("RETEST_BASELINE_REQUIRED", {"window_id": window_id})

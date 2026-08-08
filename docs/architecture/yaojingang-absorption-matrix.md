@@ -19,13 +19,14 @@
 9. 账号新增的 `haidian@707b4b6` 是城市设计征集仓且未声明许可证，不属于 GEO 业务代码来源；其中“候选来源先进入待复核草稿、AI 审核不得覆盖确定性门禁、离线评审包同时汇总风险/假设/来源/指标/文件”的治理方法对 AIRank 有价值，只按 `reference_only` 吸收方法，不复制代码、页面或素材。
 10. `Customer Evidence Packet` 已升级为 AIRank 自有 `airank.report-evidence-packet.v2`：仅在基线/复测质量门禁均通过后生成，内容寻址保存公式、限制、风险、样本/引用/事实准确性/对象索引与哈希；前端下载后本地复验 SHA-256，下载回执必须绑定 packet/hash。历史 v1 包仍可读取但不会伪装成 v2；HTML/PDF/Word 渲染、签名和正式空白评分表仍未实现，因此状态保持 `partial`。
 11. 品牌/竞品事实准确率不再是占位指标：回答中的事实声明按精确字符边界、声明类型和主体登记，追加式人工裁决只能绑定当前有效、人工审核、可披露、无开放冲突且能落到原文精确边界的 `FactRevision`。事实或来源过期、被替代或发生冲突时，旧裁决保留但自动退出当前商业指标；`insufficient` 单独统计且不绑定虚构事实。控制台可下钻登记和裁决，报告与 v2 证据包按当前证据重新计算覆盖率和准确率。
+12. `yao-geo-effect-monitor` 与 GEOFlow 的到期任务模式已改造为 AIRank 自有持久调度器：发布后窗口按 T0/T+7/T+14/T+30 执行，T0 只锚定真实基线，后续窗口从基线任务的冻结请求克隆同口径任务并创建全新 session；Worker 与 Scheduler 默认都拒绝无租户/项目范围运行，全局多租户处理需要环境变量和命令行双重授权。真实时间流逝后的客户观察证据尚未产生，因此能力仍为 `partial`。
 
 ## yao-geo-skills：21 个 Skill 全覆盖
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yao-geo-skills | `yao-geo-tracking` | 为企业建立可复查的监测口径 | `skills/yao-geo-tracking` | 企业/官网 → 追踪方案与报告 | 官网取证、区域口径 | MIT | Cohort/重复采样任务契约已落库 | 区域采集与完整性报告仍缺 | adapt | Measurement Plan Skill | P0 | partial | 同一项目方案可编译为任务契约，字段完整性测试通过 |
-| yao-geo-skills | `yao-geo-effect-monitor` | 长期监测、引用台账、谨慎归因 | `skills/yao-geo-effect-monitor` | 平台样本 → 指标、告警、月报 | 真实样本、引用、时间窗 | MIT | 纯函数指标已覆盖有效/失败/阻塞/未提及/稳定性 | T0/T+7/T+14/T+30 与归因语义仍缺 | adapt | Effect Monitor Skill | P0 | partial | 指标从样本重算一致；报告仅使用批准的归因措辞 |
+| yao-geo-skills | `yao-geo-effect-monitor` | 长期监测、引用台账、谨慎归因 | `skills/yao-geo-effect-monitor` | 平台样本 → 指标、告警、月报 | 真实样本、引用、时间窗 | MIT | 指标覆盖有效/失败/阻塞/未提及/稳定性；持久 Scheduler 已实现 T0 锚定和 T+7/T+14/T+30 到期派发，严格克隆冻结 Prompt、Provider、Cohort、surface、模型上下文并创建全新 session；终态比较继续走 v4 质量门禁和审慎归因 | 尚无真实时间流逝后的客户 T+7/T+14/T+30 artifact、运营告警与月报节奏 | adapt | Effect Monitor Skill | P0 | partial | 真实 MySQL 验证冻结 Prompt、独立 session、幂等派发、失败复测 `quality_blocked`；后续用真实观察窗口验证变化措辞 |
 | yao-geo-skills | `yao-deepseek-crawler` | Web 端独立重复采样与原始证据 | `skills/yao-deepseek-crawler` | 问题/轮次 → JSON、截图、排名报告 | 登录态、Browser Bridge | MIT | 通用 Web 采样已记录独立 session、轮次、截图/回答 hash；超时、网络失败、登录/验证码阻塞分开归类并保存失败现场截图 | 仍需真实多轮浏览器门禁证明会话隔离 | adapt | Web Collector Adapter | P0 | partial | 连续多轮保留全部样本、会话 ID、截图 hash 与失败分类 |
 | yao-geo-skills | `yao-doubao-crawler` | 豆包 Web/App 分终端证据 | `skills/yao-doubao-crawler` | 问题/轮次/终端 → 回答、截图、XML、来源卡 | 登录态；Appium/AVD（App） | MIT | 只有通用 Web 采样 | 无 App 契约；Web/App 证据混用 | adapt | Web Collector + App Collector | P0 | planned | 同问题 Web/App 独立标记、证据等级不同且可对比 |
 | yao-geo-skills | `yao-chatgpt-crawler` | ChatGPT AI Search 多次采样 | `skills/yao-chatgpt-crawler` | 问题/轮次 → 回答、可见来源与概率报告 | 登录态、Browser Bridge | MIT | 浏览器 provider 名录包含 ChatGPT | 没有原生来源面板结构化与会话隔离证明 | adapt | Web Collector Adapter | P1 | planned | 真实多轮样本可追踪到可见来源和截图 |
@@ -151,6 +152,8 @@
 - `research.intent-miner` 已吸收 M0/M1 边界：无数据时只生成假设候选；客户授权数据进入 `user_provided_snapshot` 批次并明确“未独立核验”。来源内出现次数只保存为 occurrence count，不作为搜索量；疑似邮箱、手机号或身份证的原文只计算内容 hash 和阻断原因，不进入数据库、API 响应或问题版本。
 - `airank.measurement-quality.v4` 将复测报告的“已生成”与“可交付”分开：每个 ScanRun 都能重算内容寻址质量报告，未提及仍计入有效分母；单次采样、少于 3 个独立 sample index、重用 session 或未验证全新 Consumer 会话会直接阻断交付。除样本、签名、有效率、回答/原始响应 hash 外，API/Web/App/manual_import 分别执行证据门禁。Web/App 的 `source_panel_status` 必须为 `captured` 或 `not_present`；有引用时还必须绑定不可变来源面板对象。基线与复测任一质量失败或口径不可比时，报告只保存为 `quality_blocked` 且下载 API 返回 `409 REPORT_QUALITY_BLOCKED`。
 - 真实 ScanRun 默认由 `airank_async_jobs` 与 Worker 异步执行；每个采样槽独立领取、心跳并在单事务中写回答、证据、引用、请求审计、attempt 和 job/task 状态。同批次不同槽可由多个 Worker 并行；运行指标只在全部槽终态后从持久化样本重算。进程崩溃只把结果未知的当前槽记为 `SCAN_TASK_LEASE_EXPIRED` 与 `unknown` attempt，不重放 Provider，也不破坏兄弟槽证据。证据中心可下钻 attempt 链。跨进程 MySQL 熔断、租户配额、按配置指纹隔离的分布式 QPS/并发租约和优先级多上游故障转移已经接入；动态择优和长时压测仍未完成，因此 TokHub 路由能力仍为 `partial`。
+- Worker 与 Scheduler 现在都使用 fail-closed scope：默认必须指定 tenant/project/exact job 或 window；全局运行需要命令行 `--allow-global-scope` 和独立环境开关同时启用。`--dry-run` 在初始化 Provider/Publisher 之前只读统计可领取对象，`--drain --max-jobs` 支持有限批量消费。真实库只读预览确认当前全局存在 71 个到期 `scan.provider` job，但未领取或调用任何 Provider，避免误处理其他租户历史队列。
+- 持久复测 Scheduler 已把 T0 作为不可变基线锚点，把 T+7/T+14/T+30 窗口转为新的 durable ScanRun/task/job。复测执行优先使用基线 `request_json.question_text`，不会因买家问题后续编辑而改变测量口径；缺基线、缺任务或缺冻结 Prompt 时窗口进入 `blocked` 并保存结构化错误与追加审计。真实 MySQL 验证 fresh session、幂等派发、终态失败比较生成 `quality_blocked` 观察报告以及 `completed_with_limitations` 窗口。
 - 知识治理新增项目级开放冲突查询和 1—365 天有效期观察窗：来源到期、已批准事实到期与开放冲突均从原始对象实时派生，不自动改写状态；来源过期、尚未生效或冲突开放时，FactRevision 即时失去内容生成资格。真实 MySQL 已验证冲突创建、资格阻断、人工裁决、资格恢复、UTC 序列化和重复修订对 `409` 门禁。
 - 千问、豆包、Kimi、DeepSeek（当前可用型号为 `deepseek-v3.2`）均已通过本仓 Provider Gateway 真实 L3 调用并返回真实 request ID；凭证只从本机私密环境映射到进程。Kimi 已暴露过的验收密钥必须在生产前轮换，DeepSeek 新型号额度和旧型号下架迁移仍是上线门禁。
 - 页面安全抓取切片已通过 38 项定向测试和真实 MySQL integration；真实浏览器完成 `example.com` 异步抓取，得到 HTTP 200、内容 SHA-256、DNS 固定连接 IP、11 条规则和 68 分技术可提取性。桌面与 390×844 移动端均无页面级横向溢出，console 为 0 warning / 0 error。该分数只表示服务器页面可提取条件，不能推导品牌推荐率。

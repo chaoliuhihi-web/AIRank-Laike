@@ -736,3 +736,26 @@ Limitations and blockers:
 Decision:
 
 - The previous fact-accuracy placeholder is replaced by a traceable human-evidence workflow. AIRank remains commercial `NO-GO` until the external production, reviewer-quality and observation gates pass.
+
+## 2026-08-08 Durable Retest Scheduler Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- `apps/scheduler` durably dispatches due T0/T+7/T+14/T+30 observation windows. T0 records the completed baseline as an immutable anchor; later windows create new ScanRuns and queue normal governed `scan.provider` jobs.
+- Scheduled retests clone the baseline task's frozen question text, Prompt version, Provider, Cohort, collector surface, evidence level and model-route context. Editing the current buyer question after T0 does not change the retest contract, and every cloned sample receives a fresh session ID.
+- Missing or incomplete baselines, missing baseline tasks and legacy tasks without a frozen Prompt fail closed. The window becomes `blocked`, no Provider job is fabricated, and a structured append-only audit event records the reason.
+- Worker and Scheduler are tenant-safe by default. Project scope requires tenant scope; global multi-tenant processing requires both a dedicated environment opt-in and `--allow-global-scope`. Worker `--dry-run` returns before Provider/Publisher setup, while `--drain --max-jobs` bounds mutation.
+- A real database preview found 71 due historical `scan.provider` jobs globally and deliberately left them unclaimed. A tenant-scoped preview returned only that tenant's eligible count.
+- Full regression passed `368 passed, 26 skipped`; real MySQL integration passed `24 passed, 2 skipped`. The scheduler integration verifies frozen-Prompt cloning after question edits, fresh sessions, exact queue scope, idempotent dispatch, audit history and a failed comparison run becoming a truthful `quality_blocked` report with a `completed_with_limitations` window.
+
+Limitations and blockers:
+
+- The scheduler was validated by controlled due timestamps. No real customer publication has yet elapsed through T+7, T+14 or T+30, so this is scheduling and evidence-integrity proof, not observed GEO uplift.
+- A production service unit/container, alerting, leader-election operating procedure and long-duration crash/load test remain incomplete.
+- Four-platform same-cohort repetition, Consumer Web/App evidence, production Yudao, production HTTPS object storage and customer publishing credentials remain open.
+
+Decision:
+
+- The previous manual-only observation-window gap is closed at the durable application and database-contract level. Effect monitoring remains `partial`, and AIRank remains commercial `NO-GO` until real elapsed observations and the other production gates pass.

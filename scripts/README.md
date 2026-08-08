@@ -49,7 +49,7 @@ python3 scripts/agent_control.py gate --write
 python3 scripts/release_readiness.py --database-url "$AIRANK_RELEASE_DATABASE_URL"
 ```
 
-该命令会执行 contracts、acceptance、worker、score、evidence、xinghe-adapter、Web build、真实 integration tests、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。普通自动测试会隔离 `AIRANK_DATABASE_URL` 等数据库环境变量，真实 migration 与 integration tests 只使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration/integration 失败，脚本会返回非零，不能声明 release ready。
+该命令会执行 contracts、acceptance、scheduler、worker、score、evidence、provider gateway、xinghe-adapter、Web build、真实 integration tests、Alembic 离线 SQL、真实 MySQL migration 和 capability probe。普通自动测试会隔离 `AIRANK_DATABASE_URL` 等数据库环境变量，真实 migration 与 integration tests 只使用 `--database-url` 或 `AIRANK_RELEASE_DATABASE_URL`。只要必需能力仍是 `dev_only` / `blocked` / `partial`，或真实 MySQL migration/integration 失败，脚本会返回非零，不能声明 release ready。
 
 生产发布还必须加上消费端网页 Provider 门禁：
 

@@ -44,6 +44,7 @@ apps/
   web/                 对外官网、免费测一测、客户控制台
   api/                 AIRank 产品 API，负责租户、项目、扫描、事实库、报告
   worker/              扫描、归因、内容生成、发布复测等异步任务
+  scheduler/           到期复测窗口调度、终态比较与报告触发
   review-console/      审核、风险、验收和多 Agent 审查台
 
 packages/
