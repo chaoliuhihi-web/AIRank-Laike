@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_list_response.schema.json",
+  "title": "AIRank Opportunity Action List Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["project_id", "contract_version", "actions", "open_count", "evidence_blocked_count", "overdue_count", "final_count"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "contract_version": { "const": "airank.opportunity-action.v1" },
+        "actions": { "type": "array", "items": { "$ref": "opportunity_action.schema.json" } },
+        "open_count": { "type": "integer", "minimum": 0 },
+        "evidence_blocked_count": { "type": "integer", "minimum": 0 },
+        "overdue_count": { "type": "integer", "minimum": 0 },
+        "final_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

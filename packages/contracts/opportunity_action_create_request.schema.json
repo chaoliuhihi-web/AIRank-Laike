@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_create_request.schema.json",
+  "title": "AIRank Opportunity Action Create Request",
+  "type": "object",
+  "required": ["requested_by"],
+  "additionalProperties": false,
+  "properties": {
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "due_in_days": { "type": "integer", "minimum": 1, "maximum": 90 },
+    "action_note": { "type": "string", "minLength": 8, "maxLength": 2000 }
+  }
+}

@@ -69,6 +69,7 @@ import {
   clearAuthSession,
   compileQuestionMap,
   claimEvidenceReviewAssignment,
+  claimOpportunityAction,
   bindFactAcquisitionEvidence,
   createEvidenceReviewerTeam,
   createKnowledgeSyncPolicy,
@@ -83,6 +84,7 @@ import {
   createFactEvidenceReviewCase,
   createFactAcquisitionTask,
   createPageAudit,
+  createOpportunityAction,
   downloadReportEvidencePacket,
   deriveEvidenceGaps,
   deriveOpportunities,
@@ -100,6 +102,7 @@ import {
   fetchEvidenceObject,
   fetchEvidenceGaps,
   fetchFactAcquisitionTasks,
+  fetchOpportunityActions,
   fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
@@ -153,6 +156,7 @@ import {
   storeAuthSession,
   updateProviderRoute,
   updateKnowledgeSyncPolicy,
+  verifyOpportunityActionNotObserved,
   type AuthSession,
   type AnswerSample,
   type AnswerSampleDetail,
@@ -176,6 +180,8 @@ import {
   type EvidenceGapList,
   type FactAcquisitionTaskList,
   type OpportunityList,
+  type OpportunityAction,
+  type OpportunityActionList,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -4455,7 +4461,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 },
     opportunities: [],
   });
+  const [opportunityActions, setOpportunityActions] = useState<OpportunityActionList>({
+    project_id: "",
+    contract_version: "airank.opportunity-action.v1",
+    actions: [],
+    open_count: 0,
+    evidence_blocked_count: 0,
+    overdue_count: 0,
+    final_count: 0,
+  });
   const [derivingOpportunities, setDerivingOpportunities] = useState(false);
+  const [actingOpportunityId, setActingOpportunityId] = useState<string | null>(null);
   const [creatingFactTaskGapId, setCreatingFactTaskGapId] = useState<string | null>(null);
   const [bindingFactTaskId, setBindingFactTaskId] = useState<string | null>(null);
   const [taskFactSelections, setTaskFactSelections] = useState<Record<string, string>>({});
@@ -4491,6 +4507,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setEvidenceGaps({ project_id: "", contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
       setFactAcquisitionTasks({ project_id: "", contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
       setOpportunities({ project_id: "", contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
+      setOpportunityActions({ project_id: "", contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
       return;
     }
     const controller = new AbortController();
@@ -4502,8 +4519,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchEvidenceGaps(project.id, controller.signal),
       fetchFactAcquisitionTasks(project.id, controller.signal),
       fetchOpportunities(project.id, controller.signal),
+      fetchOpportunityActions(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
@@ -4511,6 +4529,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setEvidenceGaps(nextGaps);
         setFactAcquisitionTasks(nextFactTasks);
         setOpportunities(nextOpportunities);
+        setOpportunityActions(nextOpportunityActions);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4537,6 +4556,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setEvidenceGaps({ project_id: project.id, contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
         setFactAcquisitionTasks({ project_id: project.id, contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
         setOpportunities({ project_id: project.id, contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
+        setOpportunityActions({ project_id: project.id, contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4601,8 +4621,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setDerivingOpportunities(true);
     try {
       const result = await deriveOpportunities(project.id);
-      const next = await fetchOpportunities(project.id);
+      const [next, nextActions] = await Promise.all([
+        fetchOpportunities(project.id),
+        fetchOpportunityActions(project.id),
+      ]);
       setOpportunities(next);
+      setOpportunityActions(nextActions);
       notify({
         title: result.idempotent_replay ? "机会快照已复用" : "跨域机会快照已冻结",
         desc: `当前观察到 ${result.opportunity_count} 项：新增 ${result.new_count}、持续 ${result.persisting_count}、本轮未再观察到 ${result.cleared_count}。后者不会自动标成已解决。`,
@@ -4616,6 +4640,64 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
     } finally {
       setDerivingOpportunities(false);
+    }
+  };
+
+  const submitOpportunityActionCreate = async (item: OpportunityList["opportunities"][number]) => {
+    if (!project.id) return;
+    setActingOpportunityId(item.snapshot_id);
+    try {
+      const action = await createOpportunityAction(project.id, item.snapshot_id);
+      setOpportunityActions(await fetchOpportunityActions(project.id));
+      notify({
+        title: action.idempotent_replay ? "执行行动已存在" : "已纳入执行台账",
+        desc: action.status === "evidence_blocked"
+          ? "当前行动仍被事实或复核证据阻断；可领取跟进，但不能进入效果结论。"
+          : `行动截止 ${new Date(action.due_at).toLocaleString("zh-CN")}，完成必须由后续完整复测确认。`,
+        tone: action.status === "evidence_blocked" ? "warning" : "success",
+      });
+    } catch (error) {
+      notify({ title: "行动未创建", desc: error instanceof Error ? error.message : "机会快照已过期或不满足执行门禁。", tone: "danger" });
+    } finally {
+      setActingOpportunityId(null);
+    }
+  };
+
+  const submitOpportunityActionClaim = async (action: OpportunityAction) => {
+    if (!project.id) return;
+    setActingOpportunityId(action.action_id);
+    try {
+      const claimed = await claimOpportunityAction(project.id, action.action_id, action.version);
+      setOpportunityActions(await fetchOpportunityActions(project.id));
+      notify({
+        title: "行动已领取",
+        desc: claimed.status === "evidence_blocked"
+          ? "责任人已记录，但证据阻断仍保留；先补证再执行干预。"
+          : `当前状态 ${claimed.status}，SLA ${claimed.sla_state}。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "行动领取失败", desc: error instanceof Error ? error.message : "任务已被他人领取或版本已变化。", tone: "danger" });
+    } finally {
+      setActingOpportunityId(null);
+    }
+  };
+
+  const submitOpportunityActionVerification = async (action: OpportunityAction, verificationRunId: string) => {
+    if (!project.id) return;
+    setActingOpportunityId(action.action_id);
+    try {
+      await verifyOpportunityActionNotObserved(project.id, action.action_id, action.version, verificationRunId);
+      setOpportunityActions(await fetchOpportunityActions(project.id));
+      notify({
+        title: "已记录本轮未再观察到",
+        desc: "行动由最新完整快照终结，但这不是品牌推荐、增长或长期解决的证明。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "复测确认未通过", desc: error instanceof Error ? error.message : "需要更新且完整的机会推导证据。", tone: "danger" });
+    } finally {
+      setActingOpportunityId(null);
     }
   };
 
@@ -4841,7 +4923,18 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         action={<HeaderActions primary="发布 AI 收录包" icon={Rocket} onPrimary={() => onNavigate("/console/publishing")} />}
       />
       {loadError && <DataStateCard title="内容资产读取失败" desc={loadError} tone="danger" />}
-      <OpportunityBoard data={opportunities} deriving={derivingOpportunities} onDerive={() => void submitOpportunityDerivation()} onNavigate={onNavigate} />
+      <OpportunityBoard
+        data={opportunities}
+        actionData={opportunityActions}
+        currentUserId={getStoredAuthSession()?.user.userId ?? ""}
+        deriving={derivingOpportunities}
+        actingActionId={actingOpportunityId}
+        onDerive={() => void submitOpportunityDerivation()}
+        onCreateAction={(item) => void submitOpportunityActionCreate(item)}
+        onClaimAction={(item) => void submitOpportunityActionClaim(item)}
+        onVerifyAction={(item, runId) => void submitOpportunityActionVerification(item, runId)}
+        onNavigate={onNavigate}
+      />
       <Panel title="真实扫描 → 证据缺口">
         <form className="content-blueprint-form" data-testid="evidence-gap-derive-form" onSubmit={(event) => void submitEvidenceGapDerivation(event)}>
           <div className="content-blueprint-wide knowledge-search-policy">

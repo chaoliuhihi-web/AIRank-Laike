@@ -55,6 +55,8 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_fact_acquisition_task_events` | 补证任务带前序 hash 的追加式状态事件 | 是 |
 | `airank_opportunity_derivation_runs` | 跨域机会完整推导运行、前序快照、幂等请求与来源基础 hash | 是 |
 | `airank_intervention_opportunity_snapshots` | 品牌/引用/事实/页面机会的不可变证据快照与透明行动优先分 | 是 |
+| `airank_opportunity_actions` | 机会责任人、SLA、证据刷新、复测终结和禁止效果声明的当前投影 | 是 |
+| `airank_opportunity_action_events` | 机会行动带前序 hash、版本和幂等键的追加式事件 | 是 |
 | `airank_content_assets` | FAQ、选型指南、案例页等内容资产 | 是 |
 | `airank_publish_packages` | 发布包导出、发布 URL、状态 | 是 |
 | `airank_retest_runs` | 复测批次和增长对比 | 是 |

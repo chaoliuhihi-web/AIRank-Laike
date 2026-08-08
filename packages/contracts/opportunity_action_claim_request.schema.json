@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_claim_request.schema.json",
+  "title": "AIRank Opportunity Action Claim Request",
+  "type": "object",
+  "required": ["requested_by", "expected_version"],
+  "additionalProperties": false,
+  "properties": {
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "expected_version": { "type": "integer", "minimum": 1 }
+  }
+}

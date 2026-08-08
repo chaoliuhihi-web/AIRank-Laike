@@ -41,6 +41,12 @@ M1 已冻结的 API schema：
 - `intervention_opportunity.schema.json`
 - `opportunity_derivation_response.schema.json`
 - `opportunity_list_response.schema.json`
+- `opportunity_action_create_request.schema.json`
+- `opportunity_action_claim_request.schema.json`
+- `opportunity_action_transition_request.schema.json`
+- `opportunity_action.schema.json`
+- `opportunity_action_response.schema.json`
+- `opportunity_action_list_response.schema.json`
 - `report_list_response.schema.json`
 - `download_receipt_response.schema.json`
 - `fact_accuracy_bundle_response.schema.json`

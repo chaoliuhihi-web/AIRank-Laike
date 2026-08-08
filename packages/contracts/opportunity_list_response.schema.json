@@ -37,7 +37,7 @@
         "knowledge_window_days": { "type": "integer", "minimum": 1, "maximum": 365 },
         "previous_run_id": { "type": ["string", "null"], "pattern": "^opportunity_run_[0-9a-f]{20}$" },
         "source_counts": { "$ref": "#/$defs/source_counts" },
-        "opportunity_count": { "type": "integer", "minimum": 1 },
+        "opportunity_count": { "type": "integer", "minimum": 0 },
         "new_count": { "type": "integer", "minimum": 0 },
         "persisting_count": { "type": "integer", "minimum": 0 },
         "cleared_count": { "type": "integer", "minimum": 0 },

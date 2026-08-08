@@ -460,13 +460,50 @@ def test_real_mysql_cross_domain_opportunity_snapshots_are_append_only() -> None
         assert replay.idempotent_replay is True
         assert replay.derivation_run_id == third.derivation_run_id
 
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE airank_content_gaps SET deleted_at=:deleted_at "
+                    "WHERE tenant_id=:tenant_id AND id=:gap_id"
+                ),
+                {"deleted_at": evaluated_at + timedelta(minutes=12), "tenant_id": tenant_id, "gap_id": gap_id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE airank_knowledge_sources SET status='active', valid_until=NULL "
+                    "WHERE tenant_id=:tenant_id AND id=:source_id"
+                ),
+                {"tenant_id": tenant_id, "source_id": source_id},
+            )
+            conn.execute(
+                text("DELETE FROM airank_source_citations WHERE tenant_id=:tenant_id AND id=:citation_id"),
+                {"tenant_id": tenant_id, "citation_id": citation_id},
+            )
+
+        fourth = repository.derive(
+            tenant_id,
+            project_id,
+            OpportunityDeriveRequest(
+                requested_by="spoofed",
+                as_of=evaluated_at + timedelta(minutes=13),
+            ),
+            idempotency_key=f"opportunity-fourth-{suffix}",
+            actor="mysql-qa",
+            trace_id=f"trc_opportunity_fourth_{suffix}",
+        )
+        assert fourth.opportunity_count == 0
+        assert fourth.new_count == 0
+        assert fourth.persisting_count == 0
+        assert fourth.cleared_count == 3
+        assert fourth.opportunities == []
+
         listed = repository.list(tenant_id, project_id)
         historical = repository.list(
             tenant_id, project_id, derivation_run_id=first.derivation_run_id
         )
         assert listed.latest_derivation_run is not None
-        assert listed.latest_derivation_run.derivation_run_id == third.derivation_run_id
-        assert len(listed.opportunities) == 3
+        assert listed.latest_derivation_run.derivation_run_id == fourth.derivation_run_id
+        assert len(listed.opportunities) == 0
         assert len(historical.opportunities) == 4
         with engine.begin() as conn:
             counts = conn.execute(
@@ -481,7 +518,7 @@ def test_real_mysql_cross_domain_opportunity_snapshots_are_append_only() -> None
                 ),
                 {"tenant_id": tenant_id, "project_id": project_id},
             ).mappings().one()
-        assert int(counts["run_count"]) == 3
+        assert int(counts["run_count"]) == 4
         assert int(counts["snapshot_count"]) == 11
     finally:
         with engine.begin() as conn:

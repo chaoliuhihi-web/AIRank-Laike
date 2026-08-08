@@ -262,6 +262,52 @@ export type OpportunityList = {
   opportunities: InterventionOpportunity[];
 };
 
+export type OpportunityAction = {
+  action_id: string;
+  project_id: string;
+  opportunity_id: string;
+  contract_version: "airank.opportunity-action.v1";
+  source_kind: OpportunitySourceKind;
+  action_type: string;
+  status: "open" | "in_progress" | "evidence_blocked" | "verified_not_observed" | "waived";
+  source_snapshot_id: string;
+  source_derivation_run_id: string;
+  source_snapshot_sha256: string;
+  source_evidence_sha256: string;
+  latest_snapshot_id: string;
+  latest_derivation_run_id: string;
+  latest_snapshot_sha256: string;
+  latest_evidence_sha256: string;
+  assigned_to: string | null;
+  assigned_at: string | null;
+  due_at: string;
+  sla_state: "on_track" | "due_soon" | "overdue" | "final";
+  action_note: string;
+  verification_run_id: string | null;
+  verification_basis_sha256: string | null;
+  closure_reason: string | null;
+  effect_claim_allowed: false;
+  event_count: number;
+  last_event_sha256: string;
+  created_by: string;
+  updated_by: string;
+  version: number;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type OpportunityActionList = {
+  project_id: string;
+  contract_version: "airank.opportunity-action.v1";
+  actions: OpportunityAction[];
+  open_count: number;
+  evidence_blocked_count: number;
+  overdue_count: number;
+  final_count: number;
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -1869,6 +1915,83 @@ export async function deriveOpportunities(projectId: string): Promise<Opportunit
     throw new Error(await readErrorMessage(response, `Opportunity derivation failed with ${response.status}`));
   }
   return ((await response.json()) as { data: OpportunityDerivation }).data;
+}
+
+export function fetchOpportunityActions(projectId: string, signal?: AbortSignal): Promise<OpportunityActionList> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-actions`,
+    "trc_web_opportunity_actions",
+    signal,
+  );
+}
+
+export async function createOpportunityAction(projectId: string, snapshotId: string): Promise<OpportunityAction> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunities/${encodeURIComponent(snapshotId)}/actions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-action-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_action_create"),
+      },
+      body: JSON.stringify({ requested_by: actor }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action creation failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityAction }).data;
+}
+
+export async function claimOpportunityAction(projectId: string, actionId: string, expectedVersion: number): Promise<OpportunityAction> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-actions/${encodeURIComponent(actionId)}/claims`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-action-claim-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_action_claim"),
+      },
+      body: JSON.stringify({ requested_by: actor, expected_version: expectedVersion }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action claim failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityAction }).data;
+}
+
+export async function verifyOpportunityActionNotObserved(
+  projectId: string,
+  actionId: string,
+  expectedVersion: number,
+  verificationRunId: string,
+): Promise<OpportunityAction> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-actions/${encodeURIComponent(actionId)}/transitions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-action-verify-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_action_verify"),
+      },
+      body: JSON.stringify({
+        transition: "verify_not_observed",
+        requested_by: actor,
+        expected_version: expectedVersion,
+        reason: "由当前最新完整机会快照确认本轮未再观察到；不据此声明推荐或增长效果。",
+        verification_run_id: verificationRunId,
+        acknowledge_no_outcome_claim: true,
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action verification failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityAction }).data;
 }
 
 export async function fetchReports(projectId: string, signal?: AbortSignal): Promise<ReportList> {

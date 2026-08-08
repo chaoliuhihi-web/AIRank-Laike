@@ -139,6 +139,13 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_ACQUISITION_TASK_FINAL` | 409 | 补证任务已经解决，禁止覆盖不可变完成状态 |
 | `OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED` | 409 | 当前项目没有满足不可变性与质量门禁的跨域来源证据，禁止推导干预机会 |
 | `OPPORTUNITY_DERIVATION_NOT_FOUND` | 404 | 干预机会推导运行不存在或不属于当前租户/项目 |
+| `OPPORTUNITY_SNAPSHOT_NOT_FOUND` | 404 | 干预机会快照不存在或不属于当前租户/项目 |
+| `OPPORTUNITY_ACTION_NOT_FOUND` | 404 | 机会行动任务不存在或不属于当前租户/项目 |
+| `OPPORTUNITY_ACTION_VERSION_CONFLICT` | 409 | 机会行动任务版本已变化，客户端必须刷新后再操作 |
+| `OPPORTUNITY_ACTION_OWNER_FORBIDDEN` | 403 | 机会行动已由其他责任人领取，当前用户不能变更 |
+| `OPPORTUNITY_ACTION_FINAL` | 409 | 机会行动已完成复测确认或豁免，禁止覆盖最终状态 |
+| `OPPORTUNITY_ACTION_TRANSITION_INVALID` | 409 | 行动状态转换不满足当前状态或最新证据条件 |
+| `OPPORTUNITY_ACTION_VERIFICATION_REQUIRED` | 409 | 缺少更新且完整的机会推导运行，不能确认“本轮未再观察到” |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

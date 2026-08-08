@@ -137,6 +137,13 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "FACT_ACQUISITION_TASK_FINAL": (409, "Fact acquisition task is already resolved"),
     "OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED": (409, "No governed source evidence is available for opportunity derivation"),
     "OPPORTUNITY_DERIVATION_NOT_FOUND": (404, "Opportunity derivation run was not found"),
+    "OPPORTUNITY_SNAPSHOT_NOT_FOUND": (404, "Opportunity snapshot was not found"),
+    "OPPORTUNITY_ACTION_NOT_FOUND": (404, "Opportunity action was not found"),
+    "OPPORTUNITY_ACTION_VERSION_CONFLICT": (409, "Opportunity action version is stale"),
+    "OPPORTUNITY_ACTION_OWNER_FORBIDDEN": (403, "Opportunity action belongs to another owner"),
+    "OPPORTUNITY_ACTION_FINAL": (409, "Opportunity action is already final"),
+    "OPPORTUNITY_ACTION_TRANSITION_INVALID": (409, "Opportunity action transition is invalid"),
+    "OPPORTUNITY_ACTION_VERIFICATION_REQUIRED": (409, "A newer complete opportunity derivation is required"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -6052,3 +6059,10 @@ except ImportError:  # pragma: no cover
     from opportunity_routes import router as opportunity_router  # type: ignore[no-redef]
 
 app.include_router(opportunity_router)
+
+try:
+    from .opportunity_action_routes import router as opportunity_action_router
+except ImportError:  # pragma: no cover
+    from opportunity_action_routes import router as opportunity_action_router  # type: ignore[no-redef]
+
+app.include_router(opportunity_action_router)

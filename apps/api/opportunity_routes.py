@@ -1081,6 +1081,16 @@ class MySQLOpportunityRepository:
                 return self._run_data(conn, replay, idempotent_replay=True)
 
             evaluated_at = as_utc(payload.as_of or utc_now())
+            previous = conn.execute(
+                text(
+                    """
+                    SELECT * FROM airank_opportunity_derivation_runs
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().first()
             candidates = self._collect(
                 conn,
                 tenant_id,
@@ -1088,7 +1098,7 @@ class MySQLOpportunityRepository:
                 evaluated_at=evaluated_at,
                 window_days=payload.knowledge_window_days,
             )
-            if not candidates:
+            if not candidates and previous is None:
                 raise error(
                     409,
                     "OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED",
@@ -1103,16 +1113,6 @@ class MySQLOpportunityRepository:
                     "opportunities": [item.basis_record() for item in candidates],
                 }
             )
-            previous = conn.execute(
-                text(
-                    """
-                    SELECT * FROM airank_opportunity_derivation_runs
-                    WHERE tenant_id=:tenant_id AND project_id=:project_id
-                    ORDER BY created_at DESC, id DESC LIMIT 1
-                    """
-                ),
-                {"tenant_id": tenant_id, "project_id": project_id},
-            ).mappings().first()
             previous_ids = set(
                 str(item) for item in json_value(previous["opportunity_ids_json"], [])
             ) if previous is not None else set()

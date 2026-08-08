@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_transition_request.schema.json",
+  "title": "AIRank Opportunity Action Transition Request",
+  "type": "object",
+  "required": ["transition", "requested_by", "expected_version", "reason", "acknowledge_no_outcome_claim"],
+  "additionalProperties": false,
+  "properties": {
+    "transition": { "type": "string", "enum": ["refresh_evidence", "release", "verify_not_observed", "waive"] },
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "expected_version": { "type": "integer", "minimum": 1 },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 2000 },
+    "verification_run_id": { "type": ["string", "null"], "maxLength": 64 },
+    "acknowledge_no_outcome_claim": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "transition": { "const": "verify_not_observed" } }, "required": ["transition"] },
+      "then": {
+        "required": ["verification_run_id"],
+        "properties": {
+          "verification_run_id": { "type": "string", "pattern": "^opportunity_run_[0-9a-f]{20}$" },
+          "acknowledge_no_outcome_claim": { "const": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "transition": { "const": "waive" } }, "required": ["transition"] },
+      "then": {
+        "properties": {
+          "reason": { "type": "string", "minLength": 20, "maxLength": 2000 },
+          "acknowledge_no_outcome_claim": { "const": true }
+        }
+      }
+    }
+  ]
+}

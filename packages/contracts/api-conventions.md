@@ -201,6 +201,19 @@ POST /api/v1/projects/{project_id}/opportunities/derive
 
 机会接口使用 `airank.intervention-opportunity.v1` 和 `airank.cross-domain-opportunity-policy.v1`。每次推导从当前可核验的品牌可见度缺口、引用支持复核、事实治理记录与最新页面审计结果生成完整不可变快照，保存来源基础 hash、逐项证据 hash、逐项快照 hash 和前序运行。`priority_score` 只等于严重度、证据强度和紧迫度三个公开因子的加总，不是推荐率、品牌分或增长预测。相邻运行中的 `cleared` 只表示本轮未再观察到，不会自动把问题标为已解决；页面规则必须由同 URL 的更新审计证据证明已不再失败。品牌内容动作只有在对应 `airank.evidence-gap.v2` 已通过事实补证门禁后才可标记 `content_action_ready`。
 
+完整推导允许在已有基线运行后生成 0 项机会的全空快照，以便真实记录所有前序机会“本轮未再观察到”；从未建立过机会基线且没有任何受治理来源证据时仍返回 `OPPORTUNITY_SOURCE_EVIDENCE_REQUIRED`，不会制造空成功。
+
+### 机会行动台账
+
+```text
+GET  /api/v1/projects/{project_id}/opportunity-actions
+POST /api/v1/projects/{project_id}/opportunities/{snapshot_id}/actions
+POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/claims
+POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/transitions
+```
+
+行动使用 `airank.opportunity-action.v1`。只有最新完整推导中的不可变机会快照能创建每个稳定机会唯一的行动；默认截止日期由严重度映射，责任人通过认证身份自助领取，任务版本和 Idempotency-Key 阻止覆盖与重复副作用。`evidence_blocked` 即使已领取也不会自动转为执行中，必须由更新且 `ready_for_action` 的机会快照执行 `refresh_evidence`。`verify_not_observed` 只能绑定比来源更新的最新完整推导，并证明该稳定机会不在该次完整 manifest 中；`waive` 必须由责任人提供至少 20 字原因。两种终结都固定 `effect_claim_allowed=false`，不得解释为品牌推荐、增长或长期解决。所有状态变化写入带前序 hash 的追加事件。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：
@@ -213,6 +226,7 @@ POST /api/v1/projects/{project_id}/opportunities/derive
 - 生成报告证据包
 - 从质量通过的扫描推导证据缺口
 - 从受治理来源证据推导跨域干预机会快照
+- 从最新机会快照创建、领取和复测终结行动
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
 
