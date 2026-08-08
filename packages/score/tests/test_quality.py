@@ -87,6 +87,21 @@ def test_quality_report_blocks_single_sample_even_when_evidence_is_complete() ->
     assert "repeat_stability_unavailable" in report.known_limitations
 
 
+def test_quality_report_keeps_failed_run_auditable_but_non_publishable() -> None:
+    report = build_measurement_quality_report(
+        run_id="run_failed",
+        run_status="failed",
+        samples=tuple(sample(index) for index in range(1, 4)),
+        signatures=tuple(f"question_1|qianwen|blind|api|{index}" for index in range(1, 4)),
+        evidence_manifests=tuple(api_evidence(index) for index in range(1, 4)),
+    )
+
+    status_check = next(item for item in report.checks if item.code == "run_status_publishable")
+    assert status_check.status == "blocked"
+    assert status_check.actual == "failed"
+    assert report.publishable is False
+
+
 def test_quality_report_rejects_reused_session_even_with_three_sample_indexes() -> None:
     reused = tuple(
         MeasurementSample(
@@ -187,6 +202,7 @@ def test_quality_report_requires_surface_specific_consumer_evidence() -> None:
         screenshot_ref_id="object-answer",
         screenshot_sha256="d" * 64,
         screenshot_immutable=True,
+        conversation_isolation_verified=True,
         source_panel_status="not_present",
     )
 
@@ -201,3 +217,51 @@ def test_quality_report_requires_surface_specific_consumer_evidence() -> None:
     assert "consumer_screenshots_complete" not in blocked
     assert "consumer_source_panel_evidence_consistent" in blocked
     assert report.surface_evidence[0].blocker_count == 1
+
+
+def test_quality_report_blocks_consumer_sample_without_verified_conversation_isolation() -> None:
+    answer = "本次未发现目标品牌。"
+    web_sample = MeasurementSample(
+        sample_id="sample_web_unisolated",
+        question_id="question_web_unisolated",
+        context=SampleContext(
+            prompt_version_id="prompt_web_unisolated",
+            cohort_type=PromptCohortType.BLIND,
+            sample_index=1,
+            session_id="session_web_unisolated",
+            surface=CollectorSurface.WEB,
+            evidence_level=EvidenceLevel.CONSUMER_WEB,
+            provider="qianwen",
+            captured_at=NOW,
+        ),
+        status=SampleStatus.VALID,
+        answer_text=answer,
+        raw_response_sha256="e" * 64,
+        mention_class=MentionClass.NOT_MENTIONED,
+    )
+    manifest = SampleEvidenceManifest(
+        sample_id="sample_web_unisolated",
+        surface=CollectorSurface.WEB,
+        evidence_level=EvidenceLevel.CONSUMER_WEB,
+        request_metadata_sha256="f" * 64,
+        external_trace_id="browser:qianwen:unisolated",
+        screenshot_ref_id="object-answer",
+        screenshot_sha256="1" * 64,
+        screenshot_immutable=True,
+        source_panel_status="not_present",
+    )
+
+    report = build_measurement_quality_report(
+        run_id="run_web_unisolated",
+        samples=(web_sample,),
+        signatures=("question_web_unisolated|qianwen|blind|web|1",),
+        evidence_manifests=(manifest,),
+    )
+
+    isolation = next(
+        item for item in report.checks
+        if item.code == "consumer_conversation_isolation_verified"
+    )
+    assert isolation.status == "blocked"
+    assert isolation.actual == 1
+    assert report.surface_evidence[0].evidence_complete_count == 0

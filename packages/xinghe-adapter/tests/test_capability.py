@@ -121,6 +121,7 @@ def test_probe_config_reads_positive_timeout_from_env() -> None:
     config = ProbeConfig.from_env({"AIRANK_PROBE_TIMEOUT_SECONDS": "3.5"})
 
     assert config.timeout_seconds == 3.5
+    assert config.auth_mode == "yudao"
     assert parse_timeout_seconds("0") == 0.3
     assert parse_timeout_seconds("bad") == 0.3
 

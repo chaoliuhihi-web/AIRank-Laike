@@ -11,12 +11,16 @@ from apps.api.provider_scan import (
     BrowserProviderConfig,
     ProviderCallError,
     browser_provider_config,
+    begin_fresh_conversation,
     build_brand_rank_prompt,
     call_api_provider_for_brand_rank,
     call_provider_for_brand_rank,
+    classify_login_blocker,
     classify_provider_call_failure,
     is_login_input,
+    looks_login_blocked,
     parse_provider_answer,
+    probe_provider_generation_readiness,
     provider_execution_mode,
     strip_prompt_echo,
 )
@@ -29,6 +33,137 @@ class FakeLocator:
 
     def get_attribute(self, attr_name: str, timeout: int = 500) -> str | None:
         return self.attrs.get(attr_name)
+
+
+class FakeConversationCandidate:
+    def __init__(self) -> None:
+        self.clicked = False
+
+    def is_visible(self) -> bool:
+        return True
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def click(self) -> None:
+        self.clicked = True
+
+
+class FakeConversationLocator:
+    def __init__(self, candidate: FakeConversationCandidate | None) -> None:
+        self.candidate = candidate
+
+    def count(self) -> int:
+        return 1 if self.candidate else 0
+
+    def nth(self, _index: int) -> FakeConversationCandidate:
+        assert self.candidate is not None
+        return self.candidate
+
+
+class FakeConversationPage:
+    def __init__(self, candidate: FakeConversationCandidate | None) -> None:
+        self.url = "https://provider.example.test/"
+        self.candidate = candidate
+
+    def locator(self, selector: str) -> FakeConversationLocator:
+        return FakeConversationLocator(
+            self.candidate if selector == "button:has-text('新建对话')" else None
+        )
+
+    def wait_for_timeout(self, _milliseconds: int) -> None:
+        return None
+
+
+def test_consumer_browser_requires_verified_new_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = FakeConversationCandidate()
+    monkeypatch.setattr("apps.api.provider_scan.find_prompt_input", lambda _page: object())
+
+    isolation = begin_fresh_conversation(FakeConversationPage(candidate))
+
+    assert isolation["verified"] is True
+    assert isolation["method"] == "new_conversation_control"
+    assert candidate.clicked is True
+
+
+def test_consumer_browser_blocks_when_new_conversation_cannot_be_verified() -> None:
+    with pytest.raises(RuntimeError, match="fresh conversation could not be verified"):
+        begin_fresh_conversation(FakeConversationPage(None))
+
+
+def test_slider_verification_is_classified_as_captcha() -> None:
+    challenge = "亲，请拖动下方滑块完成验证，通过验证以确保正常访问"
+
+    assert looks_login_blocked(challenge) is True
+    assert classify_login_blocker(challenge) == "captcha_required"
+
+
+def test_captcha_failure_preserves_browser_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AIRANK_BROWSER_PROFILE_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setattr(
+        "apps.api.provider_scan.run_browser_probe",
+        lambda _config, _prompt: {
+            "trace_id": "browser:qianwen:captcha",
+            "page_url": "https://www.qianwen.com/chat/captcha",
+            "title": "千问",
+            "answer_text": "亲，请拖动下方滑块完成验证",
+            "screenshot_path": "/tmp/qianwen-captcha.png",
+            "screenshot_sha256": "a" * 64,
+            "source_links": [],
+            "source_panel_status": "not_present",
+            "source_panel_screenshot_path": "",
+            "source_panel_screenshot_sha256": "",
+            "source_panel_capture_mode": "visible_page_inspected_no_sources",
+            "conversation_isolation": {
+                "verified": True,
+                "method": "new_conversation_control",
+            },
+        },
+    )
+
+    with pytest.raises(ProviderCallError) as raised:
+        call_provider_for_brand_rank(
+            provider="qianwen",
+            brand_name="AIRank",
+            website_url="https://airank.example",
+            industry="GEO",
+            competitor_names=[],
+            question_text="企业应该如何选择 GEO 监测服务商？",
+            cohort_type="blind",
+            session_id="session_captcha",
+            prompt_version_id="prompt_captcha",
+        )
+
+    assert raised.value.error_code == "CAPTCHA_REQUIRED"
+    assert raised.value.retryable is False
+    assert raised.value.public_metadata["screenshot_sha256"] == "a" * 64
+    assert raised.value.public_metadata["conversation_isolation"]["verified"] is True
+
+
+def test_release_generation_probe_requires_substantive_consumer_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "browser")
+    monkeypatch.setenv("AIRANK_BROWSER_PROFILE_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setattr(
+        "apps.api.provider_scan.run_browser_probe",
+        lambda _config, _prompt: {
+            "answer_text": "证据需要保留原始回答、请求元数据、截图、引用来源和不可变哈希。" * 4,
+            "page_url": "https://www.qianwen.com/chat/probe",
+            "screenshot_path": "/tmp/qianwen-ready.png",
+        },
+    )
+
+    result = probe_provider_generation_readiness("qianwen")
+
+    assert result.status == "ready"
+    assert result.reason == "L3 consumer generation probe returned a substantive answer"
 
 
 def test_browser_provider_config_uses_persistent_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

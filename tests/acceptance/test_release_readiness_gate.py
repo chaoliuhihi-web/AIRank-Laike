@@ -147,7 +147,16 @@ def test_api_auth_configuration_requires_yudao_with_enforcement() -> None:
     assert check.status == "PASS"
 
 
+def test_api_auth_configuration_requires_explicit_release_values() -> None:
+    check = release_readiness.api_auth_configuration_check({})
+
+    assert check.status == "BLOCKED"
+    assert "AIRANK_API_AUTH_ENFORCEMENT=<empty>" in check.detail
+    assert "AIRANK_AUTH_MODE=<empty>" in check.detail
+
+
 def test_production_object_storage_requires_s3_or_minio_over_tls() -> None:
+    local_default = release_readiness.production_object_storage_configuration_check({})
     filesystem = release_readiness.production_object_storage_configuration_check(
         {"AIRANK_ENV": "production", "AIRANK_OBJECT_STORAGE_DRIVER": "filesystem"}
     )
@@ -167,6 +176,8 @@ def test_production_object_storage_requires_s3_or_minio_over_tls() -> None:
         }
     )
 
+    assert local_default.status == "BLOCKED"
+    assert "release requires production" in local_default.detail
     assert filesystem.status == "BLOCKED"
     assert insecure_minio.status == "BLOCKED"
     assert "plaintext HTTP" in insecure_minio.detail

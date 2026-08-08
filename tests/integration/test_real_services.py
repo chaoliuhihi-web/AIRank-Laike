@@ -837,6 +837,7 @@ def test_real_mysql_scan_queue_and_asset_bundle_paths() -> None:
         assert {item["code"] for item in quality["checks"] if item["status"] == "blocked"} >= {
             "valid_sample_rate",
             "raw_response_hashes_present",
+            "consumer_conversation_isolation_verified",
             "consumer_screenshots_complete",
             "consumer_source_panels_inspected",
             "consumer_source_panel_evidence_consistent",
@@ -1379,6 +1380,79 @@ def test_real_mysql_scan_preserves_failed_task_as_immutable_evidence(
         cleanup_tenant(engine, tenant_id)
 
 
+def test_real_mysql_failed_scan_remains_quality_auditable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_failed_quality_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+
+    def blocked_provider(**_kwargs: Any) -> ProviderScanResult:
+        raise ProviderUnavailable("qianwen", "captcha required")
+
+    monkeypatch.setenv("AIRANK_DATABASE_URL", database_url())
+    monkeypatch.setenv("AIRANK_PROVIDER_MODE", "browser")
+    monkeypatch.setenv("AIRANK_OBJECT_STORAGE_DRIVER", "local")
+    monkeypatch.setenv("AIRANK_OBJECT_STORAGE_ROOT", str(tmp_path / "objects"))
+    monkeypatch.setattr("apps.api.main.call_provider_for_brand_rank", blocked_provider)
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-failed-quality.example.com",
+                brand_name_hint="AIRank Failed Quality",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="企业应该如何选择可审计的 GEO 监测服务商？",
+                status="confirmed",
+                recommended_providers=["qianwen"],
+            ),
+        )
+        run = scan_repo.create_run(
+            tenant_id,
+            ScanRunCreateRequest(
+                project_id=project.project_id,
+                name="Failed run quality audit",
+                repetitions=1,
+                collector_surfaces=["web"],
+                provider_scope=["qianwen"],
+                question_scope={"mode": "selected", "question_ids": [question.question_id]},
+            ),
+        )
+
+        dispatch = run_next_real_scan_job(
+            MySQLJobLeaseStore(database_url()),
+            worker_id="failed-quality-worker",
+            tenant_id=tenant_id,
+        )
+        assert dispatch is not None
+        assert dispatch.status == "failed"
+
+        quality = MySQLRetestRepository(database_url()).get_quality_report(
+            tenant_id,
+            project.project_id,
+            run.run_id,
+        )
+        run_status_check = next(
+            check for check in quality["checks"] if check["code"] == "run_status_publishable"
+        )
+        assert quality["publishable"] is False
+        assert quality["metrics"]["blocked_sample_count"] == 1
+        assert run_status_check["status"] == "blocked"
+        assert run_status_check["actual"] == "failed"
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
 def test_real_mysql_report_repository_and_download_receipt() -> None:
     require_real_flag("AIRANK_RUN_REAL_MYSQL")
     tenant_id = f"tenant_it_{uuid4().hex[:10]}"
@@ -1409,8 +1483,8 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                       JSON_OBJECT(
                         'summary', '真实 MySQL 报告列表验证',
                         'report_status', 'generated',
-                        'baseline_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v3', 'publishable', TRUE),
-                        'compare_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v3', 'publishable', TRUE)
+                        'baseline_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v4', 'publishable', TRUE),
+                        'compare_quality', JSON_OBJECT('contract_version', 'airank.measurement-quality.v4', 'publishable', TRUE)
                       ),
                       CURRENT_TIMESTAMP(3)
                     )

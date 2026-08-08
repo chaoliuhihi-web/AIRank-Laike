@@ -134,7 +134,7 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
                 VALUES (
                   'report_real', 'tenant_report', 'project_report',
                   'diagnostic', 'AI 来客诊断报告', 'generated',
-                  '{"summary": "真实报告摘要", "report_status": "generated", "baseline_quality": {"contract_version": "airank.measurement-quality.v3", "publishable": true}, "compare_quality": {"contract_version": "airank.measurement-quality.v3", "publishable": true}}',
+                  '{"summary": "真实报告摘要", "report_status": "generated", "baseline_quality": {"contract_version": "airank.measurement-quality.v4", "publishable": true}, "compare_quality": {"contract_version": "airank.measurement-quality.v4", "publishable": true}}',
                   '2026-05-17 12:00:00', '2026-05-17 11:00:00'
                 )
                 """
