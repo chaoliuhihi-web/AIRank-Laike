@@ -69,6 +69,7 @@ import {
   clearAuthSession,
   compileQuestionMap,
   claimEvidenceReviewAssignment,
+  createEvidenceReviewerTeam,
   createKnowledgeSyncPolicy,
   createPublishPackage,
   createComparisonContent,
@@ -97,6 +98,7 @@ import {
   fetchEvidenceReviewCases,
   fetchEvidenceReviewEscalations,
   fetchEvidenceReviewInbox,
+  fetchEvidenceReviewerRouting,
   fetchFactConflicts,
   fetchFactAccuracy,
   fetchFacts,
@@ -126,6 +128,7 @@ import {
   recordConsoleAction,
   recordPublicationEvidence,
   releaseEvidenceReviewAssignment,
+  putEvidenceReviewerRoute,
   reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
@@ -134,6 +137,7 @@ import {
   searchKnowledge,
   triggerKnowledgeSync,
   submitEvidenceReviewDecision,
+  upsertEvidenceReviewerTeamMember,
   reviewSourceRegistryEntry,
   runBrandCheck,
   runEvidenceIntegrityAudit,
@@ -158,6 +162,7 @@ import {
   type EvidenceReviewEscalationList,
   type EvidenceReviewInbox,
   type EvidenceReviewQueue,
+  type EvidenceReviewerRouting,
   type EvidenceIntegrityAudit,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
@@ -2166,6 +2171,16 @@ function EvidencePage() {
   const [reviewInboxError, setReviewInboxError] = useState<string | null>(null);
   const [reviewEscalations, setReviewEscalations] = useState<EvidenceReviewEscalationList | null>(null);
   const [reviewEscalationError, setReviewEscalationError] = useState<string | null>(null);
+  const [reviewRouting, setReviewRouting] = useState<EvidenceReviewerRouting | null>(null);
+  const [reviewRoutingError, setReviewRoutingError] = useState<string | null>(null);
+  const [reviewRoutingBusy, setReviewRoutingBusy] = useState<string | null>(null);
+  const [reviewTeamName, setReviewTeamName] = useState("");
+  const [reviewTeamId, setReviewTeamId] = useState("");
+  const [reviewMemberUserId, setReviewMemberUserId] = useState("");
+  const [reviewMemberDisplayName, setReviewMemberDisplayName] = useState("");
+  const [reviewMemberRole, setReviewMemberRole] = useState<"secondary" | "adjudicator">("secondary");
+  const [reviewMemberCapacity, setReviewMemberCapacity] = useState(5);
+  const [reviewRouteRole, setReviewRouteRole] = useState<"secondary" | "adjudicator">("secondary");
   const [reviewInboxLoadingMore, setReviewInboxLoadingMore] = useState(false);
   const [reviewAssignmentAction, setReviewAssignmentAction] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
@@ -2257,6 +2272,32 @@ function EvidencePage() {
         if (controller.signal.aborted) return;
         setReviewEscalations(null);
         setReviewEscalationError(error instanceof Error ? error.message : "SLA 升级事件不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id) {
+      setReviewRouting(null);
+      setReviewRoutingError(null);
+      setReviewTeamId("");
+      return;
+    }
+    const controller = new AbortController();
+    fetchEvidenceReviewerRouting(project.id, controller.signal)
+      .then((routing) => {
+        setReviewRouting(routing);
+        setReviewRoutingError(null);
+        setReviewTeamId((current) =>
+          routing.teams.some((team) => team.team_id === current)
+            ? current
+            : routing.teams.find((team) => team.status === "active")?.team_id ?? "",
+        );
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReviewRouting(null);
+        setReviewRoutingError(error instanceof Error ? error.message : "审核团队路由不可用");
       });
     return () => controller.abort();
   }, [project.id]);
@@ -2520,6 +2561,88 @@ function EvidencePage() {
       setReviewInboxError(null);
     } catch (error) {
       setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办刷新失败");
+    }
+  };
+  const refreshReviewRouting = async () => {
+    if (!project.id) return;
+    const routing = await fetchEvidenceReviewerRouting(project.id);
+    setReviewRouting(routing);
+    setReviewTeamId((current) =>
+      routing.teams.some((team) => team.team_id === current)
+        ? current
+        : routing.teams.find((team) => team.status === "active")?.team_id ?? "",
+    );
+    setReviewRoutingError(null);
+  };
+  const submitReviewTeam = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !reviewTeamName.trim()) return;
+    setReviewRoutingBusy("team");
+    setReviewRoutingError(null);
+    try {
+      const routing = await createEvidenceReviewerTeam(project.id, reviewTeamName);
+      setReviewRouting(routing);
+      const created = routing.teams.find((team) => team.name === reviewTeamName.trim());
+      if (created) setReviewTeamId(created.team_id);
+      setReviewTeamName("");
+    } catch (error) {
+      setReviewRoutingError(error instanceof Error ? error.message : "审核团队创建失败");
+    } finally {
+      setReviewRoutingBusy(null);
+    }
+  };
+  const submitReviewTeamMember = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !reviewTeamId || !reviewMemberUserId.trim()) return;
+    setReviewRoutingBusy("member");
+    setReviewRoutingError(null);
+    try {
+      setReviewRouting(await upsertEvidenceReviewerTeamMember(
+        project.id,
+        reviewTeamId,
+        reviewMemberUserId.trim(),
+        reviewMemberRole,
+        {
+          displayName: reviewMemberDisplayName,
+          maxActiveAssignments: reviewMemberCapacity,
+          expectedVersion: reviewRouting?.teams
+            .find((team) => team.team_id === reviewTeamId)
+            ?.members.find(
+              (member) => member.user_id === reviewMemberUserId.trim()
+                && member.reviewer_role === reviewMemberRole,
+            )?.version,
+        },
+      ));
+      setReviewMemberUserId("");
+      setReviewMemberDisplayName("");
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewRoutingError(error instanceof Error ? error.message : "审核成员保存失败");
+    } finally {
+      setReviewRoutingBusy(null);
+    }
+  };
+  const submitReviewRoute = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !reviewTeamId) return;
+    setReviewRoutingBusy("route");
+    setReviewRoutingError(null);
+    try {
+      const currentRoute = reviewRouting?.routes.find(
+        (route) => route.reviewer_role === reviewRouteRole,
+      );
+      setReviewRouting(await putEvidenceReviewerRoute(
+        project.id,
+        reviewRouteRole,
+        reviewTeamId,
+        currentRoute?.version,
+      ));
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewRoutingError(error instanceof Error ? error.message : "审核角色路由保存失败");
+      await refreshReviewRouting().catch(() => undefined);
+    } finally {
+      setReviewRoutingBusy(null);
     }
   };
   const loadMoreReviewInbox = async () => {
@@ -2981,6 +3104,64 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
+      <Panel title="审核团队与角色路由">
+        <p className="rail-caption">
+          未配置路由时系统明确处于兼容模式；一旦配置，第二审核与第三人裁决只向对应团队成员开放，并按成员的活跃领取上限控制容量。手工成员仅是 AIRank 本地绑定，不代表 Yudao 成员资格已同步；外部通知也尚未验证送达。
+        </p>
+        {reviewRoutingError && <DataStateCard title="审核团队路由操作失败" desc={reviewRoutingError} tone="danger" />}
+        {reviewRouting && (
+          <>
+            <dl className="evidence-metadata review-routing-metrics">
+              <div><dt>路由模式</dt><dd><Badge tone={reviewRouting.routing_mode === "team_routed" ? "success" : reviewRouting.routing_mode === "blocked" ? "danger" : "warning"}>{reviewRouting.routing_mode}</Badge></dd></div>
+              <div><dt>审核团队</dt><dd>{reviewRouting.teams.length}</dd></div>
+              <div><dt>角色路由</dt><dd>{reviewRouting.routes.length} / 2</dd></div>
+              <div><dt>外部同步</dt><dd>{reviewRouting.external_sync_state}</dd></div>
+            </dl>
+            <div className="review-routing-layout">
+              <div className="review-routing-forms">
+                <form className="review-routing-form" onSubmit={(event) => void submitReviewTeam(event)}>
+                  <strong>1. 建立本地审核团队</strong>
+                  <label>团队名称<input required maxLength={160} value={reviewTeamName} onChange={(event) => setReviewTeamName(event.target.value)} placeholder="如：核心证据复核组" /></label>
+                  <button className="airank-console-primary-button" type="submit" disabled={reviewRoutingBusy !== null || !reviewTeamName.trim()}>{reviewRoutingBusy === "team" ? "创建中…" : "创建团队"}</button>
+                </form>
+                <form className="review-routing-form" onSubmit={(event) => void submitReviewTeamMember(event)}>
+                  <strong>2. 添加角色成员</strong>
+                  <label>审核团队<select required value={reviewTeamId} onChange={(event) => setReviewTeamId(event.target.value)}><option value="">请选择</option>{reviewRouting.teams.filter((team) => team.status === "active").map((team) => <option value={team.team_id} key={team.team_id}>{team.name}</option>)}</select></label>
+                  <label>用户 ID<input required maxLength={128} value={reviewMemberUserId} onChange={(event) => setReviewMemberUserId(event.target.value)} placeholder="必须与登录身份一致" /></label>
+                  <label>显示名称<input maxLength={160} value={reviewMemberDisplayName} onChange={(event) => setReviewMemberDisplayName(event.target.value)} placeholder="可选" /></label>
+                  <label>审核角色<select value={reviewMemberRole} onChange={(event) => setReviewMemberRole(event.target.value as typeof reviewMemberRole)}><option value="secondary">第二审核</option><option value="adjudicator">第三人裁决</option></select></label>
+                  <label>同时领取上限<input type="number" min={1} max={100} value={reviewMemberCapacity} onChange={(event) => setReviewMemberCapacity(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label>
+                  <button className="airank-console-primary-button" type="submit" disabled={reviewRoutingBusy !== null || !reviewTeamId || !reviewMemberUserId.trim()}>{reviewRoutingBusy === "member" ? "保存中…" : "保存成员"}</button>
+                </form>
+                <form className="review-routing-form" onSubmit={(event) => void submitReviewRoute(event)}>
+                  <strong>3. 绑定角色路由</strong>
+                  <label>审核角色<select value={reviewRouteRole} onChange={(event) => setReviewRouteRole(event.target.value as typeof reviewRouteRole)}><option value="secondary">第二审核</option><option value="adjudicator">第三人裁决</option></select></label>
+                  <label>目标团队<select required value={reviewTeamId} onChange={(event) => setReviewTeamId(event.target.value)}><option value="">请选择</option>{reviewRouting.teams.filter((team) => team.status === "active").map((team) => <option value={team.team_id} key={team.team_id}>{team.name}</option>)}</select></label>
+                  <button className="airank-console-primary-button" type="submit" disabled={reviewRoutingBusy !== null || !reviewTeamId}>{reviewRoutingBusy === "route" ? "保存中…" : "保存角色路由"}</button>
+                </form>
+              </div>
+              <div className="review-routing-summary">
+                {reviewRouting.routes.length === 0 ? (
+                  <DataStateCard title="尚未启用团队路由" desc="当前为 unrestricted_legacy 兼容模式。要进入可审计运营，请先添加成员，再分别绑定第二审核和第三人裁决路由。" tone="warning" />
+                ) : reviewRouting.routes.map((route) => (
+                  <article className="review-routing-card" key={route.route_id}>
+                    <div><strong>{route.reviewer_role === "secondary" ? "第二审核" : "第三人裁决"} → {route.team_name}</strong><small>route v{route.version} · {route.routing_strategy}</small></div>
+                    <Badge tone={route.routing_ready ? "success" : "danger"}>{route.routing_ready ? "可路由" : "已阻断"}</Badge>
+                    <small>有效成员 {route.eligible_member_count} · 接收升级 {route.escalation_recipient_count}</small>
+                  </article>
+                ))}
+                {reviewRouting.teams.map((team) => (
+                  <article className="review-routing-card" key={team.team_id}>
+                    <div><strong>{team.name}</strong><small>{team.external_source} · 外部同步 {team.external_sync_state}</small></div>
+                    <Badge tone={team.member_count > 0 ? "primary" : "warning"}>{team.member_count} 人</Badge>
+                    {team.members.map((member) => <small key={member.member_id}>{member.display_name || member.user_id} · {member.reviewer_role === "secondary" ? "第二审核" : "第三人裁决"} · 上限 {member.max_active_assignments} · 外部资格{member.external_membership_verified ? "已验证" : "未验证"}</small>)}
+                  </article>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </Panel>
       <Panel title={`我的独立复核待办 · ${reviewInbox?.actionable_count ?? 0}`}>
         <p className="rail-caption">
           这里按当前登录账号从整个项目汇总可执行的第二审核与第三人裁决。领取会建立持久租约和 SLA，其他审核人不会重复看到已领取任务；队列仍不显示同伴未终结标签，必须先打开原始样本、精确 Claim 和不可变来源，再提交决定。
@@ -2998,7 +3179,7 @@ function EvidencePage() {
               <div><dt>当前已加载</dt><dd>{reviewInbox.cases.length} / {reviewInbox.actionable_count}</dd></div>
             </dl>
             {actionableReviewCases.length === 0 ? (
-              <DataStateCard title="当前账号没有可执行复核" desc="可能尚未建立复核 case，或当前账号已参与这些任务；独立审核必须切换到未参与的可信账号。" tone="warning" />
+              <DataStateCard title="当前账号没有可执行复核" desc="可能尚未建立复核 case、当前账号已参与任务，或账号不在已配置角色团队内；请先核对上方路由状态和登录用户 ID。" tone="warning" />
             ) : (
               <div className="review-inbox-list">
                 {actionableReviewCases.map((reviewCase) => (
@@ -3090,6 +3271,11 @@ function EvidencePage() {
                       <small>Case {event.case_id}</small>
                       <small>截止 {formatDateTime(event.due_at)} · 已逾期 {formatOverdueDuration(event.overdue_seconds)}</small>
                       <small>升级于 {formatDateTime(event.escalated_at)} · 任务状态 {reviewAssignmentStateLabel(event.assignment_state)}</small>
+                      <small>
+                        路由 {event.routing_state}
+                        {event.routing_team_id ? ` · 团队 ${event.routing_team_id} · route v${event.routing_route_version}` : " · 未配置团队"}
+                      </small>
+                      <small>可接收升级 {event.eligible_recipient_count} 人 · 外部成员同步 {event.external_sync_state}</small>
                     </div>
                     <div className="review-inbox-actions">
                       <Badge tone={event.outbox_status === "failed" ? "danger" : event.outbox_status === "published" ? "success" : "warning"}>

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from sqlalchemy import create_engine, text
 
 from apps.api.evidence_review_routes import review_sla_seconds
+from apps.api.reviewer_routing_routes import resolve_escalation_route_snapshot
 
 
 REVIEW_SLA_ESCALATION_EVENT = "evidence_review.sla_overdue.v1"
@@ -76,6 +77,11 @@ class ReviewEscalationDispatchRecord:
     escalated_at: datetime
     overdue_seconds: int
     assignment_state: str
+    routing_state: str
+    routing_team_id: str | None
+    routing_route_version: int | None
+    eligible_recipient_count: int
+    external_sync_state: str
     outbox_status: str
 
     def to_record(self) -> dict[str, object]:
@@ -131,6 +137,12 @@ class MySQLReviewEscalationScheduler:
                 if fresh_candidate is None:
                     continue
                 candidate = fresh_candidate
+                routing = resolve_escalation_route_snapshot(
+                    conn,
+                    str(candidate["tenant_id"]),
+                    str(candidate["project_id"]),
+                    str(candidate["reviewer_role"]),
+                )
                 payload = {
                     "schema_version": REVIEW_SLA_ESCALATION_SCHEMA,
                     "case_id": candidate["case_id"],
@@ -139,6 +151,11 @@ class MySQLReviewEscalationScheduler:
                     "escalated_at": escalated_at.isoformat(),
                     "overdue_seconds": candidate["overdue_seconds"],
                     "assignment_state": candidate["assignment_state"],
+                    "routing_state": routing.routing_state,
+                    "routing_team_id": routing.team_id,
+                    "routing_route_version": routing.route_version,
+                    "eligible_recipient_count": routing.eligible_recipient_count,
+                    "external_sync_state": routing.external_sync_state,
                     "delivery_claim": "outbox_pending_not_delivered",
                 }
                 if self.engine.dialect.name == "mysql":
@@ -196,6 +213,11 @@ class MySQLReviewEscalationScheduler:
                     escalated_at=escalated_at,
                     overdue_seconds=int(candidate["overdue_seconds"]),
                     assignment_state=str(candidate["assignment_state"]),
+                    routing_state=routing.routing_state,
+                    routing_team_id=routing.team_id,
+                    routing_route_version=routing.route_version,
+                    eligible_recipient_count=routing.eligible_recipient_count,
+                    external_sync_state=routing.external_sync_state,
                     outbox_status="pending",
                 )
             )

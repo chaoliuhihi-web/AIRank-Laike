@@ -165,6 +165,12 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED": (409, "Evidence review assignment lease expired"),
     "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT": (409, "Evidence review assignment version is stale"),
     "EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN": (403, "Only the assignment owner may change the lease"),
+    "EVIDENCE_REVIEW_TEAM_NOT_FOUND": (404, "Evidence review team was not found"),
+    "EVIDENCE_REVIEW_TEAM_NAME_CONFLICT": (409, "Evidence review team name already exists"),
+    "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT": (409, "Evidence review routing version is stale"),
+    "EVIDENCE_REVIEW_ROUTING_UNAVAILABLE": (409, "Evidence review routing is not ready"),
+    "EVIDENCE_REVIEW_ROUTING_FORBIDDEN": (403, "Current actor is not routed for this review role"),
+    "EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED": (409, "Reviewer active assignment capacity is reached"),
     "EVIDENCE_REVIEW_ESCALATION_INVALID": (409, "Evidence review escalation payload is invalid"),
     "EVIDENCE_REVIEW_LABEL_INVALID": (409, "Evidence review label is invalid for this case"),
     "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN": (409, "Independent review requires a different reviewer"),
@@ -5061,7 +5067,8 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
                 item.strip()
                 for item in os.getenv(
                     "AIRANK_DEV_PERMISSIONS",
-                    f"{skill_admin_permission()},{provider_admin_permission()}",
+                    f"{skill_admin_permission()},{provider_admin_permission()},"
+                    f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')}",
                 ).split(",")
                 if item.strip()
             ),
@@ -5960,6 +5967,13 @@ except ImportError:  # pragma: no cover
     from evidence_review_routes import router as evidence_review_router  # type: ignore[no-redef]
 
 app.include_router(evidence_review_router)
+
+try:
+    from .reviewer_routing_routes import router as reviewer_routing_router
+except ImportError:  # pragma: no cover
+    from reviewer_routing_routes import router as reviewer_routing_router  # type: ignore[no-redef]
+
+app.include_router(reviewer_routing_router)
 
 try:
     from .citation_capture_routes import router as citation_capture_router

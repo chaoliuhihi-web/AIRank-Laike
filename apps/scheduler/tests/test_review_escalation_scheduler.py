@@ -33,6 +33,38 @@ def build_scheduler() -> MySQLReviewEscalationScheduler:
         conn.execute(
             text(
                 """
+                CREATE TABLE airank_evidence_review_teams (
+                  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                  status TEXT NOT NULL, external_sync_state TEXT NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_evidence_review_routes (
+                  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                  reviewer_role TEXT NOT NULL, team_id TEXT NOT NULL,
+                  status TEXT NOT NULL, version INTEGER NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_evidence_review_team_members (
+                  id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                  team_id TEXT NOT NULL, reviewer_role TEXT NOT NULL,
+                  status TEXT NOT NULL, receives_escalations INTEGER NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
                 CREATE TABLE airank_evidence_review_assignments (
                   id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, case_id TEXT NOT NULL,
                   reviewer_role TEXT NOT NULL, assigned_to TEXT NOT NULL,
@@ -221,8 +253,102 @@ def test_review_escalation_is_scoped_idempotent_and_truthful() -> None:
         payload = json.loads(str(row["payload_json"]))
         assert payload["schema_version"] == "airank.evidence-review-sla-escalation.v1"
         assert payload["delivery_claim"] == "outbox_pending_not_delivered"
+        assert payload["routing_state"] == "unrestricted_legacy"
+        assert payload["routing_team_id"] is None
+        assert payload["eligible_recipient_count"] == 0
+        assert payload["external_sync_state"] == "not_configured"
         assert "assigned_to" not in payload
         assert "assignment_id" not in payload
+
+
+def test_review_escalation_resolves_team_without_exposing_member_identity() -> None:
+    scheduler = build_scheduler()
+    seed_case(
+        scheduler,
+        case_id="case_team_routed",
+        status="awaiting_secondary",
+        created_at=NOW - timedelta(days=2),
+    )
+    with scheduler.engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO airank_evidence_review_teams "
+                "(id, tenant_id, project_id, status, external_sync_state) "
+                "VALUES ('team_secondary', 'tenant_review', 'project_review', "
+                "'active', 'not_configured')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO airank_evidence_review_routes "
+                "(id, tenant_id, project_id, reviewer_role, team_id, status, version) "
+                "VALUES ('route_secondary', 'tenant_review', 'project_review', "
+                "'secondary', 'team_secondary', 'active', 3)"
+            )
+        )
+        for index in range(2):
+            conn.execute(
+                text(
+                    "INSERT INTO airank_evidence_review_team_members "
+                    "(id, tenant_id, project_id, team_id, reviewer_role, status, receives_escalations) "
+                    "VALUES (:id, 'tenant_review', 'project_review', 'team_secondary', "
+                    "'secondary', 'active', 1)"
+                ),
+                {"id": f"member-private-{index}"},
+            )
+
+    records = scheduler.dispatch_overdue(now=NOW, limit=10)
+    assert len(records) == 1
+    assert records[0].routing_state == "resolved"
+    assert records[0].routing_team_id == "team_secondary"
+    assert records[0].routing_route_version == 3
+    assert records[0].eligible_recipient_count == 2
+
+    with scheduler.engine.connect() as conn:
+        payload = json.loads(
+            str(conn.execute(text("SELECT payload_json FROM airank_outbox_events")).scalar_one())
+        )
+    assert payload["routing_state"] == "resolved"
+    assert payload["routing_team_id"] == "team_secondary"
+    assert payload["routing_route_version"] == 3
+    assert payload["eligible_recipient_count"] == 2
+    assert "member-private" not in json.dumps(payload)
+    assert "assigned_to" not in payload
+
+
+def test_review_escalation_fails_closed_when_other_role_is_not_configured() -> None:
+    scheduler = build_scheduler()
+    seed_case(
+        scheduler,
+        case_id="case_adjudicator_route_missing",
+        status="disputed",
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(hours=5),
+    )
+    with scheduler.engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO airank_evidence_review_teams "
+                "(id, tenant_id, project_id, status, external_sync_state) "
+                "VALUES ('team_secondary_only', 'tenant_review', 'project_review', "
+                "'active', 'not_configured')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO airank_evidence_review_routes "
+                "(id, tenant_id, project_id, reviewer_role, team_id, status, version) "
+                "VALUES ('route_secondary_only', 'tenant_review', 'project_review', "
+                "'secondary', 'team_secondary_only', 'active', 1)"
+            )
+        )
+
+    records = scheduler.dispatch_overdue(now=NOW, limit=10)
+    assert len(records) == 1
+    assert records[0].reviewer_role == "adjudicator"
+    assert records[0].routing_state == "blocked_role_unconfigured"
+    assert records[0].routing_team_id is None
+    assert records[0].eligible_recipient_count == 0
 
 
 def test_review_escalation_project_scope_requires_tenant() -> None:

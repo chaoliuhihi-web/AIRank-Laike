@@ -1105,3 +1105,25 @@ Limitations and blockers:
 Decision:
 
 - AIRank can now prove that an overdue independent-review task created one durable operations event without claiming anyone was notified. The capability remains `partial`, and AIRank remains commercial `NO-GO` until external delivery, reviewer-team routing, customer quality and production gates pass.
+
+## Reviewer team and role routing gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0028` adds tenant/project reviewer teams, role memberships and secondary/adjudicator routes. Real MySQL is at head with 72 AIRank tables; offline SQL and real migration both pass.
+- Manual memberships remain explicitly external-unverified. The API exposes team/role capacity and route readiness but does not claim Yudao group synchronization.
+- A project with no route is explicitly `unrestricted_legacy`. Once any route is configured, an unconfigured role, inactive/empty team, non-member actor or exhausted member capacity fails closed. Both roles must be ready before the project reports `team_routed`.
+- Inbox filtering and assignment creation share the same database eligibility rule. Assignment creation locks the member row before counting active work, while an existing assignment owner may still finish their leased task at capacity.
+- SLA escalation persists the resolved team, route version, eligible-recipient count and external-sync state in the same Outbox transaction. Member user IDs and assignee identity are absent; `external_delivery_verified` remains false.
+- Real MySQL verified a non-member receives zero actionable cases and a 403 claim denial, members retain unique concurrent ownership, and the escalation route resolves two recipients. Contract/acceptance/scheduler suites and the full default suite pass.
+- Real browser acceptance created one team, secondary/adjudicator memberships and both routes through the public API. Desktop and 390×844 mobile views showed `team_routed`, two ready routes, no page overflow and console `0 error / 0 warning`. All QA rows and their audit events were then deleted from the demo project.
+
+### Still blocked
+
+- Yudao group and membership synchronization is not implemented; manual member binding is not external identity proof.
+- There is no external notification Consumer, channel receipt, repeated escalation level, on-call rotation or automatic workload balancing. Outbox `published` is not delivery.
+- The real customer-labeled reviewer benchmark remains 0/20, so kappa is unavailable and commercial reviewer reliability is not established.
+
+### Decision
+
+- Internal project reviewer routing is now a durable, capacity-bounded engineering capability. AIRank remains commercial `NO-GO` until external delivery, customer reviewer quality and the existing production infrastructure/Consumer gates pass.

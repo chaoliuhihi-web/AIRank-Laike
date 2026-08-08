@@ -2043,6 +2043,83 @@ button:disabled {
   margin: 14px 0;
 }
 
+.review-routing-metrics {
+  margin: 14px 0;
+}
+
+.review-routing-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.review-routing-forms,
+.review-routing-summary {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-routing-form,
+.review-routing-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: #fbfcff;
+}
+
+.review-routing-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.review-routing-form input,
+.review-routing-form select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--console-text-strong);
+  font: 700 13px / 20px var(--console-font-family);
+}
+
+.review-routing-form .airank-console-primary-button {
+  justify-self: start;
+}
+
+.review-routing-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.review-routing-card > small {
+  grid-column: 1 / -1;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+  overflow-wrap: anywhere;
+}
+
+.review-routing-card strong,
+.review-routing-card div small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.review-routing-card div small {
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
 .review-inbox-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2118,12 +2195,20 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+  .review-routing-layout {
+    grid-template-columns: 1fr;
+  }
+
   .review-inbox-list {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 560px) {
+  .review-routing-form .airank-console-primary-button {
+    width: 100%;
+  }
+
   .review-inbox-card {
     display: grid;
   }

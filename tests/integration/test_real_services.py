@@ -83,6 +83,12 @@ from apps.api.evidence_review_routes import (
     MySQLEvidenceReviewEscalationRepository,
     MySQLEvidenceReviewRepository,
 )
+from apps.api.reviewer_routing_routes import (
+    MySQLReviewerRoutingRepository,
+    ReviewerRoleRoutePutRequest,
+    ReviewerTeamCreateRequest,
+    ReviewerTeamMemberUpsertRequest,
+)
 from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
 from airank_domain.measurement import sha256_text
 from airank_score.quality import build_measurement_quality_report
@@ -120,7 +126,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0027"
+EXPECTED_ALEMBIC_HEAD = "20260809_0028"
 
 
 def require_real_flag(flag: str) -> None:
@@ -186,7 +192,19 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 69
+        assert table_count == 72
+        for table_name in (
+            "airank_evidence_review_teams",
+            "airank_evidence_review_team_members",
+            "airank_evidence_review_routes",
+        ):
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_schema=DATABASE() AND table_name=:table_name"
+                ),
+                {"table_name": table_name},
+            ).scalar_one() == 1
         assert conn.execute(
             text(
                 """
@@ -3890,6 +3908,7 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
     scan_repo = MySQLScanRepository(database_url())
     citation_repo = MySQLCitationSupportRepository(database_url())
     review_repo = MySQLEvidenceReviewRepository(database_url())
+    routing_repo = MySQLReviewerRoutingRepository(database_url())
     knowledge_repo = MySQLKnowledgeRepository(database_url())
 
     try:
@@ -4095,6 +4114,62 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             "trace-review-primary",
         )
         assert citation_case.status == "awaiting_secondary"
+        routing = routing_repo.create_team(
+            tenant_id,
+            project.project_id,
+            ReviewerTeamCreateRequest(name="Integration evidence reviewers"),
+            "mysql-review-team",
+            "review-admin",
+            "trace-review-team",
+        )
+        review_team_id = routing.teams[0].team_id
+        for reviewer in ("reviewer-2", "reviewer-3"):
+            routing_repo.upsert_member(
+                tenant_id,
+                project.project_id,
+                review_team_id,
+                reviewer,
+                "secondary",
+                ReviewerTeamMemberUpsertRequest(max_active_assignments=2),
+                "review-admin",
+                f"trace-review-member-{reviewer}",
+            )
+        routing_repo.upsert_member(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "reviewer-3",
+            "adjudicator",
+            ReviewerTeamMemberUpsertRequest(max_active_assignments=2),
+            "review-admin",
+            "trace-review-member-adjudicator",
+        )
+        partial_routing = routing_repo.put_route(
+            tenant_id,
+            project.project_id,
+            "secondary",
+            ReviewerRoleRoutePutRequest(team_id=review_team_id),
+            "review-admin",
+            "trace-review-route-secondary",
+        )
+        assert partial_routing.routing_mode == "blocked"
+        assert partial_routing.routes[0].routing_ready is True
+        routing = routing_repo.put_route(
+            tenant_id,
+            project.project_id,
+            "adjudicator",
+            ReviewerRoleRoutePutRequest(team_id=review_team_id),
+            "review-admin",
+            "trace-review-route-adjudicator",
+        )
+        assert routing.routing_mode == "team_routed"
+        assert routing.external_sync_state == "not_configured"
+        assert all(route.routing_ready for route in routing.routes)
+        assert all(
+            not member.external_membership_verified
+            for team in routing.teams
+            for member in team.members
+        )
         escalation_at = datetime.now(timezone.utc)
         with engine.begin() as conn:
             conn.execute(
@@ -4128,6 +4203,9 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
         assert escalated[0].case_id == citation_case.case_id
         assert escalated[0].reviewer_role == "secondary"
         assert escalated[0].assignment_state == "unassigned"
+        assert escalated[0].routing_state == "resolved"
+        assert escalated[0].routing_team_id == review_team_id
+        assert escalated[0].eligible_recipient_count == 2
         assert escalation_scheduler.dispatch_overdue(now=escalation_at, limit=10) == []
         escalation_list = MySQLEvidenceReviewEscalationRepository(
             database_url()
@@ -4135,6 +4213,8 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
         assert escalation_list.escalation_count == 1
         assert escalation_list.pending_count == 1
         assert escalation_list.escalations[0].external_delivery_verified is False
+        assert escalation_list.escalations[0].routing_state == "resolved"
+        assert escalation_list.escalations[0].eligible_recipient_count == 2
         with engine.connect() as conn:
             outbox_payload = conn.execute(
                 text(
@@ -4148,6 +4228,9 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
         if isinstance(outbox_payload, str):
             outbox_payload = json.loads(outbox_payload)
         assert outbox_payload["delivery_claim"] == "outbox_pending_not_delivered"
+        assert outbox_payload["routing_state"] == "resolved"
+        assert outbox_payload["routing_team_id"] == review_team_id
+        assert outbox_payload["eligible_recipient_count"] == 2
         assert "assigned_to" not in outbox_payload
         assert "assignment_id" not in outbox_payload
 
@@ -4160,6 +4243,21 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
                 "trace-review-self",
             )
         assert self_review.value.detail["code"] == "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN"
+
+        assert review_repo.list_inbox(
+            tenant_id, project.project_id, "reviewer-outside", 12, None
+        ).actionable_count == 0
+        with pytest.raises(StarletteHTTPException) as outside_route:
+            review_repo.claim_assignment(
+                tenant_id,
+                citation_case.case_id,
+                EvidenceReviewAssignmentClaimRequest(
+                    expected_case_version=citation_case.version
+                ),
+                "reviewer-outside",
+                "trace-review-outside-route",
+            )
+        assert outside_route.value.detail["code"] == "EVIDENCE_REVIEW_ROUTING_FORBIDDEN"
 
         def attempt_claim(actor: str) -> tuple[str, Any, str | None]:
             try:
@@ -4346,6 +4444,16 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             "mysql-fact-review-case",
             "fact-reviewer-1",
             "trace-fact-primary",
+        )
+        routing_repo.upsert_member(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "fact-reviewer-2",
+            "secondary",
+            ReviewerTeamMemberUpsertRequest(max_active_assignments=2),
+            "review-admin",
+            "trace-review-member-fact-secondary",
         )
         before_fact = citation_repo.get_fact_accuracy_bundle(tenant_id, snapshot_id).metrics
         assert before_fact.fact_accuracy is None

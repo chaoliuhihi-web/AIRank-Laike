@@ -21,6 +21,14 @@ idempotent. `pending` means only that a durable Outbox event exists; even
 channel receipt contract are implemented, customer UI/API must keep external
 delivery unverified.
 
+When reviewer routing is configured, the same transaction resolves a durable
+route snapshot into the event: team ID, route version, eligible escalation
+recipient count, and external-sync state. It never stores member identities in
+the Outbox payload. No project routes means explicit `unrestricted_legacy`;
+after the first route is configured, a missing role, inactive team, or empty
+recipient set is recorded as a blocked routing state instead of falling back to
+unrestricted delivery.
+
 The scheduler is fail-closed: a tenant/project/window scope is required by
 default. A project scope always requires a tenant scope. Global multi-tenant scheduling requires both
 `AIRANK_SCHEDULER_GLOBAL_SCOPE_ENABLED=true` and `--allow-global-scope`.

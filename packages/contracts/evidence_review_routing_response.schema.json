@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_review_routing_response.schema.json",
+  "title": "AIRank Evidence Review Routing Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "routing_mode", "external_sync_state", "teams", "routes", "known_limitations"],
+      "properties": {
+        "project_id": { "type": "string", "minLength": 1 },
+        "routing_mode": { "enum": ["unrestricted_legacy", "team_routed", "blocked"] },
+        "external_sync_state": { "$ref": "#/$defs/externalSyncState" },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["team_id", "name", "status", "external_source", "external_group_id", "external_sync_state", "version", "member_count", "members", "created_at", "updated_at", "idempotent_replay"],
+            "properties": {
+              "team_id": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["active", "disabled"] },
+              "external_source": { "enum": ["manual", "yudao"] },
+              "external_group_id": { "type": ["string", "null"] },
+              "external_sync_state": { "$ref": "#/$defs/externalSyncState" },
+              "version": { "type": "integer", "minimum": 1 },
+              "member_count": { "type": "integer", "minimum": 0 },
+              "members": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/member" }
+              },
+              "created_at": { "type": "string", "format": "date-time" },
+              "updated_at": { "type": "string", "format": "date-time" },
+              "idempotent_replay": { "type": "boolean" }
+            }
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["route_id", "reviewer_role", "team_id", "team_name", "routing_strategy", "status", "version", "eligible_member_count", "escalation_recipient_count", "routing_ready", "updated_at"],
+            "properties": {
+              "route_id": { "type": "string", "minLength": 1 },
+              "reviewer_role": { "$ref": "#/$defs/reviewerRole" },
+              "team_id": { "type": "string", "minLength": 1 },
+              "team_name": { "type": "string", "minLength": 1 },
+              "routing_strategy": { "const": "manual_claim" },
+              "status": { "enum": ["active", "disabled"] },
+              "version": { "type": "integer", "minimum": 1 },
+              "eligible_member_count": { "type": "integer", "minimum": 0 },
+              "escalation_recipient_count": { "type": "integer", "minimum": 0 },
+              "routing_ready": { "type": "boolean" },
+              "updated_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "known_limitations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "reviewerRole": { "enum": ["secondary", "adjudicator"] },
+    "externalSyncState": { "enum": ["not_configured", "pending", "verified", "stale", "failed"] },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member_id", "user_id", "display_name", "reviewer_role", "priority", "max_active_assignments", "receives_escalations", "status", "membership_source", "external_membership_verified", "version", "updated_at"],
+      "properties": {
+        "member_id": { "type": "string", "minLength": 1 },
+        "user_id": { "type": "string", "minLength": 1 },
+        "display_name": { "type": ["string", "null"] },
+        "reviewer_role": { "$ref": "#/$defs/reviewerRole" },
+        "priority": { "type": "integer", "minimum": 1 },
+        "max_active_assignments": { "type": "integer", "minimum": 1 },
+        "receives_escalations": { "type": "boolean" },
+        "status": { "enum": ["active", "disabled"] },
+        "membership_source": { "enum": ["manual", "yudao"] },
+        "external_membership_verified": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

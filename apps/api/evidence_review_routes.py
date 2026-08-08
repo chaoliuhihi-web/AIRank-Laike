@@ -22,6 +22,11 @@ try:
 except ImportError:  # pragma: no cover
     import citation_support_routes as citation_routes  # type: ignore[no-redef]
 
+try:
+    from . import reviewer_routing_routes as reviewer_routing
+except ImportError:  # pragma: no cover
+    import reviewer_routing_routes as reviewer_routing  # type: ignore[no-redef]
+
 
 router = APIRouter(prefix="/api/v1", tags=["evidence-review-quality"])
 TRACE_HEADER = "X-AIRank-Trace-Id"
@@ -250,6 +255,19 @@ class EvidenceReviewEscalationData(BaseModel):
     escalated_at: datetime
     overdue_seconds: int = Field(ge=0)
     assignment_state: Literal["unassigned", "assigned", "expired"]
+    routing_state: Literal[
+        "unrestricted_legacy",
+        "resolved",
+        "blocked_role_unconfigured",
+        "blocked_team_inactive",
+        "blocked_no_recipients",
+    ]
+    routing_team_id: Optional[str]
+    routing_route_version: Optional[int]
+    eligible_recipient_count: int = Field(ge=0)
+    external_sync_state: Literal[
+        "not_configured", "pending", "verified", "stale", "failed"
+    ]
     outbox_status: Literal["pending", "published", "failed", "canceled"]
     external_delivery_verified: Literal[False] = False
 
@@ -1532,6 +1550,47 @@ class MySQLEvidenceReviewRepository:
                 cursor_case_id=cursor_key[2],
             )
         with self.engine.begin() as conn:
+            secondary_eligibility = reviewer_routing.resolve_actor_role_eligibility(
+                conn, tenant_id, project_id, actor, "secondary"
+            )
+            adjudicator_eligibility = reviewer_routing.resolve_actor_role_eligibility(
+                conn, tenant_id, project_id, actor, "adjudicator"
+            )
+            params.update(
+                secondary_allowed=int(secondary_eligibility.allowed),
+                secondary_at_capacity=int(secondary_eligibility.at_capacity),
+                adjudicator_allowed=int(adjudicator_eligibility.allowed),
+                adjudicator_at_capacity=int(adjudicator_eligibility.at_capacity),
+            )
+            eligibility = f"""
+              {eligibility}
+              AND (
+                (
+                  c.status='awaiting_secondary'
+                  AND :secondary_allowed=1
+                  AND (
+                    :secondary_at_capacity=0
+                    OR (
+                      assignment.id IS NOT NULL
+                      AND assignment.assigned_to=:actor
+                      AND assignment.lease_expires_at>:as_of
+                    )
+                  )
+                )
+                OR (
+                  c.status='disputed'
+                  AND :adjudicator_allowed=1
+                  AND (
+                    :adjudicator_at_capacity=0
+                    OR (
+                      assignment.id IS NOT NULL
+                      AND assignment.assigned_to=:actor
+                      AND assignment.lease_expires_at>:as_of
+                    )
+                  )
+                )
+              )
+            """
             counts = conn.execute(
                 text(
                     f"""
@@ -1860,6 +1919,30 @@ class MySQLEvidenceReviewRepository:
                     409, detail={"code": "EVIDENCE_REVIEW_ASSIGNMENT_CONFLICT"}
                 )
             return current, True
+        routing = reviewer_routing.resolve_actor_role_eligibility(
+            conn,
+            str(case["tenant_id"]),
+            str(case["project_id"]),
+            actor,
+            role,
+            lock_member=True,
+            as_of=at,
+        )
+        if not routing.allowed:
+            if routing.reason in {"team_inactive", "role_unconfigured"}:
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_UNAVAILABLE"},
+                )
+            raise StarletteHTTPException(
+                403,
+                detail={"code": "EVIDENCE_REVIEW_ROUTING_FORBIDDEN"},
+            )
+        if routing.at_capacity:
+            raise StarletteHTTPException(
+                409,
+                detail={"code": "EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED"},
+            )
         action_available_at = review_action_available_at(case)
         assignment_id = f"evidence_review_assignment_{uuid4().hex}"
         conn.execute(
@@ -2518,6 +2601,21 @@ class MySQLEvidenceReviewEscalationRepository:
                         0, int((checked_at - due_at).total_seconds())
                     ),
                     assignment_state=str(payload["assignment_state"]),
+                    routing_state=str(payload["routing_state"]),
+                    routing_team_id=(
+                        str(payload["routing_team_id"])
+                        if payload.get("routing_team_id") is not None
+                        else None
+                    ),
+                    routing_route_version=(
+                        int(payload["routing_route_version"])
+                        if payload.get("routing_route_version") is not None
+                        else None
+                    ),
+                    eligible_recipient_count=int(
+                        payload["eligible_recipient_count"]
+                    ),
+                    external_sync_state=str(payload["external_sync_state"]),
                     outbox_status=str(row["status"]),
                     external_delivery_verified=False,
                 )

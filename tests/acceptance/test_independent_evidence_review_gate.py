@@ -117,6 +117,44 @@ def test_review_sla_escalation_uses_real_outbox_without_fake_delivery() -> None:
     assert "系统不会把动态逾期状态冒充已通知" in web
 
 
+def test_review_team_routing_is_persistent_capacity_bounded_and_truthful() -> None:
+    migration = read(
+        "apps/api/alembic/versions/20260809_0028_reviewer_team_routing.py"
+    )
+    routing = read("apps/api/reviewer_routing_routes.py")
+    review = read("apps/api/evidence_review_routes.py")
+    scheduler = read("apps/scheduler/airank_scheduler/review_escalation.py")
+    contract = read(
+        "packages/contracts/evidence_review_routing_response.schema.json"
+    )
+    web = read("apps/web/src/App.tsx")
+
+    for token in (
+        "airank_evidence_review_teams",
+        "airank_evidence_review_team_members",
+        "airank_evidence_review_routes",
+        "max_active_assignments",
+        "external_membership_verified",
+        "external_sync_state",
+    ):
+        assert token in migration
+    for route in (
+        '"/projects/{project_id}/evidence-review-routing"',
+        '"/projects/{project_id}/evidence-review-teams"',
+        '"/projects/{project_id}/evidence-review-routes/{reviewer_role}"',
+    ):
+        assert route in routing
+    assert "unrestricted_legacy" in contract
+    assert "EVIDENCE_REVIEW_ROUTING_FORBIDDEN" in review
+    assert "EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED" in review
+    assert "resolve_escalation_route_snapshot" in scheduler
+    assert '"routing_team_id"' in scheduler
+    assert '"eligible_recipient_count"' in scheduler
+    assert "审核团队与角色路由" in web
+    assert "外部资格" in web
+    assert "不代表 Yudao 成员资格已同步" in web
+
+
 def test_review_quality_has_real_agreement_and_kappa_gate() -> None:
     quality = read("packages/evidence/src/airank_evidence/review_quality.py")
     contract = read("packages/contracts/evidence_review_queue_response.schema.json")

@@ -96,6 +96,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED` | 409 | 当前审核人的领取租约已过期，需要重新领取 |
 | `EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT` | 409 | case 或领取记录版本已变化，需要刷新后重试 |
 | `EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN` | 403 | 当前账号不是领取人，不能续租或释放任务 |
+| `EVIDENCE_REVIEW_TEAM_NOT_FOUND` | 404 | 审核团队不存在、不属于当前租户项目或已经停用 |
+| `EVIDENCE_REVIEW_TEAM_NAME_CONFLICT` | 409 | 当前租户项目已存在同名审核团队 |
+| `EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT` | 409 | 团队成员或角色路由版本已变化，需要刷新后重试 |
+| `EVIDENCE_REVIEW_ROUTING_UNAVAILABLE` | 409 | 当前角色已配置路由，但目标团队未处于可用状态 |
+| `EVIDENCE_REVIEW_ROUTING_FORBIDDEN` | 403 | 当前账号不是该角色已配置团队的有效成员 |
+| `EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED` | 409 | 当前审核人的活跃领取数已经达到团队配置上限 |
 | `EVIDENCE_REVIEW_ESCALATION_INVALID` | 409 | 持久升级事件不符合版本化 SLA Outbox 契约，拒绝展示为运营事实 |
 | `EVIDENCE_REVIEW_LABEL_INVALID` | 409 | 决定标签不属于该引用支持或事实准确性任务的允许集合 |
 | `EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN` | 409 | 第二复核人或裁决人必须与之前的审核人不同 |

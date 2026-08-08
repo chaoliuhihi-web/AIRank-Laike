@@ -38,6 +38,11 @@
               "escalated_at",
               "overdue_seconds",
               "assignment_state",
+              "routing_state",
+              "routing_team_id",
+              "routing_route_version",
+              "eligible_recipient_count",
+              "external_sync_state",
               "outbox_status",
               "external_delivery_verified"
             ],
@@ -49,6 +54,11 @@
               "escalated_at": { "type": "string", "format": "date-time" },
               "overdue_seconds": { "type": "integer", "minimum": 0 },
               "assignment_state": { "enum": ["unassigned", "assigned", "expired"] },
+              "routing_state": { "enum": ["unrestricted_legacy", "resolved", "blocked_role_unconfigured", "blocked_team_inactive", "blocked_no_recipients"] },
+              "routing_team_id": { "type": ["string", "null"] },
+              "routing_route_version": { "type": ["integer", "null"], "minimum": 1 },
+              "eligible_recipient_count": { "type": "integer", "minimum": 0 },
+              "external_sync_state": { "enum": ["not_configured", "pending", "verified", "stale", "failed"] },
               "outbox_status": { "enum": ["pending", "published", "failed", "canceled"] },
               "external_delivery_verified": { "const": false }
             }

@@ -638,9 +638,61 @@ export type EvidenceReviewEscalationList = {
     escalated_at: string;
     overdue_seconds: number;
     assignment_state: "unassigned" | "assigned" | "expired";
+    routing_state: "unrestricted_legacy" | "resolved" | "blocked_role_unconfigured" | "blocked_team_inactive" | "blocked_no_recipients";
+    routing_team_id: string | null;
+    routing_route_version: number | null;
+    eligible_recipient_count: number;
+    external_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
     outbox_status: "pending" | "published" | "failed" | "canceled";
     external_delivery_verified: false;
   }>;
+};
+
+export type EvidenceReviewerRouting = {
+  project_id: string;
+  routing_mode: "unrestricted_legacy" | "team_routed" | "blocked";
+  external_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
+  teams: Array<{
+    team_id: string;
+    name: string;
+    status: "active" | "disabled";
+    external_source: "manual" | "yudao";
+    external_group_id: string | null;
+    external_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
+    version: number;
+    member_count: number;
+    members: Array<{
+      member_id: string;
+      user_id: string;
+      display_name: string | null;
+      reviewer_role: "secondary" | "adjudicator";
+      priority: number;
+      max_active_assignments: number;
+      receives_escalations: boolean;
+      status: "active" | "disabled";
+      membership_source: "manual" | "yudao";
+      external_membership_verified: boolean;
+      version: number;
+      updated_at: string;
+    }>;
+    created_at: string;
+    updated_at: string;
+    idempotent_replay: boolean;
+  }>;
+  routes: Array<{
+    route_id: string;
+    reviewer_role: "secondary" | "adjudicator";
+    team_id: string;
+    team_name: string;
+    routing_strategy: "manual_claim";
+    status: "active" | "disabled";
+    version: number;
+    eligible_member_count: number;
+    escalation_recipient_count: number;
+    routing_ready: boolean;
+    updated_at: string;
+  }>;
+  known_limitations: string[];
 };
 
 export type CitationSourceCapture = {
@@ -1800,6 +1852,93 @@ export function fetchEvidenceReviewEscalations(
     "trc_web_evidence_review_escalations",
     signal,
   );
+}
+
+export function fetchEvidenceReviewerRouting(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<EvidenceReviewerRouting> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-routing`,
+    "trc_web_evidence_review_routing",
+    signal,
+  );
+}
+
+export async function createEvidenceReviewerTeam(
+  projectId: string,
+  name: string,
+): Promise<EvidenceReviewerRouting> {
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-teams`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_team_create"),
+        "Content-Type": "application/json",
+        "Idempotency-Key": `review-team-${randomPart}`,
+      },
+      body: JSON.stringify({ name: name.trim() }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Reviewer team request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
+}
+
+export async function upsertEvidenceReviewerTeamMember(
+  projectId: string,
+  teamId: string,
+  userId: string,
+  reviewerRole: "secondary" | "adjudicator",
+  input: { displayName?: string; maxActiveAssignments: number; expectedVersion?: number },
+): Promise<EvidenceReviewerRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}/${reviewerRole}`,
+    {
+      method: "PUT",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_team_member"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        display_name: input.displayName?.trim() || undefined,
+        priority: 100,
+        max_active_assignments: input.maxActiveAssignments,
+        receives_escalations: true,
+        expected_version: input.expectedVersion,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Reviewer member request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
+}
+
+export async function putEvidenceReviewerRoute(
+  projectId: string,
+  reviewerRole: "secondary" | "adjudicator",
+  teamId: string,
+  expectedVersion?: number,
+): Promise<EvidenceReviewerRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-routes/${reviewerRole}`,
+    {
+      method: "PUT",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_route"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ team_id: teamId, expected_version: expectedVersion }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Reviewer route request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
 }
 
 export async function createFactEvidenceReviewCase(
