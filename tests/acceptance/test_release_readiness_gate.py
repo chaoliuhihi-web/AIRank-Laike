@@ -119,6 +119,61 @@ def test_working_tree_check_fails_when_untracked_files_exist(
     assert "?? local.tmp" in check.detail
 
 
+def test_remote_ref_check_retries_transient_transport_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake_run(command: str, **kwargs: object) -> tuple[int, str]:
+        calls.append(command)
+        if command == "git rev-parse HEAD":
+            return 0, "a" * 40
+        if calls.count("git ls-remote origin refs/heads/main") == 1:
+            return 128, "banner exchange: invalid format"
+        return 0, f"{'a' * 40}\trefs/heads/main"
+
+    monkeypatch.setattr(release_readiness, "run_command", fake_run)
+
+    check = release_readiness.remote_ref_check(
+        "origin",
+        attempts=3,
+        retry_delay_seconds=0.25,
+        sleeper=sleeps.append,
+    )
+
+    assert check.status == "PASS"
+    assert "succeeded on attempt 2/3" in check.detail
+    assert calls.count("git ls-remote origin refs/heads/main") == 2
+    assert sleeps == [0.25]
+
+
+def test_remote_ref_check_fails_closed_after_bounded_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_run(command: str, **kwargs: object) -> tuple[int, str]:
+        calls.append(command)
+        if command == "git rev-parse HEAD":
+            return 0, "b" * 40
+        return 128, "transport unavailable"
+
+    monkeypatch.setattr(release_readiness, "run_command", fake_run)
+
+    check = release_readiness.remote_ref_check(
+        "origin",
+        attempts=2,
+        retry_delay_seconds=0,
+        sleeper=lambda _: None,
+    )
+
+    assert check.status == "BLOCKED"
+    assert "attempt 1/2" in check.detail
+    assert "attempt 2/2" in check.detail
+    assert calls.count("git ls-remote origin refs/heads/main") == 2
+
+
 def test_command_env_can_isolate_database_urls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AIRANK_DATABASE_URL", "mysql+pymysql://example")
     monkeypatch.setenv("ALEMBIC_DATABASE_URL", "mysql+pymysql://example")

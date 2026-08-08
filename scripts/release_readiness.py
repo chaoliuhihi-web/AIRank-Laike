@@ -8,10 +8,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,8 @@ class Check:
 
 
 DATABASE_ENV_KEYS = ("AIRANK_DATABASE_URL", "ALEMBIC_DATABASE_URL", "DATABASE_URL")
+REMOTE_REF_MAX_ATTEMPTS = 3
+REMOTE_REF_RETRY_DELAY_SECONDS = 1.0
 
 
 def command_env(
@@ -238,15 +241,54 @@ def runtime_version_check(
     )
 
 
-def remote_ref_check(remote: str) -> Check:
+def remote_ref_check(
+    remote: str,
+    *,
+    attempts: int = REMOTE_REF_MAX_ATTEMPTS,
+    retry_delay_seconds: float = REMOTE_REF_RETRY_DELAY_SECONDS,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> Check:
     head_code, head = run_command("git rev-parse HEAD")
-    remote_code, remote_head = run_command(f"git ls-remote {remote} refs/heads/main")
-    command = f"git rev-parse HEAD && git ls-remote {remote} refs/heads/main"
+    maximum_attempts = max(1, attempts)
+    remote_code = 1
+    remote_head = ""
+    attempt_records: list[str] = []
+    successful_attempt = 0
+    for attempt in range(1, maximum_attempts + 1):
+        remote_code, remote_head = run_command(
+            f"git ls-remote {remote} refs/heads/main"
+        )
+        if remote_code == 0:
+            successful_attempt = attempt
+            break
+        attempt_records.append(
+            f"remote query attempt {attempt}/{maximum_attempts}:\n"
+            f"{remote_head or '<empty>'}"
+        )
+        if attempt < maximum_attempts:
+            sleeper(max(0.0, retry_delay_seconds) * attempt)
+    command = (
+        f"git rev-parse HEAD && git ls-remote {remote} refs/heads/main "
+        f"(up to {maximum_attempts} attempts)"
+    )
     if head_code != 0 or remote_code != 0:
-        return Check(f"{remote} main ref", "BLOCKED", command, (head + "\n" + remote_head).strip())
+        detail_parts = [head] if head else []
+        detail_parts.extend(attempt_records)
+        return Check(
+            f"{remote} main ref",
+            "BLOCKED",
+            command,
+            "\n\n".join(detail_parts).strip(),
+        )
     remote_sha = remote_head.split()[0] if remote_head.split() else ""
     if head.strip() == remote_sha:
-        return Check(f"{remote} main ref", "PASS", command, head.strip())
+        detail = head.strip()
+        if successful_attempt > 1:
+            detail += (
+                f"\nremote query succeeded on attempt "
+                f"{successful_attempt}/{maximum_attempts}"
+            )
+        return Check(f"{remote} main ref", "PASS", command, detail)
     return Check(
         f"{remote} main ref",
         "BLOCKED",

@@ -108,11 +108,12 @@
 98. 深度吸收 `yao-geo-skills` 的证据契约和 `haidian` 的确定性包校验方法，新增 `20260808_0026` 项目级 `airank.evidence-integrity.v1`：逐条复核 Answer/EvidenceSnapshot、引用抓取与来源边界、知识正文与切片边界、事实修订，以及非报告对象存储的 hash、字节数、驱动和可用性；空项目、超过 10,000 个实体、任一缺失/篡改/越界均失败关闭，所有 verified/blocking finding 与证据状态 manifest 均不可变持久化。报告包升级为 `airank.report-evidence-packet.v5`，生成前强制执行巡检并绑定 manifest，失败返回 `REPORT_EVIDENCE_INTEGRITY_BLOCKED`；历史 v1–v4 继续只读且 `integrity_audit_id=null`。真实 MySQL 项目浏览器巡检为 36/36、0 blocker，桌面控制台无 warning/error；390×844 同源移动容器 html/body 宽度均为 390px、无页面级横向溢出。当前只证明该项目当时的证据完整性，不替代全库派生表重建、人工 benchmark、Consumer Web/App 或生产基础设施门禁。
 99. 修复“源证据未篡改但报告自报数字可以漂移”的交付漏洞：`airank.evidence-integrity.v2` 保留全部 v1 源证据校验，并从真实 ScanTask 行重算每个 ScanRun 的 `task_count`；Retest 报告则重新加载基线/对比任务、EvidenceSnapshot、Provider 请求审计、引用及最终 production 复核状态，重建两侧 v4 质量报告、对比指标、报告 SHA-256/status、ObservationWindow 结果与 RetestRun 摘要。任一差异形成可下钻的 `scan_run_metrics` 或 `report_derived_state` blocking finding，未知报告类型显式阻断。报告包升级为 `airank.report-evidence-packet.v6`；测试不再塞入任意 64 位 hash 和手工指标，而使用 2 个 run × 3 次独立 API 样本生成真实派生状态，并验证篡改报告结论和 `task_count=99` 后返回 `REPORT_EVIDENCE_INTEGRITY_BLOCKED`。真实 MySQL 项目浏览器巡检为 39/39、0 blocker；桌面与 390×844 移动视口均无页面级溢出，console `0 error / 0 warning`。当前只覆盖 ScanRun 与 Retest 报告重建，更广泛派生实体、大项目分片、人工 benchmark、Consumer Web/App 和生产基础设施仍保持 `partial/blocked`。
 100. 深度吸收 `haidian` 的离线评审包和正式空白评分表方法，升级 `airank.report-evidence-packet.v7`：客户对象从单 JSON 改为固定成员、固定顺序、固定时间戳、无压缩差异的确定性 ZIP，内含 canonical manifest、可打印 HTML、五维权重但评分/审核人/意见/决定全部留空的 CSV、使用边界 README 与逐文件 SHA256SUMS。manifest 新增完整 source_record，使离线工具可调用生产构建器重算质量、指标、来源、事实复核、packet basis、所有成员和整包；校验必须使用 API/下载回执 `content_sha256` 外部锚点，缺锚点、整包篡改、成员 hash 漂移、重复 JSON key、非标准数值、Zip Bomb 超限或重建不一致均失败，不把包内自洽冒充数字签名。隔离真实 MySQL 项目通过浏览器生成 6 样本/6 引用 ZIP：v2 巡检 15/15、0 blocker，生成 201、对象下载 200、回执 201；实际对象 CLI 返回 `verified`。报表中心与包内 HTML 在 1440 和 390×844 均无页面级横向溢出，console `0 error / 0 warning`。PDF/Word、Ed25519/企业签章和独立托管验证页仍为 `partial`。
+101. 上线门禁的 GitHub/Gitee 主分支同步检查增加有界传输重试：每个远端最多 3 次、线性退避，瞬时 SSH banner/网络错误恢复后记录成功发生在哪次；持续失败仍完整保存每次错误并保持 `BLOCKED`，不会把远端不可达误判成已同步。两条测试分别锁定“首轮失败后恢复”和“重试耗尽失败关闭”。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `436 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `438 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.13.1` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -137,7 +138,7 @@
 - 公开来源自动同步浏览器验收：真实登录后在事实库导入客户授权的 `https://example.com/`，启用每天检查；首次 Worker 保存原始 HTML/可见正文双对象和运行元数据，页面显示 `changed`、当前 v2、旧 v1 stale、证据 hash；随后点击“立即检查”，第二次显示 `unchanged` 且版本仍为 v2。1024px 桌面端无页面级横向溢出，console `0 error / 0 warning`；8 条审计、2 个 run/job、2 个来源修订和 4 个对象引用随后精确清理为 0，两个内容文件移入隔离临时目录。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 最新严格上线门禁（代码基线 `55bcf3a`）：工作树、GitHub/Gitee `main` 同步、diff、运行产物、Python 3.11.15、Node 24.13.1、185 个 contract、70 个 acceptance、7 个 scheduler、35 个 worker、48 个 evidence、全部分包测试、10 个核心 Skill 30/30、Web 构建、真实 MySQL 28/2、离线 SQL与真实 Alembic `0026` 均为 `PASS`；全量测试另为 436 passed / 30 skipped。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成仍为 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。API 四平台重复采样、v2 源证据与派生状态巡检、v7 可核验客户 ZIP、本地发布证据和工程门禁的通过不替代 Consumer Web/App、真实客户 benchmark 或生产站点门禁。
+- 最新严格上线门禁（v7 代码基线 `55bcf3a`，门禁重试随后补强）：工作树、GitHub/Gitee `main` 同步、diff、运行产物、Python 3.11.15、Node 24.13.1、185 个 contract、72 个 acceptance、7 个 scheduler、35 个 worker、48 个 evidence、全部分包测试、10 个核心 Skill 30/30、Web 构建、真实 MySQL 28/2、离线 SQL与真实 Alembic `0026` 均为 `PASS`；全量测试另为 438 passed / 30 skipped。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成仍为 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。API 四平台重复采样、v2 源证据与派生状态巡检、v7 可核验客户 ZIP、本地发布证据和工程门禁的通过不替代 Consumer Web/App、真实客户 benchmark 或生产站点门禁。
 
 ## 下一实施顺序
 
