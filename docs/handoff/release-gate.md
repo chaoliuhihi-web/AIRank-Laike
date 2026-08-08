@@ -1349,3 +1349,27 @@ Decision:
 ### Decision
 
 - Opportunity delivery teams now have an auditable external-directory synchronization boundary without corrupting manual ownership data. This engineering slice is complete, but AIRank remains commercial `NO-GO`; no production identity, external delivery, publication or GEO outcome is claimed.
+
+## Governed 30/60/90 capacity scheduling gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0038` adds five project-scoped tables for member capacity calendars, date exceptions, previous-hash-linked calendar events, immutable 90-day schedule runs and per-action schedule results. The real MySQL database is at head with 96 AIRank tables.
+- Capacity inputs require an IANA timezone, unique ISO workdays, positive weekly hours and a substantive manual basis. Date exceptions have independent optimistic versions. Equal content replays without version growth; changed content appends a hash-linked event. Manual entries always remain `external_calendar_verified=false`.
+- `airank.opportunity-capacity-schedule.v1` freezes action, approved-plan, routed-member, calendar, exception and dependency versions/hashes. It allocates human-estimated effort by available workday, detects shared-member daily over-allocation and returns 0–30, 31–60 and 61–90 windows plus explicit unplanned, missing-date, missing-owner, missing-calendar, unavailable-calendar, dependency, capacity and outside-horizon states.
+- Schedule runs and items are immutable. The same `Idempotency-Key` replays the original run and cannot be reused for another request; an independent key can retain a separate run even when its source and result hashes match. Historical plans are not reported as currently scheduled. No run moves or completes actions, and every response fixes `outcome_forecast_allowed=false`.
+- The real asset workflow calls the new APIs for calendar coverage, member calendars, date exceptions and schedule creation, and displays window capacity, utilization, item reasons and source/result SHA-256. The Node 24 TypeScript/Vite production build passes. Browser visual/click E2E was not rerun for this UI slice and remains pending.
+- Real MySQL verifies two actions assigned to one member: an 8-hour Monday capacity produces two daily conflicts, an immutable replay preserves the original, an independent key preserves an equal-hash snapshot, and calendar version 2 at 16 hours creates a new feasible snapshot while the previous runs remain unchanged. Calendar event hashes chain correctly.
+- The wider default regression passes `530 passed, 35 skipped`. On clean, GitHub/Gitee-synchronized commit `f7b4bfb`, the strict engineering gate passes Python 3.11.15, Node 24.14.0, 226 contracts, 6 crawler-lite, 91 acceptance, 20 Scheduler, 45 standalone Worker, 16 score, 48 evidence, 23 outbound-security, 26 Provider Gateway and 10 Xinghe adapter tests, 7/7 provider-native citation cases, 30/30 core Skill cases, Web production build, real MySQL `35 passed, 2 skipped`, offline SQL and real Alembic head `20260809_0038`.
+
+### Still blocked
+
+- Capacity is a governed manual planning input, not a contract, time sheet, invoice, actual spend or externally verified calendar. No Feishu, Yudao or other calendar connector has been supplied or validated.
+- A feasible schedule only means the submitted estimates fit the submitted manual capacity and dependency snapshot. It is not a forecast of publication, citation, brand recommendation, revenue or retention.
+- The strict report remains `BLOCKED`: authentication is `disabled/dev`, object storage is local rather than production HTTPS S3/MinIO, and optional Crawler/KB/content/workflow/Hermes services remain unconfigured `dev_only` capabilities.
+- Consumer Browser L3 was deliberately not rerun. The last verified result remains 0/4: Doubao and Kimi require authenticated sessions, while Qianwen and DeepSeek require human verification. Provider API success cannot substitute for Consumer Web/App evidence.
+- Production Yudao identity/directory, customer notification and publishing receipts, 20-case reviewer benchmark, Kimi credential rotation, DeepSeek model migration, real customer content quality/fairness and elapsed T+7/T+14/T+30 evidence remain open.
+
+### Decision
+
+- AIRank now turns evidence-backed opportunities into an auditable, resource-constrained 90-day delivery portfolio without inventing ROI. This slice is complete, but the product remains commercial `NO-GO` until external production, browser, publishing and customer-outcome gates pass.
