@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/fact_acquisition_evidence_bind_request.schema.json",
+  "title": "AIRank Fact Acquisition Evidence Bind Request",
+  "type": "object",
+  "required": ["fact_revision_ids", "expected_version", "requested_by"],
+  "additionalProperties": false,
+  "properties": {
+    "fact_revision_ids": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+    "expected_version": { "type": "integer", "minimum": 1 },
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

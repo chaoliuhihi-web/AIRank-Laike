@@ -182,6 +182,16 @@ POST /api/v1/projects/{project_id}/evidence-gaps/derive
 
 推导请求、结果和列表分别使用 `evidence_gap_derivation_request.schema.json`、`evidence_gap_derivation_response.schema.json` 与 `evidence_gap_list_response.schema.json`。服务端只从通过 `airank.measurement-quality.v4` 的不可变扫描样本推导 `airank.evidence-gap.v2`：同一问题、Provider、采集面必须拥有完整 sample index、至少 3 次独立会话、有效 AnswerSnapshot/EvidenceSnapshot hash，且每条都是正常有效的 `not_mentioned`。正常未提及样本不得删除；只是不满足该稳定缺口规则的分组不生成缺口。历史上未绑定证据 hash 的缺口只计入 `unverified_legacy_count`，不得直接进入内容建议。推导记录保存质量报告 hash、全量证据基础 hash、回答/证据/引用 ID 和可信操作者，支持按扫描运行与 Idempotency-Key 确定性重放。
 
+### 事实补证任务
+
+```text
+GET  /api/v1/projects/{project_id}/fact-acquisition-tasks
+POST /api/v1/projects/{project_id}/evidence-gaps/{gap_id}/fact-acquisition-tasks
+POST /api/v1/projects/{project_id}/fact-acquisition-tasks/{task_id}/evidence-bindings
+```
+
+补证任务使用 `airank.fact-acquisition-task.v1`。只有绑定 `airank.evidence-gap.v2`、质量报告 hash 和证据基础 hash 的缺口才能创建任务；历史缺口或已经拥有事实证据的缺口必须失败关闭。每次状态变化写入带前序 hash 的追加事件。待审 FactRevision 只能把任务推进到 `in_review`；只有当前有效、人工审核通过、无开放冲突、可公开且其 KnowledgeSource 为 `official` 或 `verified_third_party` 的事实，才能把任务和缺口推进到 `ready_for_intervention`。任务完成不等同于内容生成、发布或模型推荐。
+
 ## 幂等
 
 以下接口必须支持 `Idempotency-Key`：

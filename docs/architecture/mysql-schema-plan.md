@@ -51,6 +51,8 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_fact_atoms` | 可信事实卡内部 FactAtom，含可信等级、可公开程度、来源片段、风险提示 | 是 |
 | `airank_fact_sources` | FactAtom 与来源证据关系 | 是 |
 | `airank_content_gaps` | 内容 / 信源缺口 | 是 |
+| `airank_fact_acquisition_tasks` | 由真实缺口派生的事实补证任务、状态与证据绑定 | 是 |
+| `airank_fact_acquisition_task_events` | 补证任务带前序 hash 的追加式状态事件 | 是 |
 | `airank_content_assets` | FAQ、选型指南、案例页等内容资产 | 是 |
 | `airank_publish_packages` | 发布包导出、发布 URL、状态 | 是 |
 | `airank_retest_runs` | 复测批次和增长对比 | 是 |

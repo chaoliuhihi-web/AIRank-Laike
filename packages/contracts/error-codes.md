@@ -131,6 +131,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CONTENT_EVIDENCE_MISSING` | 409 | 内容引用的事实证据缺失、冲突或失效 |
 | `EVIDENCE_GAP_QUALITY_BLOCKED` | 409 | 扫描未通过测量质量门禁，禁止生成可干预证据缺口 |
 | `EVIDENCE_GAP_BASIS_INVALID` | 409 | 缺少完整不可变样本、证据 hash 或质量报告 hash，禁止推导缺口 |
+| `EVIDENCE_GAP_NOT_FOUND` | 404 | 真实证据缺口不存在或不属于当前租户/项目 |
+| `FACT_ACQUISITION_TASK_NOT_FOUND` | 404 | 事实补证任务不存在或不属于当前租户/项目 |
+| `FACT_ACQUISITION_GAP_INELIGIBLE` | 409 | 缺口不是受治理的 v2 证据缺口、缺少 hash 或已经拥有事实证据 |
+| `FACT_ACQUISITION_EVIDENCE_INVALID` | 409 | 补证来源不存在、失效、过期或未达到官方/已核验第三方权威门槛 |
+| `FACT_ACQUISITION_TASK_VERSION_CONFLICT` | 409 | 补证任务版本已变化，客户端必须重新读取后提交 |
+| `FACT_ACQUISITION_TASK_FINAL` | 409 | 补证任务已经解决，禁止覆盖不可变完成状态 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

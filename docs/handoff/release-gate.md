@@ -1209,3 +1209,25 @@ Decision:
 ### Decision
 
 - The evidence-to-action boundary is now truthful and auditable, but AIRank remains commercial `NO-GO` until the existing external and customer-evidence gates pass.
+
+## Governed fact-acquisition gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0032` adds durable fact-acquisition tasks and hash-chained append-only events. A task freezes the v2 gap evidence hash, quality-report hash, questions, Provider, collection surface, authority policy, actor, version and idempotency request.
+- Only `airank.evidence-gap.v2` gaps with complete immutable hashes and no existing FactAtom evidence can create a task. Legacy gaps and already-evidenced gaps fail closed.
+- Binding a FactRevision validates project scope, source existence, active validity, official or verified-third-party authority, source-content integrity hash, exact fact-text boundary, human approval, current revision, public/redacted disclosure and absence of open conflicts.
+- Proposed or otherwise ineligible facts cannot set `generation_allowed`; approved evidence moves both the task and source gap to `ready_for_intervention`. This state does not create content or claim publication/model recommendation.
+- Contract and acceptance tests cover actor trust, strict JSON schemas, legacy rejection, pending-versus-approved state transitions, idempotent replay, event count/hash and exact-boundary/hash rejection. Real MySQL completes gap → task → official source → reviewed FactRevision → resolved task, and the asset state changes from `待补事实` to `待生成` only after the evidence gate passes.
+- The live browser project intentionally has no approved facts: it displays one task as `待提议事实`, zero sources/revisions/approved facts and a disabled binding action. The 390×844 requested viewport is rendered at the in-app browser's 312×675 content viewport without page overflow; console warnings/errors are zero.
+
+### Still blocked
+
+- The live customer-like project still has no supplied enterprise source or approved fact, so no intervention content was generated from its real gap.
+- Fact-acquisition assignment ownership, SLA/escalation and automatic routing to knowledge owners are not yet implemented.
+- Citation-support, fact-staleness/conflict and page-audit findings are not yet normalized into the same cross-domain opportunity model.
+- All previously recorded production infrastructure, identity, Consumer Web/App, customer publishing, reviewer benchmark, credential migration and elapsed retest blockers remain open.
+
+### Decision
+
+- AIRank now has a truthful gap-to-fact handoff with immutable audit evidence. The engineering slice is complete, but the product remains commercial `NO-GO`; no content or recommendation outcome is claimed.

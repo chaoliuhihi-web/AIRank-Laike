@@ -69,6 +69,7 @@ import {
   clearAuthSession,
   compileQuestionMap,
   claimEvidenceReviewAssignment,
+  bindFactAcquisitionEvidence,
   createEvidenceReviewerTeam,
   createKnowledgeSyncPolicy,
   createPublishPackage,
@@ -80,6 +81,7 @@ import {
   createCitationSourceCaptureBatch,
   createCitationEvidenceReviewCase,
   createFactEvidenceReviewCase,
+  createFactAcquisitionTask,
   createPageAudit,
   downloadReportEvidencePacket,
   deriveEvidenceGaps,
@@ -96,6 +98,7 @@ import {
   fetchLatestCitationSourceCaptures,
   fetchEvidenceObject,
   fetchEvidenceGaps,
+  fetchFactAcquisitionTasks,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
   fetchEvidenceReviewEscalations,
@@ -169,6 +172,7 @@ import {
   type EvidenceReviewerRouting,
   type EvidenceIntegrityAudit,
   type EvidenceGapList,
+  type FactAcquisitionTaskList,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -4430,6 +4434,17 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     governed_gap_count: 0,
     unverified_legacy_count: 0,
   });
+  const [factAcquisitionTasks, setFactAcquisitionTasks] = useState<FactAcquisitionTaskList>({
+    project_id: "",
+    contract_version: "airank.fact-acquisition-task.v1",
+    tasks: [],
+    open_count: 0,
+    in_review_count: 0,
+    resolved_count: 0,
+  });
+  const [creatingFactTaskGapId, setCreatingFactTaskGapId] = useState<string | null>(null);
+  const [bindingFactTaskId, setBindingFactTaskId] = useState<string | null>(null);
+  const [taskFactSelections, setTaskFactSelections] = useState<Record<string, string>>({});
   const [selectedGapRunId, setSelectedGapRunId] = useState("");
   const [derivingGaps, setDerivingGaps] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -4460,6 +4475,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setBundle(fallbackAssetBundle);
       setScanRuns([]);
       setEvidenceGaps({ project_id: "", contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
+      setFactAcquisitionTasks({ project_id: "", contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
       return;
     }
     const controller = new AbortController();
@@ -4469,13 +4485,15 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchFacts(project.id, controller.signal),
       fetchScanRuns(project.id, controller.signal),
       fetchEvidenceGaps(project.id, controller.signal),
+      fetchFactAcquisitionTasks(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
         setScanRuns(nextRuns);
         setEvidenceGaps(nextGaps);
+        setFactAcquisitionTasks(nextFactTasks);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4500,6 +4518,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setFacts([]);
         setScanRuns([]);
         setEvidenceGaps({ project_id: project.id, contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
+        setFactAcquisitionTasks({ project_id: project.id, contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4556,6 +4575,65 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
     } finally {
       setDerivingGaps(false);
+    }
+  };
+
+  const createGapFactTask = async (gapId: string) => {
+    if (!project.id) return;
+    setCreatingFactTaskGapId(gapId);
+    try {
+      const task = await createFactAcquisitionTask(project.id, gapId);
+      const nextTasks = await fetchFactAcquisitionTasks(project.id);
+      setFactAcquisitionTasks(nextTasks);
+      notify({
+        title: task.idempotent_replay ? "补证任务已复用" : "补证任务已创建",
+        desc: "任务冻结了缺口证据与质量报告；请先补充并审核企业事实，系统不会直接生成内容。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({
+        title: "补证任务未创建",
+        desc: error instanceof Error ? error.message : "缺口不满足真实证据门禁。",
+        tone: "danger",
+      });
+    } finally {
+      setCreatingFactTaskGapId(null);
+    }
+  };
+
+  const bindTaskFact = async (taskId: string, version: number) => {
+    if (!project.id) return;
+    const revisionId = taskFactSelections[taskId];
+    if (!revisionId) {
+      notify({ title: "尚未选择审核事实", desc: "请选择一条当前有效且可用于生成的审核事实。", tone: "warning" });
+      return;
+    }
+    setBindingFactTaskId(taskId);
+    try {
+      const task = await bindFactAcquisitionEvidence(project.id, taskId, version, [revisionId]);
+      const [nextTasks, nextGaps, nextBundle] = await Promise.all([
+        fetchFactAcquisitionTasks(project.id),
+        fetchEvidenceGaps(project.id),
+        fetchAssetBundle(project.id),
+      ]);
+      setFactAcquisitionTasks(nextTasks);
+      setEvidenceGaps(nextGaps);
+      setBundle(nextBundle);
+      notify({
+        title: task.generation_allowed ? "补证任务已通过" : "事实已进入审核",
+        desc: task.generation_allowed
+          ? "缺口已绑定审核事实，可进入受治理干预；这不等于内容已生成、已发布或一定被模型推荐。"
+          : "事实尚未满足审核、来源、有效期或冲突门禁，任务不会放行内容生成。",
+        tone: task.generation_allowed ? "success" : "warning",
+      });
+    } catch (error) {
+      notify({
+        title: "事实补证未通过",
+        desc: error instanceof Error ? error.message : "事实证据不满足治理门禁。",
+        tone: "danger",
+      });
+    } finally {
+      setBindingFactTaskId(null);
     }
   };
 
@@ -4748,8 +4826,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <DataStateCard title="尚无稳定证据缺口" desc="这可能表示尚未执行推导、扫描质量被阻断，或没有任何分组满足连续独立有效样本均未提及的规则；系统不会补造缺口数量。" tone="warning" />
         ) : (
           <div className="content-review-list" data-testid="evidence-gap-list">
-            {evidenceGaps.gaps.map((gap) => (
-              <article className="content-review-item" data-testid="evidence-gap-card" key={gap.gap_id}>
+            {evidenceGaps.gaps.map((gap) => {
+              const existingTask = factAcquisitionTasks.tasks.find((task) => task.gap_id === gap.gap_id);
+              return <article className="content-review-item" data-testid="evidence-gap-card" key={gap.gap_id}>
                 <div className="content-review-head">
                   <div><strong>{gap.title}</strong><span>{gap.provider} · {gap.collector_surface} · {formatDateTime(gap.created_at)}</span></div>
                   <Badge tone={gap.severity === "high" ? "danger" : gap.severity === "medium" ? "warning" : "muted"}>{gap.severity}</Badge>
@@ -4774,7 +4853,70 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
                       `FactAtom：${gap.fact_atom_ids.length ? gap.fact_atom_ids.join("、") : "待补审核事实，不允许直接生成内容"}`,
                     ],
                   })}><Eye size={16} />下钻证据</button>
+                  {existingTask ? (
+                    <Badge tone={existingTask.status === "resolved" ? "success" : "warning"}>
+                      补证任务 · {existingTask.resolution_state}
+                    </Badge>
+                  ) : (
+                    <button
+                      className="outline-button"
+                      data-testid="create-fact-acquisition-task"
+                      type="button"
+                      disabled={creatingFactTaskGapId === gap.gap_id || gap.fact_atom_ids.length > 0}
+                      onClick={() => void createGapFactTask(gap.gap_id)}
+                    ><BookOpen size={16} />{creatingFactTaskGapId === gap.gap_id ? "创建中…" : "创建事实补证任务"}</button>
+                  )}
                 </div>
+              </article>
+            })}
+          </div>
+        )}
+      </Panel>
+      <Panel title={`事实补证任务 · ${factAcquisitionTasks.tasks.length}`}>
+        <div className="content-blueprint-wide knowledge-search-policy">
+          <Badge tone="primary">airank.fact-acquisition-task.v1</Badge>
+          <span>补证任务冻结缺口与质量证据；只有官方或已核验第三方来源、人工审核通过、当前有效且无冲突的事实才能放行。补证任务完成不等于内容已生成或已发布。</span>
+        </div>
+        {factAcquisitionTasks.tasks.length === 0 ? (
+          <DataStateCard title="尚无事实补证任务" desc="请先从上方真实证据缺口创建任务；系统不会从历史缺口或营销猜测自动造任务。" tone="warning" />
+        ) : (
+          <div className="content-review-list" data-testid="fact-acquisition-task-list">
+            {factAcquisitionTasks.tasks.map((task) => (
+              <article className="content-review-item" data-testid="fact-acquisition-task-card" key={task.task_id}>
+                <div className="content-review-head">
+                  <div><strong>{task.title}</strong><span>{task.provider} · {task.collector_surface} · v{task.version} · {task.event_count} 条追加事件</span></div>
+                  <Badge tone={task.status === "resolved" ? "success" : task.status === "blocked" ? "danger" : "warning"}>{task.resolution_state === "needs_fact_proposal" ? "待提议事实" : task.resolution_state === "needs_fact_review" ? "待审核事实" : task.resolution_state === "ready_for_intervention" ? "可进入干预" : "已阻断"}</Badge>
+                </div>
+                <div className="content-review-body">{task.evidence_requirement}</div>
+                <div className="content-review-proof">
+                  <span>{task.knowledge_source_ids.length} 个来源</span>
+                  <span>{task.fact_revision_ids.length} 个事实修订</span>
+                  <span>{task.approved_fact_revision_ids.length} 个已放行事实</span>
+                  <span>来源门槛：官方 / 已核验第三方</span>
+                  <code>{task.last_event_sha256.slice(0, 16)}…</code>
+                </div>
+                {task.status !== "resolved" ? (
+                  <div className="fact-review-actions">
+                    <select
+                      aria-label={`为 ${task.title} 选择审核事实`}
+                      value={taskFactSelections[task.task_id] ?? ""}
+                      onChange={(event) => setTaskFactSelections((current) => ({ ...current, [task.task_id]: event.target.value }))}
+                    >
+                      <option value="">请选择当前可用审核事实</option>
+                      {eligibleFacts.map((fact) => <option value={fact.revision_id} key={`${task.task_id}-${fact.revision_id}`}>{fact.title} · {fact.revision_id}</option>)}
+                    </select>
+                    <button
+                      className="outline-button"
+                      data-testid="bind-fact-acquisition-evidence"
+                      type="button"
+                      disabled={bindingFactTaskId === task.task_id || !taskFactSelections[task.task_id]}
+                      onClick={() => void bindTaskFact(task.task_id, task.version)}
+                    ><ShieldCheck size={16} />{bindingFactTaskId === task.task_id ? "核验中…" : "绑定并核验事实"}</button>
+                    {eligibleFacts.length === 0 ? <button className="ghost-button" type="button" onClick={() => onNavigate("/console/knowledge")}>先去事实库补证</button> : null}
+                  </div>
+                ) : (
+                  <div className="fact-review-actions"><Badge tone="success">可进入受治理内容干预</Badge><small>仍需内容审校、发布存证和同口径复测。</small></div>
+                )}
               </article>
             ))}
           </div>

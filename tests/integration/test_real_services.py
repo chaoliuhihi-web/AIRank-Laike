@@ -60,6 +60,11 @@ from apps.api.knowledge_routes import (
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
 from apps.api.evidence_gap_routes import DeriveEvidenceGapsRequest, MySQLEvidenceGapRepository
+from apps.api.fact_acquisition_routes import (
+    FactAcquisitionEvidenceBindRequest,
+    FactAcquisitionTaskCreateRequest,
+    MySQLFactAcquisitionRepository,
+)
 from apps.api.retest_routes import MySQLRetestRepository, _comparison_data
 from apps.api.report_packet import MySQLReportEvidencePacketRepository
 from apps.api.question_routes import (
@@ -143,7 +148,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0031"
+EXPECTED_ALEMBIC_HEAD = "20260809_0032"
 
 
 def require_real_flag(flag: str) -> None:
@@ -209,7 +214,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 77
+        assert table_count == 79
         for table_name in (
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
@@ -219,6 +224,8 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             "airank_notification_deliveries",
             "airank_notification_delivery_receipts",
             "airank_content_gap_derivation_runs",
+            "airank_fact_acquisition_tasks",
+            "airank_fact_acquisition_task_events",
         ):
             assert conn.execute(
                 text(
@@ -2184,12 +2191,125 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
                 ).bindparams(bindparam("evidence_ids", expanding=True)),
                 {"tenant_id": tenant_id, "evidence_ids": gap.evidence_snapshot_ids},
             ).scalar_one() == 3
+        fact_task_repository = MySQLFactAcquisitionRepository(database_url())
+        fact_task = fact_task_repository.create_task(
+            tenant_id,
+            project.project_id,
+            gap.gap_id,
+            FactAcquisitionTaskCreateRequest(
+                requested_by="integration_knowledge_operator",
+            ),
+            idempotency_key=f"fact-task-{gap.gap_id}",
+            actor="integration_knowledge_operator",
+            trace_id="trc_fact_task_mysql",
+        )
+        fact_task_replay = fact_task_repository.create_task(
+            tenant_id,
+            project.project_id,
+            gap.gap_id,
+            FactAcquisitionTaskCreateRequest(
+                requested_by="integration_knowledge_operator",
+            ),
+            idempotency_key=f"fact-task-replay-{gap.gap_id}",
+            actor="integration_knowledge_operator",
+            trace_id="trc_fact_task_mysql_replay",
+        )
+        assert fact_task.status == "open"
+        assert fact_task.resolution_state == "needs_fact_proposal"
+        assert fact_task.generation_allowed is False
+        assert fact_task.event_count == 1
+        assert fact_task_replay.task_id == fact_task.task_id
+        assert fact_task_replay.idempotent_replay is True
         gap_bundle = MySQLAssetBundleRepository(database_url()).get_bundle(
             tenant_id, project.project_id
         )
         assert [item.asset_id for item in gap_bundle.assets] == [f"gap_{gap.gap_id}"]
         assert gap_bundle.assets[0].status == "待补事实"
         assert "3 条不可变有效样本" in gap_bundle.assets[0].desc
+        knowledge_repo = MySQLKnowledgeRepository(database_url())
+        source = knowledge_repo.create_source(
+            tenant_id,
+            project.project_id,
+            KnowledgeSourceCreateRequest(
+                idempotency_key=f"fact-task-source-{uuid4().hex}",
+                source_type="official_product_documentation",
+                title="AIRank fact acquisition integration evidence",
+                content_text="AIRank 保存不可变回答、来源和请求元数据，并允许指标下钻到样本。",
+                source_uri="https://airank-report-packet.example.com/evidence/fact-acquisition",
+                authority_level="official",
+                risk_level="low",
+            ),
+        )
+        proposed_fact = knowledge_repo.propose_fact(
+            tenant_id,
+            project.project_id,
+            FactProposalRequest(
+                title="样本级证据追溯能力",
+                fact_type="brand_claim",
+                subject_type="brand",
+                subject_ref_id="AIRank Report Packet",
+                fact_text="AIRank 保存不可变回答、来源和请求元数据，并允许指标下钻到样本。",
+                source_ids=[source.source_id],
+                risk_level="low",
+                disclosure="public",
+                created_by="integration_knowledge_operator",
+            ),
+        )
+        approved_fact = knowledge_repo.review_revision(
+            tenant_id,
+            project.project_id,
+            proposed_fact.revision_id,
+            FactRevisionReviewRequest(
+                action="approved",
+                reviewed_by="integration_fact_reviewer",
+                review_note="Official source boundary verified for integration acceptance.",
+            ),
+        )
+        assert approved_fact.eligible_for_generation is True
+        resolved_task = fact_task_repository.bind_evidence(
+            tenant_id,
+            project.project_id,
+            fact_task.task_id,
+            FactAcquisitionEvidenceBindRequest(
+                fact_revision_ids=[approved_fact.revision_id],
+                expected_version=1,
+                requested_by="integration_knowledge_operator",
+            ),
+            idempotency_key=f"fact-task-bind-{gap.gap_id}",
+            actor="integration_knowledge_operator",
+            trace_id="trc_fact_task_bind_mysql",
+        )
+        assert resolved_task.status == "resolved"
+        assert resolved_task.resolution_state == "ready_for_intervention"
+        assert resolved_task.generation_allowed is True
+        assert resolved_task.event_count == 2
+        assert len(resolved_task.last_event_sha256) == 64
+        with engine.connect() as conn:
+            gap_resolution = conn.execute(
+                text(
+                    "SELECT status, fact_atom_ids FROM airank_content_gaps "
+                    "WHERE tenant_id=:tenant_id AND id=:gap_id"
+                ),
+                {"tenant_id": tenant_id, "gap_id": gap.gap_id},
+            ).mappings().one()
+            assert gap_resolution["status"] == "ready_for_intervention"
+            assert approved_fact.fact_id in json.loads(gap_resolution["fact_atom_ids"])
+            task_events = conn.execute(
+                text(
+                    "SELECT task_version, previous_event_sha256, event_sha256 "
+                    "FROM airank_fact_acquisition_task_events "
+                    "WHERE tenant_id=:tenant_id AND task_id=:task_id "
+                    "ORDER BY task_version"
+                ),
+                {"tenant_id": tenant_id, "task_id": fact_task.task_id},
+            ).mappings().all()
+            assert [int(event["task_version"]) for event in task_events] == [1, 2]
+            assert task_events[0]["previous_event_sha256"] is None
+            assert task_events[1]["previous_event_sha256"] == task_events[0]["event_sha256"]
+        resolved_gap_bundle = MySQLAssetBundleRepository(database_url()).get_bundle(
+            tenant_id, project.project_id
+        )
+        assert resolved_gap_bundle.assets[0].status == "待生成"
         report_id = f"report_packet_it_{uuid4().hex[:12]}"
         retest_run_id = f"retest_packet_it_{uuid4().hex[:12]}"
         window_id = f"window_packet_it_{uuid4().hex[:12]}"

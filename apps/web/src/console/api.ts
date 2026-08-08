@@ -144,6 +144,48 @@ export type EvidenceGapDerivation = {
   idempotent_replay: boolean;
 };
 
+export type FactAcquisitionTask = {
+  task_id: string;
+  project_id: string;
+  gap_id: string;
+  contract_version: "airank.fact-acquisition-task.v1";
+  gap_contract_version: "airank.evidence-gap.v2";
+  gap_evidence_sha256: string;
+  quality_report_sha256: string;
+  status: "open" | "in_review" | "resolved" | "blocked";
+  resolution_state: "needs_fact_proposal" | "needs_fact_review" | "ready_for_intervention" | "blocked";
+  priority: "low" | "medium" | "high";
+  title: string;
+  evidence_requirement: string;
+  required_authority_policy: "official_or_verified_third_party.v1";
+  suggested_fact_type: string;
+  related_question_ids: string[];
+  provider: string;
+  collector_surface: "api" | "web" | "app" | "manual_import";
+  knowledge_source_ids: string[];
+  fact_revision_ids: string[];
+  approved_fact_revision_ids: string[];
+  generation_allowed: boolean;
+  event_count: number;
+  last_event_sha256: string;
+  created_by: string;
+  updated_by: string;
+  version: number;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  idempotent_replay: boolean;
+};
+
+export type FactAcquisitionTaskList = {
+  project_id: string;
+  contract_version: "airank.fact-acquisition-task.v1";
+  tasks: FactAcquisitionTask[];
+  open_count: number;
+  in_review_count: number;
+  resolved_count: number;
+};
+
 export type ReportItem = {
   report_id: string;
   title: string;
@@ -1657,6 +1699,69 @@ export async function deriveEvidenceGaps(projectId: string, runId: string): Prom
     throw new Error(await readErrorMessage(response, `Evidence gap derivation failed with ${response.status}`));
   }
   return ((await response.json()) as { data: EvidenceGapDerivation }).data;
+}
+
+export function fetchFactAcquisitionTasks(projectId: string, signal?: AbortSignal): Promise<FactAcquisitionTaskList> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/fact-acquisition-tasks`,
+    "trc_web_fact_acquisition_tasks",
+    signal,
+  );
+}
+
+export async function createFactAcquisitionTask(projectId: string, gapId: string): Promise<FactAcquisitionTask> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) {
+    throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  }
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-gaps/${encodeURIComponent(gapId)}/fact-acquisition-tasks`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `fact-task-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_fact_acquisition_create"),
+      },
+      body: JSON.stringify({ requested_by: actor }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact acquisition task creation failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: FactAcquisitionTask }).data;
+}
+
+export async function bindFactAcquisitionEvidence(
+  projectId: string,
+  taskId: string,
+  expectedVersion: number,
+  factRevisionIds: string[],
+): Promise<FactAcquisitionTask> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) {
+    throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  }
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/fact-acquisition-tasks/${encodeURIComponent(taskId)}/evidence-bindings`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `fact-task-bind-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_fact_acquisition_bind"),
+      },
+      body: JSON.stringify({
+        fact_revision_ids: factRevisionIds,
+        expected_version: expectedVersion,
+        requested_by: actor,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact acquisition evidence binding failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: FactAcquisitionTask }).data;
 }
 
 export async function fetchReports(projectId: string, signal?: AbortSignal): Promise<ReportList> {

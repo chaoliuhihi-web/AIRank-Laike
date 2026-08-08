@@ -32,6 +32,11 @@ M1 已冻结的 API schema：
 - `evidence_gap_derivation_request.schema.json`
 - `evidence_gap_derivation_response.schema.json`
 - `evidence_gap_list_response.schema.json`
+- `fact_acquisition_task.schema.json`
+- `fact_acquisition_task_create_request.schema.json`
+- `fact_acquisition_evidence_bind_request.schema.json`
+- `fact_acquisition_task_response.schema.json`
+- `fact_acquisition_task_list_response.schema.json`
 - `report_list_response.schema.json`
 - `download_receipt_response.schema.json`
 - `fact_accuracy_bundle_response.schema.json`

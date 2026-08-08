@@ -129,6 +129,12 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CONTENT_EVIDENCE_MISSING": (409, "Content evidence is missing or ineligible"),
     "EVIDENCE_GAP_QUALITY_BLOCKED": (409, "Scan run did not pass the evidence-gap quality gate"),
     "EVIDENCE_GAP_BASIS_INVALID": (409, "Evidence-gap derivation basis is incomplete or invalid"),
+    "EVIDENCE_GAP_NOT_FOUND": (404, "Evidence-backed content gap was not found"),
+    "FACT_ACQUISITION_TASK_NOT_FOUND": (404, "Fact acquisition task was not found"),
+    "FACT_ACQUISITION_GAP_INELIGIBLE": (409, "Evidence gap is not eligible for fact acquisition"),
+    "FACT_ACQUISITION_EVIDENCE_INVALID": (409, "Fact acquisition evidence is invalid or ineligible"),
+    "FACT_ACQUISITION_TASK_VERSION_CONFLICT": (409, "Fact acquisition task version is stale"),
+    "FACT_ACQUISITION_TASK_FINAL": (409, "Fact acquisition task is already resolved"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -6030,3 +6036,10 @@ except ImportError:  # pragma: no cover
     from evidence_gap_routes import router as evidence_gap_router  # type: ignore[no-redef]
 
 app.include_router(evidence_gap_router)
+
+try:
+    from .fact_acquisition_routes import router as fact_acquisition_router
+except ImportError:  # pragma: no cover
+    from fact_acquisition_routes import router as fact_acquisition_router  # type: ignore[no-redef]
+
+app.include_router(fact_acquisition_router)

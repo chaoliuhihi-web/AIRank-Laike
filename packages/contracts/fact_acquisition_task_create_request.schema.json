@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/fact_acquisition_task_create_request.schema.json",
+  "title": "AIRank Fact Acquisition Task Create Request",
+  "type": "object",
+  "required": ["requested_by"],
+  "additionalProperties": false,
+  "properties": {
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "evidence_requirement": { "type": ["string", "null"], "minLength": 8, "maxLength": 2000 }
+  }
+}
