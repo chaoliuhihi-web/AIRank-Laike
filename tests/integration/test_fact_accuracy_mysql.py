@@ -395,10 +395,14 @@ def test_real_mysql_fact_accuracy_requires_current_reviewed_fact_and_exact_sourc
                 ),
                 {"tenant_id": tenant_id},
             ).scalars().all()
-            assert audit_actions == [
-                "evidence_review.case_created",
-                "evidence_review.assignment_claimed",
-                "evidence_review.decision_submitted",
-            ]
+            # Auto-claim and decision are committed with the same transaction
+            # timestamp, so the audit contract is set membership, not UUID order.
+            assert sorted(audit_actions) == sorted(
+                [
+                    "evidence_review.case_created",
+                    "evidence_review.assignment_claimed",
+                    "evidence_review.decision_submitted",
+                ]
+            )
     finally:
         cleanup_tenant(engine, tenant_id)
