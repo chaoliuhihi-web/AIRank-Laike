@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T17:49:42+08:00
+Generated: 2026-08-08T18:12:59+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -44,7 +44,7 @@ Status: PASS
 Status: PASS
 
 ```text
-6a59661787c4d64f02c9eacd1d60ec90bc70c77c
+cf1e5477823b4d831320120aa2a033f7a3d739d9
 ```
 
 ## gitee main ref
@@ -52,7 +52,7 @@ Status: PASS
 Status: PASS
 
 ```text
-6a59661787c4d64f02c9eacd1d60ec90bc70c77c
+cf1e5477823b4d831320120aa2a033f7a3d739d9
 ```
 
 ## diff check
@@ -137,7 +137,7 @@ Status: PASS
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-171 passed, 1 warning in 1.65s
+171 passed, 1 warning in 1.89s
 ```
 
 ## crawler lite tests
@@ -161,7 +161,7 @@ Status: PASS
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-62 passed, 1 warning in 0.58s
+62 passed, 1 warning in 0.59s
 ```
 
 ## scheduler tests
@@ -170,7 +170,7 @@ Status: PASS
 
 ```text
 .....                                                                    [100%]
-5 passed in 0.24s
+5 passed in 0.25s
 ```
 
 ## worker tests
@@ -179,7 +179,7 @@ Status: PASS
 
 ```text
 ................................                                         [100%]
-32 passed in 0.15s
+32 passed in 0.16s
 ```
 
 ## score tests
@@ -188,7 +188,7 @@ Status: PASS
 
 ```text
 ................                                                         [100%]
-16 passed in 0.04s
+16 passed in 0.05s
 ```
 
 ## evidence tests
@@ -232,7 +232,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.03s
+6 passed in 0.04s
 ```
 
 ## web build
@@ -250,8 +250,8 @@ rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
 dist/assets/index-C9MG4JGM.css   66.96 kB │ gzip:  11.12 kB
-dist/assets/index-CJaiOemN.js   372.04 kB │ gzip: 112.06 kB
-✓ built in 765ms
+dist/assets/index-DDel3gBI.js   379.87 kB │ gzip: 114.17 kB
+✓ built in 756ms
 ```
 
 ## real integration tests
@@ -260,7 +260,7 @@ Status: PASS
 
 ```text
 .....s...................s..                                             [100%]
-26 passed, 2 skipped in 3.95s
+26 passed, 2 skipped in 3.81s
 ```
 
 ## alembic offline sql
@@ -315,7 +315,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -326,7 +326,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -337,7 +337,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -352,7 +352,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -363,7 +363,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -374,7 +374,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -385,7 +385,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -396,7 +396,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T09:48:44.998268+00:00",
+    "checked_at": "2026-08-08T10:12:02.643358+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -436,7 +436,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/82/82c08f3c48f57ad24723196199ff8ec8f7c25df5ae1365838ac07808c47d6aee.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/f1/f14ad0a9e8fd7c43ad60ec0c89ea1ae719a49b56c33c4a362a3f95a46f9a75d9.png"
     },
     {
       "provider": "qianwen",
@@ -449,7 +449,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/41/4158f76d55fea93ec51739e7289196796d4c52fd9c991600e6898253f2c9ec2d.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/c4/c4df4dc59537a7cba4a5c90ab4090151edd1bec4e3cbf4b92475fb69b9299138.png"
     },
     {
       "provider": "kimi",
@@ -462,7 +462,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/2d/2db508a612ed087a47a772f0e15ac7ee529db23ac4bc81d8e71d08c8245b8566.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/fe/fe146de7c143f428c0c4104dee50cc8f88a5a4da180d5810374d9e433f8f79c0.png"
     },
     {
       "provider": "deepseek",
@@ -475,7 +475,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/fb/fb80509a0c1d18a99f95c4f1f357b202105ab5a5918bb1ffdfa56d2b5ba9935a.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/e3/e34a345a2c3a1a345e892652b178de811c5b0b60b7afecfe468552930d856c5a.png"
     }
   ]
 }
