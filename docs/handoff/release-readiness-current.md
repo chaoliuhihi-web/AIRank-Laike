@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T09:39:08+08:00
+Generated: 2026-08-08T09:44:21+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -12,7 +12,7 @@ Result: BLOCKED
 | tracked runtime artifacts | PASS | `git ls-files | rg "node_modules|dist|\\.runtime|\\.env|\\.sqlite|tsbuildinfo"` |
 | API authentication configuration | PASS | `validate AIRANK_API_AUTH_ENFORCEMENT and AIRANK_AUTH_MODE` |
 | production object storage configuration | PASS | `validate AIRANK_ENV and S3/MinIO transport configuration` |
-| runtime versions | BLOCKED | `validate Python and Node production runtime versions` |
+| runtime versions | PASS | `validate Python and Node production runtime versions` |
 | contract tests | PASS | `python3 -m pytest tests/contracts -q` |
 | crawler lite tests | PASS | `python3 -m pytest packages/crawler-lite/tests -q` |
 | acceptance tests | PASS | `python3 -m pytest tests/acceptance -q` |
@@ -42,7 +42,7 @@ Status: PASS
 Status: BLOCKED
 
 ```text
-local HEAD adf6d89d32a94c54d0016fadfe2c6dfb00dd4e34 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD ddea052105cc146611924f0f2860703607be4122 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## gitee main ref
@@ -50,7 +50,7 @@ local HEAD adf6d89d32a94c54d0016fadfe2c6dfb00dd4e34 does not match origin main 4
 Status: BLOCKED
 
 ```text
-local HEAD adf6d89d32a94c54d0016fadfe2c6dfb00dd4e34 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD ddea052105cc146611924f0f2860703607be4122 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## diff check
@@ -101,19 +101,17 @@ Status: PASS
 
 ## runtime versions
 
-Status: BLOCKED
+Status: PASS
 
 ```text
 {
   "python": "3.12.13",
-  "node": "v20.18.2",
+  "node": "v24.14.0",
   "required": {
     "python": "3.11+",
     "node": "20.19+ or 22.12+"
   },
-  "blockers": [
-    "Node v20.18.2; Vite requires 20.19+ or 22.12+"
-  ]
+  "blockers": []
 }
 ```
 
@@ -124,7 +122,7 @@ Status: PASS
 ```text
 ........................................................................ [ 51%]
 ...................................................................      [100%]
-139 passed in 1.40s
+139 passed in 1.21s
 ```
 
 ## crawler lite tests
@@ -133,7 +131,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.02s
+6 passed in 0.01s
 ```
 
 ## acceptance tests
@@ -142,7 +140,7 @@ Status: PASS
 
 ```text
 ...................................................                      [100%]
-51 passed in 0.54s
+51 passed in 0.52s
 ```
 
 ## worker tests
@@ -151,7 +149,7 @@ Status: PASS
 
 ```text
 .........................                                                [100%]
-25 passed in 0.13s
+25 passed in 0.12s
 ```
 
 ## score tests
@@ -169,7 +167,7 @@ Status: PASS
 
 ```text
 .....................                                                    [100%]
-21 passed in 0.04s
+21 passed in 0.03s
 ```
 
 ## outbound security tests
@@ -178,7 +176,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.02s
+23 passed in 0.01s
 ```
 
 ## core skill evaluation
@@ -214,8 +212,7 @@ computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
 dist/assets/index-C5thYdsS.css   59.90 kB │ gzip:  10.22 kB
 dist/assets/index-DKghTugq.js   329.17 kB │ gzip: 100.68 kB
-✓ built in 840ms
-You are using Node.js 20.18.2. Vite requires Node.js version 20.19+ or 22.12+. Please upgrade your Node.js version.
+✓ built in 734ms
 ```
 
 ## real integration tests
@@ -224,7 +221,7 @@ Status: PASS
 
 ```text
 ....s..............s                                                     [100%]
-18 passed, 2 skipped in 2.01s
+18 passed, 2 skipped in 1.75s
 ```
 
 ## alembic offline sql
@@ -270,7 +267,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "dev_only",
     "source": "yudao",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev auth fallback",
@@ -283,7 +280,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "dev_only",
     "source": "yudao",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "AIRANK_AUTH_MODE=dev; using dev tenant/user fixture context",
@@ -296,7 +293,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -311,7 +308,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -322,7 +319,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -333,7 +330,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -344,7 +341,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -355,7 +352,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T01:39:04.735541+00:00",
+    "checked_at": "2026-08-08T01:43:41.331095+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -391,20 +388,20 @@ Status: BLOCKED
       "url": "https://www.doubao.com/chat/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
       "headless": true,
-      "blocker_code": "network_error",
-      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
-      "screenshot_path": null
+      "blocker_code": "login_required",
+      "reason": "login or human verification is visible",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/8f/8f8969fbe154357823f95d81ba524e821c1c77ed382635715e0c671c75536d79.png"
     },
     {
       "provider": "qianwen",
       "label": "千问",
       "status": "blocked",
-      "url": "https://www.tongyi.com/qianwen/",
+      "url": "https://www.qianwen.com/?ch=tongyi_redirect",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/qianwen",
       "headless": true,
-      "blocker_code": "network_error",
-      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
-      "screenshot_path": null
+      "blocker_code": "login_required",
+      "reason": "login or human verification is visible",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/a6/a61bc07897c5671c5fe99343f5f60182573f53757bb4dade408efa08cbc1fc12.png"
     },
     {
       "provider": "kimi",
@@ -413,37 +410,29 @@ Status: BLOCKED
       "url": "https://www.kimi.com/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
       "headless": true,
-      "blocker_code": "network_error",
-      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
-      "screenshot_path": null
+      "blocker_code": "login_required",
+      "reason": "login or human verification is visible",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/f5/f5a5d1dc67ff29f7451859c4ebb06afd925db594155bddf0616b8315fc61266f.png"
     },
     {
       "provider": "deepseek",
       "label": "DeepSeek",
       "status": "blocked",
-      "url": "https://chat.deepseek.com/",
+      "url": "https://chat.deepseek.com/sign_in",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
       "headless": true,
-      "blocker_code": "network_error",
-      "reason": "browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or",
-      "screenshot_path": null
+      "blocker_code": "captcha_required",
+      "reason": "login or human verification is visible",
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/9e/9e9439c4887f4965bddb2d29d9ac4253030465c13bb0c798419e864dacd3a1e9.png"
     }
   ]
 }
 
 Warnings:
-- doubao=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
-╔════════════════════════════════════════════════════════════╗
-║ Looks like Playwright was just installed or)
-- qianwen=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
-╔════════════════════════════════════════════════════════════╗
-║ Looks like Playwright was just installed or)
-- kimi=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
-╔════════════════════════════════════════════════════════════╗
-║ Looks like Playwright was just installed or)
-- deepseek=blocked (browser automation failed: BrowserType.launch_persistent_context: Executable doesn't exist at /Users/bruce/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell
-╔════════════════════════════════════════════════════════════╗
-║ Looks like Playwright was just installed or)
+- doubao=blocked (login or human verification is visible)
+- qianwen=blocked (login or human verification is visible)
+- kimi=blocked (login or human verification is visible)
+- deepseek=blocked (login or human verification is visible)
 
 Blockers:
 - browser_provider_ready=0/4
