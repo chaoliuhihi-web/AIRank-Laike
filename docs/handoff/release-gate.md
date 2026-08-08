@@ -1000,6 +1000,7 @@ Passed:
 - After registration, the source-review workbench exposes an explicit current-Claim selector. Every source-segment `supports`, `contradicts` or `insufficient` decision resolves that selected ID instead of silently using the first Claim in the response array.
 - Real browser/MySQL acceptance created two Claims at boundaries 0–29 and 29–54, selected the second Claim, captured one real source page and submitted a production `insufficient` primary decision. Direct database verification proved the review case referenced the second Claim, retained the trusted session reviewer and remained `awaiting_secondary`.
 - Desktop 1543px and mobile 390x844 had no page-level horizontal overflow and the browser console reported zero warnings/errors. The isolated tenant was deleted from 17 tables (20 rows), its project count returned to zero, and two temporary object files were deleted.
+- The strict gate on clean commit `c0b0b0c` passed both remote `main` refs, Python 3.11.15, Node 24.14.0, 187 contract tests, 75 acceptance tests, all package/worker/scheduler suites, 7/7 citation parser cases, 30/30 core Skill cases, the production Web build, real MySQL 28/2, offline SQL and real Alembic `0026`. The overall result correctly remained `BLOCKED` on external production and Consumer requirements.
 
 Limitations and blockers:
 
