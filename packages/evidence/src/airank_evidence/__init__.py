@@ -21,7 +21,17 @@ from .object_storage import (
     sha256_bytes,
 )
 from .provider import MockAnswerProvider, ProviderPayloadError
-from .report import EvidenceReport, ReportConclusion, build_report_conclusion
+from .report import (
+    EvidenceReport,
+    METRIC_FORMULAS,
+    REPORT_EVIDENCE_PACKET_VERSION,
+    ReportConclusion,
+    ReportEvidencePacket,
+    ReportEvidencePacketError,
+    build_report_conclusion,
+    build_report_evidence_packet,
+    canonical_json_bytes,
+)
 from .snapshot import AnswerSnapshot, SourceCitation
 
 __all__ = [
@@ -38,7 +48,11 @@ __all__ = [
     "FilesystemObjectStorage",
     "ObjectStorageError",
     "ObjectStorage",
+    "METRIC_FORMULAS",
+    "REPORT_EVIDENCE_PACKET_VERSION",
     "ReportConclusion",
+    "ReportEvidencePacket",
+    "ReportEvidencePacketError",
     "SourceCitation",
     "S3CompatibleObjectStorage",
     "StoredObject",
@@ -46,6 +60,8 @@ __all__ = [
     "calculate_citation_support_metrics",
     "sha256_bytes",
     "build_report_conclusion",
+    "build_report_evidence_packet",
+    "canonical_json_bytes",
     "fact_source_ref_from_citation",
     "generate_gap_from_citations",
 ]

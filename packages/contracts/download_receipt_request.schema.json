@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/download_receipt_request.schema.json",
+  "title": "AIRank Download Receipt Request",
+  "type": "object",
+  "required": ["packet_id", "content_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "packet_id": { "type": "string", "pattern": "^report_packet_[0-9a-f]{20}$" },
+    "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

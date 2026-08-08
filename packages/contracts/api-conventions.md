@@ -116,6 +116,16 @@ scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`cancel
 
 每个已完成 ScanRun 可通过 `GET /api/v1/projects/{project_id}/scan-runs/{run_id}/quality-report` 重算 `airank.measurement-quality.v4`。响应使用 `measurement_quality_report_response.schema.json`，执行基础样本与分采集面证据检查；未提及必须保留在有效分母。每个问题、Provider、Cohort、采集面和模型口径必须有至少 3 个独立 sample index 和 session；单次样本或重用会话必须 `publishable=false`。每个样本都必须有独立 Evidence Manifest，且 `surface/evidence_level` 必须与任务一致：API 要求请求元数据、追踪 ID 和 Provider 请求审计；Web/App 除要求不可变截图对象与 SHA-256 外，采集器还必须确认进入全新会话，并明确来源面板 `captured/not_present`，有引用时还要绑定不可变来源面板对象；App 另需设备/App 环境元数据 hash；manual_import 另需导入源 hash。任一阻断检查失败时 `publishable=false`，报告只能保存为 `quality_blocked`，下载接口返回 `409 REPORT_QUALITY_BLOCKED`。
 
+客户交付使用不可变证据包，而不是仅记录“下载成功”：
+
+```text
+POST /api/v1/reports/{report_id}/evidence-packets
+GET  /api/v1/reports/{report_id}/evidence-packets/latest
+GET  /api/v1/evidence-objects/{object_ref_id}/content
+```
+
+生成接口必须携带 `Idempotency-Key`，操作者来自认证上下文。只有 `airank.measurement-quality.v4` 的基线和对比质量门禁均为 `publishable=true`，且报告具备 `report_sha256`、基线/对比 run、样本索引时才允许生成。证据包采用内容寻址保存，包含公式、限制项、风险、样本/引用/对象索引和文件哈希，但不复制原始回答正文；原始回答仍通过样本详情和不可变证据对象下钻。客户端下载对象并校验 SHA-256 后，再调用下载回执接口。
+
 ## M3 事实审核契约
 
 可信事实卡审核接口：

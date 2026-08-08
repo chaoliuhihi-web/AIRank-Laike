@@ -8,12 +8,15 @@
   "properties": {
     "data": {
       "type": "object",
-      "required": ["receipt_id", "report_id", "tenant_id", "downloaded_at", "status"],
+      "required": ["receipt_id", "report_id", "packet_id", "content_sha256", "tenant_id", "downloaded_by", "downloaded_at", "status"],
       "additionalProperties": false,
       "properties": {
         "receipt_id": { "type": "string", "pattern": "^receipt_[A-Za-z0-9_-]+$" },
         "report_id": { "type": "string", "minLength": 1 },
+        "packet_id": { "type": "string", "pattern": "^report_packet_[0-9a-f]{20}$" },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "tenant_id": { "type": "string", "minLength": 1 },
+        "downloaded_by": { "type": "string", "minLength": 1, "maxLength": 128 },
         "downloaded_at": { "type": "string", "format": "date-time" },
         "status": { "type": "string", "enum": ["recorded"] }
       }

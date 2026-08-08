@@ -55,6 +55,21 @@ try:
 except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
     from provider_operations import MySQLProviderOperations  # type: ignore[no-redef]
 
+try:
+    from .report_packet import (
+        InMemoryReportEvidencePacketRepository,
+        MySQLReportEvidencePacketRepository,
+        ReportEvidencePacketRepository,
+        ReportEvidencePacketResponse,
+    )
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from report_packet import (  # type: ignore[no-redef]
+        InMemoryReportEvidencePacketRepository,
+        MySQLReportEvidencePacketRepository,
+        ReportEvidencePacketRepository,
+        ReportEvidencePacketResponse,
+    )
+
 API_PREFIX = "/api/v1"
 API_VERSION = "v1"
 SERVICE_NAME = "airank-api"
@@ -117,6 +132,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "REPORT_NOT_FOUND": (404, "Report not found"),
     "REPORT_QUALITY_BLOCKED": (409, "Report did not pass the measurement quality gate"),
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
+    "REPORT_EVIDENCE_PACKET_NOT_FOUND": (404, "Report evidence packet not found"),
     "PAGE_AUDIT_URL_REQUIRED": (400, "Page audit URL is required"),
     "PAGE_AUDIT_URL_INVALID": (400, "Page audit URL is invalid"),
     "PAGE_AUDIT_NOT_FOUND": (404, "Page audit run not found"),
@@ -586,7 +602,10 @@ class ReportListResponse(BaseModel):
 class DownloadReceiptData(BaseModel):
     receipt_id: str
     report_id: str
+    packet_id: str
+    content_sha256: str
     tenant_id: str
+    downloaded_by: str
     downloaded_at: datetime
     status: Literal["recorded"]
 
@@ -594,6 +613,13 @@ class DownloadReceiptData(BaseModel):
 class DownloadReceiptResponse(BaseModel):
     data: DownloadReceiptData
     meta: ResponseMeta
+
+
+class DownloadReceiptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    packet_id: str = Field(pattern=r"^report_packet_[0-9a-f]{20}$")
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ConsoleActionRequest(BaseModel):
@@ -949,7 +975,14 @@ class ReportRepository(Protocol):
     def list_reports(self, tenant_id: str, project_id: str) -> ReportListData:
         ...
 
-    def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
+    def record_download_receipt(
+        self,
+        tenant_id: str,
+        report_id: str,
+        payload: DownloadReceiptRequest,
+        downloaded_by: str,
+        trace_id: str,
+    ) -> DownloadReceiptData:
         ...
 
 
@@ -2147,7 +2180,14 @@ class InMemoryReportRepository:
             reports=[],
         )
 
-    def record_download_receipt(self, tenant_id: str, report_id: str, _trace_id: str) -> DownloadReceiptData:
+    def record_download_receipt(
+        self,
+        tenant_id: str,
+        report_id: str,
+        _payload: DownloadReceiptRequest,
+        _downloaded_by: str,
+        _trace_id: str,
+    ) -> DownloadReceiptData:
         raise StarletteHTTPException(
             status_code=404,
             detail={"code": "REPORT_NOT_FOUND", "details": {"report_id": report_id, "repository": "empty"}},
@@ -2239,7 +2279,14 @@ class MySQLReportRepository:
             status=effective_status,
         )
 
-    def record_download_receipt(self, tenant_id: str, report_id: str, trace_id: str) -> DownloadReceiptData:
+    def record_download_receipt(
+        self,
+        tenant_id: str,
+        report_id: str,
+        payload: DownloadReceiptRequest,
+        downloaded_by: str,
+        trace_id: str,
+    ) -> DownloadReceiptData:
         receipt_id = f"receipt_{uuid4().hex[:12]}"
         downloaded_at = utc_now()
         with self._engine.begin() as conn:
@@ -2270,6 +2317,36 @@ class MySQLReportRepository:
                         "details": {"report_id": report_id, "status": row["status"]},
                     },
                 )
+            packet = conn.execute(
+                text(
+                    """
+                    SELECT id, content_sha256
+                    FROM airank_report_evidence_packets
+                    WHERE tenant_id=:tenant_id AND report_id=:report_id AND id=:packet_id
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "report_id": report_id,
+                    "packet_id": payload.packet_id,
+                },
+            ).mappings().first()
+            if packet is None:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "REPORT_EVIDENCE_PACKET_NOT_FOUND",
+                        "details": {"report_id": report_id, "packet_id": payload.packet_id},
+                    },
+                )
+            if packet["content_sha256"] != payload.content_sha256:
+                raise StarletteHTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "EVIDENCE_INTEGRITY_FAILED",
+                        "details": {"report_id": report_id, "packet_id": payload.packet_id},
+                    },
+                )
             conn.execute(
                 text(
                     """
@@ -2291,14 +2368,25 @@ class MySQLReportRepository:
                     "entity_type": "report",
                     "entity_id": report_id,
                     "trace_id": trace_id,
-                    "payload_json": json.dumps({"report_id": report_id, "downloaded_at": downloaded_at.isoformat()}),
+                    "payload_json": json.dumps(
+                        {
+                            "report_id": report_id,
+                            "packet_id": payload.packet_id,
+                            "content_sha256": payload.content_sha256,
+                            "downloaded_by": downloaded_by,
+                            "downloaded_at": downloaded_at.isoformat(),
+                        }
+                    ),
                     "created_at": downloaded_at,
                 },
             )
         return DownloadReceiptData(
             receipt_id=receipt_id,
             report_id=report_id,
+            packet_id=payload.packet_id,
+            content_sha256=payload.content_sha256,
             tenant_id=tenant_id,
+            downloaded_by=downloaded_by,
             downloaded_at=downloaded_at,
             status="recorded",
         )
@@ -2312,6 +2400,18 @@ def build_report_repository() -> ReportRepository:
 
 
 REPORT_REPOSITORY: ReportRepository = build_report_repository()
+
+
+def build_report_evidence_packet_repository() -> ReportEvidencePacketRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    if database_url:
+        return MySQLReportEvidencePacketRepository(database_url)
+    return InMemoryReportEvidencePacketRepository()
+
+
+REPORT_EVIDENCE_PACKET_REPOSITORY: ReportEvidencePacketRepository = (
+    build_report_evidence_packet_repository()
+)
 
 
 class InMemoryConsoleActionRepository:
@@ -5485,13 +5585,71 @@ def get_reports(
 )
 def create_download_receipt(
     report_id: str,
+    payload: DownloadReceiptRequest,
+    authenticated_actor: Annotated[
+        str,
+        Header(alias="X-AIRank-User-Id", min_length=1, max_length=128),
+    ],
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> DownloadReceiptResponse:
     meta = build_meta(trace_id)
     return DownloadReceiptResponse(
-        data=REPORT_REPOSITORY.record_download_receipt(tenant_id, report_id, meta.trace_id),
+        data=REPORT_REPOSITORY.record_download_receipt(
+            tenant_id,
+            report_id,
+            payload,
+            authenticated_actor,
+            meta.trace_id,
+        ),
         meta=meta,
+    )
+
+
+@app.post(
+    f"{API_PREFIX}/reports/{{report_id}}/evidence-packets",
+    response_model=ReportEvidencePacketResponse,
+    status_code=201,
+)
+def create_report_evidence_packet(
+    report_id: str,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=160),
+    ],
+    authenticated_actor: Annotated[
+        str,
+        Header(alias="X-AIRank-User-Id", min_length=1, max_length=128),
+    ],
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ReportEvidencePacketResponse:
+    meta = build_meta(trace_id)
+    return ReportEvidencePacketResponse(
+        data=REPORT_EVIDENCE_PACKET_REPOSITORY.create_packet(
+            tenant_id,
+            report_id,
+            idempotency_key,
+            authenticated_actor,
+            meta.trace_id,
+        ),
+        meta=meta.model_dump(),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/reports/{{report_id}}/evidence-packets/latest",
+    response_model=ReportEvidencePacketResponse,
+)
+def get_latest_report_evidence_packet(
+    report_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ReportEvidencePacketResponse:
+    meta = build_meta(trace_id)
+    return ReportEvidencePacketResponse(
+        data=REPORT_EVIDENCE_PACKET_REPOSITORY.get_latest(tenant_id, report_id),
+        meta=meta.model_dump(),
     )
 
 

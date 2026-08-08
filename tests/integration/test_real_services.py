@@ -22,6 +22,7 @@ from apps.api.main import (
     BrandCheckRequest,
     BuyerQuestionCreateRequest,
     CompetitorCreateRequest,
+    DownloadReceiptRequest,
     MySQLAssetBundleRepository,
     MySQLProjectRepository,
     MySQLReportRepository,
@@ -50,6 +51,7 @@ from apps.api.knowledge_routes import (
 from apps.api.provider_operations import MySQLProviderOperations
 from apps.api.evidence_routes import MySQLEvidenceRepository
 from apps.api.retest_routes import MySQLRetestRepository
+from apps.api.report_packet import MySQLReportEvidencePacketRepository
 from apps.api.question_routes import (
     MySQLQuestionGovernanceRepository,
     QuestionMapCompileRequest,
@@ -90,7 +92,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0017"
+EXPECTED_ALEMBIC_HEAD = "20260808_0018"
 
 
 def require_real_flag(flag: str) -> None:
@@ -156,7 +158,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 59
+        assert table_count == 60
         assert conn.execute(
             text(
                 """
@@ -170,6 +172,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
         for table_name in (
             "airank_provider_route_controls",
             "airank_provider_route_control_events",
+            "airank_report_evidence_packets",
         ):
             assert conn.execute(
                 text(
@@ -1474,6 +1477,9 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
     engine = create_engine(database_url(), pool_pre_ping=True)
     project_repo = MySQLProjectRepository(database_url())
     report_repo = MySQLReportRepository(database_url())
+    packet_id = f"report_packet_{uuid4().hex[:20]}"
+    packet_object_id = f"object_{uuid4().hex[:24]}"
+    packet_sha256 = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
 
     try:
         project = project_repo.create_project(
@@ -1507,12 +1513,67 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                 ),
                 {"tenant_id": tenant_id, "project_id": project.project_id},
             )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_object_refs (
+                      id, tenant_id, project_id, object_type, object_uri,
+                      content_type, byte_size, sha256, metadata_json
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'report_evidence_packet',
+                      :object_uri, 'application/json', 2, :sha256,
+                      JSON_OBJECT('immutable', TRUE, 'object_key', 'integration/report.json', 'storage_driver', 'filesystem')
+                    )
+                    """
+                ),
+                {
+                    "id": packet_object_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "object_uri": "file:///tmp/airank-integration-report.json",
+                    "sha256": packet_sha256,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_report_evidence_packets (
+                      id, tenant_id, project_id, report_id, schema_version,
+                      report_sha256, source_record_sha256, object_ref_id,
+                      content_sha256, byte_size, summary_json, idempotency_key,
+                      created_by, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'report_real_exec',
+                      'airank.report-evidence-packet.v1', :report_sha256,
+                      :source_record_sha256, :object_ref_id, :content_sha256,
+                      2, JSON_OBJECT('samples', 1, 'citations', 0, 'evidence_objects', 0, 'known_limitations', 0),
+                      :idempotency_key, 'integration_reporter', CURRENT_TIMESTAMP(3)
+                    )
+                    """
+                ),
+                {
+                    "id": packet_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "report_sha256": "8" * 64,
+                    "source_record_sha256": "9" * 64,
+                    "object_ref_id": packet_object_id,
+                    "content_sha256": packet_sha256,
+                    "idempotency_key": f"integration-{packet_id}",
+                },
+            )
 
         report_list = report_repo.list_reports(tenant_id, project.project_id)
         assert [report.report_id for report in report_list.reports] == ["report_real_exec"]
         assert report_list.reports[0].desc == "真实 MySQL 报告列表验证"
 
-        receipt = report_repo.record_download_receipt(tenant_id, "report_real_exec", "trc_real_report")
+        receipt = report_repo.record_download_receipt(
+            tenant_id,
+            "report_real_exec",
+            DownloadReceiptRequest(packet_id=packet_id, content_sha256=packet_sha256),
+            "integration_reporter",
+            "trc_real_report",
+        )
         assert receipt.status == "recorded"
 
         with engine.begin() as conn:
@@ -1533,7 +1594,13 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
                 {"tenant_id": tenant_id, "project_id": project.project_id},
             )
         with pytest.raises(StarletteHTTPException) as blocked_download:
-            report_repo.record_download_receipt(tenant_id, "report_real_blocked", "trc_real_blocked")
+            report_repo.record_download_receipt(
+                tenant_id,
+                "report_real_blocked",
+                DownloadReceiptRequest(packet_id=packet_id, content_sha256=packet_sha256),
+                "integration_reporter",
+                "trc_real_blocked",
+            )
         assert blocked_download.value.status_code == 409
         assert blocked_download.value.detail["code"] == "REPORT_QUALITY_BLOCKED"
 
@@ -1553,6 +1620,307 @@ def test_real_mysql_report_repository_and_download_receipt() -> None:
         assert audit["entity_id"] == "report_real_exec"
         assert audit["trace_id"] == "trc_real_report"
         assert json.loads(audit["payload_json"])["report_id"] == "report_real_exec"
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_report_packet_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    project_repo = MySQLProjectRepository(database_url())
+    scan_repo = MySQLScanRepository(database_url())
+    quality_repo = MySQLRetestRepository(database_url())
+    storage = FilesystemObjectStorage(tmp_path / "report-packets")
+    packet_repo = MySQLReportEvidencePacketRepository(
+        database_url(),
+        object_storage=storage,
+    )
+
+    try:
+        project = project_repo.create_project(
+            tenant_id,
+            ProjectCreateRequest(
+                website_url="https://airank-report-packet.example.com",
+                brand_name_hint="AIRank Report Packet",
+                industry_hint="B2B SaaS",
+            ),
+        )
+        question = project_repo.create_buyer_question(
+            tenant_id,
+            project.project_id,
+            BuyerQuestionCreateRequest(
+                question_text="企业应该如何选择有证据链的 GEO 监测服务？",
+                status="confirmed",
+                recommended_providers=["qianwen"],
+            ),
+        )
+        runs = [
+            scan_repo.create_run(
+                tenant_id,
+                ScanRunCreateRequest(
+                    project_id=project.project_id,
+                    name=name,
+                    repetitions=3,
+                    collector_surfaces=["api"],
+                    provider_scope=["qianwen"],
+                    question_scope={"mode": "selected", "question_ids": [question.question_id]},
+                ),
+            )
+            for name in ("Report packet T0", "Report packet T+7")
+        ]
+        captured_at = datetime.now(timezone.utc)
+        with engine.begin() as conn:
+            for run_index, run in enumerate(runs):
+                tasks = scan_repo.list_tasks(tenant_id, run.run_id)
+                assert len(tasks) == 3
+                for task in tasks:
+                    snapshot_id = f"snapshot_packet_{uuid4().hex[:16]}"
+                    evidence_id = f"evidence_packet_{uuid4().hex[:16]}"
+                    audit_id = f"provider_audit_{uuid4().hex[:16]}"
+                    answer_text = (
+                        "当前有效回答未提及目标品牌。"
+                        if run_index == 0
+                        else "目标品牌是可进一步核验的候选方案。"
+                    )
+                    answer_sha256 = hashlib.sha256(answer_text.encode("utf-8")).hexdigest()
+                    raw_json = json.dumps(
+                        {"request_id": f"request-{task.task_id}", "answer": answer_text},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    raw_sha256 = hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+                    provider_request_id = f"request-{task.task_id}"
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_answer_snapshots (
+                              id, tenant_id, project_id, run_id, task_id, question_id,
+                              provider, cohort_type, prompt_version_id, sample_index,
+                              session_id, collector_surface, evidence_level, sample_status,
+                              answer_text, answer_sha256, raw_response_sha256,
+                              brand_mentioned, brand_rank, mention_class,
+                              competitor_mentions_json, model_name, model_version,
+                              search_enabled, locale, region, external_trace_id, created_at
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :run_id, :task_id, :question_id,
+                              :provider, :cohort_type, :prompt_version_id, :sample_index,
+                              :session_id, :collector_surface, :evidence_level, 'valid',
+                              :answer_text, :answer_sha256, :raw_response_sha256,
+                              :brand_mentioned, :brand_rank, :mention_class,
+                              JSON_ARRAY(), 'qwen3.6-plus', 'qwen3.6-plus',
+                              0, 'zh-CN', 'CN', :external_trace_id, :created_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": snapshot_id,
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "run_id": run.run_id,
+                            "task_id": task.task_id,
+                            "question_id": task.question_id,
+                            "provider": task.provider,
+                            "cohort_type": task.cohort_type,
+                            "prompt_version_id": task.prompt_version_id,
+                            "sample_index": task.sample_index,
+                            "session_id": task.session_id,
+                            "collector_surface": task.collector_surface,
+                            "evidence_level": task.evidence_level,
+                            "answer_text": answer_text,
+                            "answer_sha256": answer_sha256,
+                            "raw_response_sha256": raw_sha256,
+                            "brand_mentioned": run_index == 1,
+                            "brand_rank": 2 if run_index == 1 else None,
+                            "mention_class": "candidate" if run_index == 1 else "not_mentioned",
+                            "external_trace_id": provider_request_id,
+                            "created_at": captured_at,
+                        },
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_evidence_snapshots (
+                              id, tenant_id, project_id, answer_snapshot_id,
+                              raw_response_json, raw_response_sha256,
+                              request_metadata_json, captured_at, created_at
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :snapshot_id,
+                              :raw_json, :raw_sha256, :request_metadata_json,
+                              :captured_at, :captured_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": evidence_id,
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "snapshot_id": snapshot_id,
+                            "raw_json": raw_json,
+                            "raw_sha256": raw_sha256,
+                            "request_metadata_json": json.dumps(
+                                {
+                                    "provider_request": {
+                                        "provider": task.provider,
+                                        "collector_surface": "api",
+                                    }
+                                }
+                            ),
+                            "captured_at": captured_at,
+                        },
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_provider_request_audits (
+                              id, tenant_id, project_id, run_id, task_id,
+                              answer_snapshot_id, provider_key, model_name,
+                              endpoint_host, configuration_fingerprint,
+                              provider_request_id, prompt_sha256, outcome,
+                              evidence_grade, attempt_count, duration_ms,
+                              requested_at, completed_at, metadata_json
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :run_id, :task_id,
+                              :snapshot_id, 'qianwen', 'qwen3.6-plus',
+                              'dashscope.aliyuncs.com', :configuration_fingerprint,
+                              :provider_request_id, :prompt_sha256, 'succeeded',
+                              'provider_api_search_not_used', 1, 100,
+                              :captured_at, :captured_at, JSON_OBJECT('integration_test', TRUE)
+                            )
+                            """
+                        ),
+                        {
+                            "id": audit_id,
+                            "tenant_id": tenant_id,
+                            "project_id": project.project_id,
+                            "run_id": run.run_id,
+                            "task_id": task.task_id,
+                            "snapshot_id": snapshot_id,
+                            "configuration_fingerprint": "a" * 64,
+                            "provider_request_id": provider_request_id,
+                            "prompt_sha256": "b" * 64,
+                            "captured_at": captured_at,
+                        },
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE airank_scan_tasks
+                            SET status='completed', attempt_count=1,
+                                started_at=:captured_at, finished_at=:captured_at,
+                                updated_at=:captured_at
+                            WHERE tenant_id=:tenant_id AND id=:task_id
+                            """
+                        ),
+                        {"captured_at": captured_at, "tenant_id": tenant_id, "task_id": task.task_id},
+                    )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_scan_runs
+                        SET status='completed', started_at=:captured_at,
+                            finished_at=:captured_at, updated_at=:captured_at
+                        WHERE tenant_id=:tenant_id AND id=:run_id
+                        """
+                    ),
+                    {"captured_at": captured_at, "tenant_id": tenant_id, "run_id": run.run_id},
+                )
+
+        baseline_quality = quality_repo.get_quality_report(
+            tenant_id, project.project_id, runs[0].run_id
+        )
+        compare_quality = quality_repo.get_quality_report(
+            tenant_id, project.project_id, runs[1].run_id
+        )
+        assert baseline_quality["publishable"] is True
+        assert compare_quality["publishable"] is True
+        assert baseline_quality["metrics"]["not_mentioned_count"] == 3
+        metrics = {
+            "report_status": "generated",
+            "baseline_quality": baseline_quality,
+            "compare_quality": compare_quality,
+            "baseline_metrics": baseline_quality["metrics"],
+            "compare_metrics": compare_quality["metrics"],
+            "metric_deltas": {"mention_rate": 1.0, "recommendation_rate": 0.0},
+            "known_limitations": sorted(
+                set(baseline_quality["known_limitations"] + compare_quality["known_limitations"])
+            ),
+            "attribution_policy": "observational_non_causal.v1",
+            "confidence": "low",
+            "conclusion": "同口径样本观察到变化，但不能据此证明因果。",
+        }
+        evidence_index = {
+            "baseline_run_id": runs[0].run_id,
+            "compare_run_id": runs[1].run_id,
+            "evidence_refs": [f"scan_run:{runs[0].run_id}", f"scan_run:{runs[1].run_id}"],
+        }
+        report_id = f"report_packet_it_{uuid4().hex[:12]}"
+        report_sha256 = hashlib.sha256(
+            json.dumps(metrics, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_reports (
+                      id, tenant_id, project_id, report_type, title, status,
+                      run_id, metrics_json, report_sha256, evidence_index_json,
+                      generated_by, generated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'retest',
+                      'T+7 GEO 复测证据包集成报告', 'generated', :run_id,
+                      :metrics_json, :report_sha256, :evidence_index_json,
+                      'integration_reporter', :generated_at
+                    )
+                    """
+                ),
+                {
+                    "id": report_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "run_id": runs[1].run_id,
+                    "metrics_json": json.dumps(metrics, ensure_ascii=False),
+                    "report_sha256": report_sha256,
+                    "evidence_index_json": json.dumps(evidence_index),
+                    "generated_at": captured_at,
+                },
+            )
+
+        packet = packet_repo.create_packet(
+            tenant_id,
+            report_id,
+            f"packet-{report_id}",
+            "integration_reporter",
+            "trc_report_packet_it",
+        )
+        assert packet.summary.sample_count == 6
+        assert packet.idempotent_replay is False
+        with engine.connect() as conn:
+            object_metadata = conn.execute(
+                text("SELECT metadata_json FROM airank_object_refs WHERE id=:id"),
+                {"id": packet.object_ref_id},
+            ).scalar_one()
+        if isinstance(object_metadata, str):
+            object_metadata = json.loads(object_metadata)
+        manifest_bytes = storage.get_bytes(object_metadata["object_key"])
+        assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
+        manifest = json.loads(manifest_bytes)
+        assert manifest["counts"]["samples"] == 6
+        assert sum(
+            item["mention_class"] == "not_mentioned" for item in manifest["sample_index"]
+        ) == 3
+
+        receipt = MySQLReportRepository(database_url()).record_download_receipt(
+            tenant_id,
+            report_id,
+            DownloadReceiptRequest(
+                packet_id=packet.packet_id,
+                content_sha256=packet.content_sha256,
+            ),
+            "integration_reporter",
+            "trc_report_packet_download_it",
+        )
+        assert receipt.packet_id == packet.packet_id
     finally:
         cleanup_tenant(engine, tenant_id)
 

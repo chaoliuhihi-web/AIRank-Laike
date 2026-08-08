@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import text
 
-from apps.api.main import InMemoryReportRepository, MySQLReportRepository, app, build_report_repository
+from apps.api.main import (
+    DownloadReceiptRequest,
+    InMemoryReportRepository,
+    MySQLReportRepository,
+    app,
+    build_report_repository,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +41,12 @@ def test_report_api_returns_empty_state_without_evidence_backed_reports() -> Non
 
     receipt = client.post(
         "/api/v1/reports/report_missing/download-receipts",
-        headers={"tenant-id": "tenant_reports", "X-AIRank-Trace-Id": "trc_receipt"},
+        headers={
+            "tenant-id": "tenant_reports",
+            "X-AIRank-Trace-Id": "trc_receipt",
+            "X-AIRank-User-Id": "user_report",
+        },
+        json={"packet_id": "report_packet_" + "1" * 20, "content_sha256": "2" * 64},
     )
     assert receipt.status_code == 404
     receipt_body = receipt.json()
@@ -67,6 +78,18 @@ def create_report_repository_tables(repository: MySQLReportRepository) -> None:
                   id VARCHAR(64) PRIMARY KEY,
                   tenant_id VARCHAR(64) NOT NULL,
                   deleted_at DATETIME NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_report_evidence_packets (
+                  id VARCHAR(64) PRIMARY KEY,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  report_id VARCHAR(64) NOT NULL,
+                  content_sha256 CHAR(64) NOT NULL
                 )
                 """
             )
@@ -140,6 +163,18 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                INSERT INTO airank_report_evidence_packets (
+                  id, tenant_id, report_id, content_sha256
+                ) VALUES (
+                  :id, 'tenant_report', 'report_real', :content_sha256
+                )
+                """
+            ),
+            {"id": "report_packet_" + "1" * 20, "content_sha256": "2" * 64},
+        )
 
     report_list = repository.list_reports("tenant_report", "project_report")
     assert len(report_list.reports) == 1
@@ -147,9 +182,21 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
     assert report_list.reports[0].desc == "真实报告摘要"
     assert report_list.reports[0].date == "2026-05-17"
 
-    receipt = repository.record_download_receipt("tenant_report", "report_real", "trc_report_real")
+    receipt = repository.record_download_receipt(
+        "tenant_report",
+        "report_real",
+        DownloadReceiptRequest(
+            packet_id="report_packet_" + "1" * 20,
+            content_sha256="2" * 64,
+        ),
+        "user_report",
+        "trc_report_real",
+    )
     assert receipt.report_id == "report_real"
     assert receipt.receipt_id.startswith("receipt_")
+    assert receipt.downloaded_by == "user_report"
+    assert receipt.packet_id == "report_packet_" + "1" * 20
+    assert receipt.content_sha256 == "2" * 64
 
     with repository._engine.begin() as conn:
         audit = conn.execute(text("SELECT * FROM airank_audit_events")).mappings().one()
@@ -157,6 +204,7 @@ def test_mysql_report_repository_lists_reports_and_records_audit_receipt() -> No
     assert audit["event_type"] == "report.download_receipt"
     assert audit["entity_id"] == "report_real"
     assert audit["trace_id"] == "trc_report_real"
+    assert json.loads(audit["payload_json"])["downloaded_by"] == "user_report"
 
 
 def test_mysql_report_repository_is_tenant_scoped() -> None:
@@ -175,7 +223,16 @@ def test_mysql_report_receipt_rejects_missing_report() -> None:
     create_report_repository_tables(repository)
 
     with pytest.raises(Exception) as exc_info:
-        repository.record_download_receipt("tenant_report", "report_missing", "trc_missing")
+        repository.record_download_receipt(
+            "tenant_report",
+            "report_missing",
+            DownloadReceiptRequest(
+                packet_id="report_packet_" + "1" * 20,
+                content_sha256="2" * 64,
+            ),
+            "user_report",
+            "trc_missing",
+        )
 
     assert getattr(exc_info.value, "status_code") == 404
     assert exc_info.value.detail["code"] == "REPORT_NOT_FOUND"
@@ -217,7 +274,16 @@ def test_mysql_report_receipt_rejects_quality_blocked_or_legacy_report() -> None
         )
 
     with pytest.raises(Exception) as exc_info:
-        repository.record_download_receipt("tenant_report", "report_blocked", "trc_report_blocked")
+        repository.record_download_receipt(
+            "tenant_report",
+            "report_blocked",
+            DownloadReceiptRequest(
+                packet_id="report_packet_" + "1" * 20,
+                content_sha256="2" * 64,
+            ),
+            "user_report",
+            "trc_report_blocked",
+        )
 
     assert getattr(exc_info.value, "status_code") == 409
     assert exc_info.value.detail["code"] == "REPORT_QUALITY_BLOCKED"
@@ -226,6 +292,15 @@ def test_mysql_report_receipt_rejects_quality_blocked_or_legacy_report() -> None
     assert legacy.status == "quality_blocked"
     assert "不可作为客户交付物" in legacy.desc
     with pytest.raises(Exception) as legacy_exc_info:
-        repository.record_download_receipt("tenant_report", "report_legacy", "trc_report_legacy")
+        repository.record_download_receipt(
+            "tenant_report",
+            "report_legacy",
+            DownloadReceiptRequest(
+                packet_id="report_packet_" + "1" * 20,
+                content_sha256="2" * 64,
+            ),
+            "user_report",
+            "trc_report_legacy",
+        )
     assert getattr(legacy_exc_info.value, "status_code") == 409
     assert legacy_exc_info.value.detail["code"] == "REPORT_QUALITY_BLOCKED"

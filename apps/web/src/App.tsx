@@ -72,6 +72,7 @@ import {
   createCitationSourceCapture,
   createCitationSupportReview,
   createPageAudit,
+  downloadReportEvidencePacket,
   fetchQuestionObservationBatches,
   fetchAnswerSample,
   fetchAnswerSamples,
@@ -105,7 +106,6 @@ import {
   loginToAirank,
   importQuestionObservations,
   recordConsoleAction,
-  recordDownloadReceipt,
   reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
@@ -3133,14 +3133,18 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   };
 
   const downloadReport = async (report: ReportItem) => {
-    const reportId = report.report_id ?? report.title;
+    const reportId = report.report_id;
     setDownloadingReportId(reportId);
     try {
-      await recordDownloadReceipt(reportId);
-      notify({ title: "下载回执已记录", desc: `${report.title} 的下载审计已写入 API。`, tone: "success" });
+      const packet = await downloadReportEvidencePacket(report);
+      notify({
+        title: "证据包已校验并下载",
+        desc: `${packet.summary.sample_count} 个样本、${packet.summary.citation_count} 条引用；SHA-256 ${packet.content_sha256.slice(0, 12)}…，下载回执已记录。`,
+        tone: "success",
+      });
     } catch (error) {
       notify({
-        title: "下载回执记录失败",
+        title: "证据包导出失败",
         desc: error instanceof Error ? error.message : "请稍后重试。",
         tone: "danger",
       });
@@ -3153,7 +3157,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     <>
       <PageHeader
         title="报表中心"
-        subtitle="复测 AI 回答变化，只汇报可追溯的观察结果、证据索引和归因置信度。"
+        subtitle="复测 AI 回答变化；导出包包含质量门禁、公式、风险、限制、样本与引用哈希，可独立校验。"
         action={<HeaderActions primary="生成老板报告" icon={FileChartColumn} onPrimary={generateReport} />}
       />
       {reports.reports.length === 0 && (
@@ -3169,24 +3173,27 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
               <ReportIcon size={23} />
             </IconTile>
             <div>
-              <h3>{item.title}</h3>
+              <div className="report-card-heading">
+                <h3>{item.title}</h3>
+                <Badge tone={qualityBlocked ? "danger" : "success"}>{qualityBlocked ? "quality blocked" : "evidence ready"}</Badge>
+              </div>
               <p>{item.desc}</p>
               <span>{item.date}</span>
             </div>
             <button
               className="outline-button"
               type="button"
-              disabled={qualityBlocked || downloadingReportId === (item.report_id ?? item.title)}
+              disabled={qualityBlocked || downloadingReportId === item.report_id}
               onClick={() => void downloadReport(item)}
             >
               {qualityBlocked ? (
                 "质量阻断"
-              ) : downloadingReportId === (item.report_id ?? item.title) ? (
-                "记录中"
+              ) : downloadingReportId === item.report_id ? (
+                "生成并校验中"
               ) : (
                 <>
-                  {item.status.includes("下载") ? <Download size={15} /> : <FileChartColumn size={15} />}
-                  {item.status}
+                  <Download size={15} />
+                  导出证据包
                 </>
               )}
             </button>

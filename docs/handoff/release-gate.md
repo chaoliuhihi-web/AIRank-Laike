@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | evidence package | source index、snapshot index、download receipt |
+| 证据包 | `airank.report-evidence-packet.v1` | v4 质量门禁、公式/限制/风险、sample/citation/object index、内容寻址 SHA-256、packet 级 download receipt；HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -690,3 +690,26 @@ Limitations and blockers:
 Decision:
 
 - Three-provider API repetition is deliverable within its stated evidence scope. Four-platform measurement, citations, fact accuracy, Consumer surfaces and the overall commercial release remain `partial/blocked`.
+
+## 2026-08-08 Customer Evidence Packet Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- `airank.report-evidence-packet.v1` is a deterministic, content-addressed customer evidence artifact. It binds the report, baseline and comparison runs, v4 quality gates, metric formulas, limitations, risks, samples, citations and stored evidence objects without duplicating raw answer bodies.
+- Packet creation fails closed for legacy or non-publishable quality contracts, missing runs, inconsistent sample counts, incomplete immutable evidence, missing API request audits, unknown citations and invalid SHA-256 values.
+- Alembic `20260808_0018` adds an immutable packet ledger with tenant/report/schema uniqueness, idempotency protection, object reference and creation audit. Downloads require a matching packet ID and content hash and record the trusted authenticated actor.
+- The console performs create/replay, object download, browser SHA-256 verification, file save and packet-bound receipt in that order. Empty or quality-blocked projects do not fabricate a report.
+- Full regression passed `339 passed, 24 skipped`; real MySQL integration passed `22 passed, 2 skipped`; Node 24 TypeScript/Vite build passed; npm high-severity audit reported zero vulnerabilities. The absorption matrix remains `13 sources / 67 rows / 21 GEO skills`.
+- Browser QA on the real reports route showed the honest empty state and blocked generation notice, no page-level overflow at 1024px, and zero warning/error logs.
+
+Limitations and blockers:
+
+- HTML/PDF/Word renderers, digital signing, a public verification page and the formal blank scorecard remain `partial`.
+- Four-platform same-cohort repetition is incomplete because the exposed Kimi credential must be rotated before use. Consumer Web/App L3 remains `0/4`.
+- Production Yudao, production HTTPS S3/MinIO, customer publishing credentials and a real T0/T+7/T+14/T+30 observation window are external blockers.
+
+Decision:
+
+- AIRank now has a tamper-evident JSON delivery artifact for qualified reports. It is not commercially launchable until the external production and observation gates pass.

@@ -95,7 +95,7 @@ export type AssetBundle = {
 };
 
 export type ReportItem = {
-  report_id?: string;
+  report_id: string;
   title: string;
   desc: string;
   date: string;
@@ -106,6 +106,30 @@ export type ReportList = {
   project_id: string;
   tenant_id: string;
   reports: ReportItem[];
+};
+
+export type ReportEvidencePacket = {
+  packet_id: string;
+  report_id: string;
+  tenant_id: string;
+  project_id: string;
+  schema_version: "airank.report-evidence-packet.v1";
+  status: "ready";
+  object_ref_id: string;
+  content_url: string;
+  content_type: "application/json";
+  byte_size: number;
+  content_sha256: string;
+  report_sha256: string;
+  created_by: string;
+  created_at: string;
+  summary: {
+    sample_count: number;
+    citation_count: number;
+    evidence_object_count: number;
+    known_limitation_count: number;
+  };
+  idempotent_replay: boolean;
 };
 
 export type KnowledgeSource = {
@@ -851,6 +875,14 @@ type ReportListPayload = {
   };
 };
 
+type ReportEvidencePacketPayload = {
+  data: ReportEvidencePacket;
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
 type BrandCheckPayload = {
   data: {
     project: {
@@ -1583,15 +1615,74 @@ export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckR
   };
 }
 
-export async function recordDownloadReceipt(reportId: string): Promise<void> {
-  const response = await fetch(`/api/v1/reports/${reportId}/download-receipts`, {
+export async function recordDownloadReceipt(packet: ReportEvidencePacket): Promise<void> {
+  const response = await fetch(`/api/v1/reports/${packet.report_id}/download-receipts`, {
     method: "POST",
-    headers: buildApiHeaders("trc_web_receipt"),
+    headers: {
+      "Content-Type": "application/json",
+      ...buildApiHeaders("trc_web_receipt"),
+    },
+    body: JSON.stringify({
+      packet_id: packet.packet_id,
+      content_sha256: packet.content_sha256,
+    }),
   });
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Download receipt request failed with ${response.status}`));
   }
+}
+
+export async function createReportEvidencePacket(reportId: string): Promise<ReportEvidencePacket> {
+  const headers = buildApiHeaders("trc_web_report_packet");
+  headers["Idempotency-Key"] = `report-packet-${reportId}-v1`;
+  const response = await fetch(`/api/v1/reports/${reportId}/evidence-packets`, {
+    method: "POST",
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Evidence packet request failed with ${response.status}`),
+    );
+  }
+  return ((await response.json()) as ReportEvidencePacketPayload).data;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function downloadReportEvidencePacket(
+  report: ReportItem,
+): Promise<ReportEvidencePacket> {
+  const packet = await createReportEvidencePacket(report.report_id);
+  const response = await fetch(packet.content_url, {
+    headers: buildApiHeaders("trc_web_report_packet_content"),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Evidence packet download failed with ${response.status}`),
+    );
+  }
+  const payload = await response.arrayBuffer();
+  const digest = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", payload)));
+  if (digest !== packet.content_sha256) {
+    throw new Error("EVIDENCE_INTEGRITY_FAILED");
+  }
+
+  const filename = `${report.title.replace(/[\\/:*?"<>|]+/g, "-")}-证据包.json`;
+  const objectUrl = URL.createObjectURL(new Blob([payload], { type: packet.content_type }));
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  await recordDownloadReceipt(packet);
+  return packet;
 }
 
 export async function recordConsoleAction(input: ConsoleActionInput): Promise<ConsoleActionReceipt> {

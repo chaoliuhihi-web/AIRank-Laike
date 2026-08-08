@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/report_evidence_packet_response.schema.json",
+  "title": "AIRank Report Evidence Packet Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": [
+        "packet_id", "report_id", "tenant_id", "project_id", "schema_version",
+        "status", "object_ref_id", "content_url", "content_type", "byte_size",
+        "content_sha256", "report_sha256", "created_by", "created_at", "summary",
+        "idempotent_replay"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "packet_id": { "type": "string", "pattern": "^report_packet_[0-9a-f]{20}$" },
+        "report_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "schema_version": { "const": "airank.report-evidence-packet.v1" },
+        "status": { "const": "ready" },
+        "object_ref_id": { "type": "string", "pattern": "^object_[0-9a-f]{24}$" },
+        "content_url": { "type": "string", "pattern": "^/api/v1/evidence-objects/[A-Za-z0-9_-]+/content$" },
+        "content_type": { "const": "application/json" },
+        "byte_size": { "type": "integer", "minimum": 1 },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "summary": {
+          "type": "object",
+          "required": ["sample_count", "citation_count", "evidence_object_count", "known_limitation_count"],
+          "additionalProperties": false,
+          "properties": {
+            "sample_count": { "type": "integer", "minimum": 1 },
+            "citation_count": { "type": "integer", "minimum": 0 },
+            "evidence_object_count": { "type": "integer", "minimum": 0 },
+            "known_limitation_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

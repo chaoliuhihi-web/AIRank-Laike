@@ -123,6 +123,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | `REPORT_NOT_FOUND` | 404 | 报告不存在 |
 | `REPORT_QUALITY_BLOCKED` | 409 | 报告未通过样本完整性、证据 hash、有效率或可比性门禁，禁止下载交付 |
 | `REPORT_EVIDENCE_MISSING` | 500 | 报告缺少证据链 |
+| `REPORT_EVIDENCE_PACKET_NOT_FOUND` | 404 | 报告尚未生成不可变客户证据包 |
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |
 | `EVIDENCE_OBJECT_UNAVAILABLE` | 503 | 对象存储不可用、配置不匹配或对象无法读取 |
 | `EVIDENCE_INTEGRITY_FAILED` | 409 | 对象内容与数据库记录的 SHA-256 或字节数不一致 |
