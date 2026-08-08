@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_review_escalation_response.schema.json",
+  "title": "AIRank Evidence Review SLA Escalation List Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "escalation_count",
+        "pending_count",
+        "published_count",
+        "failed_count",
+        "canceled_count",
+        "escalations"
+      ],
+      "properties": {
+        "project_id": { "type": "string", "minLength": 1 },
+        "escalation_count": { "type": "integer", "minimum": 0 },
+        "pending_count": { "type": "integer", "minimum": 0 },
+        "published_count": { "type": "integer", "minimum": 0 },
+        "failed_count": { "type": "integer", "minimum": 0 },
+        "canceled_count": { "type": "integer", "minimum": 0 },
+        "escalations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "event_id",
+              "case_id",
+              "reviewer_role",
+              "due_at",
+              "escalated_at",
+              "overdue_seconds",
+              "assignment_state",
+              "outbox_status",
+              "external_delivery_verified"
+            ],
+            "properties": {
+              "event_id": { "type": "string", "minLength": 1 },
+              "case_id": { "type": "string", "minLength": 1 },
+              "reviewer_role": { "enum": ["secondary", "adjudicator"] },
+              "due_at": { "type": "string", "format": "date-time" },
+              "escalated_at": { "type": "string", "format": "date-time" },
+              "overdue_seconds": { "type": "integer", "minimum": 0 },
+              "assignment_state": { "enum": ["unassigned", "assigned", "expired"] },
+              "outbox_status": { "enum": ["pending", "published", "failed", "canceled"] },
+              "external_delivery_verified": { "const": false }
+            }
+          }
+        }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

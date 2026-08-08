@@ -1079,3 +1079,28 @@ Limitations and blockers:
 Decision:
 
 - AIRank now prevents duplicate reviewer ownership and preserves a complete assignment/SLA audit trail without weakening blind review. The capability remains `partial`, and AIRank remains commercial `NO-GO` until reviewer-quality and external production gates pass.
+
+## 2026-08-09 Reviewer SLA Escalation Outbox Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- The shared Scheduler now scans tenant/project-scoped `awaiting_secondary` and `disputed` cases and persists versioned `evidence_review.sla_overdue.v1` events to the existing durable Outbox. Stable IDs make replay idempotent; scope safety caps the scan at 10,000 actionable cases and dispatch at 500 events per tick.
+- Before insertion, the Scheduler locks and reloads the case and active assignment, then recomputes reviewer role, due time and event ID. A case completed or changed after the initial scan produces no stale event.
+- Event payloads declare `airank.evidence-review-sla-escalation.v1` and `delivery_claim=outbox_pending_not_delivered`. Public list responses exclude assignee and assignment identity and always return `external_delivery_verified=false`.
+- Evidence Center shows real persisted counts and event cards. It distinguishes dynamic overdue work from Scheduler-persisted escalation and explains that neither `pending` nor `published` proves delivery through Feishu, email or SMS.
+- Contract, scheduler and acceptance regression passed 17 targeted tests. The real MySQL independent-review integration passed with one new escalation, idempotent replay and the existing claim/lease/release/expiry/takeover/adjudication chain intact.
+- Full regression passed `454 passed, 30 skipped`; contracts passed `190`, acceptance passed `77`, scheduler passed `10`, real MySQL integration passed `28 passed, 2 skipped`, the 13-source / 67-row / 21-Skill absorption matrix passed, and the Node 24 production build plus high-severity npm audit passed.
+- Isolated real MySQL/browser acceptance displayed one overdue secondary-review task, one persisted pending event and zero externally verified deliveries. The public response contained no `assigned_to` or `assignment_id`; evidence drill-down still loaded the immutable answer, exact Claim, source text and second-review form. Desktop and mobile had no page-level horizontal overflow and console warning/error count was zero. All 61 tenant-scoped tables were cleaned back to zero QA rows.
+
+Limitations and blockers:
+
+- No external notification Consumer or delivery-receipt contract is implemented. `published` currently means only that an Outbox publisher processed the event, not that a person or channel received it.
+- Reviewer-team routing, Yudao group/permission mapping, escalation recipients, repeat escalation levels, on-call rotation and workload balancing remain incomplete. Failed/canceled escalation operations need a governed retry/recovery workflow.
+- The real customer review benchmark remains 0/20 and Cohen's kappa remains unavailable. Persistent SLA operations do not establish reviewer quality.
+- Production Yudao authentication, HTTPS S3/MinIO, Consumer Web/App L3, Kimi credential rotation, DeepSeek model migration, customer publishing credentials and elapsed T+7/T+14/T+30 evidence remain open.
+
+Decision:
+
+- AIRank can now prove that an overdue independent-review task created one durable operations event without claiming anyone was notified. The capability remains `partial`, and AIRank remains commercial `NO-GO` until external delivery, reviewer-team routing, customer quality and production gates pass.

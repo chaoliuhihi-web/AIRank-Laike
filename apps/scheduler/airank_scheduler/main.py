@@ -10,6 +10,7 @@ from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
 
 from .knowledge_sync import MySQLKnowledgeSyncScheduler
 from .retest import MySQLRetestScheduler
+from .review_escalation import MySQLReviewEscalationScheduler
 
 
 def _clean(value: object) -> str | None:
@@ -44,7 +45,9 @@ def resolve_scope(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="AIRank durable retest and knowledge scheduler")
+    parser = argparse.ArgumentParser(
+        description="AIRank durable retest, knowledge, and reviewer-SLA scheduler"
+    )
     parser.add_argument("--once", action="store_true", help="run one scheduler tick and exit")
     parser.add_argument("--dry-run", action="store_true", help="inspect due/ready windows without mutation")
     parser.add_argument("--tenant-id")
@@ -84,12 +87,23 @@ def main() -> int:
         project_id=project_id,
         scheduler_id=scheduler_id,
     )
+    review_escalation_scheduler = MySQLReviewEscalationScheduler(
+        database_url,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id=scheduler_id,
+    )
     if args.dry_run:
         retest_preview = scheduler.preview().to_record()
         knowledge_preview = (
             {"skipped": "window_id scope only"}
             if window_id
             else knowledge_scheduler.preview().to_record()
+        )
+        review_escalation_preview = (
+            {"skipped": "window_id scope only"}
+            if window_id
+            else review_escalation_scheduler.preview().to_record()
         )
         print(
             json.dumps(
@@ -103,6 +117,7 @@ def main() -> int:
                     },
                     "retest": retest_preview,
                     "knowledge_sync": knowledge_preview,
+                    "review_escalation": review_escalation_preview,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -134,6 +149,11 @@ def main() -> int:
         knowledge_dispatched = (
             [] if window_id else knowledge_scheduler.dispatch_due(limit=args.limit)
         )
+        review_escalations = (
+            []
+            if window_id
+            else review_escalation_scheduler.dispatch_overdue(limit=args.limit)
+        )
         print(
             json.dumps(
                 {
@@ -142,6 +162,9 @@ def main() -> int:
                     "dispatched": [item.to_record() for item in dispatched],
                     "knowledge_sync_dispatched": [
                         item.to_record() for item in knowledge_dispatched
+                    ],
+                    "review_escalations": [
+                        item.to_record() for item in review_escalations
                     ],
                 },
                 ensure_ascii=False,

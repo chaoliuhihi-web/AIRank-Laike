@@ -80,6 +80,7 @@ from apps.api.evidence_review_routes import (
     EvidenceReviewAssignmentReleaseRequest,
     EvidenceReviewDecisionRequest,
     FactReviewCaseCreateRequest,
+    MySQLEvidenceReviewEscalationRepository,
     MySQLEvidenceReviewRepository,
 )
 from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
@@ -114,6 +115,7 @@ from airank_worker import (  # noqa: E402
     run_next_real_scan_job,
     run_next_publish_job,
 )
+from airank_scheduler import MySQLReviewEscalationScheduler  # noqa: E402
 from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig  # noqa: E402
 
 
@@ -4093,6 +4095,62 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             "trace-review-primary",
         )
         assert citation_case.status == "awaiting_secondary"
+        escalation_at = datetime.now(timezone.utc)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_evidence_review_cases
+                    SET created_at=:created_at, updated_at=:created_at
+                    WHERE tenant_id=:tenant_id AND id=:case_id
+                    """
+                ),
+                {
+                    "created_at": escalation_at - timedelta(days=2),
+                    "tenant_id": tenant_id,
+                    "case_id": citation_case.case_id,
+                },
+            )
+        escalation_scheduler = MySQLReviewEscalationScheduler(
+            database_url(),
+            tenant_id=tenant_id,
+            project_id=project.project_id,
+            scheduler_id="integration-review-escalation",
+        )
+        escalation_preview = escalation_scheduler.preview(escalation_at)
+        assert escalation_preview.overdue_case_count == 1
+        assert escalation_preview.pending_event_count == 0
+        assert escalation_preview.dispatchable_count == 1
+        escalated = escalation_scheduler.dispatch_overdue(
+            now=escalation_at, limit=10
+        )
+        assert len(escalated) == 1
+        assert escalated[0].case_id == citation_case.case_id
+        assert escalated[0].reviewer_role == "secondary"
+        assert escalated[0].assignment_state == "unassigned"
+        assert escalation_scheduler.dispatch_overdue(now=escalation_at, limit=10) == []
+        escalation_list = MySQLEvidenceReviewEscalationRepository(
+            database_url()
+        ).list_escalations(tenant_id, project.project_id, None, 50)
+        assert escalation_list.escalation_count == 1
+        assert escalation_list.pending_count == 1
+        assert escalation_list.escalations[0].external_delivery_verified is False
+        with engine.connect() as conn:
+            outbox_payload = conn.execute(
+                text(
+                    """
+                    SELECT payload_json FROM airank_outbox_events
+                    WHERE tenant_id=:tenant_id AND id=:event_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "event_id": escalated[0].event_id},
+            ).scalar_one()
+        if isinstance(outbox_payload, str):
+            outbox_payload = json.loads(outbox_payload)
+        assert outbox_payload["delivery_claim"] == "outbox_pending_not_delivered"
+        assert "assigned_to" not in outbox_payload
+        assert "assignment_id" not in outbox_payload
+
         with pytest.raises(StarletteHTTPException) as self_review:
             review_repo.submit_decision(
                 tenant_id,

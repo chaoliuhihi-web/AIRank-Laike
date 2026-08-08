@@ -242,6 +242,33 @@ class EvidenceReviewInboxResponse(BaseModel):
     meta: dict[str, str]
 
 
+class EvidenceReviewEscalationData(BaseModel):
+    event_id: str
+    case_id: str
+    reviewer_role: Literal["secondary", "adjudicator"]
+    due_at: datetime
+    escalated_at: datetime
+    overdue_seconds: int = Field(ge=0)
+    assignment_state: Literal["unassigned", "assigned", "expired"]
+    outbox_status: Literal["pending", "published", "failed", "canceled"]
+    external_delivery_verified: Literal[False] = False
+
+
+class EvidenceReviewEscalationListData(BaseModel):
+    project_id: str
+    escalation_count: int
+    pending_count: int
+    published_count: int
+    failed_count: int
+    canceled_count: int
+    escalations: list[EvidenceReviewEscalationData]
+
+
+class EvidenceReviewEscalationListResponse(BaseModel):
+    data: EvidenceReviewEscalationListData
+    meta: dict[str, str]
+
+
 class EvidenceReviewRepository(Protocol):
     def create_citation_case(
         self,
@@ -2380,12 +2407,169 @@ def build_queue(project_id: str, snapshot_id: Optional[str], cases: list[Mapping
     )
 
 
+class EvidenceReviewEscalationRepository(Protocol):
+    def list_escalations(
+        self,
+        tenant_id: str,
+        project_id: str,
+        status: Optional[str],
+        limit: int,
+    ) -> EvidenceReviewEscalationListData: ...
+
+
+class InMemoryEvidenceReviewEscalationRepository:
+    def list_escalations(
+        self,
+        tenant_id: str,
+        project_id: str,
+        status: Optional[str],
+        limit: int,
+    ) -> EvidenceReviewEscalationListData:
+        del tenant_id, status, limit
+        return EvidenceReviewEscalationListData(
+            project_id=project_id,
+            escalation_count=0,
+            pending_count=0,
+            published_count=0,
+            failed_count=0,
+            canceled_count=0,
+            escalations=[],
+        )
+
+
+class MySQLEvidenceReviewEscalationRepository:
+    EVENT_TYPE = "evidence_review.sla_overdue.v1"
+    SCHEMA_VERSION = "airank.evidence-review-sla-escalation.v1"
+
+    def __init__(self, database_url: str) -> None:
+        self.engine = create_engine(database_url, pool_pre_ping=True)
+
+    def list_escalations(
+        self,
+        tenant_id: str,
+        project_id: str,
+        status: Optional[str],
+        limit: int,
+    ) -> EvidenceReviewEscalationListData:
+        status_clause = " AND status=:status" if status else ""
+        params: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "event_type": self.EVENT_TYPE,
+            "status": status,
+            "limit": limit,
+        }
+        with self.engine.begin() as conn:
+            project = conn.execute(
+                text(
+                    "SELECT id FROM airank_projects "
+                    "WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL"
+                ),
+                params,
+            ).first()
+            if project is None:
+                raise StarletteHTTPException(
+                    404,
+                    detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id}},
+                )
+            counts = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*) AS escalation_count,
+                           SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_count,
+                           SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) AS published_count,
+                           SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_count,
+                           SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END) AS canceled_count
+                    FROM airank_outbox_events
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                      AND event_type=:event_type
+                    """
+                ),
+                params,
+            ).mappings().one()
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT id, aggregate_id, status, payload_json, created_at
+                    FROM airank_outbox_events
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                      AND event_type=:event_type{status_clause}
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).mappings().all()
+        checked_at = now_utc()
+        escalations: list[EvidenceReviewEscalationData] = []
+        for row in rows:
+            try:
+                payload = self._json_object(row["payload_json"])
+                if payload.get("schema_version") != self.SCHEMA_VERSION:
+                    raise ValueError("unsupported escalation payload schema")
+                due_at = citation_routes._utc_datetime(payload["due_at"])
+                escalation = EvidenceReviewEscalationData(
+                    event_id=str(row["id"]),
+                    case_id=str(row["aggregate_id"]),
+                    reviewer_role=str(payload["reviewer_role"]),
+                    due_at=due_at,
+                    escalated_at=citation_routes._utc_datetime(row["created_at"]),
+                    overdue_seconds=max(
+                        0, int((checked_at - due_at).total_seconds())
+                    ),
+                    assignment_state=str(payload["assignment_state"]),
+                    outbox_status=str(row["status"]),
+                    external_delivery_verified=False,
+                )
+            except (KeyError, TypeError, ValueError):
+                raise StarletteHTTPException(
+                    409,
+                    detail={
+                        "code": "EVIDENCE_REVIEW_ESCALATION_INVALID",
+                        "details": {"event_id": str(row["id"])},
+                    },
+                )
+            escalations.append(escalation)
+        return EvidenceReviewEscalationListData(
+            project_id=project_id,
+            escalation_count=int(counts["escalation_count"] or 0),
+            pending_count=int(counts["pending_count"] or 0),
+            published_count=int(counts["published_count"] or 0),
+            failed_count=int(counts["failed_count"] or 0),
+            canceled_count=int(counts["canceled_count"] or 0),
+            escalations=escalations,
+        )
+
+    @staticmethod
+    def _json_object(value: object) -> dict[str, Any]:
+        if isinstance(value, Mapping):
+            return dict(value)
+        if isinstance(value, str):
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, Mapping) else {}
+        return {}
+
+
 def build_repository() -> EvidenceReviewRepository:
     database_url = os.getenv("AIRANK_DATABASE_URL")
     return MySQLEvidenceReviewRepository(database_url) if database_url else InMemoryEvidenceReviewRepository()
 
 
 EVIDENCE_REVIEW_REPOSITORY: EvidenceReviewRepository = build_repository()
+
+
+def build_escalation_repository() -> EvidenceReviewEscalationRepository:
+    database_url = os.getenv("AIRANK_DATABASE_URL")
+    return (
+        MySQLEvidenceReviewEscalationRepository(database_url)
+        if database_url
+        else InMemoryEvidenceReviewEscalationRepository()
+    )
+
+
+EVIDENCE_REVIEW_ESCALATION_REPOSITORY: EvidenceReviewEscalationRepository = (
+    build_escalation_repository()
+)
 
 
 @router.post(
@@ -2560,6 +2744,27 @@ def list_evidence_review_inbox(
     return EvidenceReviewInboxResponse(
         data=EVIDENCE_REVIEW_REPOSITORY.list_inbox(
             tenant_id, project_id, actor, limit, cursor
+        ),
+        meta=response_meta(trace_id),
+    )
+
+
+@router.get(
+    "/projects/{project_id}/evidence-review-escalations",
+    response_model=EvidenceReviewEscalationListResponse,
+)
+def list_evidence_review_escalations(
+    project_id: str,
+    status: Optional[Literal["pending", "published", "failed", "canceled"]] = Query(
+        default=None
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> EvidenceReviewEscalationListResponse:
+    return EvidenceReviewEscalationListResponse(
+        data=EVIDENCE_REVIEW_ESCALATION_REPOSITORY.list_escalations(
+            tenant_id, project_id, status, limit
         ),
         meta=response_meta(trace_id),
     )

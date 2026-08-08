@@ -95,6 +95,7 @@ import {
   fetchEvidenceObject,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
+  fetchEvidenceReviewEscalations,
   fetchEvidenceReviewInbox,
   fetchFactConflicts,
   fetchFactAccuracy,
@@ -154,6 +155,7 @@ import {
   type FactConflict,
   type FactAccuracyBundle,
   type EvidenceReviewCase,
+  type EvidenceReviewEscalationList,
   type EvidenceReviewInbox,
   type EvidenceReviewQueue,
   type EvidenceIntegrityAudit,
@@ -1170,6 +1172,22 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatOverdueDuration(seconds: number): string {
+  const normalized = Math.max(0, Math.floor(seconds));
+  if (normalized < 60) return `${normalized} 秒`;
+  if (normalized < 3600) return `${Math.floor(normalized / 60)} 分钟`;
+  if (normalized < 86400) return `${Math.floor(normalized / 3600)} 小时`;
+  const days = Math.floor(normalized / 86400);
+  const hours = Math.floor((normalized % 86400) / 3600);
+  return hours ? `${days} 天 ${hours} 小时` : `${days} 天`;
+}
+
+function reviewAssignmentStateLabel(state: "unassigned" | "assigned" | "expired"): string {
+  if (state === "assigned") return "已领取";
+  if (state === "expired") return "租约已过期";
+  return "待领取";
+}
+
 function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: string) => void; blocked?: boolean }) {
   return (
     <aside className="airank-console-card right-rail">
@@ -2146,6 +2164,8 @@ function EvidencePage() {
   const [reviewQueueError, setReviewQueueError] = useState<string | null>(null);
   const [reviewInbox, setReviewInbox] = useState<EvidenceReviewInbox | null>(null);
   const [reviewInboxError, setReviewInboxError] = useState<string | null>(null);
+  const [reviewEscalations, setReviewEscalations] = useState<EvidenceReviewEscalationList | null>(null);
+  const [reviewEscalationError, setReviewEscalationError] = useState<string | null>(null);
   const [reviewInboxLoadingMore, setReviewInboxLoadingMore] = useState(false);
   const [reviewAssignmentAction, setReviewAssignmentAction] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
@@ -2217,6 +2237,26 @@ function EvidencePage() {
         if (controller.signal.aborted) return;
         setReviewInbox(null);
         setReviewInboxError(error instanceof Error ? error.message : "项目独立复核待办不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id) {
+      setReviewEscalations(null);
+      setReviewEscalationError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchEvidenceReviewEscalations(project.id, controller.signal)
+      .then((result) => {
+        setReviewEscalations(result);
+        setReviewEscalationError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReviewEscalations(null);
+        setReviewEscalationError(error instanceof Error ? error.message : "SLA 升级事件不可用");
       });
     return () => controller.abort();
   }, [project.id]);
@@ -3013,6 +3053,52 @@ function EvidencePage() {
                 <button className="table-action" type="button" disabled={reviewInboxLoadingMore} onClick={() => void loadMoreReviewInbox()}>
                   {reviewInboxLoadingMore ? "加载中" : `继续加载（${reviewInbox.cases.length}/${reviewInbox.actionable_count}）`}
                 </button>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+      <Panel title={`SLA 升级运营 · ${reviewEscalations?.escalation_count ?? 0}`}>
+        <p className="rail-caption">
+          这里只展示 Scheduler 已持久写入 Outbox 的真实逾期事件。pending 只表示等待外部消费者处理，published 也只表示事件已发布；在取得飞书、邮件或短信回执前，系统统一显示“外部送达未验证”。
+        </p>
+        {reviewEscalationError && <DataStateCard title="SLA 升级事件读取失败" desc={reviewEscalationError} tone="danger" />}
+        {reviewEscalations && (
+          <>
+            <dl className="evidence-metadata review-inbox-metrics">
+              <div><dt>持久升级事件</dt><dd>{reviewEscalations.escalation_count}</dd></div>
+              <div><dt>Outbox 待处理</dt><dd>{reviewEscalations.pending_count}</dd></div>
+              <div><dt>事件已发布</dt><dd>{reviewEscalations.published_count}</dd></div>
+              <div><dt>处理失败</dt><dd>{reviewEscalations.failed_count}</dd></div>
+              <div><dt>已取消</dt><dd>{reviewEscalations.canceled_count}</dd></div>
+              <div><dt>外部送达已验证</dt><dd>0</dd></div>
+            </dl>
+            {reviewEscalations.escalations.length === 0 ? (
+              <DataStateCard
+                title="尚无持久升级事件"
+                desc={reviewInbox?.overdue_count
+                  ? `当前有 ${reviewInbox.overdue_count} 条逾期待办，但 Scheduler 尚未写入升级 Outbox；系统不会把动态逾期状态冒充已通知。`
+                  : "当前没有已持久化的审核 SLA 升级事件。"}
+                tone={reviewInbox?.overdue_count ? "warning" : "success"}
+              />
+            ) : (
+              <div className="review-inbox-list">
+                {reviewEscalations.escalations.map((event) => (
+                  <article className="review-inbox-card" key={event.event_id}>
+                    <div>
+                      <strong>{event.reviewer_role === "secondary" ? "第二人复核" : "第三人裁决"} · SLA 已升级</strong>
+                      <small>Case {event.case_id}</small>
+                      <small>截止 {formatDateTime(event.due_at)} · 已逾期 {formatOverdueDuration(event.overdue_seconds)}</small>
+                      <small>升级于 {formatDateTime(event.escalated_at)} · 任务状态 {reviewAssignmentStateLabel(event.assignment_state)}</small>
+                    </div>
+                    <div className="review-inbox-actions">
+                      <Badge tone={event.outbox_status === "failed" ? "danger" : event.outbox_status === "published" ? "success" : "warning"}>
+                        Outbox {event.outbox_status}
+                      </Badge>
+                      <small>外部送达未验证</small>
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
           </>

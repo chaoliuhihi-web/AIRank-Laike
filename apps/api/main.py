@@ -165,6 +165,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "EVIDENCE_REVIEW_ASSIGNMENT_LEASE_EXPIRED": (409, "Evidence review assignment lease expired"),
     "EVIDENCE_REVIEW_ASSIGNMENT_VERSION_CONFLICT": (409, "Evidence review assignment version is stale"),
     "EVIDENCE_REVIEW_ASSIGNMENT_OWNER_FORBIDDEN": (403, "Only the assignment owner may change the lease"),
+    "EVIDENCE_REVIEW_ESCALATION_INVALID": (409, "Evidence review escalation payload is invalid"),
     "EVIDENCE_REVIEW_LABEL_INVALID": (409, "Evidence review label is invalid for this case"),
     "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN": (409, "Independent review requires a different reviewer"),
     "SOURCE_REGISTRY_ENTRY_NOT_FOUND": (404, "Citation source registry entry not found"),

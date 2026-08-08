@@ -90,6 +90,33 @@ def test_review_assignment_has_persistent_lease_sla_and_blind_owner_contract() -
     assert "我已领取 · 租约至" in web
 
 
+def test_review_sla_escalation_uses_real_outbox_without_fake_delivery() -> None:
+    scheduler = read("apps/scheduler/airank_scheduler/review_escalation.py")
+    scheduler_main = read("apps/scheduler/airank_scheduler/main.py")
+    routes = read("apps/api/evidence_review_routes.py")
+    contract = read(
+        "packages/contracts/evidence_review_escalation_response.schema.json"
+    )
+    web = read("apps/web/src/App.tsx")
+
+    for token in (
+        "evidence_review.sla_overdue.v1",
+        "airank.evidence-review-sla-escalation.v1",
+        "INSERT IGNORE INTO airank_outbox_events",
+        "outbox_pending_not_delivered",
+        "REVIEW_ESCALATION_SCOPE_TOO_LARGE",
+    ):
+        assert token in scheduler
+    assert "review_escalation_scheduler.preview" in scheduler_main
+    assert "review_escalation_scheduler.dispatch_overdue" in scheduler_main
+    assert '"/projects/{project_id}/evidence-review-escalations"' in routes
+    assert '"external_delivery_verified": { "const": false }' in contract
+    assert "SLA 升级运营" in web
+    assert "外部送达未验证" in web
+    assert "reviewEscalations.canceled_count" in web
+    assert "系统不会把动态逾期状态冒充已通知" in web
+
+
 def test_review_quality_has_real_agreement_and_kappa_gate() -> None:
     quality = read("packages/evidence/src/airank_evidence/review_quality.py")
     contract = read("packages/contracts/evidence_review_queue_response.schema.json")

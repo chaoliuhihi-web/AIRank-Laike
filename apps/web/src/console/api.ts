@@ -623,6 +623,26 @@ export type EvidenceReviewInbox = {
   next_cursor: string | null;
 };
 
+export type EvidenceReviewEscalationList = {
+  project_id: string;
+  escalation_count: number;
+  pending_count: number;
+  published_count: number;
+  failed_count: number;
+  canceled_count: number;
+  escalations: Array<{
+    event_id: string;
+    case_id: string;
+    reviewer_role: "secondary" | "adjudicator";
+    due_at: string;
+    escalated_at: string;
+    overdue_seconds: number;
+    assignment_state: "unassigned" | "assigned" | "expired";
+    outbox_status: "pending" | "published" | "failed" | "canceled";
+    external_delivery_verified: false;
+  }>;
+};
+
 export type CitationSourceCapture = {
   capture_id: string;
   tenant_id: string;
@@ -1767,6 +1787,17 @@ export function fetchEvidenceReviewInbox(
   return fetchData(
     `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-inbox?${params.toString()}`,
     "trc_web_evidence_review_inbox",
+    signal,
+  );
+}
+
+export function fetchEvidenceReviewEscalations(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<EvidenceReviewEscalationList> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-escalations?limit=50`,
+    "trc_web_evidence_review_escalations",
     signal,
   );
 }

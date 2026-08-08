@@ -56,8 +56,16 @@ def repositories(monkeypatch: pytest.MonkeyPatch):
         segment_text=SOURCE,
     )
     review_repo = evidence_review_routes.InMemoryEvidenceReviewRepository()
+    escalation_repo = (
+        evidence_review_routes.InMemoryEvidenceReviewEscalationRepository()
+    )
     monkeypatch.setattr(citation_support_routes, "CITATION_SUPPORT_REPOSITORY", citation_repo)
     monkeypatch.setattr(evidence_review_routes, "EVIDENCE_REVIEW_REPOSITORY", review_repo)
+    monkeypatch.setattr(
+        evidence_review_routes,
+        "EVIDENCE_REVIEW_ESCALATION_REPOSITORY",
+        escalation_repo,
+    )
     monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
     return citation_repo, review_repo
 
@@ -83,6 +91,32 @@ def create_claim(client: TestClient, *, fact: bool = False) -> str:
     )
     assert response.status_code == 201
     return response.json()["data"]["claim_id"]
+
+
+def test_sla_escalation_contract_is_empty_without_persisted_outbox(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/api/v1/projects/project_1/evidence-review-escalations?status=pending&limit=50",
+        headers={"tenant-id": "tenant_1"},
+    )
+    assert response.status_code == 200
+    validate_contract("evidence_review_escalation_response.schema.json", response.json())
+    assert response.json()["data"] == {
+        "project_id": "project_1",
+        "escalation_count": 0,
+        "pending_count": 0,
+        "published_count": 0,
+        "failed_count": 0,
+        "canceled_count": 0,
+        "escalations": [],
+    }
+
+    invalid = client.get(
+        "/api/v1/projects/project_1/evidence-review-escalations?status=delivered",
+        headers={"tenant-id": "tenant_1"},
+    )
+    assert invalid.status_code == 422
 
 
 def citation_case_payload(claim_id: str, *, purpose: str = "production") -> dict:
