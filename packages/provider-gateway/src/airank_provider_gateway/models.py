@@ -105,6 +105,7 @@ class ProviderResult:
     raw_response: Mapping[str, Any]
     endpoint_host: str
     configuration_fingerprint: str
+    route_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,10 @@ class ProviderGatewayError(RuntimeError):
         retryable: bool = False,
         status_code: int | None = None,
         provider_code: str | None = None,
+        route_id: str | None = None,
+        configuration_fingerprint: str | None = None,
+        endpoint_host: str | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
@@ -139,3 +144,7 @@ class ProviderGatewayError(RuntimeError):
         self.retryable = retryable
         self.status_code = status_code
         self.provider_code = provider_code
+        self.route_id = route_id
+        self.configuration_fingerprint = configuration_fingerprint
+        self.endpoint_host = endpoint_host
+        self.model = model

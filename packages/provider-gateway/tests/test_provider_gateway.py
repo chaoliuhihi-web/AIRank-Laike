@@ -10,6 +10,7 @@ from airank_provider_gateway import (
     HttpResponse,
     InMemoryQuotaLedger,
     ProbeLevel,
+    ProviderCapacityLease,
     ProviderGateway,
     ProviderGatewayError,
     ProviderRequestContext,
@@ -80,6 +81,101 @@ def test_unapproved_custom_endpoint_is_not_treated_as_configured() -> None:
     with pytest.raises(ProviderGatewayError) as caught:
         gateway.generate("qianwen", "测试")
     assert caught.value.code == "PROVIDER_NOT_CONFIGURED"
+
+
+def test_route_registry_falls_through_unconfigured_primary_without_exposing_keys() -> None:
+    env = qianwen_env()
+    env.update(
+        {
+            "QIANWEN_SECONDARY_KEY": "secondary-secret",
+            "QIANWEN_ROUTES_JSON": """[
+              {"route_id":"primary","priority":100,"endpoint":"https://primary.example.test/v1/chat/completions","model":"qwen-primary","key_env":"QIANWEN_PRIMARY_KEY"},
+              {"route_id":"secondary","priority":50,"endpoint":"https://secondary.example.test/v1/chat/completions","model":"qwen-secondary","key_env":"QIANWEN_SECONDARY_KEY"}
+            ]""",
+        }
+    )
+    transport = FakeTransport(
+        [HttpResponse(status=200, headers={}, data={"id": "req_secondary", "choices": [{"message": {"content": "OK"}}]})]
+    )
+
+    result = ProviderGateway(env=env, transport=transport).generate("qianwen", "测试")
+
+    assert result.route_id == "secondary"
+    assert result.model == "qwen-secondary"
+    assert transport.calls[0]["url"] == "https://secondary.example.test/v1/chat/completions"
+    assert "secondary-secret" not in result.configuration_fingerprint
+
+
+def test_retryable_upstream_failure_fails_over_to_next_route_with_audit() -> None:
+    env = qianwen_env()
+    env.update(
+        {
+            "QIANWEN_PRIMARY_KEY": "primary-secret",
+            "QIANWEN_SECONDARY_KEY": "secondary-secret",
+            "QIANWEN_ROUTES_JSON": """[
+              {"route_id":"primary","priority":100,"endpoint":"https://primary.example.test/v1/chat/completions","model":"qwen-primary","key_env":"QIANWEN_PRIMARY_KEY"},
+              {"route_id":"secondary","priority":50,"endpoint":"https://secondary.example.test/v1/chat/completions","model":"qwen-secondary","key_env":"QIANWEN_SECONDARY_KEY"}
+            ]""",
+        }
+    )
+    transport = FakeTransport(
+        [
+            ProviderGatewayError(
+                "qianwen", "PROVIDER_UPSTREAM_FAILED", "primary unavailable", retryable=True
+            ),
+            HttpResponse(status=200, headers={}, data={"id": "req_secondary", "choices": [{"message": {"content": "fallback"}}]}),
+        ]
+    )
+    audits: list[Mapping[str, Any]] = []
+    result = ProviderGateway(
+        env=env,
+        transport=transport,
+        max_attempts=1,
+        audit_sink=audits.append,
+    ).generate("qianwen", "测试")
+
+    assert [call["url"] for call in transport.calls] == [
+        "https://primary.example.test/v1/chat/completions",
+        "https://secondary.example.test/v1/chat/completions",
+    ]
+    assert result.answer_text == "fallback"
+    assert result.route_id == "secondary"
+    assert [audit["route_id"] for audit in audits] == ["primary", "secondary"]
+    assert [audit["outcome"] for audit in audits] == ["failed", "success"]
+
+
+def test_global_tenant_quota_failure_cannot_be_bypassed_by_route_fallback() -> None:
+    class ExhaustedQuotaLedger(InMemoryQuotaLedger):
+        def reserve(self, provider: str, units: int = 1, *, context=None):
+            raise ProviderGatewayError(
+                provider, "PROVIDER_QUOTA_EXHAUSTED", "tenant quota exhausted"
+            )
+
+    env = qianwen_env()
+    env["QIANWEN_ROUTES_JSON"] = """[
+      {"route_id":"primary","priority":100},
+      {"route_id":"secondary","priority":50}
+    ]"""
+    transport = FakeTransport([])
+    with pytest.raises(ProviderGatewayError) as caught:
+        ProviderGateway(
+            env=env, transport=transport, quota_ledger=ExhaustedQuotaLedger()
+        ).generate("qianwen", "测试")
+
+    assert caught.value.code == "PROVIDER_QUOTA_EXHAUSTED"
+    assert transport.calls == []
+
+
+def test_route_configuration_rejects_inline_secret_material() -> None:
+    env = qianwen_env()
+    env["QIANWEN_ROUTES_JSON"] = """[
+      {"route_id":"unsafe","priority":100,"api_key":"must-not-be-accepted"}
+    ]"""
+
+    with pytest.raises(ProviderGatewayError) as caught:
+        ProviderGateway(env=env, transport=FakeTransport([])).generate("qianwen", "测试")
+
+    assert caught.value.code == "PROVIDER_ROUTE_CONFIG_INVALID"
 
 
 def test_qianwen_generation_preserves_request_id_search_evidence_citation_and_usage() -> None:
@@ -255,6 +351,66 @@ def test_gateway_passes_tenant_idempotency_context_to_quota_ledger() -> None:
     gateway.generate("qianwen", "测试", request_context=context)
 
     assert ledger.context == context
+
+
+def test_gateway_holds_distributed_capacity_around_provider_call() -> None:
+    class CapturingCapacityLedger:
+        context: ProviderRequestContext | None = None
+        released_lease: ProviderCapacityLease | None = None
+
+        def acquire_capacity(self, provider, configuration_fingerprint, *, context):
+            self.context = context
+            return ProviderCapacityLease(
+                provider=provider,
+                configuration_fingerprint=configuration_fingerprint,
+                tenant_id=context.tenant_id,
+            )
+
+        def release_capacity(self, lease):
+            lease.released = True
+            self.released_lease = lease
+
+    capacity = CapturingCapacityLedger()
+    transport = FakeTransport(
+        [HttpResponse(status=200, headers={}, data={"id": "req_capacity", "choices": [{"message": {"content": "OK"}}]})]
+    )
+    context = ProviderRequestContext(
+        tenant_id="tenant_1", project_id="project_1", idempotency_key="task_capacity_1"
+    )
+    gateway = ProviderGateway(
+        env=qianwen_env(), transport=transport, capacity_ledger=capacity
+    )
+
+    gateway.generate("qianwen", "测试", request_context=context)
+
+    assert capacity.context == context
+    assert capacity.released_lease is not None
+    assert capacity.released_lease.released is True
+
+
+def test_capacity_cleanup_failure_never_replays_successful_provider_call() -> None:
+    class FailingCleanupCapacityLedger:
+        def acquire_capacity(self, provider, configuration_fingerprint, *, context):
+            return ProviderCapacityLease(
+                provider=provider,
+                configuration_fingerprint=configuration_fingerprint,
+                tenant_id=context.tenant_id,
+            )
+
+        def release_capacity(self, lease):
+            raise RuntimeError("database unavailable during cleanup")
+
+    transport = FakeTransport(
+        [HttpResponse(status=200, headers={}, data={"id": "req_once", "choices": [{"message": {"content": "OK"}}]})]
+    )
+    result = ProviderGateway(
+        env=qianwen_env(),
+        transport=transport,
+        capacity_ledger=FailingCleanupCapacityLedger(),
+    ).generate("qianwen", "测试")
+
+    assert result.answer_text == "OK"
+    assert len(transport.calls) == 1
 
 
 def test_quota_reservation_is_released_after_failed_request() -> None:

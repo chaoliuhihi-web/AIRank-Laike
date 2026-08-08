@@ -4,6 +4,9 @@ from .gateway import (
     CircuitBreaker,
     CircuitBreakerContract,
     InMemoryQuotaLedger,
+    NoopProviderCapacityLedger,
+    ProviderCapacityLease,
+    ProviderCapacityLedgerContract,
     ProviderGateway,
     ProviderLimiter,
     ProviderRequestContext,
@@ -25,6 +28,7 @@ from .models import (
     UsagePrecision,
 )
 from .runtime import HttpResponse, ProviderSettings, ProviderTransport, UrllibProviderTransport
+from .routing import ResolvedProviderRoute, resolve_provider_routes
 
 __all__ = [
     "CircuitBreaker",
@@ -33,11 +37,14 @@ __all__ = [
     "HttpResponse",
     "ImplementationStatus",
     "InMemoryQuotaLedger",
+    "NoopProviderCapacityLedger",
     "PROVIDER_ALIASES",
     "PROVIDER_MANIFESTS",
     "ProbeLevel",
     "ProbeResult",
     "ProviderCapabilities",
+    "ProviderCapacityLease",
+    "ProviderCapacityLedgerContract",
     "ProviderCitation",
     "ProviderGateway",
     "ProviderGatewayError",
@@ -50,8 +57,10 @@ __all__ = [
     "ProviderUsage",
     "QuotaLedgerContract",
     "QuotaReservation",
+    "ResolvedProviderRoute",
     "UsagePrecision",
     "UrllibProviderTransport",
     "canonical_provider",
     "get_manifest",
+    "resolve_provider_routes",
 ]

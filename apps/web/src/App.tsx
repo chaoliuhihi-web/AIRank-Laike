@@ -2059,6 +2059,12 @@ function EvidencePage() {
     && typeof selectedProviderRequest.source_panel_status === "string"
       ? selectedProviderRequest.source_panel_status
       : null;
+  const selectedRouteId = selectedProviderRequest
+    && typeof selectedProviderRequest === "object"
+    && "route_id" in selectedProviderRequest
+    && typeof selectedProviderRequest.route_id === "string"
+      ? selectedProviderRequest.route_id
+      : null;
 
   return (
     <>
@@ -2140,6 +2146,7 @@ function EvidencePage() {
               <div><dt>采集时间</dt><dd>{formatDateTime(selected.evidence_captured_at)}</dd></div>
               <div><dt>会话</dt><dd>{selected.session_id}</dd></div>
               <div><dt>证据等级</dt><dd>{selected.evidence_level}</dd></div>
+              <div><dt>Provider 路由</dt><dd>{selectedRouteId || "历史样本未记录"}</dd></div>
             </dl>
           </Panel>
           <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>

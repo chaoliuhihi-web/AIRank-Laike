@@ -3546,13 +3546,13 @@ def complete_mysql_real_brand_scan(
                         """
                         INSERT INTO airank_provider_request_audits (
                           id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
-                          provider_key, model_name, endpoint_host, configuration_fingerprint,
+                          provider_key, route_id, model_name, endpoint_host, configuration_fingerprint,
                           provider_request_id, prompt_sha256, outcome, evidence_grade,
                           attempt_count, duration_ms, requested_at, completed_at, metadata_json
                         )
                         VALUES (
                           :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
-                          :provider_key, :model_name, :endpoint_host, :configuration_fingerprint,
+                          :provider_key, :route_id, :model_name, :endpoint_host, :configuration_fingerprint,
                           :provider_request_id, :prompt_sha256, 'success', :evidence_grade,
                           :attempt_count, :duration_ms, :requested_at, :completed_at, :metadata_json
                         )
@@ -3566,6 +3566,7 @@ def complete_mysql_real_brand_scan(
                         "task_id": row["id"],
                         "answer_snapshot_id": snapshot_id,
                         "provider_key": result.provider,
+                        "route_id": result.raw_metadata.get("route_id"),
                         "model_name": result.raw_metadata["model_name"],
                         "endpoint_host": result.raw_metadata["endpoint_host"],
                         "configuration_fingerprint": result.raw_metadata["configuration_fingerprint"],
@@ -3581,6 +3582,7 @@ def complete_mysql_real_brand_scan(
                                 "search_requested": result.raw_metadata.get("search_requested"),
                                 "search_used": result.raw_metadata.get("search_used"),
                                 "source_extraction": result.raw_metadata.get("source_extraction"),
+                                "route_id": result.raw_metadata.get("route_id"),
                             },
                             ensure_ascii=False,
                         ),
@@ -3947,13 +3949,13 @@ def complete_mysql_real_brand_scan(
                             """
                             INSERT INTO airank_provider_request_audits (
                               id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
-                              provider_key, model_name, endpoint_host, configuration_fingerprint,
+                              provider_key, route_id, model_name, endpoint_host, configuration_fingerprint,
                               prompt_sha256, outcome, attempt_count, error_code,
                               provider_error_code, requested_at, completed_at, metadata_json
                             )
                             VALUES (
                               :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
-                              :provider_key, :model_name, :endpoint_host, :configuration_fingerprint,
+                              :provider_key, :route_id, :model_name, :endpoint_host, :configuration_fingerprint,
                               :prompt_sha256, 'failed', :attempt_count, :error_code,
                               :provider_error_code, :requested_at, :completed_at, :metadata_json
                             )
@@ -3967,6 +3969,7 @@ def complete_mysql_real_brand_scan(
                             "task_id": failure["id"],
                             "answer_snapshot_id": failure_snapshot_id,
                             "provider_key": failure["provider"],
+                            "route_id": provider_metadata.get("route_id"),
                             "model_name": provider_metadata["model_name"],
                             "endpoint_host": provider_metadata["endpoint_host"],
                             "configuration_fingerprint": provider_metadata["configuration_fingerprint"],
@@ -3977,7 +3980,10 @@ def complete_mysql_real_brand_scan(
                             "requested_at": failure["started_at"],
                             "completed_at": failure["finished_at"],
                             "metadata_json": json.dumps(
-                                {"retryable": bool(failure.get("retryable"))}, ensure_ascii=False
+                                {
+                                    "retryable": bool(failure.get("retryable")),
+                                    "route_id": provider_metadata.get("route_id"),
+                                }, ensure_ascii=False
                             ),
                         },
                     )

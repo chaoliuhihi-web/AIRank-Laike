@@ -102,6 +102,7 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
                 raw_response={"id": "request_real_1"},
                 endpoint_host="dashscope.example.com",
                 configuration_fingerprint="a" * 64,
+                route_id="qianwen-primary",
             )
 
     monkeypatch.setattr("apps.api.provider_scan.get_api_gateway", lambda: FakeGateway())
@@ -122,6 +123,7 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     assert result.native_citations[0]["url"] == "https://example.com/a"
     assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
     assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}
+    assert result.raw_metadata["route_id"] == "qianwen-primary"
 
 
 def test_provider_answer_parser_extracts_rank_from_browser_text() -> None:

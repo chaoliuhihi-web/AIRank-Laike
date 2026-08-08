@@ -23,6 +23,7 @@ from .models import (
     ProviderResult,
 )
 from .runtime import HttpResponse, ProviderSettings, ProviderTransport, UrllibProviderTransport, auth_probe_url
+from .routing import ResolvedProviderRoute, resolve_provider_routes
 
 
 @dataclass
@@ -141,6 +142,49 @@ class ProviderRequestContext:
     idempotency_key: str = field(default_factory=lambda: f"provider_request_{uuid4().hex}")
 
 
+@dataclass
+class ProviderCapacityLease:
+    provider: str
+    configuration_fingerprint: str
+    tenant_id: str
+    lease_id: str = field(default_factory=lambda: f"capacity_{uuid4().hex}")
+    released: bool = False
+
+
+class ProviderCapacityLedgerContract(Protocol):
+    def acquire_capacity(
+        self,
+        provider: str,
+        configuration_fingerprint: str,
+        *,
+        context: ProviderRequestContext,
+    ) -> ProviderCapacityLease:
+        ...
+
+    def release_capacity(self, lease: ProviderCapacityLease) -> None:
+        ...
+
+
+class NoopProviderCapacityLedger:
+    """Local fallback; the existing process limiter remains authoritative."""
+
+    def acquire_capacity(
+        self,
+        provider: str,
+        configuration_fingerprint: str,
+        *,
+        context: ProviderRequestContext,
+    ) -> ProviderCapacityLease:
+        return ProviderCapacityLease(
+            provider=provider,
+            configuration_fingerprint=configuration_fingerprint,
+            tenant_id=context.tenant_id,
+        )
+
+    def release_capacity(self, lease: ProviderCapacityLease) -> None:
+        lease.released = True
+
+
 class QuotaLedgerContract(Protocol):
     def reserve(
         self,
@@ -215,6 +259,7 @@ class ProviderGateway:
         timeout_seconds: float = 90.0,
         circuit_breaker: CircuitBreakerContract | None = None,
         quota_ledger: QuotaLedgerContract | None = None,
+        capacity_ledger: ProviderCapacityLedgerContract | None = None,
         audit_sink: Callable[[Mapping[str, Any]], None] | None = None,
         probe_sink: Callable[[ProbeResult], None] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -225,6 +270,7 @@ class ProviderGateway:
         self.timeout_seconds = max(1.0, timeout_seconds)
         self.circuit = circuit_breaker or CircuitBreaker()
         self.quota = quota_ledger or InMemoryQuotaLedger()
+        self.capacity = capacity_ledger or NoopProviderCapacityLedger()
         self.audit_sink = audit_sink
         self.probe_sink = probe_sink
         self.sleep = sleep
@@ -235,7 +281,7 @@ class ProviderGateway:
 
     def settings(self, provider: str) -> ProviderSettings:
         manifest = self._manifest(provider)
-        return ProviderSettings.from_env(manifest, self.env)
+        return resolve_provider_routes(manifest, self.env)[0].settings
 
     def generate(
         self,
@@ -245,15 +291,43 @@ class ProviderGateway:
         request_context: ProviderRequestContext | None = None,
     ) -> ProviderResult:
         manifest = self._manifest(provider)
-        settings = ProviderSettings.from_env(manifest, self.env)
+        routes = resolve_provider_routes(manifest, self.env)
+        last_error: ProviderGatewayError | None = None
+        for index, route in enumerate(routes):
+            try:
+                return self._generate_route(
+                    manifest,
+                    route,
+                    prompt,
+                    request_context=request_context,
+                )
+            except ProviderGatewayError as exc:
+                last_error = self._route_error(manifest, route, exc)
+                if index >= len(routes) - 1 or not self._route_can_fail_over(exc):
+                    raise last_error
+        assert last_error is not None
+        raise last_error
+
+    def _generate_route(
+        self,
+        manifest: ProviderManifest,
+        route: ResolvedProviderRoute,
+        prompt: str,
+        *,
+        request_context: ProviderRequestContext | None,
+    ) -> ProviderResult:
+        settings = route.settings
         self._assert_operational(manifest, settings)
         canonical = manifest.provider
-        configuration_fingerprint = settings.configuration_fingerprint(canonical)
+        configuration_fingerprint = settings.configuration_fingerprint(
+            canonical, route.route_id
+        )
         if not self.circuit.allow(canonical, configuration_fingerprint):
             raise ProviderGatewayError(
                 canonical, "PROVIDER_CIRCUIT_OPEN", "provider circuit is open", retryable=True
             )
-        reservation = self.quota.reserve(canonical, context=request_context)
+        normalized_context = request_context or ProviderRequestContext()
+        reservation = self.quota.reserve(canonical, context=normalized_context)
         requested_at = datetime.now(timezone.utc)
         started = time.monotonic()
         headers = {
@@ -264,70 +338,86 @@ class ProviderGateway:
         request_payload = build_request(manifest, settings.model, prompt, settings.max_tokens)
         limiter = self._limiters.setdefault(canonical, self._build_limiter(canonical))
         last_error: ProviderGatewayError | None = None
+        capacity_lease: ProviderCapacityLease | None = None
         try:
             with limiter.acquire():
-                for attempt in range(1, self.max_attempts + 1):
-                    try:
-                        response, search_requested_for_call = self._request_with_supported_tools(
-                            manifest,
-                            settings,
-                            prompt,
-                            headers,
-                            request_payload,
-                        )
-                        answer, request_id, citations, search_used, usage = parse_response(
-                            response.data,
-                            response.headers,
-                            search_requested=search_requested_for_call,
-                        )
-                        if not answer:
-                            raise ProviderGatewayError(
-                                canonical,
-                                "PROVIDER_EMPTY_RESPONSE",
-                                "provider returned an empty answer",
+                capacity_lease = self.capacity.acquire_capacity(
+                    canonical,
+                    configuration_fingerprint,
+                    context=normalized_context,
+                )
+                try:
+                    for attempt in range(1, self.max_attempts + 1):
+                        try:
+                            response, search_requested_for_call = self._request_with_supported_tools(
+                                manifest,
+                                settings,
+                                prompt,
+                                headers,
+                                request_payload,
                             )
-                        completed_at = datetime.now(timezone.utc)
-                        self.circuit.success(canonical, configuration_fingerprint)
-                        self.quota.commit(reservation)
-                        result = ProviderResult(
-                            provider=canonical,
-                            model=settings.model,
-                            answer_text=answer,
-                            request_id=request_id,
-                            requested_at=requested_at,
-                            completed_at=completed_at,
-                            duration_ms=max(0, round((time.monotonic() - started) * 1000)),
-                            attempt_count=attempt,
-                            evidence_grade=self._evidence_grade(manifest, search_used),
-                            web_search_requested=manifest.capabilities.web_search,
-                            web_search_used=search_used,
-                            citations=citations,
-                            usage=usage,
-                            raw_response=response.data,
-                            endpoint_host=settings.endpoint_host,
-                            configuration_fingerprint=configuration_fingerprint,
-                        )
-                        self._audit(result, "success")
-                        return result
-                    except ProviderGatewayError as exc:
-                        last_error = ProviderGatewayError(
-                            canonical,
-                            exc.code,
-                            exc.message,
-                            retryable=exc.retryable,
-                            status_code=exc.status_code,
-                            provider_code=exc.provider_code,
-                        )
-                        self.circuit.failure(
-                            canonical,
-                            configuration_fingerprint,
-                            retryable=last_error.retryable,
-                        )
-                        if not last_error.retryable or attempt >= self.max_attempts:
-                            raise last_error
-                        self.sleep(min(5.0, 0.25 * (2 ** (attempt - 1))) + random.random() * 0.05)
+                            answer, request_id, citations, search_used, usage = parse_response(
+                                response.data,
+                                response.headers,
+                                search_requested=search_requested_for_call,
+                            )
+                            if not answer:
+                                raise ProviderGatewayError(
+                                    canonical,
+                                    "PROVIDER_EMPTY_RESPONSE",
+                                    "provider returned an empty answer",
+                                )
+                            completed_at = datetime.now(timezone.utc)
+                            self.circuit.success(canonical, configuration_fingerprint)
+                            self.quota.commit(reservation)
+                            result = ProviderResult(
+                                provider=canonical,
+                                model=settings.model,
+                                answer_text=answer,
+                                request_id=request_id,
+                                requested_at=requested_at,
+                                completed_at=completed_at,
+                                duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+                                attempt_count=attempt,
+                                evidence_grade=self._evidence_grade(manifest, search_used),
+                                web_search_requested=manifest.capabilities.web_search,
+                                web_search_used=search_used,
+                                citations=citations,
+                                usage=usage,
+                                raw_response=response.data,
+                                endpoint_host=settings.endpoint_host,
+                                configuration_fingerprint=configuration_fingerprint,
+                                route_id=route.route_id,
+                            )
+                            self._audit(result, "success")
+                            return result
+                        except ProviderGatewayError as exc:
+                            last_error = ProviderGatewayError(
+                                canonical,
+                                exc.code,
+                                exc.message,
+                                retryable=exc.retryable,
+                                status_code=exc.status_code,
+                                provider_code=exc.provider_code,
+                            )
+                            self.circuit.failure(
+                                canonical,
+                                configuration_fingerprint,
+                                retryable=last_error.retryable,
+                            )
+                            if not last_error.retryable or attempt >= self.max_attempts:
+                                raise last_error
+                            self.sleep(min(5.0, 0.25 * (2 ** (attempt - 1))) + random.random() * 0.05)
+                finally:
+                    if capacity_lease is not None:
+                        try:
+                            self.capacity.release_capacity(capacity_lease)
+                        except Exception:
+                            # A successful upstream call must not be replayed because
+                            # cleanup failed. Distributed leases have a mandatory TTL.
+                            pass
         except ProviderGatewayError as exc:
-            self._audit_error(canonical, settings, exc)
+            self._audit_error(canonical, route, exc)
             raise
         finally:
             self.quota.release(reservation)
@@ -386,7 +476,7 @@ class ProviderGateway:
 
     def _run_probe(self, provider: str, level: ProbeLevel) -> ProbeResult:
         manifest = self._manifest(provider)
-        settings = ProviderSettings.from_env(manifest, self.env)
+        settings = resolve_provider_routes(manifest, self.env)[0].settings
         checked_at = datetime.now(timezone.utc)
         started = time.monotonic()
         if settings.disabled:
@@ -531,12 +621,53 @@ class ProviderGateway:
             return "provider_api_search_not_used"
         return "provider_api_search_unverified"
 
+    @staticmethod
+    def _route_can_fail_over(error: ProviderGatewayError) -> bool:
+        return error.code in {
+            "PROVIDER_NOT_CONFIGURED",
+            "PROVIDER_CIRCUIT_OPEN",
+            "PROVIDER_NETWORK_FAILED",
+            "PROVIDER_UPSTREAM_FAILED",
+            "PROVIDER_RATE_OR_QUOTA_LIMITED",
+            "PROVIDER_AUTH_FAILED",
+            "PROVIDER_MODEL_OR_ENDPOINT_NOT_FOUND",
+            "PROVIDER_RESPONSE_INVALID",
+            "PROVIDER_EMPTY_RESPONSE",
+            "PROVIDER_MODEL_EXPIRED",
+            "PROVIDER_MODEL_MIGRATION_REQUIRED",
+            "PROVIDER_DISTRIBUTED_RATE_LIMITED",
+            "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED",
+        }
+
+    @staticmethod
+    def _route_error(
+        manifest: ProviderManifest,
+        route: ResolvedProviderRoute,
+        error: ProviderGatewayError,
+    ) -> ProviderGatewayError:
+        fingerprint = route.settings.configuration_fingerprint(
+            manifest.provider, route.route_id
+        )
+        return ProviderGatewayError(
+            manifest.provider,
+            error.code,
+            error.message,
+            retryable=error.retryable,
+            status_code=error.status_code,
+            provider_code=error.provider_code,
+            route_id=route.route_id,
+            configuration_fingerprint=fingerprint,
+            endpoint_host=route.settings.endpoint_host,
+            model=route.settings.model,
+        )
+
     def _audit(self, result: ProviderResult, outcome: str) -> None:
         if not self.audit_sink:
             return
         self.audit_sink(
             {
                 "provider": result.provider,
+                "route_id": result.route_id,
                 "model": result.model,
                 "endpoint_host": result.endpoint_host,
                 "request_id_present": bool(result.request_id),
@@ -550,20 +681,24 @@ class ProviderGateway:
         )
 
     def _audit_error(
-        self, provider: str, settings: ProviderSettings, error: ProviderGatewayError
+        self, provider: str, route: ResolvedProviderRoute, error: ProviderGatewayError
     ) -> None:
         if not self.audit_sink:
             return
+        settings = route.settings
         self.audit_sink(
             {
                 "provider": provider,
+                "route_id": route.route_id,
                 "model": settings.model,
                 "endpoint_host": settings.endpoint_host,
                 "error_code": error.code,
                 "provider_code": error.provider_code,
                 "retryable": error.retryable,
                 "outcome": "failed",
-                "configuration_fingerprint": settings.configuration_fingerprint(provider),
+                "configuration_fingerprint": settings.configuration_fingerprint(
+                    provider, route.route_id
+                ),
             }
         )
 

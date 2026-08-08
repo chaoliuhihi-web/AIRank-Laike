@@ -229,6 +229,7 @@ def get_api_gateway() -> ProviderGateway:
                 timeout_seconds=timeout_seconds,
                 circuit_breaker=_API_PROVIDER_OPERATIONS,
                 quota_ledger=_API_PROVIDER_OPERATIONS,
+                capacity_ledger=_API_PROVIDER_OPERATIONS,
                 probe_sink=_API_PROVIDER_OPERATIONS.record_probe,
             )
             _API_PROVIDER_OPERATIONS.sync_manifests(_API_GATEWAY.manifests())
@@ -300,9 +301,13 @@ def call_api_provider_for_brand_rank(
             retryable=exc.retryable,
             public_metadata={
                 "prompt_sha256": sha256_text(prompt),
-                "model_name": settings.model,
-                "endpoint_host": settings.endpoint_host,
-                "configuration_fingerprint": settings.configuration_fingerprint(provider),
+                "model_name": exc.model or settings.model,
+                "endpoint_host": exc.endpoint_host or settings.endpoint_host,
+                "configuration_fingerprint": (
+                    exc.configuration_fingerprint
+                    or settings.configuration_fingerprint(provider)
+                ),
+                "route_id": exc.route_id,
                 "capture_mode": "provider_api",
             },
         ) from exc
@@ -364,6 +369,7 @@ def call_api_provider_for_brand_rank(
             },
             "endpoint_host": api_result.endpoint_host,
             "configuration_fingerprint": api_result.configuration_fingerprint,
+            "route_id": api_result.route_id,
             "source_extraction": "provider_native_payload",
             "provider_raw_response": api_result.raw_response,
         },

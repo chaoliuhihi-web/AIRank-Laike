@@ -72,10 +72,11 @@ class ProviderSettings:
     def endpoint_host(self) -> str:
         return urlparse(self.endpoint).hostname or ""
 
-    def configuration_fingerprint(self, provider: str) -> str:
+    def configuration_fingerprint(self, provider: str, route_id: str = "default") -> str:
         payload = {
-            "contract": "airank.provider-config.v1",
+            "contract": "airank.provider-config.v2",
             "provider": provider,
+            "route_id": route_id,
             "endpoint": self.endpoint,
             "model": self.model,
             "disabled": self.disabled,

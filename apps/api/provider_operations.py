@@ -11,11 +11,12 @@ from sqlalchemy import create_engine, text
 
 from airank_provider_gateway import (
     ProbeResult,
+    ProviderCapacityLease,
     ProviderGatewayError,
     ProviderManifest,
     ProviderRequestContext,
-    ProviderSettings,
     QuotaReservation,
+    resolve_provider_routes,
 )
 
 
@@ -37,12 +38,16 @@ class MySQLProviderOperations:
         self.failure_threshold = self._integer("AIRANK_PROVIDER_CIRCUIT_FAILURE_THRESHOLD", 3, minimum=1)
         self.cooldown_seconds = self._integer("AIRANK_PROVIDER_CIRCUIT_COOLDOWN_SECONDS", 30, minimum=1)
         self.reservation_ttl_seconds = self._integer("AIRANK_PROVIDER_QUOTA_RESERVATION_TTL_SECONDS", 300, minimum=10)
+        self.capacity_lease_ttl_seconds = self._integer(
+            "AIRANK_PROVIDER_CAPACITY_LEASE_TTL_SECONDS", 300, minimum=10
+        )
 
     def sync_manifests(self, manifests: Iterable[ProviderManifest]) -> None:
         now = utc_now_naive()
         with self.engine.begin() as conn:
             for manifest in manifests:
-                settings = ProviderSettings.from_env(manifest, self.env)
+                routes = resolve_provider_routes(manifest, self.env)
+                settings = routes[0].settings
                 public_manifest = {
                     "provider": manifest.provider,
                     "label": manifest.label,
@@ -66,7 +71,9 @@ class MySQLProviderOperations:
                 }
                 manifest_json = json.dumps(public_manifest, ensure_ascii=False, sort_keys=True)
                 manifest_version = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()[:16]
-                fingerprint = settings.configuration_fingerprint(manifest.provider)
+                fingerprint = settings.configuration_fingerprint(
+                    manifest.provider, routes[0].route_id
+                )
                 conn.execute(
                     text(
                         """
@@ -118,6 +125,67 @@ class MySQLProviderOperations:
                         "created_at": now,
                     },
                 )
+                for route in routes:
+                    route_public = {
+                        "provider": manifest.provider,
+                        "route_id": route.route_id,
+                        "priority": route.priority,
+                        "endpoint_host": route.settings.endpoint_host,
+                        "model": route.settings.model,
+                    }
+                    route_json = json.dumps(
+                        route_public, ensure_ascii=False, sort_keys=True
+                    )
+                    route_version = hashlib.sha256(
+                        route_json.encode("utf-8")
+                    ).hexdigest()[:16]
+                    route_fingerprint = route.settings.configuration_fingerprint(
+                        manifest.provider, route.route_id
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE airank_provider_routes SET is_current=0
+                            WHERE provider_key=:provider_key AND route_id=:route_id
+                              AND route_version<>:route_version AND is_current=1
+                            """
+                        ),
+                        {
+                            "provider_key": manifest.provider,
+                            "route_id": route.route_id,
+                            "route_version": route_version,
+                        },
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_provider_routes (
+                              provider_key, route_id, route_version, priority,
+                              endpoint_host, model_name,
+                              configuration_fingerprint, is_current, created_at
+                            ) VALUES (
+                              :provider_key, :route_id, :route_version, :priority,
+                              :endpoint_host, :model_name,
+                              :configuration_fingerprint, 1, :created_at
+                            ) ON DUPLICATE KEY UPDATE
+                              priority=VALUES(priority),
+                              endpoint_host=VALUES(endpoint_host),
+                              model_name=VALUES(model_name),
+                              configuration_fingerprint=VALUES(configuration_fingerprint),
+                              is_current=1
+                            """
+                        ),
+                        {
+                            "provider_key": manifest.provider,
+                            "route_id": route.route_id,
+                            "route_version": route_version,
+                            "priority": route.priority,
+                            "endpoint_host": route.settings.endpoint_host,
+                            "model_name": route.settings.model,
+                            "configuration_fingerprint": route_fingerprint,
+                            "created_at": now,
+                        },
+                    )
 
     def record_probe(self, result: ProbeResult) -> None:
         with self.engine.begin() as conn:
@@ -267,6 +335,280 @@ class MySQLProviderOperations:
                     "configuration_fingerprint": fingerprint,
                 },
             )
+
+    def acquire_capacity(
+        self,
+        provider: str,
+        configuration_fingerprint: str,
+        *,
+        context: ProviderRequestContext,
+    ) -> ProviderCapacityLease:
+        """Atomically consume one distributed QPS token and one concurrency slot."""
+
+        now = utc_now_naive()
+        fingerprint = self._fingerprint(configuration_fingerprint)
+        qps_limit, concurrency_limit = self._provider_capacity_limits(provider)
+        expires_at = now + timedelta(seconds=self.capacity_lease_ttl_seconds)
+        denied: ProviderGatewayError | None = None
+        lease_id = f"capacity_{uuid4().hex}"
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_provider_capacity_states (
+                      provider_key, configuration_fingerprint, qps_limit,
+                      concurrency_limit, available_tokens, last_refill_at,
+                      in_flight_count, updated_at
+                    ) VALUES (
+                      :provider_key, :configuration_fingerprint, :qps_limit,
+                      :concurrency_limit, :available_tokens, :last_refill_at,
+                      0, :updated_at
+                    ) ON DUPLICATE KEY UPDATE
+                      qps_limit=VALUES(qps_limit),
+                      concurrency_limit=VALUES(concurrency_limit)
+                    """
+                ),
+                {
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                    "qps_limit": qps_limit,
+                    "concurrency_limit": concurrency_limit,
+                    "available_tokens": qps_limit,
+                    "last_refill_at": now,
+                    "updated_at": now,
+                },
+            )
+            state = conn.execute(
+                text(
+                    """
+                    SELECT qps_limit, concurrency_limit, available_tokens,
+                           last_refill_at, in_flight_count
+                    FROM airank_provider_capacity_states
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            ).mappings().one()
+            expired = conn.execute(
+                text(
+                    """
+                    SELECT id FROM airank_provider_capacity_leases
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                      AND status='active' AND expires_at <= :now
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                    "now": now,
+                },
+            ).scalars().all()
+            if expired:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_provider_capacity_leases
+                        SET status='expired', released_at=:now
+                        WHERE provider_key=:provider_key
+                          AND configuration_fingerprint=:configuration_fingerprint
+                          AND status='active' AND expires_at <= :now
+                        """
+                    ),
+                    {
+                        "provider_key": provider,
+                        "configuration_fingerprint": fingerprint,
+                        "now": now,
+                    },
+                )
+            in_flight = max(0, int(state["in_flight_count"]) - len(expired))
+            last_refill_at = state["last_refill_at"] or now
+            elapsed_seconds = max(0.0, (now - last_refill_at).total_seconds())
+            available_tokens = min(
+                float(qps_limit),
+                float(state["available_tokens"]) + elapsed_seconds * float(qps_limit),
+            )
+            existing = conn.execute(
+                text(
+                    """
+                    SELECT id, status FROM airank_provider_capacity_leases
+                    WHERE tenant_id=:tenant_id AND provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                      AND idempotency_key=:idempotency_key
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "tenant_id": context.tenant_id,
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                    "idempotency_key": context.idempotency_key,
+                },
+            ).mappings().first()
+            if existing and str(existing["status"]) == "active":
+                denied = ProviderGatewayError(
+                    provider,
+                    "PROVIDER_REQUEST_IN_PROGRESS",
+                    "provider request already owns a distributed capacity lease",
+                    retryable=True,
+                )
+            elif in_flight >= concurrency_limit:
+                denied = ProviderGatewayError(
+                    provider,
+                    "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED",
+                    "provider distributed concurrency limit is reached",
+                    retryable=True,
+                )
+            elif available_tokens < 1.0:
+                denied = ProviderGatewayError(
+                    provider,
+                    "PROVIDER_DISTRIBUTED_RATE_LIMITED",
+                    "provider distributed QPS token is not available",
+                    retryable=True,
+                )
+            else:
+                available_tokens -= 1.0
+                in_flight += 1
+                lease_id = str(existing["id"]) if existing else lease_id
+                if existing:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE airank_provider_capacity_leases
+                            SET project_id=:project_id, status='active',
+                                acquired_at=:acquired_at, expires_at=:expires_at,
+                                released_at=NULL
+                            WHERE id=:id
+                            """
+                        ),
+                        {
+                            "project_id": context.project_id,
+                            "acquired_at": now,
+                            "expires_at": expires_at,
+                            "id": lease_id,
+                        },
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_provider_capacity_leases (
+                              id, tenant_id, project_id, provider_key,
+                              configuration_fingerprint, idempotency_key,
+                              status, acquired_at, expires_at, created_at
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :provider_key,
+                              :configuration_fingerprint, :idempotency_key,
+                              'active', :acquired_at, :expires_at, :created_at
+                            )
+                            """
+                        ),
+                        {
+                            "id": lease_id,
+                            "tenant_id": context.tenant_id,
+                            "project_id": context.project_id,
+                            "provider_key": provider,
+                            "configuration_fingerprint": fingerprint,
+                            "idempotency_key": context.idempotency_key,
+                            "acquired_at": now,
+                            "expires_at": expires_at,
+                            "created_at": now,
+                        },
+                    )
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_provider_capacity_states
+                    SET qps_limit=:qps_limit,
+                        concurrency_limit=:concurrency_limit,
+                        available_tokens=:available_tokens,
+                        last_refill_at=:last_refill_at,
+                        in_flight_count=:in_flight_count,
+                        updated_at=:updated_at
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    """
+                ),
+                {
+                    "qps_limit": qps_limit,
+                    "concurrency_limit": concurrency_limit,
+                    "available_tokens": available_tokens,
+                    "last_refill_at": now,
+                    "in_flight_count": in_flight,
+                    "updated_at": now,
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            )
+        if denied is not None:
+            raise denied
+        return ProviderCapacityLease(
+            provider=provider,
+            configuration_fingerprint=fingerprint,
+            tenant_id=context.tenant_id,
+            lease_id=lease_id,
+        )
+
+    def release_capacity(self, lease: ProviderCapacityLease) -> None:
+        if lease.released:
+            return
+        now = utc_now_naive()
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, status FROM airank_provider_capacity_leases
+                    WHERE id=:id AND tenant_id=:tenant_id
+                      AND provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "id": lease.lease_id,
+                    "tenant_id": lease.tenant_id,
+                    "provider_key": lease.provider,
+                    "configuration_fingerprint": self._fingerprint(
+                        lease.configuration_fingerprint
+                    ),
+                },
+            ).mappings().first()
+            if row is not None and str(row["status"]) == "active":
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_provider_capacity_leases
+                        SET status='released', released_at=:released_at
+                        WHERE id=:id AND status='active'
+                        """
+                    ),
+                    {"released_at": now, "id": lease.lease_id},
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_provider_capacity_states
+                        SET in_flight_count=GREATEST(0, in_flight_count - 1),
+                            updated_at=:updated_at
+                        WHERE provider_key=:provider_key
+                          AND configuration_fingerprint=:configuration_fingerprint
+                        """
+                    ),
+                    {
+                        "updated_at": now,
+                        "provider_key": lease.provider,
+                        "configuration_fingerprint": self._fingerprint(
+                            lease.configuration_fingerprint
+                        ),
+                    },
+                )
+        lease.released = True
 
     def reserve(
         self,
@@ -566,6 +908,20 @@ class MySQLProviderOperations:
     def _provider_quota_limit(self, provider: str) -> int:
         provider_key = f"{provider.upper()}_QUOTA_UNITS"
         return self._integer(provider_key, self._integer("AIRANK_PROVIDER_DEFAULT_QUOTA_UNITS", 1_000_000, minimum=1), minimum=1)
+
+    def _provider_capacity_limits(self, provider: str) -> tuple[int, int]:
+        prefix = provider.upper()
+        qps = self._integer(
+            f"{prefix}_QPS",
+            self._integer("AIRANK_PROVIDER_QPS", 2, minimum=1),
+            minimum=1,
+        )
+        concurrency = self._integer(
+            f"{prefix}_CONCURRENCY",
+            self._integer("AIRANK_PROVIDER_CONCURRENCY", 2, minimum=1),
+            minimum=1,
+        )
+        return qps, concurrency
 
     def _integer(self, name: str, default: int, *, minimum: int) -> int:
         try:

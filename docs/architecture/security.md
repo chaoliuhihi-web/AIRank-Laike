@@ -29,6 +29,7 @@ M1 规则：
 - `model_route_snapshot` 只保存 provider、model、model_id、key_id 和脱敏后的 key 指纹。
 - 日志、audit event、错误详情禁止输出 API Key。
 - 生产环境密钥放独立 secret store，不放 `.env`、SQL、文档或测试 fixture。
+- 多上游路由配置只允许引用密钥环境变量名称；路由 JSON 禁止出现 `api_key`、`token`、`secret` 或凭证值。数据库只保存 route id、host、model、priority 和单向配置指纹。
 
 ## 可信事实卡公开控制
 

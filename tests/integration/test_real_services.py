@@ -59,9 +59,13 @@ from apps.api.question_routes import (
 from airank_evidence import FilesystemObjectStorage
 from airank_provider_gateway import (
     HealthState,
+    ImplementationStatus,
     ProbeLevel,
     ProbeResult,
+    ProviderCapabilities,
+    ProviderCapacityLease,
     ProviderGatewayError,
+    ProviderManifest,
     ProviderRequestContext,
 )
 
@@ -84,7 +88,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0014"
+EXPECTED_ALEMBIC_HEAD = "20260808_0016"
 
 
 def require_real_flag(flag: str) -> None:
@@ -150,7 +154,17 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 54
+        assert table_count == 57
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_request_audits'
+                  AND column_name='route_id'
+                """
+            )
+        ).scalar_one() == 1
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -1519,6 +1533,8 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
         "AIRANK_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "1",
         "AIRANK_PROVIDER_DEFAULT_QUOTA_UNITS": "1",
         "AIRANK_PROVIDER_QUOTA_RESERVATION_TTL_SECONDS": "30",
+        "AIRANK_PROVIDER_QPS": "1",
+        "AIRANK_PROVIDER_CONCURRENCY": "1",
     }
     first_worker = MySQLProviderOperations(database_url(), env=env)
     second_worker = MySQLProviderOperations(database_url(), env=env)
@@ -1527,6 +1543,8 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
         project_id="project_provider_it",
         idempotency_key="scan_task_provider_it",
     )
+    race_tenant_id = f"{tenant_id}_race"
+    capacity_tenant_id = f"{tenant_id}_capacity"
 
     try:
         reservation = first_worker.reserve(provider, context=context)
@@ -1561,8 +1579,6 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
             )
         assert quota_error.value.code == "PROVIDER_QUOTA_EXHAUSTED"
 
-        race_tenant_id = f"{tenant_id}_race"
-
         def reserve_from_worker(index: int) -> str:
             worker = first_worker if index == 1 else second_worker
             try:
@@ -1581,6 +1597,153 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
             race_results = list(executor.map(reserve_from_worker, (1, 2)))
         assert sum(result.startswith("quota_") for result in race_results) == 1
         assert race_results.count("PROVIDER_QUOTA_EXHAUSTED") == 1
+
+        capacity_context_1 = ProviderRequestContext(
+            tenant_id=capacity_tenant_id,
+            project_id="project_provider_capacity",
+            idempotency_key="capacity_task_1",
+        )
+        capacity_context_2 = ProviderRequestContext(
+            tenant_id=capacity_tenant_id,
+            project_id="project_provider_capacity",
+            idempotency_key="capacity_task_2",
+        )
+        capacity_context_3 = ProviderRequestContext(
+            tenant_id=capacity_tenant_id,
+            project_id="project_provider_capacity",
+            idempotency_key="capacity_task_3",
+        )
+        capacity_lease_1 = first_worker.acquire_capacity(
+            provider, fingerprint, context=capacity_context_1
+        )
+        with pytest.raises(ProviderGatewayError) as concurrency_error:
+            second_worker.acquire_capacity(
+                provider, fingerprint, context=capacity_context_2
+            )
+        assert concurrency_error.value.code == "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED"
+        assert concurrency_error.value.retryable is True
+
+        first_worker.release_capacity(capacity_lease_1)
+        with pytest.raises(ProviderGatewayError) as rate_error:
+            second_worker.acquire_capacity(
+                provider, fingerprint, context=capacity_context_2
+            )
+        assert rate_error.value.code == "PROVIDER_DISTRIBUTED_RATE_LIMITED"
+        assert rate_error.value.retryable is True
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_provider_capacity_states
+                    SET available_tokens=0, last_refill_at=:last_refill_at
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    """
+                ),
+                {
+                    "last_refill_at": datetime.now(timezone.utc).replace(tzinfo=None)
+                    - timedelta(seconds=2),
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            )
+        capacity_lease_2 = second_worker.acquire_capacity(
+            provider, fingerprint, context=capacity_context_2
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_provider_capacity_leases
+                    SET expires_at=:expired_at WHERE id=:lease_id
+                    """
+                ),
+                {
+                    "expired_at": datetime.now(timezone.utc).replace(tzinfo=None)
+                    - timedelta(seconds=1),
+                    "lease_id": capacity_lease_2.lease_id,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_provider_capacity_states
+                    SET available_tokens=0, last_refill_at=:last_refill_at
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    """
+                ),
+                {
+                    "last_refill_at": datetime.now(timezone.utc).replace(tzinfo=None)
+                    - timedelta(seconds=2),
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            )
+        recovered_lease = first_worker.acquire_capacity(
+            provider, fingerprint, context=capacity_context_3
+        )
+        with engine.connect() as conn:
+            capacity_state = conn.execute(
+                text(
+                    """
+                    SELECT in_flight_count FROM airank_provider_capacity_states
+                    WHERE provider_key=:provider_key
+                      AND configuration_fingerprint=:configuration_fingerprint
+                    """
+                ),
+                {
+                    "provider_key": provider,
+                    "configuration_fingerprint": fingerprint,
+                },
+            ).scalar_one()
+            expired_status = conn.execute(
+                text(
+                    "SELECT status FROM airank_provider_capacity_leases WHERE id=:lease_id"
+                ),
+                {"lease_id": capacity_lease_2.lease_id},
+            ).scalar_one()
+        assert int(capacity_state) == 1
+        assert expired_status == "expired"
+        first_worker.release_capacity(recovered_lease)
+
+        race_fingerprint = "b" * 64
+
+        def acquire_capacity_from_worker(index: int) -> str:
+            worker = first_worker if index == 1 else second_worker
+            try:
+                return worker.acquire_capacity(
+                    provider,
+                    race_fingerprint,
+                    context=ProviderRequestContext(
+                        tenant_id=capacity_tenant_id,
+                        project_id="project_provider_capacity_race",
+                        idempotency_key=f"capacity_race_{index}",
+                    ),
+                ).lease_id
+            except ProviderGatewayError as exc:
+                return exc.code
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            capacity_race_results = list(
+                executor.map(acquire_capacity_from_worker, (1, 2))
+            )
+        assert sum(result.startswith("capacity_") for result in capacity_race_results) == 1
+        assert capacity_race_results.count(
+            "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED"
+        ) == 1
+        winning_capacity_lease_id = next(
+            result for result in capacity_race_results if result.startswith("capacity_")
+        )
+        first_worker.release_capacity(
+            ProviderCapacityLease(
+                provider=provider,
+                configuration_fingerprint=race_fingerprint,
+                tenant_id=capacity_tenant_id,
+                lease_id=winning_capacity_lease_id,
+            )
+        )
 
         first_worker.failure(provider, fingerprint, retryable=True)
         assert second_worker.allow(provider, fingerprint) is False
@@ -1633,6 +1796,8 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
         assert probe["health_state"] == "healthy"
         assert bool(probe["request_id_present"]) is True
     finally:
+        cleanup_tenant(engine, capacity_tenant_id)
+        cleanup_tenant(engine, race_tenant_id)
         with engine.begin() as conn:
             conn.execute(
                 text("DELETE FROM airank_provider_probe_runs WHERE provider_key = :provider_key"),
@@ -1642,8 +1807,109 @@ def test_real_mysql_provider_operations_are_shared_and_idempotent() -> None:
                 text("DELETE FROM airank_provider_circuit_states WHERE provider_key = :provider_key"),
                 {"provider_key": provider},
             )
+            conn.execute(
+                text("DELETE FROM airank_provider_capacity_states WHERE provider_key = :provider_key"),
+                {"provider_key": provider},
+            )
         cleanup_tenant(engine, tenant_id)
-        cleanup_tenant(engine, race_tenant_id)
+
+
+def test_real_mysql_provider_route_manifests_are_public_and_versioned() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    provider = f"provider_route_{uuid4().hex[:8]}"
+    route_id = f"route-{uuid4().hex[:8]}"
+    route_env = f"{provider.upper()}_ROUTES_JSON"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    env = {
+        "AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS": "true",
+        "ROUTE_TEST_PRIMARY_KEY": "secret-route-value-never-persisted",
+        route_env: json.dumps(
+            [
+                {
+                    "route_id": route_id,
+                    "priority": 100,
+                    "endpoint": "https://route-primary.example.test/v1/chat/completions",
+                    "model": "route-model-v1",
+                    "key_env": "ROUTE_TEST_PRIMARY_KEY",
+                }
+            ]
+        ),
+    }
+    manifest = ProviderManifest(
+        provider=provider,
+        label="Provider Route Integration",
+        implementation_status=ImplementationStatus.PARTIAL,
+        collection_mode="provider_api",
+        endpoint_env=f"{provider.upper()}_API_URL",
+        endpoint_default="https://route-default.example.test/v1/chat/completions",
+        key_env=f"{provider.upper()}_API_KEY",
+        model_env=f"{provider.upper()}_MODEL",
+        model_default="route-model-default",
+        disabled_env=f"{provider.upper()}_DISABLED",
+        request_kind="openai_chat",
+        capabilities=ProviderCapabilities(web_search=False, citations=False),
+        allowed_endpoint_hosts=("route-primary.example.test",),
+    )
+    operations = MySQLProviderOperations(database_url(), env=env)
+
+    try:
+        operations.sync_manifests([manifest])
+        with engine.connect() as conn:
+            first = conn.execute(
+                text(
+                    """
+                    SELECT route_id, priority, endpoint_host, model_name,
+                           configuration_fingerprint, is_current
+                    FROM airank_provider_routes
+                    WHERE provider_key=:provider_key AND route_id=:route_id
+                    """
+                ),
+                {"provider_key": provider, "route_id": route_id},
+            ).mappings().one()
+        assert first["endpoint_host"] == "route-primary.example.test"
+        assert first["model_name"] == "route-model-v1"
+        assert len(str(first["configuration_fingerprint"])) == 64
+        assert bool(first["is_current"]) is True
+        assert "secret-route-value-never-persisted" not in json.dumps(
+            dict(first), default=str
+        )
+
+        env[route_env] = json.dumps(
+            [
+                {
+                    "route_id": route_id,
+                    "priority": 100,
+                    "endpoint": "https://route-primary.example.test/v1/chat/completions",
+                    "model": "route-model-v2",
+                    "key_env": "ROUTE_TEST_PRIMARY_KEY",
+                }
+            ]
+        )
+        operations.sync_manifests([manifest])
+        with engine.connect() as conn:
+            versions = conn.execute(
+                text(
+                    """
+                    SELECT model_name, is_current FROM airank_provider_routes
+                    WHERE provider_key=:provider_key AND route_id=:route_id
+                    ORDER BY created_at, route_version
+                    """
+                ),
+                {"provider_key": provider, "route_id": route_id},
+            ).mappings().all()
+        assert len(versions) == 2
+        assert sum(bool(row["is_current"]) for row in versions) == 1
+        assert next(row["model_name"] for row in versions if row["is_current"]) == "route-model-v2"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM airank_provider_routes WHERE provider_key=:provider_key"),
+                {"provider_key": provider},
+            )
+            conn.execute(
+                text("DELETE FROM airank_provider_manifests WHERE provider_key=:provider_key"),
+                {"provider_key": provider},
+            )
 
 
 def test_real_mysql_knowledge_governance_derives_expiry_and_conflict_queue() -> None:
