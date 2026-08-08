@@ -1220,6 +1220,7 @@ Decision:
 - Proposed or otherwise ineligible facts cannot set `generation_allowed`; approved evidence moves both the task and source gap to `ready_for_intervention`. This state does not create content or claim publication/model recommendation.
 - Contract and acceptance tests cover actor trust, strict JSON schemas, legacy rejection, pending-versus-approved state transitions, idempotent replay, event count/hash and exact-boundary/hash rejection. Real MySQL completes gap → task → official source → reviewed FactRevision → resolved task, and the asset state changes from `待补事实` to `待生成` only after the evidence gate passes.
 - The live browser project intentionally has no approved facts: it displays one task as `待提议事实`, zero sources/revisions/approved facts and a disabled binding action. The 390×844 requested viewport is rendered at the in-app browser's 312×675 content viewport without page overflow; console warnings/errors are zero.
+- The strict release gate was rerun on the clean, dual-remote-synchronized feature commit `44c7ceb`. Contracts 205, crawler-lite 6, acceptance 81, Scheduler 15, standalone Worker 41, score 16, evidence 48, outbound-security 23, Provider Gateway 26 and Xinghe adapter 10 all pass; Provider-native citations pass 7/7, core Skills pass 30/30, the production Web build passes, real MySQL passes `28 passed, 2 skipped`, and both offline SQL plus real Alembic head `20260809_0032` pass.
 
 ### Still blocked
 
@@ -1227,6 +1228,7 @@ Decision:
 - Fact-acquisition assignment ownership, SLA/escalation and automatic routing to knowledge owners are not yet implemented.
 - Citation-support, fact-staleness/conflict and page-audit findings are not yet normalized into the same cross-domain opportunity model.
 - All previously recorded production infrastructure, identity, Consumer Web/App, customer publishing, reviewer benchmark, credential migration and elapsed retest blockers remain open.
+- The strict report therefore remains `BLOCKED`: the API-auth configuration check passes under explicit `required`/`yudao` settings, but the real Yudao permission endpoint is absent; object storage is still local, optional Xinghe capabilities are `dev_only`, and Consumer browser L3 generation is 0/4 because login or captcha verification blocks all four providers. Real Provider API success is not substituted for these missing production/Consumer proofs.
 
 ### Decision
 
