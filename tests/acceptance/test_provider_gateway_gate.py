@@ -70,6 +70,20 @@ def test_provider_operations_migration_has_no_plaintext_credential_column() -> N
     assert "airank_provider_request_audits" in route_migration
     assert "api_key" not in route_migration
 
+    control_migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0017_provider_route_controls.py"
+    ).read_text(encoding="utf-8")
+    assert "airank_provider_route_controls" in control_migration
+    assert "airank_provider_route_control_events" in control_migration
+    assert "control_version" in control_migration
+    assert "api_key" not in control_migration
+    assert "secret" not in control_migration
+
 
 def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() -> None:
     provider_scan = (ROOT / "apps" / "api" / "provider_scan.py").read_text(encoding="utf-8")
@@ -79,6 +93,7 @@ def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() ->
     assert "circuit_breaker=_API_PROVIDER_OPERATIONS" in provider_scan
     assert "quota_ledger=_API_PROVIDER_OPERATIONS" in provider_scan
     assert "capacity_ledger=_API_PROVIDER_OPERATIONS" in provider_scan
+    assert "route_policy=_API_PROVIDER_OPERATIONS" in provider_scan
     assert "probe_sink=_API_PROVIDER_OPERATIONS.record_probe" in provider_scan
     assert 'f"scan:{tenant_id}:{project_id}:{task_id}"' in provider_scan
     assert "FOR UPDATE" in operations
@@ -89,4 +104,7 @@ def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() ->
     assert "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED" in operations
     assert "resolve_provider_routes" in operations
     assert "airank_provider_routes" in operations
+    assert "airank_provider_route_controls" in operations
+    assert "airank_provider_route_control_events" in operations
+    assert "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN" in operations
     assert "api_key" not in operations

@@ -60,6 +60,7 @@ from airank_evidence import FilesystemObjectStorage
 from airank_provider_gateway import (
     HealthState,
     ImplementationStatus,
+    PROVIDER_MANIFESTS,
     ProbeLevel,
     ProbeResult,
     ProviderCapabilities,
@@ -67,6 +68,7 @@ from airank_provider_gateway import (
     ProviderGatewayError,
     ProviderManifest,
     ProviderRequestContext,
+    resolve_provider_routes,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,7 +90,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0016"
+EXPECTED_ALEMBIC_HEAD = "20260808_0017"
 
 
 def require_real_flag(flag: str) -> None:
@@ -154,7 +156,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 57
+        assert table_count == 59
         assert conn.execute(
             text(
                 """
@@ -165,6 +167,19 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one() == 1
+        for table_name in (
+            "airank_provider_route_controls",
+            "airank_provider_route_control_events",
+        ):
+            assert conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_schema=DATABASE() AND table_name=:table_name
+                    """
+                ),
+                {"table_name": table_name},
+            ).scalar_one() == 1
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -1983,6 +1998,122 @@ def test_real_mysql_provider_route_manifests_are_public_and_versioned() -> None:
             conn.execute(
                 text("DELETE FROM airank_provider_manifests WHERE provider_key=:provider_key"),
                 {"provider_key": provider},
+            )
+
+
+def test_real_mysql_provider_route_controls_apply_without_restart_and_are_audited() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    suffix = uuid4().hex[:8]
+    primary_route = f"primary-{suffix}"
+    secondary_route = f"secondary-{suffix}"
+    env = {
+        "QIANWEN_API_KEY": "default-secret-never-persisted",
+        "QIANWEN_MODEL": "qwen-default",
+        "QIANWEN_PRIMARY_TEST_KEY": "primary-secret-never-persisted",
+        "QIANWEN_SECONDARY_TEST_KEY": "secondary-secret-never-persisted",
+        "QIANWEN_ROUTES_JSON": json.dumps(
+            [
+                {
+                    "route_id": primary_route,
+                    "priority": 100,
+                    "model": "qwen-primary-test",
+                    "key_env": "QIANWEN_PRIMARY_TEST_KEY",
+                },
+                {
+                    "route_id": secondary_route,
+                    "priority": 50,
+                    "model": "qwen-secondary-test",
+                    "key_env": "QIANWEN_SECONDARY_TEST_KEY",
+                },
+            ]
+        ),
+    }
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    operations = MySQLProviderOperations(database_url(), env=env)
+    configured = resolve_provider_routes(PROVIDER_MANIFESTS["qianwen"], env)
+
+    try:
+        record = operations.set_route_control(
+            "qianwen",
+            primary_route,
+            enabled=False,
+            priority_override=None,
+            expected_version=0,
+            changed_by="integration-route-admin",
+            reason="planned primary maintenance",
+        )
+        assert record["control_version"] == 1
+        assert [route.route_id for route in operations.apply_routes("qianwen", configured)] == [
+            secondary_route
+        ]
+        route_status = operations.list_route_status([PROVIDER_MANIFESTS["qianwen"]])
+        primary_status = next(item for item in route_status if item["route_id"] == primary_route)
+        secondary_status = next(item for item in route_status if item["route_id"] == secondary_route)
+        assert primary_status["enabled"] is False
+        assert primary_status["control_version"] == 1
+        assert primary_status["request_count_24h"] == 0
+        assert secondary_status["enabled"] is True
+        assert secondary_status["effective_priority"] == 50
+        assert "secret-never-persisted" not in json.dumps(route_status, default=str)
+
+        with pytest.raises(ProviderGatewayError) as stale:
+            operations.set_route_control(
+                "qianwen",
+                primary_route,
+                enabled=True,
+                priority_override=200,
+                expected_version=0,
+                changed_by="stale-admin",
+                reason="stale update",
+            )
+        assert stale.value.code == "PROVIDER_ROUTE_CONTROL_CONFLICT"
+
+        with pytest.raises(ProviderGatewayError) as last_route:
+            operations.set_route_control(
+                "qianwen",
+                secondary_route,
+                enabled=False,
+                priority_override=None,
+                expected_version=0,
+                changed_by="integration-route-admin",
+                reason="must not disable all routes",
+            )
+        assert last_route.value.code == "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN"
+
+        with engine.connect() as conn:
+            event = conn.execute(
+                text(
+                    """
+                    SELECT previous_control_json, new_control_json, changed_by, reason
+                    FROM airank_provider_route_control_events
+                    WHERE provider_key='qianwen' AND route_id=:route_id
+                    """
+                ),
+                {"route_id": primary_route},
+            ).mappings().one()
+        serialized = json.dumps(dict(event), default=str)
+        assert event["changed_by"] == "integration-route-admin"
+        assert "planned primary maintenance" in serialized
+        assert "secret-never-persisted" not in serialized
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM airank_provider_route_control_events
+                    WHERE provider_key='qianwen' AND route_id IN (:primary_route, :secondary_route)
+                    """
+                ),
+                {"primary_route": primary_route, "secondary_route": secondary_route},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM airank_provider_route_controls
+                    WHERE provider_key='qianwen' AND route_id IN (:primary_route, :secondary_route)
+                    """
+                ),
+                {"primary_route": primary_route, "secondary_route": secondary_route},
             )
 
 

@@ -20,6 +20,7 @@ def test_absorption_matrix_covers_every_source_and_geo_skill() -> None:
     result = load_verifier().validate()
 
     assert result["status"] == "pass", result["errors"]
-    assert result["source_count"] == 12
+    assert result["source_count"] == 13
+    assert result["matrix_row_count"] == 67
     assert result["geo_skill_count"] == 21
     assert set(result["decisions"]) == {"absorb", "adapt", "reference_only", "reject"}

@@ -165,6 +165,25 @@ class ProviderCapacityLedgerContract(Protocol):
         ...
 
 
+class ProviderRoutePolicyContract(Protocol):
+    def apply_routes(
+        self,
+        provider: str,
+        routes: tuple[ResolvedProviderRoute, ...],
+    ) -> tuple[ResolvedProviderRoute, ...]:
+        ...
+
+
+class NoopProviderRoutePolicy:
+    def apply_routes(
+        self,
+        provider: str,
+        routes: tuple[ResolvedProviderRoute, ...],
+    ) -> tuple[ResolvedProviderRoute, ...]:
+        del provider
+        return routes
+
+
 class NoopProviderCapacityLedger:
     """Local fallback; the existing process limiter remains authoritative."""
 
@@ -260,6 +279,7 @@ class ProviderGateway:
         circuit_breaker: CircuitBreakerContract | None = None,
         quota_ledger: QuotaLedgerContract | None = None,
         capacity_ledger: ProviderCapacityLedgerContract | None = None,
+        route_policy: ProviderRoutePolicyContract | None = None,
         audit_sink: Callable[[Mapping[str, Any]], None] | None = None,
         probe_sink: Callable[[ProbeResult], None] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -271,6 +291,7 @@ class ProviderGateway:
         self.circuit = circuit_breaker or CircuitBreaker()
         self.quota = quota_ledger or InMemoryQuotaLedger()
         self.capacity = capacity_ledger or NoopProviderCapacityLedger()
+        self.route_policy = route_policy or NoopProviderRoutePolicy()
         self.audit_sink = audit_sink
         self.probe_sink = probe_sink
         self.sleep = sleep
@@ -281,7 +302,18 @@ class ProviderGateway:
 
     def settings(self, provider: str) -> ProviderSettings:
         manifest = self._manifest(provider)
-        return resolve_provider_routes(manifest, self.env)[0].settings
+        return self._routes(manifest)[0].settings
+
+    def _routes(self, manifest: ProviderManifest) -> tuple[ResolvedProviderRoute, ...]:
+        routes = resolve_provider_routes(manifest, self.env)
+        controlled = self.route_policy.apply_routes(manifest.provider, routes)
+        if not controlled:
+            raise ProviderGatewayError(
+                manifest.provider,
+                "PROVIDER_ROUTES_DISABLED_BY_CONTROL",
+                "provider has no route enabled by the operational control plane",
+            )
+        return tuple(sorted(controlled, key=lambda route: (-route.priority, route.route_id)))
 
     def generate(
         self,
@@ -291,7 +323,7 @@ class ProviderGateway:
         request_context: ProviderRequestContext | None = None,
     ) -> ProviderResult:
         manifest = self._manifest(provider)
-        routes = resolve_provider_routes(manifest, self.env)
+        routes = self._routes(manifest)
         last_error: ProviderGatewayError | None = None
         for index, route in enumerate(routes):
             try:
@@ -476,7 +508,7 @@ class ProviderGateway:
 
     def _run_probe(self, provider: str, level: ProbeLevel) -> ProbeResult:
         manifest = self._manifest(provider)
-        settings = resolve_provider_routes(manifest, self.env)[0].settings
+        settings = self._routes(manifest)[0].settings
         checked_at = datetime.now(timezone.utc)
         started = time.monotonic()
         if settings.disabled:

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_route_control_response.schema.json",
+  "title": "AIRank Provider Route Control Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "route_id", "enabled", "priority_override", "control_version", "updated_by", "reason", "updated_at"],
+      "properties": {
+        "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+        "route_id": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "priority_override": { "type": ["integer", "null"], "minimum": -10000, "maximum": 10000 },
+        "control_version": { "type": "integer", "minimum": 1 },
+        "updated_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reason": { "type": "string", "minLength": 3, "maxLength": 500 },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

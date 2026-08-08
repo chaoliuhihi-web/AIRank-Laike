@@ -14,6 +14,7 @@ from airank_provider_gateway import (
     ProviderGateway,
     ProviderGatewayError,
     ProviderRequestContext,
+    ResolvedProviderRoute,
     UsagePrecision,
     canonical_provider,
 )
@@ -142,6 +143,62 @@ def test_retryable_upstream_failure_fails_over_to_next_route_with_audit() -> Non
     assert result.route_id == "secondary"
     assert [audit["route_id"] for audit in audits] == ["primary", "secondary"]
     assert [audit["outcome"] for audit in audits] == ["failed", "success"]
+
+
+def test_runtime_route_policy_can_disable_primary_without_restart() -> None:
+    class DisablePrimaryPolicy:
+        def apply_routes(
+            self,
+            provider: str,
+            routes: tuple[ResolvedProviderRoute, ...],
+        ) -> tuple[ResolvedProviderRoute, ...]:
+            assert provider == "qianwen"
+            return tuple(route for route in routes if route.route_id != "primary")
+
+    env = qianwen_env()
+    env.update(
+        {
+            "QIANWEN_PRIMARY_KEY": "primary-secret",
+            "QIANWEN_SECONDARY_KEY": "secondary-secret",
+            "QIANWEN_ROUTES_JSON": """[
+              {"route_id":"primary","priority":100,"endpoint":"https://primary.example.test/v1/chat/completions","key_env":"QIANWEN_PRIMARY_KEY"},
+              {"route_id":"secondary","priority":50,"endpoint":"https://secondary.example.test/v1/chat/completions","key_env":"QIANWEN_SECONDARY_KEY"}
+            ]""",
+        }
+    )
+    transport = FakeTransport(
+        [HttpResponse(status=200, headers={}, data={"id": "req_secondary", "choices": [{"message": {"content": "OK"}}]})]
+    )
+
+    result = ProviderGateway(
+        env=env,
+        transport=transport,
+        route_policy=DisablePrimaryPolicy(),
+    ).generate("qianwen", "测试")
+
+    assert result.route_id == "secondary"
+    assert [call["url"] for call in transport.calls] == [
+        "https://secondary.example.test/v1/chat/completions"
+    ]
+
+
+def test_runtime_route_policy_fails_closed_when_all_routes_are_disabled() -> None:
+    class DisableAllPolicy:
+        def apply_routes(
+            self,
+            provider: str,
+            routes: tuple[ResolvedProviderRoute, ...],
+        ) -> tuple[ResolvedProviderRoute, ...]:
+            return ()
+
+    with pytest.raises(ProviderGatewayError) as caught:
+        ProviderGateway(
+            env=qianwen_env(),
+            transport=FakeTransport([]),
+            route_policy=DisableAllPolicy(),
+        ).generate("qianwen", "测试")
+
+    assert caught.value.code == "PROVIDER_ROUTES_DISABLED_BY_CONTROL"
 
 
 def test_global_tenant_quota_failure_cannot_be_bypassed_by_route_fallback() -> None:

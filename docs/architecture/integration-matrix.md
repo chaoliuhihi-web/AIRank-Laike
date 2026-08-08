@@ -64,6 +64,17 @@ GET /api/v1/provider-readiness
 
 该接口会逐个打开消费端网页，检查当前持久浏览器 profile 是否具备可输入问题的状态。返回 `blocked` 时需人工在对应 `profile_dir` 登录、通过真人验证或更新 provider URL 后再发布。
 
+接口必须同时返回 `probe_level` 与 `generation_verified`：网页入口和输入框探测只能标记 `l2_interaction`，只有真实提交并取得生成结果才能标记 `l3_generation`。L2 通过不能写成平台可采样或商业就绪。
+
+API Provider 的系统管理员路由控制使用：
+
+```text
+GET /api/v1/admin/provider-routes
+PUT /api/v1/admin/provider-routes/{provider}/{route_id}
+```
+
+两者要求可信 `airank:provider:admin` 权限。写操作必须提交 `expected_version` 和 `reason`；只允许调整运行时已安全注入凭证的路由，禁止停用最后一路。数据库只保存公开 host/model/priority、单向配置指纹和追加式控制事件，不保存 API Key。
+
 | Provider | 默认网页入口 | 真实运行要求 |
 | --- | --- | --- |
 | ChatGPT | `https://chatgpt.com/` | 持久浏览器 profile 中有可用登录态 |
@@ -74,4 +85,4 @@ GET /api/v1/provider-readiness
 | 百度 AI 搜索 | `https://chat.baidu.com/` | 持久浏览器 profile 中有可用登录态 |
 | 腾讯元宝 | `https://yuanbao.tencent.com/` | 持久浏览器 profile 中有可用登录态 |
 
-API 调用只能作为运维探测或企业接口扩展，不得进入 AIRank Score 和对客报告的“真实排名”证据链。真实排名证据链必须保存 provider、网页 URL、截图路径、原始网页回答、brand_rank 和 competitor_mentions。
+API 调用可以形成独立的 `provider_api` 测量报告，但只能表示 Provider API 表面的回答可见度，不能冒充消费端 Web/App 排名。API、Web、App 必须分开汇总、分开显示证据等级；对客报告若使用 API 样本，标题、口径和限制项都必须明确。消费端排名证据链仍必须保存 provider、网页 URL、截图对象、原始网页回答、会话隔离证明、brand_rank 和 competitor_mentions。

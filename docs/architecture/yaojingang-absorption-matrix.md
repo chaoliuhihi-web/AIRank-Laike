@@ -16,6 +16,7 @@
 6. `GEORank` 的页面诊断、URL 安全和 BYOK 值得改造；其确定性 fallback 分数不允许进入 AIRank 商业指标。
 7. `GEOFlow`、`TokHub` 和 `TokEMS` 提供了成熟的任务、幂等、审核、发布、凭证、探测和审计模式，但 AIRank 必须以自己的领域对象和契约实现，不能复制业务代码。
 8. 第二轮代码级复核已锁定当前上游：`yao-geo-skills@201c0c4`、`geo-citation-lab@81ba156`、`GEOFlow@1c1a361`、`GEORank@1df59ad`、`TokHub@f95be48`、`yao-meta-skill@e15472e`。AIRank 已据此先实现统一出站安全和页面可提取性，不把上游页面、固定分数或业务源码直接搬入本仓。
+9. 账号新增的 `haidian@707b4b6` 是城市设计征集仓且未声明许可证，不属于 GEO 业务代码来源；其中“候选来源先进入待复核草稿、AI 审核不得覆盖确定性门禁、离线评审包同时汇总风险/假设/来源/指标/文件”的治理方法对 AIRank 有价值，只按 `reference_only` 吸收方法，不复制代码、页面或素材。
 
 ## yao-geo-skills：21 个 Skill 全覆盖
 
@@ -86,7 +87,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TokHub | Provider manifest | 统一模型、端点、能力和生命周期 | channel/store models | manifest → eligible upstreams | provider catalog | Apache-2.0 | 四平台 manifest、别名、能力、官方 host、模型生命周期契约已实现 | manifest 持久化同步与后台编辑仍缺 | adapt | Provider Manifest | P0 | partial | manifest schema、版本与迁移测试通过 |
 | TokHub | L1/L2/L3 探测 | 区分网络、鉴权、模型和生成故障 | probe services/`probe_runs` | channel → layer results | 凭证、网络 | Apache-2.0 | Gateway 已区分网络、鉴权/模型和真实生成状态；三平台完成真实 L2/L3 | Kimi 安全运行时注入和四平台持久化 probe 记录仍缺 | absorb | Provider Health | P0 | partial | 四平台各产生真实 L1/L2/L3 记录和 request id |
-| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 统一 Gateway 已有优先级多上游路由、路由级配置指纹、受控故障转移、重试/退避/半开恢复和跨进程 circuit；MySQL 保存无密钥 route manifest 与请求 route_id；分布式 QPS/并发租约已经接入；租户配额和任务幂等不能通过切路由绕过 | 基于延迟/成功率的动态择优、路由管理 API 和长时负载压测仍缺 | adapt | Provider Gateway | P1 | partial | 主路由网络/鉴权/模型/上游故障可切换备用；配额耗尽不切换；多 Worker、熔断、route audit、容量过期和未知结果不可重放均通过 |
+| TokHub | 路由、降级和熔断 | 失败时保护队列和成本 | gateway routing/circuit state | request → chosen upstream | Redis/DB fallback | Apache-2.0 | 统一 Gateway 已有优先级多上游路由、路由级配置指纹、受控故障转移、重试/退避/半开恢复和跨进程 circuit；MySQL 保存无密钥 route manifest 与请求 route_id；分布式 QPS/并发租约已经接入；新增带 RBAC、reason、乐观锁和不可变事件的路由控制 API/设置页，Worker 每次调用热读取启停与优先级，且禁止停用最后一路 | 基于实时延迟/成功率的自动择优和长时负载压测仍缺 | adapt | Provider Gateway | P1 | partial | 主路由故障可切换备用；人工控制无需重启即可生效；过期版本、最后一路停用、密钥入参和伪造权限均被拒绝；真实 MySQL 控制/审计/统计查询通过 |
 | TokHub | QPS、并发与配额预留 | 避免超额和预算并发穿透 | quota/reservation/store | request → reserve/commit/release | Redis/事务 | Apache-2.0 | MySQL tenant quota repository 按租户/UTC 日锁行预留；新增按 Provider + 配置指纹隔离的分布式 token bucket 与并发租约，跨 Worker 原子领取、幂等冲突、TTL 崩溃回收和成功后清理失败不重放均有测试；无数据库时保留进程内保护 | 租户成本预算、排队等待策略和长时压力测试仍缺 | adapt | Quota Service | P1 | partial | 真实 MySQL 并发竞争只能一个 Worker 获得容量；配额不超额、失败归还、过期恢复且已成功调用不得因清理失败重放 |
 | TokHub | 用量 exact/estimated 标记 | 不把估算成本冒充精确成本 | usage events/rollups | response → tokens/cost/provenance | 价格版本 | Apache-2.0 | ProviderUsage 与 usage events 已区分 exact/estimated/unknown；真实三平台均返回 exact | 价格版本、成本计算和报表筛选仍缺 | absorb | Usage Ledger | P1 | partial | 缺上游 usage 时标 estimated，报告可过滤 |
 | TokHub | 凭证加密、指纹、轮换 | 支撑安全私有 Provider | credential store/migrations | secret → ciphertext/fingerprint | 主密钥/KMS | Apache-2.0 | env 注入 | 无租户级 vault 与轮换审计 | adapt | Credential Vault | P1 | planned | 明文扫描为零；轮换不暴露旧值；删除执行 scrub |
@@ -108,6 +109,9 @@
 | yao-open-prompts | GEO/企业研究 Prompt 库 | 提供候选问题和写作方法 | `prompts/08-ai-marketing` | 输入 → 文本建议 | LLM | CC-BY-4.0 | 有零散生成逻辑 | Prompt 本身无真实证据 | reference_only | Eval/Prompt candidates | P2 | planned | 进入产品前必须转成 schema、事实政策和 eval case |
 | TokEMS | 不可变版本、Outbox、RBAC、审计 | 提升发布与交付可靠性 | templates/publishing/common modules | 写操作 → snapshot/event/audit | DB/worker | AGPL-3.0 | AIRank 自有实现已有内容审核、不可变发布快照、幂等包和复测证据索引 | RBAC、outbox 消费和故障恢复仍缺 | reference_only | Delivery architecture | P1 | partial | 只参考模式；AIRank 自有实现通过幂等和恢复测试 |
 | TokEMS | 大会报名/支付/签到业务 | 与 GEO 无关 | event/order/payment/check-in modules | 活动数据 → 交易/核销 | 支付、短信、设备 | AGPL-3.0 | 无 | 不属于 GEO 付费闭环 | reject | 无 | P3 | rejected | 不进入领域模型和导航 |
+| haidian | 来源候选草稿与用途边界 | 自动发现不能直接升级为企业事实，先区分待复核、临时和批准来源 | `docs/data-workflow.md`、`data/source_registry.schema.json` | 候选 URL/资料 → source registry draft → 人工决策 | 来源权利、权威度、时效与用途审核 | NOASSERTION；仅参考方法 | KnowledgeSource 已有 hash、权威度、风险、版本、有效期和人工审核 | 自动发现候选、formal/background/prohibited 用途边界与清权队列仍缺 | reference_only | Knowledge Source Intake | P1 | partial | 自动发现记录只能进入 `needs_review`；审核前不得生成 FactAtom；所有用途限制可下钻且过期会撤销资格 |
+| haidian | 确定性门禁与 AI 咨询评审分离 | 避免模型评分覆盖格式、证据和合规硬门禁 | `docs/review-rubric.md`、`scripts/ai_review_submission.py` | 本地 gate/证据包 → advisory review → 人工决定 | 版本化 rubric、审核角色 | NOASSERTION；仅参考方法 | 测量质量门禁、内容事实门禁和 Skill promotion blocker 已是确定性判断；AI 派生标签不覆盖原证据 | 双人复核、评审分歧和人工抽检闭环仍缺 | reference_only | Governance Review Gate | P1 | partial | 任何 AI 评审不能把 blocked 改成 ready；人工决定保留 reviewer、理由、rubric 版本和 supersedes 链 |
+| haidian | 离线评审包与空白评分表 | 把风险、假设、来源、指标、文件和正文放入一个可归档交付包 | `docs/review-packets.md`、`scripts/export_review_packet.py`、`scripts/generate_formal_scorecard.py` | 已通过门禁的产物 → manifest/HTML/PDF/评分材料 | 不可变 artifact、导出引擎、人工评审 | NOASSERTION；仅参考方法 | AIRank 有报告、证据索引、质量检查和下载回执 | 尚无同时覆盖风险/假设/来源/公式/文件 hash 的离线客户证据包；评分材料未与 eligibility gate 绑定 | reference_only | Customer Evidence Packet | P1 | planned | 未过质量门禁时分数字段保持空且导出阻断；通过后导出包有 manifest、文件 SHA-256、版本和下载回执，可离线复核 |
 | yaojingang.github.io | 个人博客内容 | 无核心产品能力 | repository content | 内容 → 静态站 | 无 | NOASSERTION | 无 | 许可和业务价值不足 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
 | yaojingang | 个人 Profile README | 无产品能力 | profile README | 文本 → 主页 | 无 | NOASSERTION | 无 | 与产品无关 | reject | 无 | P3 | rejected | 不克隆、不吸收 |
 
@@ -130,7 +134,7 @@
 
 ## 阶段一完成判定
 
-- 12 个公开仓库都有明确取舍，10 个相关仓库锁定 commit 并完成代码级入口定位。
+- 13 个公开仓库都有明确取舍，11 个相关仓库锁定 commit 并完成代码级入口定位。
 - `yao-geo-skills` 的 21 个 Skill 全部逐项覆盖。
 - 所有 `absorb/adapt/reference_only/reject` 都有目标模块和验收方法。
 - 许可证边界已记录；CN-GEO 数据、原创内容和第三方论文不混用许可。

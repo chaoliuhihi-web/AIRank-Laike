@@ -20,6 +20,10 @@ The gateway exposes:
 - ordered multi-upstream routes configured through `<PROVIDER>_ROUTES_JSON`;
   route JSON may reference a credential environment-variable name but cannot
   contain inline secret fields;
+- audited runtime route controls stored in MySQL. The admin API can enable or
+  disable a configured route and override its priority without restarting API
+  or workers; every change requires a trusted actor, reason, and optimistic
+  lock version, and the final configured route cannot be disabled;
 - L1 network, L2 authentication/model, and L3 generation probes;
 - provider-specific request/response adapters;
 - retry and per-process QPS/concurrency limiting;
@@ -44,3 +48,10 @@ charge the same task concurrently. Provider secrets remain process-only and
 are represented in the database solely by a one-way configuration fingerprint.
 Capacity cleanup failures do not turn an already successful upstream response
 into a retry; the stale lease is recovered by TTL instead.
+
+Operational routes are managed through `GET /api/v1/admin/provider-routes`
+and `PUT /api/v1/admin/provider-routes/{provider}/{route_id}` with the trusted
+`airank:provider:admin` permission. The API exposes only host, model, safe
+fingerprint, control version, and 24-hour aggregate request/latency/usage data.
+It never accepts or returns credentials. Automatic selection based on live
+latency/success windows and long-duration load validation remain `partial`.

@@ -139,6 +139,11 @@ FACT_DISCLOSURE_FORBIDDEN
 | --- | --- | --- |
 | `INTEGRATION_CAPABILITY_BLOCKED` | 503 | 外部能力 blocked |
 | `INTEGRATION_CAPABILITY_DISABLED` | 503 | 外部能力 disabled |
+| `PROVIDER_ROUTE_NOT_FOUND` | 404 | 指定 Provider 或运行时已配置路由不存在 |
+| `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
+| `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
+| `PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN` | 409 | 禁止停用 Provider 最后一条已配置路由 |
+| `PROVIDER_ROUTES_DISABLED_BY_CONTROL` | 503 | Provider 所有运行时路由均被控制面停用，网关拒绝生成请求 |
 | `YUDAO_MODEL_RESOLVE_FAILED` | 502 | yudao 模型解析失败 |
 | `XINGHE_CRAWLER_FAILED` | 502 | Crawler Gateway 调用失败 |
 | `XINGHE_KB_FAILED` | 502 | KB Service 调用失败 |

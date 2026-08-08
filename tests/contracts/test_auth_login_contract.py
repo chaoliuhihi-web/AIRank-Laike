@@ -223,6 +223,52 @@ def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monk
     assert len(allowed.json()["data"]["skills"]) == 8
 
 
+def test_provider_route_admin_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:
+    class FakeOperations:
+        def list_route_status(self, _manifests):
+            return []
+
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_provider_admin")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "console:read")
+    monkeypatch.setattr(api_main, "build_provider_route_operations", lambda: FakeOperations())
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "ordinary-user", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    forbidden = client.get(
+        "/api/v1/admin/provider-routes",
+        headers={
+            "tenant-id": "tenant_provider_admin",
+            "Authorization": f"Bearer {token}",
+            "X-AIRank-Permissions": "airank:provider:admin",
+        },
+    )
+
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
+
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:admin")
+    admin_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "provider-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+    allowed = client.get(
+        "/api/v1/admin/provider-routes",
+        headers={
+            "tenant-id": "tenant_provider_admin",
+            "Authorization": f"Bearer {admin_token}",
+        },
+    )
+
+    assert allowed.status_code == 200
+    assert allowed.json()["data"]["routes"] == []
+
+
 def test_yudao_permission_extraction_and_admin_wildcards_are_explicit() -> None:
     permissions = api_main.extract_yudao_permissions(
         {"code": 0, "data": {"permissions": ["airank:skill:admin", "airank:skill:admin", "console:read"]}}

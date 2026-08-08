@@ -637,6 +637,39 @@ export type ProviderReadiness = {
   }>;
 };
 
+export type ProviderRouteStatus = {
+  provider: string;
+  label: string;
+  route_id: string;
+  endpoint_host: string;
+  model: string;
+  configured: boolean;
+  enabled: boolean;
+  base_priority: number;
+  effective_priority: number;
+  priority_override?: number | null;
+  control_version: number;
+  updated_by?: string | null;
+  reason?: string | null;
+  updated_at?: string | null;
+  configuration_fingerprint: string;
+  request_count_24h: number;
+  success_count_24h: number;
+  failure_count_24h: number;
+  success_rate_24h?: number | null;
+  average_duration_ms_24h?: number | null;
+  total_tokens_24h?: number | null;
+  cost_amount_24h?: string | null;
+  cost_currency?: string | null;
+};
+
+export type ProviderRouteControlInput = {
+  enabled: boolean;
+  priorityOverride: number | null;
+  expectedVersion: number;
+  reason: string;
+};
+
 export type InternalSkill = {
   skill_id: string;
   version: string;
@@ -1472,6 +1505,37 @@ export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Pro
 
 export function fetchProviderReadiness(signal?: AbortSignal): Promise<ProviderReadiness> {
   return fetchData("/api/v1/provider-readiness", "trc_web_provider_health", signal);
+}
+
+export async function fetchProviderRoutes(signal?: AbortSignal): Promise<ProviderRouteStatus[]> {
+  const data = await fetchData<{ routes: ProviderRouteStatus[]; window_hours: 24 }>(
+    "/api/v1/admin/provider-routes",
+    "trc_web_provider_routes",
+    signal,
+  );
+  return data.routes;
+}
+
+export async function updateProviderRoute(
+  route: Pick<ProviderRouteStatus, "provider" | "route_id">,
+  input: ProviderRouteControlInput,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/admin/provider-routes/${encodeURIComponent(route.provider)}/${encodeURIComponent(route.route_id)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_provider_route_update") },
+      body: JSON.stringify({
+        enabled: input.enabled,
+        priority_override: input.priorityOverride,
+        expected_version: input.expectedVersion,
+        reason: input.reason,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Provider route update failed with ${response.status}`));
+  }
 }
 
 export async function fetchInternalSkills(signal?: AbortSignal): Promise<InternalSkill[]> {

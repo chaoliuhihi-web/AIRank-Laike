@@ -92,6 +92,7 @@ import {
   fetchPageAudits,
   fetchMeasurementQuality,
   fetchProviderReadiness,
+  fetchProviderRoutes,
   fetchPublishAttempts,
   fetchPublishPackages,
   fetchRetestWindows,
@@ -113,6 +114,7 @@ import {
   searchKnowledge,
   runBrandCheck,
   storeAuthSession,
+  updateProviderRoute,
   type AuthSession,
   type AnswerSample,
   type AnswerSampleDetail,
@@ -135,6 +137,7 @@ import {
   type KnowledgeSource,
   type MeasurementQualityReport,
   type ProviderReadiness,
+  type ProviderRouteStatus,
   type QuestionMapResult,
   type QuestionObservationBatch,
   type PublishPackage,
@@ -3198,21 +3201,80 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 function SettingsPage() {
   const overview = useConsoleOverview();
   const { project } = overview;
-  const { openPanel } = useActionFeedback();
+  const { notify, openPanel } = useActionFeedback();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
+  const [providerRoutes, setProviderRoutes] = useState<ProviderRouteStatus[]>([]);
+  const [routeLoadError, setRouteLoadError] = useState<string | null>(null);
+  const [updatingRoute, setUpdatingRoute] = useState<string | null>(null);
+  const [routeDrafts, setRouteDrafts] = useState<Record<string, { enabled: boolean; priority: string; reason: string }>>({});
+
+  const loadProviderRoutes = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const routes = await fetchProviderRoutes(signal);
+      setProviderRoutes(routes);
+      setRouteLoadError(null);
+      setRouteDrafts((current) => {
+        const next = { ...current };
+        routes.forEach((route) => {
+          const key = `${route.provider}/${route.route_id}`;
+          next[key] = {
+            enabled: route.enabled,
+            priority: route.priority_override == null ? "" : String(route.priority_override),
+            reason: "",
+          };
+        });
+        return next;
+      });
+    } catch (error) {
+      if (signal?.aborted) return;
+      setProviderRoutes([]);
+      setRouteLoadError(error instanceof Error ? error.message : "Provider 路由控制接口不可用");
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
+    void loadProviderRoutes(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [loadProviderRoutes]);
+
+  const applyProviderRoute = async (route: ProviderRouteStatus) => {
+    const key = `${route.provider}/${route.route_id}`;
+    const draft = routeDrafts[key] ?? { enabled: route.enabled, priority: "", reason: "" };
+    const reason = draft.reason.trim();
+    if (reason.length < 3) {
+      notify({ title: "需要变更理由", desc: "请填写至少 3 个字符，理由会进入不可变审计事件。", tone: "warning" });
+      return;
+    }
+    const priorityOverride = draft.priority.trim() === "" ? null : Number(draft.priority);
+    if (priorityOverride !== null && (!Number.isInteger(priorityOverride) || priorityOverride < -10000 || priorityOverride > 10000)) {
+      notify({ title: "优先级无效", desc: "请输入 -10000 到 10000 之间的整数，留空则使用环境配置优先级。", tone: "warning" });
+      return;
+    }
+    setUpdatingRoute(key);
+    try {
+      await updateProviderRoute(route, {
+        enabled: draft.enabled,
+        priorityOverride,
+        expectedVersion: route.control_version,
+        reason,
+      });
+      await loadProviderRoutes();
+      notify({ title: "路由控制已生效", desc: `${route.label} · ${route.route_id} 已热更新并记录审计事件。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "路由控制更新失败", desc: error instanceof Error ? error.message : "请刷新状态后重试。", tone: "danger" });
+    } finally {
+      setUpdatingRoute(null);
+    }
+  };
 
   return (
     <>
       <PageHeader
         title="设置中心"
-        subtitle="展示后端返回的项目、Provider 与能力状态；未接入保存 API 的配置不伪装成已保存。"
-        action={<Badge tone="primary">read-only</Badge>}
+        subtitle="展示真实项目与 Provider 状态；路由启停和优先级通过审计控制面热更新，密钥仍只从安全运行时注入。"
+        action={<Badge tone="primary">audited control</Badge>}
       />
       <section className="settings-grid">
         <SettingsSection
@@ -3263,6 +3325,80 @@ function SettingsPage() {
           }
           rows={[["事实与证据", "partial"], ["导出发布包", "ready"], ["WordPress / HTTP", "partial"], ["AI 来客助手", "disabled"], ["商业上线", "blocked"]]}
         />
+      </section>
+      <section className="airank-console-card provider-route-control" data-testid="provider-route-control">
+        <div className="provider-route-control-head">
+          <div>
+            <h2>Provider 路由控制</h2>
+            <p>显示运行时已配置路由和 24 小时真实调用指标。所有变更需理由和版本校验；服务端禁止停用最后一路。</p>
+          </div>
+          <Badge tone={routeLoadError ? "danger" : "success"}>{routeLoadError ? "blocked" : `${providerRoutes.length} routes`}</Badge>
+        </div>
+        {routeLoadError && <DataStateCard title="路由控制不可用" desc={routeLoadError} tone="danger" />}
+        {!routeLoadError && providerRoutes.length === 0 && <DataStateCard title="没有运行时路由" desc="没有已配置凭证时不生成演示路由，也不允许在页面录入密钥。" tone="warning" />}
+        {providerRoutes.length > 0 && (
+          <div className="provider-route-table-wrap">
+            <table className="question-table provider-route-table">
+              <thead><tr><th>Provider / 路由</th><th>状态</th><th>24h 实际调用</th><th>优先级</th><th>变更理由</th><th>操作</th></tr></thead>
+              <tbody>
+                {providerRoutes.map((route) => {
+                  const key = `${route.provider}/${route.route_id}`;
+                  const draft = routeDrafts[key] ?? { enabled: route.enabled, priority: route.priority_override == null ? "" : String(route.priority_override), reason: "" };
+                  const successRate = route.success_rate_24h == null ? "无样本" : `${(route.success_rate_24h * 100).toFixed(1)}%`;
+                  return (
+                    <tr key={key}>
+                      <td>
+                        <strong>{route.label} · {route.route_id}</strong>
+                        <small>{route.model} · {route.endpoint_host}</small>
+                        <small>fp {route.configuration_fingerprint.slice(0, 12)}… · v{route.control_version}</small>
+                      </td>
+                      <td>
+                        <label className="provider-route-toggle">
+                          <input
+                            type="checkbox"
+                            checked={draft.enabled}
+                            disabled={!route.configured}
+                            onChange={(event) => setRouteDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), enabled: event.target.checked } }))}
+                          />
+                          <Badge tone={!route.configured ? "warning" : draft.enabled ? "success" : "danger"}>{!route.configured ? "not configured" : draft.enabled ? "enabled" : "disabled"}</Badge>
+                        </label>
+                      </td>
+                      <td><strong>{route.request_count_24h} 次 · {successRate}</strong><small>{route.average_duration_ms_24h == null ? "无延迟样本" : `均值 ${route.average_duration_ms_24h} ms`} · {route.total_tokens_24h ?? "无 token"}</small></td>
+                      <td>
+                        <input
+                          className="provider-route-priority"
+                          type="number"
+                          min={-10000}
+                          max={10000}
+                          step={1}
+                          value={draft.priority}
+                          disabled={!route.configured}
+                          placeholder={`默认 ${route.base_priority}`}
+                          onChange={(event) => setRouteDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), priority: event.target.value } }))}
+                          aria-label={`${route.route_id} 优先级`}
+                        />
+                        <small>生效 {route.effective_priority}</small>
+                      </td>
+                      <td>
+                        <input
+                          className="provider-route-reason"
+                          value={draft.reason}
+                          maxLength={500}
+                          disabled={!route.configured}
+                          placeholder="必填：本次变更原因"
+                          onChange={(event) => setRouteDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), reason: event.target.value } }))}
+                          aria-label={`${route.route_id} 变更理由`}
+                        />
+                        <small>{route.reason ? `上次：${route.reason}` : "尚无人工控制记录"}</small>
+                      </td>
+                      <td><button className="outline-button" type="button" disabled={!route.configured || updatingRoute === key} onClick={() => void applyProviderRoute(route)}>{updatingRoute === key ? "保存中…" : "应用"}</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </>
   );

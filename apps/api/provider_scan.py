@@ -237,6 +237,7 @@ def get_api_gateway() -> ProviderGateway:
                 circuit_breaker=_API_PROVIDER_OPERATIONS,
                 quota_ledger=_API_PROVIDER_OPERATIONS,
                 capacity_ledger=_API_PROVIDER_OPERATIONS,
+                route_policy=_API_PROVIDER_OPERATIONS,
                 probe_sink=_API_PROVIDER_OPERATIONS.record_probe,
             )
             _API_PROVIDER_OPERATIONS.sync_manifests(_API_GATEWAY.manifests())

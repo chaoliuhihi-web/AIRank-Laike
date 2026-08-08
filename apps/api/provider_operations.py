@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -16,6 +17,8 @@ from airank_provider_gateway import (
     ProviderManifest,
     ProviderRequestContext,
     QuotaReservation,
+    ResolvedProviderRoute,
+    get_manifest,
     resolve_provider_routes,
 )
 
@@ -186,6 +189,337 @@ class MySQLProviderOperations:
                             "created_at": now,
                         },
                     )
+
+    def apply_routes(
+        self,
+        provider: str,
+        routes: tuple[ResolvedProviderRoute, ...],
+    ) -> tuple[ResolvedProviderRoute, ...]:
+        """Apply mutable public controls to secret-bearing in-memory routes."""
+
+        if not routes:
+            return routes
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT route_id, enabled, priority_override
+                    FROM airank_provider_route_controls
+                    WHERE provider_key=:provider_key
+                    """
+                ),
+                {"provider_key": provider},
+            ).mappings().all()
+        controls = {str(row["route_id"]): row for row in rows}
+        controlled: list[ResolvedProviderRoute] = []
+        for route in routes:
+            control = controls.get(route.route_id)
+            if control is not None and not bool(control["enabled"]):
+                continue
+            priority = (
+                int(control["priority_override"])
+                if control is not None and control["priority_override"] is not None
+                else route.priority
+            )
+            controlled.append(replace(route, priority=priority))
+        return tuple(sorted(controlled, key=lambda route: (-route.priority, route.route_id)))
+
+    def list_route_status(
+        self,
+        manifests: Iterable[ProviderManifest],
+    ) -> list[dict[str, object]]:
+        configured_routes = [
+            (manifest, route)
+            for manifest in manifests
+            for route in resolve_provider_routes(manifest, self.env)
+        ]
+        with self.engine.connect() as conn:
+            controls = {
+                (str(row["provider_key"]), str(row["route_id"])): row
+                for row in conn.execute(
+                    text(
+                        """
+                        SELECT provider_key, route_id, enabled, priority_override,
+                               control_version, updated_by, reason, updated_at
+                        FROM airank_provider_route_controls
+                        """
+                    )
+                ).mappings().all()
+            }
+            stats = {
+                (str(row["provider_key"]), str(row["route_id"])): row
+                for row in conn.execute(
+                    text(
+                        """
+                        SELECT a.provider_key, a.route_id,
+                               COUNT(*) AS request_count,
+                               SUM(a.outcome='success') AS success_count,
+                               SUM(a.outcome<>'success') AS failure_count,
+                               AVG(a.duration_ms) AS average_duration_ms,
+                               SUM(u.total_tokens) AS total_tokens,
+                               SUM(u.cost_amount) AS cost_amount,
+                               CASE
+                                 WHEN COUNT(DISTINCT u.cost_currency)=1 THEN MAX(u.cost_currency)
+                                 WHEN COUNT(DISTINCT u.cost_currency)>1 THEN 'MIXED'
+                                 ELSE NULL
+                               END AS cost_currency
+                        FROM airank_provider_request_audits a
+                        LEFT JOIN airank_provider_usage_events u
+                          ON u.request_audit_id=a.id
+                        WHERE a.requested_at >= UTC_TIMESTAMP(3) - INTERVAL 24 HOUR
+                          AND a.route_id IS NOT NULL
+                        GROUP BY a.provider_key, a.route_id
+                        """
+                    )
+                ).mappings().all()
+            }
+        records: list[dict[str, object]] = []
+        for manifest, route in configured_routes:
+            key = (manifest.provider, route.route_id)
+            control = controls.get(key)
+            metric = stats.get(key)
+            request_count = int(metric["request_count"]) if metric else 0
+            success_count = int(metric["success_count"] or 0) if metric else 0
+            records.append(
+                {
+                    "provider": manifest.provider,
+                    "label": manifest.label,
+                    "route_id": route.route_id,
+                    "endpoint_host": route.settings.endpoint_host,
+                    "model": route.settings.model,
+                    "configured": route.settings.configured,
+                    "enabled": bool(control["enabled"]) if control else True,
+                    "base_priority": route.priority,
+                    "effective_priority": (
+                        int(control["priority_override"])
+                        if control and control["priority_override"] is not None
+                        else route.priority
+                    ),
+                    "priority_override": (
+                        int(control["priority_override"])
+                        if control and control["priority_override"] is not None
+                        else None
+                    ),
+                    "control_version": int(control["control_version"]) if control else 0,
+                    "updated_by": str(control["updated_by"]) if control else None,
+                    "reason": str(control["reason"]) if control else None,
+                    "updated_at": control["updated_at"].isoformat() if control else None,
+                    "configuration_fingerprint": route.settings.configuration_fingerprint(
+                        manifest.provider, route.route_id
+                    ),
+                    "request_count_24h": request_count,
+                    "success_count_24h": success_count,
+                    "failure_count_24h": int(metric["failure_count"] or 0) if metric else 0,
+                    "success_rate_24h": (
+                        round(success_count / request_count, 6) if request_count else None
+                    ),
+                    "average_duration_ms_24h": (
+                        round(float(metric["average_duration_ms"]), 2)
+                        if metric and metric["average_duration_ms"] is not None
+                        else None
+                    ),
+                    "total_tokens_24h": (
+                        int(metric["total_tokens"])
+                        if metric and metric["total_tokens"] is not None
+                        else None
+                    ),
+                    "cost_amount_24h": (
+                        str(metric["cost_amount"])
+                        if metric and metric["cost_amount"] is not None
+                        else None
+                    ),
+                    "cost_currency": (
+                        str(metric["cost_currency"])
+                        if metric and metric["cost_currency"]
+                        else None
+                    ),
+                }
+            )
+        return sorted(records, key=lambda item: (
+            str(item["provider"]), -int(item["effective_priority"]), str(item["route_id"])
+        ))
+
+    def set_route_control(
+        self,
+        provider: str,
+        route_id: str,
+        *,
+        enabled: bool,
+        priority_override: int | None,
+        expected_version: int,
+        changed_by: str,
+        reason: str,
+    ) -> dict[str, object]:
+        if priority_override is not None and not -10_000 <= priority_override <= 10_000:
+            raise ProviderGatewayError(
+                provider,
+                "PROVIDER_ROUTE_CONTROL_INVALID",
+                "route priority override must be between -10000 and 10000",
+            )
+        actor = changed_by.strip()
+        change_reason = reason.strip()
+        if not actor or not change_reason:
+            raise ProviderGatewayError(
+                provider,
+                "PROVIDER_ROUTE_CONTROL_INVALID",
+                "route control actor and reason are required",
+            )
+        manifest = get_manifest(provider)
+        if manifest is None:
+            raise ProviderGatewayError(
+                provider,
+                "PROVIDER_ROUTE_NOT_FOUND",
+                "provider manifest was not found",
+            )
+        configured_routes = tuple(
+            route
+            for route in resolve_provider_routes(manifest, self.env)
+            if route.settings.configured and not route.settings.disabled
+        )
+        route_ids = {route.route_id for route in configured_routes}
+        if route_id not in route_ids:
+            raise ProviderGatewayError(
+                provider,
+                "PROVIDER_ROUTE_NOT_FOUND",
+                "configured provider route was not found",
+            )
+        now = utc_now_naive()
+        with self.engine.begin() as conn:
+            # Materialize the implicit default before locking. MySQL cannot lock
+            # a missing row, so without this insert two first-time operators
+            # could both observe version 0. The baseline mirrors the runtime
+            # default and is not a user change event.
+            conn.execute(
+                text(
+                    """
+                    INSERT IGNORE INTO airank_provider_route_controls (
+                      provider_key, route_id, enabled, priority_override,
+                      control_version, updated_by, reason, updated_at
+                    ) VALUES (
+                      :provider_key, :route_id, 1, NULL,
+                      0, 'system_default', 'implicit enabled runtime default', :updated_at
+                    )
+                    """
+                ),
+                {"provider_key": provider, "route_id": route_id, "updated_at": now},
+            )
+            current = conn.execute(
+                text(
+                    """
+                    SELECT enabled, priority_override, control_version,
+                           updated_by, reason, updated_at
+                    FROM airank_provider_route_controls
+                    WHERE provider_key=:provider_key AND route_id=:route_id
+                    FOR UPDATE
+                    """
+                ),
+                {"provider_key": provider, "route_id": route_id},
+            ).mappings().first()
+            if current is None:  # pragma: no cover - INSERT IGNORE + same transaction guarantees the row
+                raise ProviderGatewayError(
+                    provider,
+                    "PROVIDER_ROUTE_CONTROL_CONFLICT",
+                    "route control baseline could not be locked",
+                )
+            current_version = int(current["control_version"])
+            if current_version != expected_version:
+                raise ProviderGatewayError(
+                    provider,
+                    "PROVIDER_ROUTE_CONTROL_CONFLICT",
+                    "route control version changed; reload before updating",
+                )
+            next_version = current_version + 1
+            simulated_controls = {
+                str(row["route_id"]): bool(row["enabled"])
+                for row in conn.execute(
+                    text(
+                        """
+                        SELECT route_id, enabled FROM airank_provider_route_controls
+                        WHERE provider_key=:provider_key
+                        """
+                    ),
+                    {"provider_key": provider},
+                ).mappings().all()
+            }
+            simulated_controls[route_id] = enabled
+            if not any(simulated_controls.get(item.route_id, True) for item in configured_routes):
+                raise ProviderGatewayError(
+                    provider,
+                    "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN",
+                    "at least one configured provider route must remain enabled",
+                )
+            previous_record = {
+                "enabled": bool(current["enabled"]),
+                "priority_override": current["priority_override"],
+                "control_version": current_version,
+                "updated_by": current["updated_by"],
+                "reason": current["reason"],
+                "updated_at": current["updated_at"].isoformat(),
+            }
+            new_record = {
+                "provider": provider,
+                "route_id": route_id,
+                "enabled": enabled,
+                "priority_override": priority_override,
+                "control_version": next_version,
+                "updated_by": actor[:128],
+                "reason": change_reason[:500],
+                "updated_at": now.isoformat(),
+            }
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_provider_route_controls (
+                      provider_key, route_id, enabled, priority_override,
+                      control_version, updated_by, reason, updated_at
+                    ) VALUES (
+                      :provider_key, :route_id, :enabled, :priority_override,
+                      :control_version, :updated_by, :reason, :updated_at
+                    ) ON DUPLICATE KEY UPDATE
+                      enabled=VALUES(enabled),
+                      priority_override=VALUES(priority_override),
+                      control_version=VALUES(control_version),
+                      updated_by=VALUES(updated_by),
+                      reason=VALUES(reason),
+                      updated_at=VALUES(updated_at)
+                    """
+                ),
+                {
+                    "provider_key": provider,
+                    "route_id": route_id,
+                    **{key: new_record[key] for key in (
+                        "enabled", "priority_override", "control_version",
+                        "updated_by", "reason", "updated_at"
+                    )},
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_provider_route_control_events (
+                      id, provider_key, route_id, control_version,
+                      previous_control_json, new_control_json,
+                      changed_by, reason, changed_at
+                    ) VALUES (
+                      :id, :provider_key, :route_id, :control_version,
+                      :previous_control_json, :new_control_json,
+                      :changed_by, :reason, :changed_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"route_event_{uuid4().hex}",
+                    "provider_key": provider,
+                    "route_id": route_id,
+                    "control_version": next_version,
+                    "previous_control_json": json.dumps(previous_record, ensure_ascii=False),
+                    "new_control_json": json.dumps(new_record, ensure_ascii=False),
+                    "changed_by": actor[:128],
+                    "reason": change_reason[:500],
+                    "changed_at": now,
+                },
+            )
+        return new_record
 
     def record_probe(self, result: ProbeResult) -> None:
         with self.engine.begin() as conn:

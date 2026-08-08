@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from airank_domain import govern_question
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
 from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
+from airank_provider_gateway import PROVIDER_MANIFESTS, ProviderGatewayError
 from airank_score import QUALITY_CONTRACT_VERSION
 from airank_skills import build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
 
@@ -48,6 +49,11 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
         probe_provider_readiness,
         provider_execution_mode,
     )
+
+try:
+    from .provider_operations import MySQLProviderOperations
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from provider_operations import MySQLProviderOperations  # type: ignore[no-redef]
 
 API_PREFIX = "/api/v1"
 API_VERSION = "v1"
@@ -125,6 +131,11 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "EVIDENCE_INTEGRITY_FAILED": (409, "Evidence object integrity verification failed"),
     "INTEGRATION_CAPABILITY_BLOCKED": (503, "Integration capability is blocked"),
     "INTEGRATION_CAPABILITY_DISABLED": (503, "Integration capability is disabled"),
+    "PROVIDER_ROUTE_NOT_FOUND": (404, "Provider route not found"),
+    "PROVIDER_ROUTE_CONTROL_INVALID": (422, "Provider route control is invalid"),
+    "PROVIDER_ROUTE_CONTROL_CONFLICT": (409, "Provider route control version conflict"),
+    "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN": (409, "The last configured provider route cannot be disabled"),
+    "PROVIDER_ROUTES_DISABLED_BY_CONTROL": (503, "All provider routes are disabled by control policy"),
     "YUDAO_MODEL_RESOLVE_FAILED": (502, "Yudao model resolution failed"),
     "XINGHE_CRAWLER_FAILED": (502, "Xinghe crawler failed"),
     "XINGHE_KB_FAILED": (502, "Xinghe KB failed"),
@@ -813,6 +824,67 @@ class ProviderReadinessData(BaseModel):
 
 class ProviderReadinessResponse(BaseModel):
     data: ProviderReadinessData
+    meta: ResponseMeta
+
+
+class ProviderRouteStatus(BaseModel):
+    provider: str
+    label: str
+    route_id: str
+    endpoint_host: str
+    model: str
+    configured: bool
+    enabled: bool
+    base_priority: int
+    effective_priority: int
+    priority_override: Optional[int] = None
+    control_version: int
+    updated_by: Optional[str] = None
+    reason: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    configuration_fingerprint: str
+    request_count_24h: int
+    success_count_24h: int
+    failure_count_24h: int
+    success_rate_24h: Optional[float] = None
+    average_duration_ms_24h: Optional[float] = None
+    total_tokens_24h: Optional[int] = None
+    cost_amount_24h: Optional[str] = None
+    cost_currency: Optional[str] = None
+
+
+class ProviderRouteStatusData(BaseModel):
+    routes: list[ProviderRouteStatus]
+    window_hours: Literal[24] = 24
+
+
+class ProviderRouteStatusResponse(BaseModel):
+    data: ProviderRouteStatusData
+    meta: ResponseMeta
+
+
+class ProviderRouteControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    priority_override: Optional[int] = Field(default=None, ge=-10_000, le=10_000)
+    expected_version: int = Field(ge=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ProviderRouteControlData(BaseModel):
+    provider: str
+    route_id: str
+    enabled: bool
+    priority_override: Optional[int] = None
+    control_version: int
+    updated_by: str
+    reason: str
+    updated_at: datetime
+
+
+class ProviderRouteControlResponse(BaseModel):
+    data: ProviderRouteControlData
     meta: ResponseMeta
 
 
@@ -2445,6 +2517,30 @@ def build_provider_readiness_items(provider_scope: list[Provider]) -> list[Provi
             )
         )
     return items
+
+
+def build_provider_route_operations() -> MySQLProviderOperations:
+    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
+    if not database_url:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "INTEGRATION_CAPABILITY_BLOCKED", "details": {"capability": "provider_route_control"}},
+        )
+    operations = MySQLProviderOperations(database_url)
+    operations.sync_manifests(PROVIDER_MANIFESTS.values())
+    return operations
+
+
+def raise_provider_route_control_error(exc: ProviderGatewayError) -> None:
+    status = 409
+    if exc.code == "PROVIDER_ROUTE_NOT_FOUND":
+        status = 404
+    elif exc.code == "PROVIDER_ROUTE_CONTROL_INVALID":
+        status = 422
+    raise StarletteHTTPException(
+        status_code=status,
+        detail={"code": exc.code, "details": {"provider": exc.provider, "reason": exc.message}},
+    ) from exc
 
 
 def assert_browser_provider_ready_for_brand_check(existing_project_id: Optional[str] = None) -> None:
@@ -4713,6 +4809,13 @@ def skill_admin_permission() -> str:
     return os.getenv("AIRANK_SKILL_ADMIN_PERMISSION", "airank:skill:admin").strip() or "airank:skill:admin"
 
 
+def provider_admin_permission() -> str:
+    return (
+        os.getenv("AIRANK_PROVIDER_ADMIN_PERMISSION", "airank:provider:admin").strip()
+        or "airank:provider:admin"
+    )
+
+
 def permission_allows(granted: tuple[str, ...], required: str) -> bool:
     namespace = required.rsplit(":", 1)[0]
     return bool({required, "*", "*:*:*", f"{namespace}:*"}.intersection(granted))
@@ -4730,6 +4833,18 @@ def require_skill_admin(permission_header: Optional[str]) -> None:
         )
 
 
+def require_provider_admin(permission_header: Optional[str]) -> None:
+    if not auth_enforcement_required():
+        return
+    granted = tuple(item.strip() for item in (permission_header or "").split(",") if item.strip())
+    required = provider_admin_permission()
+    if not permission_allows(granted, required):
+        raise StarletteHTTPException(
+            status_code=403,
+            detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"required_permission": required}},
+        )
+
+
 def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
     token = f"dev_only_{uuid4().hex}"
     expires_in = 3600
@@ -4740,7 +4855,10 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
             "user_id": payload.username,
             "permissions": tuple(
                 item.strip()
-                for item in os.getenv("AIRANK_DEV_PERMISSIONS", skill_admin_permission()).split(",")
+                for item in os.getenv(
+                    "AIRANK_DEV_PERMISSIONS",
+                    f"{skill_admin_permission()},{provider_admin_permission()}",
+                ).split(",")
                 if item.strip()
             ),
             "expires_at": datetime.now(timezone.utc).timestamp() + expires_in,
@@ -5087,6 +5205,73 @@ def get_provider_readiness(trace_id: Optional[str] = Header(default=None, alias=
             minimum_success_count=minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE),
             providers=build_provider_readiness_items(DEFAULT_PROVIDER_SCOPE),
         ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/admin/provider-routes",
+    response_model=ProviderRouteStatusResponse,
+    response_model_exclude_none=True,
+)
+def get_provider_routes(
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> ProviderRouteStatusResponse:
+    require_provider_admin(permissions)
+    operations = build_provider_route_operations()
+    return ProviderRouteStatusResponse(
+        data=ProviderRouteStatusData(
+            routes=[
+                ProviderRouteStatus.model_validate(record)
+                for record in operations.list_route_status(PROVIDER_MANIFESTS.values())
+            ]
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.put(
+    f"{API_PREFIX}/admin/provider-routes/{{provider}}/{{route_id}}",
+    response_model=ProviderRouteControlResponse,
+)
+def update_provider_route(
+    provider: str,
+    route_id: str,
+    payload: ProviderRouteControlRequest,
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+    actor_user_id: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+) -> ProviderRouteControlResponse:
+    require_provider_admin(permissions)
+    if provider not in PROVIDER_MANIFESTS:
+        raise StarletteHTTPException(
+            status_code=404,
+            detail={"code": "PROVIDER_ROUTE_NOT_FOUND", "details": {"provider": provider}},
+        )
+    actor = (actor_user_id or "").strip()
+    if not actor:
+        if auth_enforcement_required():
+            raise StarletteHTTPException(
+                status_code=403,
+                detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"reason": "trusted actor missing"}},
+            )
+        actor = "dev_only_provider_admin"
+    operations = build_provider_route_operations()
+    try:
+        result = operations.set_route_control(
+            provider,
+            route_id,
+            enabled=payload.enabled,
+            priority_override=payload.priority_override,
+            expected_version=payload.expected_version,
+            changed_by=actor,
+            reason=payload.reason,
+        )
+    except ProviderGatewayError as exc:
+        raise_provider_route_control_error(exc)
+    return ProviderRouteControlResponse(
+        data=ProviderRouteControlData.model_validate(result),
         meta=build_meta(trace_id),
     )
 

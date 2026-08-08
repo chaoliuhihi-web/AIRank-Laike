@@ -74,6 +74,13 @@
       "decision": "reference_only"
     },
     {
+      "name": "haidian",
+      "url": "https://github.com/yaojingang/haidian",
+      "commit": "707b4b64286c8869e6529b635fb8d6560ae71441",
+      "license": "NOASSERTION; fork of open-city-ai/haidian; methods only, no code or assets copied",
+      "decision": "reference_only"
+    },
+    {
       "name": "yaojingang.github.io",
       "url": "https://github.com/yaojingang/yaojingang.github.io",
       "commit": null,

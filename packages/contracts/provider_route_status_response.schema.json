@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_route_status_response.schema.json",
+  "title": "AIRank Provider Route Status Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routes", "window_hours"],
+      "properties": {
+        "window_hours": { "const": 24 },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "label", "route_id", "endpoint_host", "model", "configured", "enabled", "base_priority", "effective_priority", "control_version", "configuration_fingerprint", "request_count_24h", "success_count_24h", "failure_count_24h"],
+            "properties": {
+              "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+              "label": { "type": "string", "minLength": 1 },
+              "route_id": { "type": "string", "minLength": 1 },
+              "endpoint_host": { "type": "string" },
+              "model": { "type": "string", "minLength": 1 },
+              "configured": { "type": "boolean" },
+              "enabled": { "type": "boolean" },
+              "base_priority": { "type": "integer" },
+              "effective_priority": { "type": "integer" },
+              "priority_override": { "type": "integer" },
+              "control_version": { "type": "integer", "minimum": 0 },
+              "updated_by": { "type": "string" },
+              "reason": { "type": "string" },
+              "updated_at": { "type": "string", "format": "date-time" },
+              "configuration_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "request_count_24h": { "type": "integer", "minimum": 0 },
+              "success_count_24h": { "type": "integer", "minimum": 0 },
+              "failure_count_24h": { "type": "integer", "minimum": 0 },
+              "success_rate_24h": { "type": "number", "minimum": 0, "maximum": 1 },
+              "average_duration_ms_24h": { "type": "number", "minimum": 0 },
+              "total_tokens_24h": { "type": "integer", "minimum": 0 },
+              "cost_amount_24h": { "type": "string" },
+              "cost_currency": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

@@ -22,6 +22,7 @@ EXPECTED_REPOSITORIES = {
     "yao-open-skills",
     "TokHub",
     "yao-open-tools",
+    "haidian",
     "yaojingang.github.io",
     "yaojingang",
 }

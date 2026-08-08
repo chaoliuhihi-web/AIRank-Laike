@@ -171,6 +171,8 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_provider_capacity_leases` | `tenant_id` | `project_id` | 按 Provider/配置指纹跨 Worker 领取并发槽、幂等拦截、TTL 回收 | idempotency、expiry、project 索引覆盖 |
 | `airank_provider_capacity_states` | 无 | 无 | Provider/配置指纹级 token bucket 与在途并发计数 | 复合主键和 updated 索引覆盖；不保存凭证或客户内容 |
 | `airank_provider_routes` | 无 | 无 | Provider 上游路由公开 manifest 历史、当前版本和配置指纹 | current、fingerprint 索引覆盖；只保存 host/model/priority，不保存密钥或密钥值 |
+| `airank_provider_route_controls` | 无 | 无 | Provider 路由启停、优先级覆盖和乐观锁当前状态 | Provider/route 复合主键；只保存公开控制状态、操作者和理由，不保存凭证 |
+| `airank_provider_route_control_events` | 无 | 无 | Provider 路由控制追加式审计历史 | Provider/route/version 唯一；应用禁止覆盖历史事件，回滚需先导出审计证据 |
 | `airank_outbox_events` | `tenant_id` | `project_id` 可空 | outbox 发布、aggregate 回溯、trace 排查 | `idx_airank_outbox_events_publish`、`idx_airank_outbox_events_aggregate`、`idx_airank_outbox_events_trace` 覆盖 |
 | `airank_integration_capabilities` | 无 | 无 | 能力探测状态，非租户业务数据 | `uk_airank_capabilities`、`idx_airank_capabilities_status` 覆盖 |
 | `airank_audit_events` | `tenant_id` | `project_id` 可空 | 审计列表、实体审计、trace 排查 | `idx_airank_audit_events_project`、`idx_airank_audit_events_entity`、`idx_airank_audit_events_trace` 覆盖 |
