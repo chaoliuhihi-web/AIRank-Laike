@@ -888,6 +888,7 @@ Passed:
 - New customer artifacts use `airank.report-evidence-packet.v5`. Packet generation first runs the project audit, embeds its summary and manifest hash, and returns `409 REPORT_EVIDENCE_INTEGRITY_BLOCKED` before delivery if any entity is missing, corrupt or out of bounds. Historical v1/v2/v3/v4 packets remain read-only compatible and do not claim a v5 audit.
 - Contract tests cover an empty project, tenant isolation, a valid nine-entity evidence graph, tampered answer content, deleted objects, response-schema validation and report generation blocked by a corrupted Provider raw response.
 - A real MySQL project completed a browser-triggered audit with 36/36 entities verified and zero blockers. The Evidence Center displays policy, full manifest SHA-256 and entity-level blocking rows without fabricated scores. Desktop application logs were zero warning/error; a same-origin 390×844 container measured html/body width at 390px with no page-level horizontal overflow.
+- The strict gate on commit `74b8c59` passed both remote refs, Python 3.11.15, Node 24.13.1, 184 contract tests, 69 acceptance tests, all package/worker/scheduler suites, 30/30 core Skill cases, the production Web build, real MySQL 28/2, offline SQL and real Alembic `0026` migration. The overall result remained `BLOCKED` on external production and Consumer requirements.
 
 Limitations and blockers:
 

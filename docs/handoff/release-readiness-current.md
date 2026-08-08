@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T20:13:15+08:00
+Generated: 2026-08-08T20:54:06+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -44,7 +44,7 @@ Status: PASS
 Status: PASS
 
 ```text
-e77d1df127d63753d47f9a90cfe856003bf7d9b4
+74b8c594e26764c95f727754c9fc068a7810aae6
 ```
 
 ## gitee main ref
@@ -52,7 +52,7 @@ e77d1df127d63753d47f9a90cfe856003bf7d9b4
 Status: PASS
 
 ```text
-e77d1df127d63753d47f9a90cfe856003bf7d9b4
+74b8c594e26764c95f727754c9fc068a7810aae6
 ```
 
 ## diff check
@@ -114,7 +114,7 @@ Status: PASS
 ```text
 {
   "python": "3.11.15",
-  "node": "v24.14.0",
+  "node": "v24.13.1",
   "required": {
     "python": "3.11+",
     "node": "20.19+ or 22.12+"
@@ -128,16 +128,10 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 40%]
-........................................................................ [ 80%]
-....................................                                     [100%]
-=============================== warnings summary ===============================
-.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-180 passed, 1 warning in 1.82s
+........................................................................ [ 39%]
+........................................................................ [ 78%]
+........................................                                 [100%]
+184 passed in 2.13s
 ```
 
 ## crawler lite tests
@@ -146,7 +140,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.02s
+6 passed in 0.01s
 ```
 
 ## acceptance tests
@@ -154,14 +148,8 @@ Status: PASS
 Status: PASS
 
 ```text
-...................................................................      [100%]
-=============================== warnings summary ===============================
-.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1
-  /Users/bruce/Developer/work/AIRank-productization/.runtime/api-py311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
-    from starlette.testclient import TestClient as TestClient  # noqa
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-67 passed, 1 warning in 0.60s
+.....................................................................    [100%]
+69 passed in 0.69s
 ```
 
 ## scheduler tests
@@ -170,7 +158,7 @@ Status: PASS
 
 ```text
 .......                                                                  [100%]
-7 passed in 0.26s
+7 passed in 0.27s
 ```
 
 ## worker tests
@@ -179,7 +167,7 @@ Status: PASS
 
 ```text
 ...................................                                      [100%]
-35 passed in 0.16s
+35 passed in 0.15s
 ```
 
 ## score tests
@@ -188,7 +176,7 @@ Status: PASS
 
 ```text
 ................                                                         [100%]
-16 passed in 0.05s
+16 passed in 0.04s
 ```
 
 ## evidence tests
@@ -197,7 +185,7 @@ Status: PASS
 
 ```text
 ...............................................                          [100%]
-47 passed in 0.08s
+47 passed in 0.06s
 ```
 
 ## outbound security tests
@@ -215,7 +203,7 @@ Status: PASS
 
 ```text
 .......................                                                  [100%]
-23 passed in 0.04s
+23 passed in 0.02s
 ```
 
 ## core skill evaluation
@@ -232,7 +220,7 @@ Status: PASS
 
 ```text
 ......                                                                   [100%]
-6 passed in 0.04s
+6 passed in 0.03s
 ```
 
 ## web build
@@ -249,9 +237,9 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
-dist/assets/index-5riTn7Pq.css   71.39 kB │ gzip:  11.65 kB
-dist/assets/index-DLx2d2rj.js   396.80 kB │ gzip: 118.30 kB
-✓ built in 724ms
+dist/assets/index-ClLEF_uU.css   72.24 kB │ gzip:  11.79 kB
+dist/assets/index-ZU4t4C-r.js   400.69 kB │ gzip: 119.13 kB
+✓ built in 768ms
 ```
 
 ## real integration tests
@@ -260,7 +248,7 @@ Status: PASS
 
 ```text
 ......s...................s...                                           [100%]
-28 passed, 2 skipped in 4.39s
+28 passed, 2 skipped in 3.45s
 ```
 
 ## alembic offline sql
@@ -296,6 +284,7 @@ INFO  [alembic.runtime.migration] Running upgrade 20260808_0021 -> 20260808_0022
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0022 -> 20260808_0023, bind governed facts to a stable comparison subject
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0023 -> 20260808_0024, add governed knowledge source synchronization
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0024 -> 20260808_0025, add independent evidence review cases and agreement gates
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0025 -> 20260808_0026, add immutable project evidence integrity audits
 ```
 
 ## alembic real mysql
@@ -317,7 +306,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -328,7 +317,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -339,7 +328,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -354,7 +343,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -365,7 +354,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -376,7 +365,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -387,7 +376,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -398,7 +387,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T12:12:17.944809+00:00",
+    "checked_at": "2026-08-08T12:53:07.028237+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -438,7 +427,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/34/34611c8bde948c24eb6a59a1d5bfb34f89c279efa75237201c93bc5b740f891e.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/d2/d227889493baee5c238c91790f57e0edb397dd5a26ca8fdbbeb9684d5d64dca1.png"
     },
     {
       "provider": "qianwen",
@@ -451,7 +440,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/c7/c7cb30c14591d0f98a6150b458b803cdeff32538f6866c589ade73daed2f1839.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/04/04c8b6431cbeb01548c08a860e4ea92ccc04335811a375012bcf22b3620b5730.png"
     },
     {
       "provider": "kimi",
@@ -464,7 +453,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/29/29e1974038e7910de1631bafa81ca8112bac899e41f2cc87b1f28b51382606bb.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/49/492e73d4eeaa45bbfb03aaed3e15cd64d3926cef4dcc3f6750cf0c100451dde6.png"
     },
     {
       "provider": "deepseek",
@@ -477,7 +466,7 @@ Status: BLOCKED
       "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/e6/e63f9bf5878a185cb3f81376ac6284f172d94d6a488cb9bc6089b83f31e0c949.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/62/62bb71ff23b60f44059d39f7df54c1cf2c9b602883a115a36964b1a824586973.png"
     }
   ]
 }
