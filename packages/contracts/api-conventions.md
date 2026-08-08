@@ -210,9 +210,15 @@ GET  /api/v1/projects/{project_id}/opportunity-actions
 POST /api/v1/projects/{project_id}/opportunities/{snapshot_id}/actions
 POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/claims
 POST /api/v1/projects/{project_id}/opportunity-actions/{action_id}/transitions
+GET  /api/v1/projects/{project_id}/opportunity-action-routing
+POST /api/v1/projects/{project_id}/opportunity-action-teams
+PUT  /api/v1/projects/{project_id}/opportunity-action-teams/{team_id}/members/{user_id}
+PUT  /api/v1/projects/{project_id}/opportunity-action-routes/{source_kind}
 ```
 
 行动使用 `airank.opportunity-action.v1`。只有最新完整推导中的不可变机会快照能创建每个稳定机会唯一的行动；默认截止日期由严重度映射，责任人通过认证身份自助领取，任务版本和 Idempotency-Key 阻止覆盖与重复副作用。`evidence_blocked` 即使已领取也不会自动转为执行中，必须由更新且 `ready_for_action` 的机会快照执行 `refresh_evidence`。`verify_not_observed` 只能绑定比来源更新的最新完整推导，并证明该稳定机会不在该次完整 manifest 中；`waive` 必须由责任人提供至少 20 字原因。两种终结都固定 `effect_claim_allowed=false`，不得解释为品牌推荐、增长或长期解决。所有状态变化写入带前序 hash 的追加事件。
+
+行动团队路由使用 `airank.opportunity-action-routing.v1`，按四类 `source_kind` 配置交付团队。完全未配置时兼容 `unrestricted_legacy`；配置任一路由后，缺路由、停用/空团队、非成员与容量耗尽分别返回显式阻断。管理员操作要求 `airank:opportunity:admin`，成员领取只信任认证身份。手工成员固定 `external_membership_verified=false`，不能冒充 Yudao 目录证明。Scheduler 以 `opportunity_action.sla_overdue.v1` 记录逾期与无身份路由摘要；Outbox pending 不等于外部通知，只有通知 Consumer 的成功回执才使行动返回 `external_delivery_verified=true`。
 
 ## 幂等
 

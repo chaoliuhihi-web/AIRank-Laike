@@ -70,6 +70,7 @@ import {
   compileQuestionMap,
   claimEvidenceReviewAssignment,
   claimOpportunityAction,
+  createOpportunityActionTeam,
   bindFactAcquisitionEvidence,
   createEvidenceReviewerTeam,
   createKnowledgeSyncPolicy,
@@ -103,6 +104,7 @@ import {
   fetchEvidenceGaps,
   fetchFactAcquisitionTasks,
   fetchOpportunityActions,
+  fetchOpportunityActionRouting,
   fetchOpportunities,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
@@ -156,6 +158,8 @@ import {
   storeAuthSession,
   updateProviderRoute,
   updateKnowledgeSyncPolicy,
+  upsertOpportunityActionMember,
+  putOpportunityActionRoute,
   verifyOpportunityActionNotObserved,
   type AuthSession,
   type AnswerSample,
@@ -182,6 +186,8 @@ import {
   type OpportunityList,
   type OpportunityAction,
   type OpportunityActionList,
+  type OpportunityActionRouting,
+  type OpportunitySourceKind,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -4470,8 +4476,19 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     overdue_count: 0,
     final_count: 0,
   });
+  const [opportunityRouting, setOpportunityRouting] = useState<OpportunityActionRouting>({
+    project_id: "",
+    contract_version: "airank.opportunity-action-routing.v1",
+    routing_mode: "unrestricted_legacy",
+    teams: [],
+    routes: [],
+    missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"],
+    known_limitations: ["yudao_action_team_sync_not_configured"],
+    idempotent_replay: false,
+  });
   const [derivingOpportunities, setDerivingOpportunities] = useState(false);
   const [actingOpportunityId, setActingOpportunityId] = useState<string | null>(null);
+  const [routingMutationKey, setRoutingMutationKey] = useState<string | null>(null);
   const [creatingFactTaskGapId, setCreatingFactTaskGapId] = useState<string | null>(null);
   const [bindingFactTaskId, setBindingFactTaskId] = useState<string | null>(null);
   const [taskFactSelections, setTaskFactSelections] = useState<Record<string, string>>({});
@@ -4508,6 +4525,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       setFactAcquisitionTasks({ project_id: "", contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
       setOpportunities({ project_id: "", contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
       setOpportunityActions({ project_id: "", contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
+      setOpportunityRouting({ project_id: "", contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
       return;
     }
     const controller = new AbortController();
@@ -4520,8 +4538,9 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchFactAcquisitionTasks(project.id, controller.signal),
       fetchOpportunities(project.id, controller.signal),
       fetchOpportunityActions(project.id, controller.signal),
+      fetchOpportunityActionRouting(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting]) => {
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
@@ -4530,6 +4549,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setFactAcquisitionTasks(nextFactTasks);
         setOpportunities(nextOpportunities);
         setOpportunityActions(nextOpportunityActions);
+        setOpportunityRouting(nextOpportunityRouting);
         const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
@@ -4557,6 +4577,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setFactAcquisitionTasks({ project_id: project.id, contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
         setOpportunities({ project_id: project.id, contract_version: "airank.intervention-opportunity.v1", policy_version: "airank.cross-domain-opportunity-policy.v1", latest_derivation_run: null, state_counts: { blocked_evidence: 0, ready_for_action: 0, monitor: 0 }, source_counts: { brand_visibility: 0, citation_support: 0, fact_governance: 0, page_extractability: 0 }, opportunities: [] });
         setOpportunityActions({ project_id: project.id, contract_version: "airank.opportunity-action.v1", actions: [], open_count: 0, evidence_blocked_count: 0, overdue_count: 0, final_count: 0 });
+        setOpportunityRouting({ project_id: project.id, contract_version: "airank.opportunity-action-routing.v1", routing_mode: "unrestricted_legacy", teams: [], routes: [], missing_source_kinds: ["brand_visibility", "citation_support", "fact_governance", "page_extractability"], known_limitations: ["yudao_action_team_sync_not_configured"], idempotent_replay: false });
         setLoadError(error instanceof Error ? error.message : "内容资产接口不可用");
       });
     return () => controller.abort();
@@ -4698,6 +4719,56 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       notify({ title: "复测确认未通过", desc: error instanceof Error ? error.message : "需要更新且完整的机会推导证据。", tone: "danger" });
     } finally {
       setActingOpportunityId(null);
+    }
+  };
+
+  const submitOpportunityTeamCreate = async (name: string) => {
+    if (!project.id) return;
+    setRoutingMutationKey("create-team");
+    try {
+      const routing = await createOpportunityActionTeam(project.id, name);
+      setOpportunityRouting(routing);
+      notify({
+        title: routing.idempotent_replay ? "交付团队已存在" : "交付团队已创建",
+        desc: "手工成员不会被标记为 Yudao 已核验；请继续添加成员并配置四类来源路由。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "交付团队未创建", desc: error instanceof Error ? error.message : "请确认管理员权限与团队名称。", tone: "danger" });
+    } finally {
+      setRoutingMutationKey(null);
+    }
+  };
+
+  const submitOpportunityTeamJoin = async (teamId: string) => {
+    if (!project.id) return;
+    const userId = getStoredAuthSession()?.user.userId;
+    if (!userId) {
+      notify({ title: "缺少登录身份", desc: "请重新登录后再加入交付团队。", tone: "danger" });
+      return;
+    }
+    setRoutingMutationKey(`member:${teamId}`);
+    try {
+      setOpportunityRouting(await upsertOpportunityActionMember(project.id, teamId, userId));
+      notify({ title: "当前账号已加入团队", desc: "默认容量为 5 个活动行动；手工成员身份未经过 Yudao 外部目录核验。", tone: "success" });
+    } catch (error) {
+      notify({ title: "团队成员未更新", desc: error instanceof Error ? error.message : "成员版本或管理员权限不满足。", tone: "danger" });
+    } finally {
+      setRoutingMutationKey(null);
+    }
+  };
+
+  const submitOpportunityRoute = async (sourceKind: OpportunitySourceKind, teamId: string) => {
+    if (!project.id) return;
+    const existing = opportunityRouting.routes.find((route) => route.source_kind === sourceKind);
+    setRoutingMutationKey(`route:${sourceKind}`);
+    try {
+      setOpportunityRouting(await putOpportunityActionRoute(project.id, sourceKind, teamId, existing?.version));
+      notify({ title: "机会来源路由已保存", desc: "领取时将重新核验团队成员资格与容量；配置任一路由后不再回退到无限制领取。", tone: "success" });
+    } catch (error) {
+      notify({ title: "机会来源路由未保存", desc: error instanceof Error ? error.message : "团队为空、停用或路由版本已变化。", tone: "danger" });
+    } finally {
+      setRoutingMutationKey(null);
     }
   };
 
@@ -4926,13 +4997,18 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       <OpportunityBoard
         data={opportunities}
         actionData={opportunityActions}
+        routingData={opportunityRouting}
         currentUserId={getStoredAuthSession()?.user.userId ?? ""}
         deriving={derivingOpportunities}
         actingActionId={actingOpportunityId}
+        routingMutationKey={routingMutationKey}
         onDerive={() => void submitOpportunityDerivation()}
         onCreateAction={(item) => void submitOpportunityActionCreate(item)}
         onClaimAction={(item) => void submitOpportunityActionClaim(item)}
         onVerifyAction={(item, runId) => void submitOpportunityActionVerification(item, runId)}
+        onCreateTeam={(name) => void submitOpportunityTeamCreate(name)}
+        onJoinTeam={(teamId) => void submitOpportunityTeamJoin(teamId)}
+        onPutRoute={(sourceKind, teamId) => void submitOpportunityRoute(sourceKind, teamId)}
         onNavigate={onNavigate}
       />
       <Panel title="真实扫描 → 证据缺口">

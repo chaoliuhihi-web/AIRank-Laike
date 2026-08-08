@@ -1281,3 +1281,26 @@ Decision:
 ### Decision
 
 - AIRank can now turn evidence-backed opportunities into owned, auditable work without turning task completion into a marketing outcome. This closes an internal delivery gap but does not change the commercial `NO-GO` decision.
+
+## Opportunity action routing and SLA escalation gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0035` adds project-scoped opportunity delivery teams, members and one current route for each of the four opportunity source kinds. The action projection freezes route/team/member versions and external membership verification state; the real database is at head with 86 AIRank tables.
+- With no route configuration, the existing behavior is explicitly labeled `unrestricted_legacy`. Once any route is configured, missing source routes, disabled or empty teams, non-members and owners at their active-action capacity all fail closed. Claim resolution locks the member row and counts current non-final assignments before assignment.
+- Manual members remain `external_membership_verified=false`; this implementation does not claim Yudao directory verification. Admin mutations require `airank:opportunity:admin`, while authenticated project users can read routing state needed to understand why a claim is blocked.
+- The Scheduler now re-locks overdue non-final actions and writes deterministic `opportunity_action.sla_overdue.v1` Outbox events. Payloads omit owner/member identity, preserve route version and recipient count, set `delivery_claim=outbox_pending_not_delivered`, and keep `effect_claim_allowed=false`.
+- The existing DNS-pinned HTTPS notification Consumer accepts both reviewer and opportunity-action SLA events. Only a persisted successful 2xx channel receipt can make `external_delivery_verified=true`; a pending Outbox row is not external delivery.
+- Real MySQL verifies team creation, membership, source routing, non-member rejection, authenticated claim, route/member snapshots, one idempotent overdue event, pending delivery semantics, later evidence refresh, zero-opportunity verification and exact cleanup. Default regression passes `507 passed, 32 skipped`; real MySQL passes `30 passed, 2 skipped`; focused Scheduler/Worker/API coverage passes 70 tests; Node 24 Web production build and production dependency audit pass.
+- The asset workflow now reads the real routing API, shows member capacity and external-verification state, configures all four source routes, and exposes action escalation/receipt state. This new UI passed TypeScript/Vite production build; browser visual/E2E acceptance has not been rerun in this slice and remains explicitly pending.
+
+### Still blocked
+
+- Opportunity delivery teams do not yet synchronize from a real Yudao group. Manual members are usable for controlled internal delivery but are not production directory proof.
+- No customer HTTPS notification endpoint was supplied, so the new action SLA event is proven only through durable pending Outbox state; external recipient delivery remains unverified.
+- Budget, effort, dependency ordering and 30/60/90 portfolio scheduling are not yet implemented. No expected growth or recommendation uplift is generated.
+- Existing production object storage, Yudao auth, optional Xinghe services, Consumer Browser L3, reviewer benchmark, customer publishing and elapsed T+7/T+14/T+30 blockers remain unchanged.
+
+### Decision
+
+- Team routing and capacity close another internal delivery-control gap, but AIRank remains commercial `NO-GO`. Build success, manual membership and pending escalation events are not substituted for production identity, external delivery or observed GEO outcomes.

@@ -146,6 +146,13 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPPORTUNITY_ACTION_FINAL` | 409 | 机会行动已完成复测确认或豁免，禁止覆盖最终状态 |
 | `OPPORTUNITY_ACTION_TRANSITION_INVALID` | 409 | 行动状态转换不满足当前状态或最新证据条件 |
 | `OPPORTUNITY_ACTION_VERIFICATION_REQUIRED` | 409 | 缺少更新且完整的机会推导运行，不能确认“本轮未再观察到” |
+| `OPPORTUNITY_ACTION_TEAM_NOT_FOUND` | 404 | 机会行动团队不存在或不属于当前租户/项目 |
+| `OPPORTUNITY_ACTION_TEAM_CONFLICT` | 409 | 同名机会行动团队已经存在 |
+| `OPPORTUNITY_ACTION_MEMBER_VERSION_CONFLICT` | 409 | 机会行动团队成员版本已变化，必须刷新后更新 |
+| `OPPORTUNITY_ACTION_ROUTE_VERSION_CONFLICT` | 409 | 机会来源路由版本已变化，必须刷新后更新 |
+| `OPPORTUNITY_ACTION_ROUTING_BLOCKED` | 409 | 已启用团队路由，但该来源没有可用团队或成员 |
+| `OPPORTUNITY_ACTION_ROUTING_FORBIDDEN` | 403 | 当前认证账号不是该机会来源路由团队的有效成员 |
+| `OPPORTUNITY_ACTION_CAPACITY_REACHED` | 409 | 当前责任人的活动机会数达到团队成员容量上限 |
 | `COMPARISON_EVIDENCE_INCOMPLETE` | 409 | 比较页的主体、维度或对称证据矩阵不完整 |
 | `EXPLAINER_EVIDENCE_INCOMPLETE` | 409 | 解释页的角色、篇幅、品牌露出或精确证据门禁未通过 |
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |

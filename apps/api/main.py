@@ -144,6 +144,13 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "OPPORTUNITY_ACTION_FINAL": (409, "Opportunity action is already final"),
     "OPPORTUNITY_ACTION_TRANSITION_INVALID": (409, "Opportunity action transition is invalid"),
     "OPPORTUNITY_ACTION_VERIFICATION_REQUIRED": (409, "A newer complete opportunity derivation is required"),
+    "OPPORTUNITY_ACTION_TEAM_NOT_FOUND": (404, "Opportunity action team was not found"),
+    "OPPORTUNITY_ACTION_TEAM_CONFLICT": (409, "Opportunity action team already exists"),
+    "OPPORTUNITY_ACTION_MEMBER_VERSION_CONFLICT": (409, "Opportunity action team membership version is stale"),
+    "OPPORTUNITY_ACTION_ROUTE_VERSION_CONFLICT": (409, "Opportunity action route version is stale"),
+    "OPPORTUNITY_ACTION_ROUTING_BLOCKED": (409, "Opportunity action routing is not ready"),
+    "OPPORTUNITY_ACTION_ROUTING_FORBIDDEN": (403, "Current actor is not routed for this opportunity"),
+    "OPPORTUNITY_ACTION_CAPACITY_REACHED": (409, "Opportunity action owner capacity is reached"),
     "COMPARISON_EVIDENCE_INCOMPLETE": (409, "Comparison evidence matrix is incomplete"),
     "EXPLAINER_EVIDENCE_INCOMPLETE": (409, "Explainer evidence or quality gate is incomplete"),
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
@@ -6066,3 +6073,10 @@ except ImportError:  # pragma: no cover
     from opportunity_action_routes import router as opportunity_action_router  # type: ignore[no-redef]
 
 app.include_router(opportunity_action_router)
+
+try:
+    from .opportunity_routing_routes import router as opportunity_routing_router
+except ImportError:  # pragma: no cover
+    from opportunity_routing_routes import router as opportunity_routing_router  # type: ignore[no-redef]
+
+app.include_router(opportunity_routing_router)

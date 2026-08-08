@@ -1,10 +1,11 @@
 # AIRank Scheduler
 
-The scheduler handles four durable workflows:
+The scheduler handles five durable workflows:
 
 - turns due `T+7/T+14/T+30` observation windows into new `ScanRun` tasks;
 - queues due knowledge-source synchronization jobs; and
 - persists reviewer-SLA overdue events to `airank_outbox_events`; and
+- persists opportunity-action SLA overdue events to `airank_outbox_events`; and
 - queues due Yudao reviewer-directory bindings as `reviewer.directory.sync` jobs.
 
 Retest dispatch clones the baseline tasks' frozen prompt/request contract,
@@ -21,6 +22,15 @@ idempotent. `pending` means only that a durable Outbox event exists; even
 `published` is accepted as external delivery only when the notification
 Consumer has persisted a successful immutable channel receipt. A plain Outbox
 row or failed attempt remains externally unverified.
+
+Opportunity action escalation uses `opportunity_action.sla_overdue.v1` and
+`airank.opportunity-action-sla-escalation.v1`. It re-locks the non-final action
+before writing, freezes the team/route version and recipient count without
+including owner/member identities, and records
+`delivery_claim=outbox_pending_not_delivered` plus
+`effect_claim_allowed=false`. The existing secure notification Consumer may
+deliver either review or action events, but only a persisted 2xx receipt is
+treated as externally delivered.
 
 Reviewer-directory scheduling stores only binding IDs, versions, roles and the
 external department ID. Service credentials remain in Worker process secrets.

@@ -2,6 +2,7 @@ import type {
   InterventionOpportunity,
   OpportunityAction,
   OpportunityActionList,
+  OpportunityActionRouting,
   OpportunityList,
   OpportunitySourceKind,
 } from "./api";
@@ -64,29 +65,44 @@ function shortHash(value: string): string {
 export function OpportunityBoard({
   data,
   actionData,
+  routingData,
   currentUserId,
   deriving,
   actingActionId,
+  routingMutationKey,
   onDerive,
   onCreateAction,
   onClaimAction,
   onVerifyAction,
+  onCreateTeam,
+  onJoinTeam,
+  onPutRoute,
   onNavigate,
 }: {
   data: OpportunityList;
   actionData: OpportunityActionList;
+  routingData: OpportunityActionRouting;
   currentUserId: string;
   deriving: boolean;
   actingActionId: string | null;
+  routingMutationKey: string | null;
   onDerive: () => void;
   onCreateAction: (item: InterventionOpportunity) => void;
   onClaimAction: (item: OpportunityAction) => void;
   onVerifyAction: (item: OpportunityAction, verificationRunId: string) => void;
+  onCreateTeam: (name: string) => void;
+  onJoinTeam: (teamId: string) => void;
+  onPutRoute: (sourceKind: OpportunitySourceKind, teamId: string) => void;
   onNavigate: (path: string) => void;
 }) {
   const latest = data.latest_derivation_run;
   const actionsByOpportunity = new Map(actionData.actions.map((item) => [item.opportunity_id, item]));
   const currentOpportunityIds = new Set(data.opportunities.map((item) => item.opportunity_id));
+  const currentUserTeamIds = new Set(
+    routingData.teams
+      .filter((team) => team.members.some((member) => member.user_id === currentUserId && member.status === "active"))
+      .map((team) => team.team_id),
+  );
   return (
     <section className="opportunity-board" data-testid="cross-domain-opportunity-board">
       <header className="opportunity-board-header">
@@ -185,6 +201,80 @@ export function OpportunityBoard({
         </div>
       )}
 
+      <section className="opportunity-routing-panel" aria-label="机会行动团队路由">
+        <header>
+          <div>
+            <span className="opportunity-eyebrow">airank.opportunity-action-routing.v1</span>
+            <h4>交付团队与容量路由</h4>
+            <p>配置任一来源后即进入失败关闭模式：缺路由、非团队成员或容量耗尽都不能领取。手工成员不冒充 Yudao 已核验。</p>
+          </div>
+          <span data-mode={routingData.routing_mode}>
+            {routingData.routing_mode === "team_routed" ? "四类路由就绪" : routingData.routing_mode === "blocked" ? "路由未完整" : "兼容无限制模式"}
+          </span>
+        </header>
+        <form
+          className="opportunity-routing-create"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const name = String(form.get("team_name") || "").trim();
+            if (name) onCreateTeam(name);
+          }}
+        >
+          <label>新团队<input name="team_name" defaultValue="GEO 交付组" minLength={1} maxLength={160} /></label>
+          <button type="submit" disabled={routingMutationKey === "create-team"}>{routingMutationKey === "create-team" ? "创建中…" : "创建交付团队"}</button>
+        </form>
+        {routingData.teams.length === 0 ? (
+          <p className="opportunity-routing-empty">尚未配置团队；当前保持显式 unrestricted_legacy，仅用于兼容，不代表生产路由完成。</p>
+        ) : (
+          <div className="opportunity-routing-teams">
+            {routingData.teams.map((team) => (
+              <article key={team.team_id}>
+                <div><strong>{team.name}</strong><span>{team.member_count} 名成员 · {team.external_sync_state}</span></div>
+                <div className="opportunity-routing-members">
+                  {team.members.map((member) => (
+                    <span key={member.member_id} data-capacity={member.at_capacity ? "full" : "available"}>
+                      {member.display_name || member.user_id} · {member.active_action_count}/{member.max_active_actions}
+                      {member.external_membership_verified ? " · Yudao 已核验" : " · 手工未核验"}
+                    </span>
+                  ))}
+                </div>
+                {!currentUserTeamIds.has(team.team_id) && (
+                  <button type="button" disabled={routingMutationKey === `member:${team.team_id}`} onClick={() => onJoinTeam(team.team_id)}>
+                    {routingMutationKey === `member:${team.team_id}` ? "加入中…" : "将当前账号加入团队"}
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+        {routingData.teams.length > 0 && (
+          <div className="opportunity-routing-grid">
+            {(Object.keys(sourceLabels) as OpportunitySourceKind[]).map((kind) => {
+              const currentRoute = routingData.routes.find((route) => route.source_kind === kind);
+              return (
+                <article key={kind}>
+                  <div><strong>{sourceLabels[kind]}</strong><span>{currentRoute ? `${currentRoute.team_name} · ${currentRoute.eligible_member_count} 可领取` : "未配置，已阻断"}</span></div>
+                  <div>
+                    {routingData.teams.map((team) => (
+                      <button
+                        type="button"
+                        key={team.team_id}
+                        data-active={currentRoute?.team_id === team.team_id}
+                        disabled={routingMutationKey === `route:${kind}` || currentRoute?.team_id === team.team_id}
+                        onClick={() => onPutRoute(kind, team.team_id)}
+                      >
+                        {currentRoute?.team_id === team.team_id ? "当前路由" : `路由到 ${team.name}`}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {actionData.actions.length > 0 && (
         <section className="opportunity-action-queue" aria-label="机会行动台账">
           <header>
@@ -217,8 +307,10 @@ export function OpportunityBoard({
                   <p>{action.action_note}</p>
                   <div className="opportunity-action-proof">
                     <span>{action.assigned_to ? `责任人 ${action.assigned_to}` : "未领取"}</span>
+                    <span>路由 {action.routing_state}{action.external_membership_verified ? " · Yudao 已核验" : " · 外部成员未核验"}</span>
                     <code title={action.latest_evidence_sha256}>{shortHash(action.latest_evidence_sha256)}</code>
                     <span>事件 {action.event_count} · 版本 {action.version}</span>
+                    <span>SLA 升级 {action.escalation_count}{action.pending_escalation_count ? ` · ${action.pending_escalation_count} 待送达` : ""}{action.external_delivery_verified ? " · 外部已送达" : " · 外部未验证"}</span>
                     <strong>效果声明：禁止</strong>
                   </div>
                   {!action.assigned_to && !["verified_not_observed", "waived"].includes(action.status) && (

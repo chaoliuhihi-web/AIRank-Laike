@@ -20,6 +20,10 @@ from apps.api.opportunity_routes import (
     stable_id,
     trusted_actor,
 )
+from apps.api.opportunity_routing_routes import (
+    resolve_action_claim_route,
+    resolve_action_route_summary,
+)
 
 
 router = APIRouter(prefix="/api/v1", tags=["opportunity-actions"])
@@ -112,6 +116,12 @@ class OpportunityActionData(BaseModel):
     latest_derivation_run_id: str
     latest_snapshot_sha256: str
     latest_evidence_sha256: str
+    routing_state: Literal["unrestricted_legacy", "team_routed", "blocked"]
+    routing_team_id: Optional[str]
+    routing_route_version: Optional[int]
+    routing_member_id: Optional[str]
+    routing_member_version: Optional[int]
+    external_membership_verified: bool
     assigned_to: Optional[str]
     assigned_at: Optional[datetime]
     due_at: datetime
@@ -123,6 +133,10 @@ class OpportunityActionData(BaseModel):
     effect_claim_allowed: Literal[False]
     event_count: int = Field(ge=1)
     last_event_sha256: str
+    escalation_count: int = Field(ge=0)
+    pending_escalation_count: int = Field(ge=0)
+    external_delivery_verified: bool
+    latest_escalated_at: Optional[datetime]
     created_by: str
     updated_by: str
     version: int = Field(ge=1)
@@ -292,6 +306,12 @@ class MySQLOpportunityActionRepository:
             now = utc_now().replace(tzinfo=None)
             due_at = now + timedelta(days=due_days)
             status = "evidence_blocked" if str(snapshot["state"]) == "blocked_evidence" else "open"
+            routing = resolve_action_route_summary(
+                conn,
+                tenant_id,
+                project_id,
+                str(snapshot["source_kind"]),
+            )
             action_id = stable_id(
                 "opportunity_action",
                 tenant_id,
@@ -312,7 +332,10 @@ class MySQLOpportunityActionRepository:
                       source_derivation_run_id, source_snapshot_sha256,
                       source_evidence_sha256, latest_snapshot_id,
                       latest_derivation_run_id, latest_snapshot_sha256,
-                      latest_evidence_sha256, assigned_to, assigned_at, due_at,
+                      latest_evidence_sha256, routing_state, routing_team_id,
+                      routing_route_version, routing_member_id,
+                      routing_member_version, external_membership_verified,
+                      assigned_to, assigned_at, due_at,
                       action_note, verification_run_id, verification_basis_sha256,
                       closure_reason, effect_claim_allowed, creation_idempotency_key,
                       creation_request_sha256, created_by, updated_by, version,
@@ -323,7 +346,9 @@ class MySQLOpportunityActionRepository:
                       :source_derivation_run_id, :source_snapshot_sha256,
                       :source_evidence_sha256, :source_snapshot_id,
                       :source_derivation_run_id, :source_snapshot_sha256,
-                      :source_evidence_sha256, NULL, NULL, :due_at,
+                      :source_evidence_sha256, :routing_state, :routing_team_id,
+                      :routing_route_version, NULL, NULL, 0,
+                      NULL, NULL, :due_at,
                       :action_note, NULL, NULL, NULL, 0, :idempotency_key,
                       :request_sha256, :actor, :actor, 1, NULL, :created_at, :created_at
                     )
@@ -342,6 +367,9 @@ class MySQLOpportunityActionRepository:
                     "source_derivation_run_id": str(snapshot["derivation_run_id"]),
                     "source_snapshot_sha256": str(snapshot["snapshot_sha256"]),
                     "source_evidence_sha256": str(snapshot["source_evidence_sha256"]),
+                    "routing_state": routing.routing_state,
+                    "routing_team_id": routing.team_id,
+                    "routing_route_version": routing.route_version,
                     "due_at": due_at,
                     "action_note": note,
                     "idempotency_key": idempotency_key,
@@ -393,6 +421,33 @@ class MySQLOpportunityActionRepository:
             assigned_to = str(action["assigned_to"] or "")
             if assigned_to and assigned_to != actor:
                 raise action_error(403, "OPPORTUNITY_ACTION_OWNER_FORBIDDEN", {"action_id": action_id})
+            routing = resolve_action_claim_route(
+                conn,
+                self.engine.dialect.name,
+                tenant_id,
+                project_id,
+                str(action["source_kind"]),
+                actor,
+                action_id=action_id,
+                lock_member=True,
+            )
+            if routing.at_capacity:
+                raise action_error(
+                    409,
+                    "OPPORTUNITY_ACTION_CAPACITY_REACHED",
+                    {
+                        "active_action_count": routing.active_action_count,
+                        "max_active_actions": routing.max_active_actions,
+                    },
+                )
+            if routing.routing_state == "blocked":
+                code = (
+                    "OPPORTUNITY_ACTION_ROUTING_FORBIDDEN"
+                    if routing.reason == "actor_is_not_active_team_member"
+                    else "OPPORTUNITY_ACTION_ROUTING_BLOCKED"
+                )
+                status_code = 403 if code.endswith("FORBIDDEN") else 409
+                raise action_error(status_code, code, {"reason": routing.reason or "routing_not_ready"})
             now = utc_now().replace(tzinfo=None)
             next_status = "in_progress" if str(action["status"]) == "open" else str(action["status"])
             next_version = int(action["version"]) + 1
@@ -402,7 +457,13 @@ class MySQLOpportunityActionRepository:
                     UPDATE airank_opportunity_actions
                     SET assigned_to=:actor,
                         assigned_at=COALESCE(assigned_at, :updated_at),
-                        status=:status, updated_by=:actor,
+                        status=:status, routing_state=:routing_state,
+                        routing_team_id=:routing_team_id,
+                        routing_route_version=:routing_route_version,
+                        routing_member_id=:routing_member_id,
+                        routing_member_version=:routing_member_version,
+                        external_membership_verified=:external_verified,
+                        updated_by=:actor,
                         version=:version, updated_at=:updated_at
                     WHERE tenant_id=:tenant_id AND id=:action_id
                     """
@@ -410,6 +471,12 @@ class MySQLOpportunityActionRepository:
                 {
                     "actor": actor,
                     "status": next_status,
+                    "routing_state": routing.routing_state,
+                    "routing_team_id": routing.team_id,
+                    "routing_route_version": routing.route_version,
+                    "routing_member_id": routing.member_id,
+                    "routing_member_version": routing.member_version,
+                    "external_verified": routing.external_membership_verified,
                     "version": next_version,
                     "updated_at": now,
                     "tenant_id": tenant_id,
@@ -470,6 +537,14 @@ class MySQLOpportunityActionRepository:
                 "latest_derivation_run_id": str(action["latest_derivation_run_id"]),
                 "latest_snapshot_sha256": str(action["latest_snapshot_sha256"]),
                 "latest_evidence_sha256": str(action["latest_evidence_sha256"]),
+                "routing_state": str(action["routing_state"]),
+                "routing_team_id": action["routing_team_id"],
+                "routing_route_version": action["routing_route_version"],
+                "routing_member_id": action["routing_member_id"],
+                "routing_member_version": action["routing_member_version"],
+                "external_membership_verified": bool(
+                    action["external_membership_verified"]
+                ),
                 "verification_run_id": action["verification_run_id"],
                 "verification_basis_sha256": action["verification_basis_sha256"],
                 "closure_reason": action["closure_reason"],
@@ -506,6 +581,9 @@ class MySQLOpportunityActionRepository:
                     status="open" if str(action["status"]) == "in_progress" else str(action["status"]),
                     assigned_to=None,
                     assigned_at=None,
+                    routing_member_id=None,
+                    routing_member_version=None,
+                    external_membership_verified=False,
                 )
             elif payload.transition == "verify_not_observed":
                 self._require_owner(action, actor)
@@ -536,6 +614,12 @@ class MySQLOpportunityActionRepository:
                         latest_derivation_run_id=:latest_derivation_run_id,
                         latest_snapshot_sha256=:latest_snapshot_sha256,
                         latest_evidence_sha256=:latest_evidence_sha256,
+                        routing_state=:routing_state,
+                        routing_team_id=:routing_team_id,
+                        routing_route_version=:routing_route_version,
+                        routing_member_id=:routing_member_id,
+                        routing_member_version=:routing_member_version,
+                        external_membership_verified=:external_membership_verified,
                         verification_run_id=:verification_run_id,
                         verification_basis_sha256=:verification_basis_sha256,
                         closure_reason=:closure_reason, completed_at=:completed_at,
@@ -777,6 +861,12 @@ class MySQLOpportunityActionRepository:
             "latest_snapshot_id": str(action["latest_snapshot_id"]),
             "latest_snapshot_sha256": str(action["latest_snapshot_sha256"]),
             "latest_evidence_sha256": str(action["latest_evidence_sha256"]),
+            "routing_state": str(action["routing_state"]),
+            "routing_team_id": str(action["routing_team_id"]) if action["routing_team_id"] else None,
+            "routing_route_version": int(action["routing_route_version"]) if action["routing_route_version"] is not None else None,
+            "routing_member_id": str(action["routing_member_id"]) if action["routing_member_id"] else None,
+            "routing_member_version": int(action["routing_member_version"]) if action["routing_member_version"] is not None else None,
+            "external_membership_verified": bool(action["external_membership_verified"]),
             "verification_run_id": str(action["verification_run_id"]) if action["verification_run_id"] else None,
             "verification_basis_sha256": str(action["verification_basis_sha256"]) if action["verification_basis_sha256"] else None,
             "effect_claim_allowed": False,
@@ -838,6 +928,29 @@ class MySQLOpportunityActionRepository:
             ),
             {"tenant_id": str(action["tenant_id"]), "action_id": str(action["id"])},
         ).scalars().all()
+        escalation = conn.execute(
+            text(
+                """
+                SELECT COUNT(event.id) AS escalation_count,
+                       SUM(CASE WHEN event.status='pending' THEN 1 ELSE 0 END)
+                         AS pending_count,
+                       MAX(event.created_at) AS latest_escalated_at,
+                       MAX(CASE WHEN event.status='published'
+                                      AND delivery.status='succeeded'
+                                THEN 1 ELSE 0 END) AS delivery_verified
+                FROM airank_outbox_events event
+                LEFT JOIN airank_notification_deliveries delivery
+                  ON delivery.tenant_id=event.tenant_id
+                 AND delivery.outbox_event_id=event.id
+                 AND delivery.channel='webhook'
+                WHERE event.tenant_id=:tenant_id
+                  AND event.aggregate_type='opportunity_action'
+                  AND event.aggregate_id=:action_id
+                  AND event.event_type='opportunity_action.sla_overdue.v1'
+                """
+            ),
+            {"tenant_id": str(action["tenant_id"]), "action_id": str(action["id"])},
+        ).mappings().one()
         return OpportunityActionData(
             action_id=str(action["id"]),
             project_id=str(action["project_id"]),
@@ -854,6 +967,12 @@ class MySQLOpportunityActionRepository:
             latest_derivation_run_id=str(action["latest_derivation_run_id"]),
             latest_snapshot_sha256=str(action["latest_snapshot_sha256"]),
             latest_evidence_sha256=str(action["latest_evidence_sha256"]),
+            routing_state=str(action["routing_state"]),
+            routing_team_id=str(action["routing_team_id"]) if action["routing_team_id"] else None,
+            routing_route_version=int(action["routing_route_version"]) if action["routing_route_version"] is not None else None,
+            routing_member_id=str(action["routing_member_id"]) if action["routing_member_id"] else None,
+            routing_member_version=int(action["routing_member_version"]) if action["routing_member_version"] is not None else None,
+            external_membership_verified=bool(action["external_membership_verified"]),
             assigned_to=str(action["assigned_to"]) if action["assigned_to"] else None,
             assigned_at=as_utc(action["assigned_at"]) if action["assigned_at"] else None,
             due_at=as_utc(action["due_at"]),
@@ -865,6 +984,14 @@ class MySQLOpportunityActionRepository:
             effect_claim_allowed=False,
             event_count=len(events),
             last_event_sha256=str(events[-1]) if events else "",
+            escalation_count=int(escalation["escalation_count"] or 0),
+            pending_escalation_count=int(escalation["pending_count"] or 0),
+            external_delivery_verified=bool(escalation["delivery_verified"]),
+            latest_escalated_at=(
+                as_utc(escalation["latest_escalated_at"])
+                if escalation["latest_escalated_at"]
+                else None
+            ),
             created_by=str(action["created_by"]),
             updated_by=str(action["updated_by"]),
             version=int(action["version"]),

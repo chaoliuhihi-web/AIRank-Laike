@@ -391,6 +391,155 @@ body,
   font: 750 11px / 17px var(--console-font-family);
 }
 
+.opportunity-routing-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d8e2f0;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.opportunity-routing-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.opportunity-routing-panel h4 {
+  margin: 3px 0 4px;
+  color: var(--console-text-strong);
+  font: 820 16px / 22px var(--console-font-family);
+}
+
+.opportunity-routing-panel header p,
+.opportunity-routing-empty {
+  max-width: 760px;
+  margin: 0;
+  color: var(--console-text-muted);
+  font: 600 12px / 19px var(--console-font-family);
+}
+
+.opportunity-routing-panel header > span {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #f1eff8;
+  color: #67588f;
+  font: 750 10px / 15px var(--console-font-family);
+}
+
+.opportunity-routing-panel header > span[data-mode="team_routed"] {
+  background: #e9f8ef;
+  color: #247346;
+}
+
+.opportunity-routing-panel header > span[data-mode="blocked"] {
+  background: #fff3df;
+  color: #8a5d12;
+}
+
+.opportunity-routing-create {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.opportunity-routing-create label {
+  display: grid;
+  gap: 5px;
+  color: var(--console-text-muted);
+  font: 700 11px / 17px var(--console-font-family);
+}
+
+.opportunity-routing-create input {
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 11px;
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-text-strong);
+}
+
+.opportunity-routing-create button,
+.opportunity-routing-teams button,
+.opportunity-routing-grid button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid #cec4f2;
+  border-radius: 8px;
+  background: #f7f4ff;
+  color: var(--console-primary);
+  font: 750 11px / 17px var(--console-font-family);
+}
+
+.opportunity-routing-teams,
+.opportunity-routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.opportunity-routing-teams article,
+.opportunity-routing-grid article {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--console-border);
+  border-radius: 9px;
+  background: #fafbfe;
+}
+
+.opportunity-routing-teams article > div:first-child,
+.opportunity-routing-grid article > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.opportunity-routing-teams strong,
+.opportunity-routing-grid strong {
+  color: var(--console-text-strong);
+  font: 800 12px / 18px var(--console-font-family);
+}
+
+.opportunity-routing-teams span,
+.opportunity-routing-grid span,
+.opportunity-routing-members span {
+  color: var(--console-text-muted);
+  font: 650 10px / 16px var(--console-font-family);
+  overflow-wrap: anywhere;
+}
+
+.opportunity-routing-members,
+.opportunity-routing-grid article > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.opportunity-routing-members span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #35658a;
+}
+
+.opportunity-routing-members span[data-capacity="full"] {
+  background: #fff0ed;
+  color: #a54837;
+}
+
+.opportunity-routing-grid button[data-active="true"] {
+  border-color: #b7d9c5;
+  background: #e9f8ef;
+  color: #247346;
+}
+
 @media (max-width: 760px) {
   .opportunity-board {
     padding: 15px;
@@ -437,7 +586,11 @@ body,
   }
 
   .opportunity-action-queue > header,
-  .opportunity-action-list article {
+  .opportunity-action-list article,
+  .opportunity-routing-panel > header,
+  .opportunity-routing-create,
+  .opportunity-routing-teams,
+  .opportunity-routing-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
   }

@@ -5,6 +5,11 @@ from .knowledge_sync import (
     KnowledgeSyncQueuePreview,
     MySQLKnowledgeSyncScheduler,
 )
+from .opportunity_action_escalation import (
+    MySQLOpportunityActionEscalationScheduler,
+    OpportunityActionEscalationPreview,
+    OpportunityActionEscalationRecord,
+)
 from .retest import MySQLRetestScheduler, RetestDispatchRecord, RetestQueuePreview
 from .review_escalation import (
     MySQLReviewEscalationScheduler,
@@ -21,11 +26,14 @@ __all__ = [
     "KnowledgeSyncDispatchRecord",
     "KnowledgeSyncQueuePreview",
     "MySQLKnowledgeSyncScheduler",
+    "MySQLOpportunityActionEscalationScheduler",
     "MySQLReviewEscalationScheduler",
     "MySQLReviewerDirectorySyncScheduler",
     "MySQLRetestScheduler",
     "ReviewEscalationDispatchRecord",
     "ReviewEscalationQueuePreview",
+    "OpportunityActionEscalationPreview",
+    "OpportunityActionEscalationRecord",
     "ReviewerDirectorySyncDispatchRecord",
     "ReviewerDirectorySyncQueuePreview",
     "RetestDispatchRecord",

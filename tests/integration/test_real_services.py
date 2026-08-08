@@ -148,7 +148,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0034"
+EXPECTED_ALEMBIC_HEAD = "20260809_0035"
 
 
 def require_real_flag(flag: str) -> None:
@@ -214,7 +214,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 83
+        assert table_count == 86
         for table_name in (
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
@@ -230,6 +230,9 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             "airank_intervention_opportunity_snapshots",
             "airank_opportunity_actions",
             "airank_opportunity_action_events",
+            "airank_opportunity_action_teams",
+            "airank_opportunity_action_team_members",
+            "airank_opportunity_action_routes",
         ):
             assert conn.execute(
                 text(

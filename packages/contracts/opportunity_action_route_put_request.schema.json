@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_route_put_request.schema.json",
+  "title": "AIRank Opportunity Action Route Put Request",
+  "type": "object",
+  "required": ["team_id"],
+  "additionalProperties": false,
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^opportunity_action_team_[0-9a-f]{20}$" },
+    "expected_version": { "type": "integer", "minimum": 1 }
+  }
+}

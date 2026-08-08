@@ -19,6 +19,8 @@ from airank_outbound_security import (
 
 
 EVENT_TYPE = "evidence_review.sla_overdue.v1"
+ACTION_EVENT_TYPE = "opportunity_action.sla_overdue.v1"
+SUPPORTED_EVENT_TYPES = (EVENT_TYPE, ACTION_EVENT_TYPE)
 DELIVERY_CONTRACT_VERSION = "airank.review-notification-webhook.v1"
 
 
@@ -307,7 +309,7 @@ class MySQLReviewNotificationRepository:
                       ON delivery.tenant_id=event.tenant_id
                      AND delivery.outbox_event_id=event.id
                      AND delivery.channel=:channel
-                    WHERE event.event_type='{EVENT_TYPE}'
+                    WHERE event.event_type IN ('{EVENT_TYPE}','{ACTION_EVENT_TYPE}')
                       AND event.status='pending' AND event.available_at<=:now
                       AND (delivery.id IS NULL OR (
                         delivery.status='queued' AND delivery.next_attempt_at<=:now

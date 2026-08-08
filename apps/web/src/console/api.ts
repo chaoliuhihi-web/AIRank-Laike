@@ -278,6 +278,12 @@ export type OpportunityAction = {
   latest_derivation_run_id: string;
   latest_snapshot_sha256: string;
   latest_evidence_sha256: string;
+  routing_state: "unrestricted_legacy" | "team_routed" | "blocked";
+  routing_team_id: string | null;
+  routing_route_version: number | null;
+  routing_member_id: string | null;
+  routing_member_version: number | null;
+  external_membership_verified: boolean;
   assigned_to: string | null;
   assigned_at: string | null;
   due_at: string;
@@ -289,6 +295,10 @@ export type OpportunityAction = {
   effect_claim_allowed: false;
   event_count: number;
   last_event_sha256: string;
+  escalation_count: number;
+  pending_escalation_count: number;
+  external_delivery_verified: boolean;
+  latest_escalated_at: string | null;
   created_by: string;
   updated_by: string;
   version: number;
@@ -306,6 +316,61 @@ export type OpportunityActionList = {
   evidence_blocked_count: number;
   overdue_count: number;
   final_count: number;
+};
+
+export type OpportunityActionTeamMember = {
+  member_id: string;
+  user_id: string;
+  display_name: string | null;
+  priority: number;
+  max_active_actions: number;
+  active_action_count: number;
+  at_capacity: boolean;
+  receives_escalations: boolean;
+  status: "active" | "disabled";
+  membership_source: "manual" | "yudao";
+  external_membership_verified: boolean;
+  version: number;
+  updated_at: string;
+};
+
+export type OpportunityActionTeam = {
+  team_id: string;
+  name: string;
+  status: "active" | "disabled";
+  external_source: "manual" | "yudao";
+  external_group_id: string | null;
+  external_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
+  version: number;
+  member_count: number;
+  members: OpportunityActionTeamMember[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type OpportunityActionRoute = {
+  route_id: string;
+  source_kind: OpportunitySourceKind;
+  team_id: string;
+  team_name: string;
+  routing_strategy: "manual_claim";
+  status: "active" | "disabled";
+  version: number;
+  eligible_member_count: number;
+  escalation_recipient_count: number;
+  routing_ready: boolean;
+  updated_at: string;
+};
+
+export type OpportunityActionRouting = {
+  project_id: string;
+  contract_version: "airank.opportunity-action-routing.v1";
+  routing_mode: "unrestricted_legacy" | "team_routed" | "blocked";
+  teams: OpportunityActionTeam[];
+  routes: OpportunityActionRoute[];
+  missing_source_kinds: OpportunitySourceKind[];
+  known_limitations: string[];
+  idempotent_replay: boolean;
 };
 
 export type ReportItem = {
@@ -1923,6 +1988,72 @@ export function fetchOpportunityActions(projectId: string, signal?: AbortSignal)
     "trc_web_opportunity_actions",
     signal,
   );
+}
+
+export function fetchOpportunityActionRouting(projectId: string, signal?: AbortSignal): Promise<OpportunityActionRouting> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-routing`,
+    "trc_web_opportunity_action_routing",
+    signal,
+  );
+}
+
+export async function createOpportunityActionTeam(projectId: string, name: string): Promise<OpportunityActionRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-teams`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `opportunity-team-${globalThis.crypto.randomUUID()}`,
+        ...buildApiHeaders("trc_web_opportunity_action_team_create"),
+      },
+      body: JSON.stringify({ name }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action team creation failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionRouting }).data;
+}
+
+export async function upsertOpportunityActionMember(
+  projectId: string,
+  teamId: string,
+  userId: string,
+  expectedVersion?: number,
+): Promise<OpportunityActionRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_action_member") },
+      body: JSON.stringify({
+        display_name: userId,
+        max_active_actions: 5,
+        receives_escalations: true,
+        ...(expectedVersion ? { expected_version: expectedVersion } : {}),
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action member update failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionRouting }).data;
+}
+
+export async function putOpportunityActionRoute(
+  projectId: string,
+  sourceKind: OpportunitySourceKind,
+  teamId: string,
+  expectedVersion?: number,
+): Promise<OpportunityActionRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/opportunity-action-routes/${encodeURIComponent(sourceKind)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_opportunity_action_route") },
+      body: JSON.stringify({ team_id: teamId, ...(expectedVersion ? { expected_version: expectedVersion } : {}) }),
+    },
+  );
+  if (!response.ok) throw new Error(await readErrorMessage(response, `Opportunity action route update failed with ${response.status}`));
+  return ((await response.json()) as { data: OpportunityActionRouting }).data;
 }
 
 export async function createOpportunityAction(projectId: string, snapshotId: string): Promise<OpportunityAction> {

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_member_upsert_request.schema.json",
+  "title": "AIRank Opportunity Action Team Member Upsert Request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "max_active_actions": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "receives_escalations": { "type": "boolean" },
+    "expected_version": { "type": "integer", "minimum": 1 }
+  }
+}

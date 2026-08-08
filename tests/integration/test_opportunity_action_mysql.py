@@ -16,7 +16,14 @@ from apps.api.opportunity_action_routes import (
     OpportunityActionCreateRequest,
     OpportunityActionTransitionRequest,
 )
+from apps.api.opportunity_routing_routes import (
+    MySQLOpportunityActionRoutingRepository,
+    OpportunityActionMemberUpsertRequest,
+    OpportunityActionRoutePutRequest,
+    OpportunityActionTeamCreateRequest,
+)
 from apps.api.opportunity_routes import CONTRACT_VERSION, POLICY_VERSION, stable_id
+from airank_scheduler import MySQLOpportunityActionEscalationScheduler
 
 
 DATABASE_URL = os.getenv("AIRANK_DATABASE_URL", "").strip()
@@ -179,6 +186,13 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
     at = datetime(2026, 8, 9, 8, 0, tzinfo=timezone.utc)
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
     repository = MySQLOpportunityActionRepository(DATABASE_URL)
+    routing_repository = MySQLOpportunityActionRoutingRepository(DATABASE_URL)
+    escalation_scheduler = MySQLOpportunityActionEscalationScheduler(
+        DATABASE_URL,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id="action-integration-qa",
+    )
 
     try:
         with engine.begin() as conn:
@@ -213,6 +227,36 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
                 created_at=at,
             )
 
+        routing = routing_repository.create_team(
+            tenant_id,
+            project_id,
+            OpportunityActionTeamCreateRequest(name="Action QA Team " + suffix),
+            "action-team-" + suffix,
+            "routing-admin",
+        )
+        team_id = routing.teams[0].team_id
+        routing_repository.upsert_member(
+            tenant_id,
+            project_id,
+            team_id,
+            "owner-user",
+            OpportunityActionMemberUpsertRequest(
+                display_name="Opportunity Owner",
+                max_active_actions=1,
+                receives_escalations=True,
+            ),
+            "routing-admin",
+        )
+        routing = routing_repository.put_route(
+            tenant_id,
+            project_id,
+            "brand_visibility",
+            OpportunityActionRoutePutRequest(team_id=team_id),
+            "routing-admin",
+        )
+        assert routing.routing_mode == "blocked"
+        assert routing.routes[0].routing_ready is True
+
         created = repository.create(
             tenant_id,
             project_id,
@@ -226,6 +270,20 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
         assert created.assigned_to is None
         assert created.effect_claim_allowed is False
         assert created.event_count == 1
+        assert created.routing_state == "team_routed"
+        assert created.routing_team_id == team_id
+
+        with pytest.raises(StarletteHTTPException) as unrouted:
+            repository.claim(
+                tenant_id,
+                project_id,
+                created.action_id,
+                OpportunityActionClaimRequest(requested_by="spoofed", expected_version=1),
+                idempotency_key="action-unrouted-" + suffix,
+                actor="other-user",
+                trace_id="trc_action_unrouted_" + suffix,
+            )
+        assert unrouted.value.status_code == 403
 
         claimed = repository.claim(
             tenant_id,
@@ -239,6 +297,9 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
         assert claimed.status == "evidence_blocked"
         assert claimed.assigned_to == "owner-user"
         assert claimed.version == 2
+        assert claimed.routing_state == "team_routed"
+        assert claimed.routing_member_id is not None
+        assert claimed.external_membership_verified is False
         with pytest.raises(StarletteHTTPException) as forbidden:
             repository.transition(
                 tenant_id,
@@ -300,6 +361,29 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
         assert refreshed.version == 3
 
         with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE airank_opportunity_actions SET due_at=:due_at "
+                    "WHERE tenant_id=:tenant_id AND id=:action_id"
+                ),
+                {
+                    "due_at": at,
+                    "tenant_id": tenant_id,
+                    "action_id": refreshed.action_id,
+                },
+            )
+        escalation = escalation_scheduler.dispatch_overdue(
+            now=at + timedelta(days=1, hours=1), limit=10
+        )
+        assert len(escalation) == 1
+        assert escalation[0].routing_team_id == team_id
+        assert escalation[0].eligible_recipient_count == 1
+        escalated = repository.list(tenant_id, project_id).actions[0]
+        assert escalated.escalation_count == 1
+        assert escalated.pending_escalation_count == 1
+        assert escalated.external_delivery_verified is False
+
+        with engine.begin() as conn:
             insert_run(
                 conn,
                 run_id=run_three,
@@ -357,7 +441,13 @@ def test_real_mysql_opportunity_action_requires_owner_and_newer_clear_snapshot()
     finally:
         with engine.begin() as conn:
             conn.execute(text("DELETE FROM airank_opportunity_action_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_notification_delivery_receipts WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_notification_deliveries WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_outbox_events WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
             conn.execute(text("DELETE FROM airank_opportunity_actions WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_opportunity_action_routes WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_opportunity_action_team_members WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
+            conn.execute(text("DELETE FROM airank_opportunity_action_teams WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
             conn.execute(text("DELETE FROM airank_intervention_opportunity_snapshots WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
             conn.execute(text("UPDATE airank_opportunity_derivation_runs SET previous_run_id=NULL WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})
             conn.execute(text("DELETE FROM airank_opportunity_derivation_runs WHERE tenant_id=:tenant_id"), {"tenant_id": tenant_id})

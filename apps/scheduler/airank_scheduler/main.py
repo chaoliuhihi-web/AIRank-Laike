@@ -9,6 +9,7 @@ from typing import Mapping
 from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
 
 from .knowledge_sync import MySQLKnowledgeSyncScheduler
+from .opportunity_action_escalation import MySQLOpportunityActionEscalationScheduler
 from .retest import MySQLRetestScheduler
 from .review_escalation import MySQLReviewEscalationScheduler
 from .reviewer_directory_sync import MySQLReviewerDirectorySyncScheduler
@@ -94,6 +95,12 @@ def main() -> int:
         project_id=project_id,
         scheduler_id=scheduler_id,
     )
+    opportunity_action_escalation_scheduler = MySQLOpportunityActionEscalationScheduler(
+        database_url,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id=scheduler_id,
+    )
     reviewer_directory_scheduler = MySQLReviewerDirectorySyncScheduler(
         database_url,
         tenant_id=tenant_id,
@@ -111,6 +118,11 @@ def main() -> int:
             {"skipped": "window_id scope only"}
             if window_id
             else review_escalation_scheduler.preview().to_record()
+        )
+        opportunity_action_escalation_preview = (
+            {"skipped": "window_id scope only"}
+            if window_id
+            else opportunity_action_escalation_scheduler.preview().to_record()
         )
         reviewer_directory_preview = (
             {"skipped": "window_id scope only"}
@@ -130,6 +142,7 @@ def main() -> int:
                     "retest": retest_preview,
                     "knowledge_sync": knowledge_preview,
                     "review_escalation": review_escalation_preview,
+                    "opportunity_action_escalation": opportunity_action_escalation_preview,
                     "reviewer_directory_sync": reviewer_directory_preview,
                 },
                 ensure_ascii=False,
@@ -167,6 +180,13 @@ def main() -> int:
             if window_id
             else review_escalation_scheduler.dispatch_overdue(limit=args.limit)
         )
+        opportunity_action_escalations = (
+            []
+            if window_id
+            else opportunity_action_escalation_scheduler.dispatch_overdue(
+                limit=args.limit
+            )
+        )
         reviewer_directory_dispatched = (
             []
             if window_id
@@ -183,6 +203,9 @@ def main() -> int:
                     ],
                     "review_escalations": [
                         item.to_record() for item in review_escalations
+                    ],
+                    "opportunity_action_escalations": [
+                        item.to_record() for item in opportunity_action_escalations
                     ],
                     "reviewer_directory_sync_dispatched": [
                         item.to_record() for item in reviewer_directory_dispatched

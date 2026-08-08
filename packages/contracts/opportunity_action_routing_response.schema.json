@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/opportunity_action_routing_response.schema.json",
+  "title": "AIRank Opportunity Action Routing Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["project_id", "contract_version", "routing_mode", "teams", "routes", "missing_source_kinds", "known_limitations", "idempotent_replay"],
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "contract_version": { "const": "airank.opportunity-action-routing.v1" },
+        "routing_mode": { "type": "string", "enum": ["unrestricted_legacy", "team_routed", "blocked"] },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["team_id", "name", "status", "external_source", "external_group_id", "external_sync_state", "version", "member_count", "members", "created_at", "updated_at"],
+            "additionalProperties": false,
+            "properties": {
+              "team_id": { "$ref": "#/$defs/team_id" },
+              "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "status": { "type": "string", "enum": ["active", "disabled"] },
+              "external_source": { "type": "string", "enum": ["manual", "yudao"] },
+              "external_group_id": { "type": ["string", "null"], "maxLength": 128 },
+              "external_sync_state": { "$ref": "#/$defs/sync_state" },
+              "version": { "type": "integer", "minimum": 1 },
+              "member_count": { "type": "integer", "minimum": 0 },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["member_id", "user_id", "display_name", "priority", "max_active_actions", "active_action_count", "at_capacity", "receives_escalations", "status", "membership_source", "external_membership_verified", "version", "updated_at"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "member_id": { "$ref": "#/$defs/member_id" },
+                    "user_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+                    "display_name": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+                    "priority": { "type": "integer", "minimum": 1 },
+                    "max_active_actions": { "type": "integer", "minimum": 1 },
+                    "active_action_count": { "type": "integer", "minimum": 0 },
+                    "at_capacity": { "type": "boolean" },
+                    "receives_escalations": { "type": "boolean" },
+                    "status": { "type": "string", "enum": ["active", "disabled"] },
+                    "membership_source": { "type": "string", "enum": ["manual", "yudao"] },
+                    "external_membership_verified": { "type": "boolean" },
+                    "version": { "type": "integer", "minimum": 1 },
+                    "updated_at": { "type": "string", "format": "date-time" }
+                  }
+                }
+              },
+              "created_at": { "type": "string", "format": "date-time" },
+              "updated_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["route_id", "source_kind", "team_id", "team_name", "routing_strategy", "status", "version", "eligible_member_count", "escalation_recipient_count", "routing_ready", "updated_at"],
+            "additionalProperties": false,
+            "properties": {
+              "route_id": { "type": "string", "pattern": "^opportunity_action_route_[0-9a-f]{20}$" },
+              "source_kind": { "$ref": "#/$defs/source_kind" },
+              "team_id": { "$ref": "#/$defs/team_id" },
+              "team_name": { "type": "string", "minLength": 1 },
+              "routing_strategy": { "const": "manual_claim" },
+              "status": { "type": "string", "enum": ["active", "disabled"] },
+              "version": { "type": "integer", "minimum": 1 },
+              "eligible_member_count": { "type": "integer", "minimum": 0 },
+              "escalation_recipient_count": { "type": "integer", "minimum": 0 },
+              "routing_ready": { "type": "boolean" },
+              "updated_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "missing_source_kinds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/source_kind" } },
+        "known_limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "idempotent_replay": { "type": "boolean" }
+      }
+    },
+    "meta": { "$ref": "#/$defs/response_meta" }
+  },
+  "$defs": {
+    "team_id": { "type": "string", "pattern": "^opportunity_action_team_[0-9a-f]{20}$" },
+    "member_id": { "type": "string", "pattern": "^opportunity_action_member_[0-9a-f]{20}$" },
+    "source_kind": { "type": "string", "enum": ["brand_visibility", "citation_support", "fact_governance", "page_extractability"] },
+    "sync_state": { "type": "string", "enum": ["not_configured", "pending", "verified", "stale", "failed"] },
+    "response_meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

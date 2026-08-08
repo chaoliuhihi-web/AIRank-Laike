@@ -182,3 +182,26 @@ def test_notification_requires_server_side_webhook_configuration_before_claim() 
     assert captured.value.code == "REVIEW_NOTIFICATION_NOT_CONFIGURED"
     with repository.engine.begin() as conn:
         assert conn.execute(text("SELECT attempt_count FROM airank_outbox_events")).scalar_one() == 0
+
+
+def test_notification_worker_claims_opportunity_action_sla_events() -> None:
+    repository = build_repository()
+    with repository.engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE airank_outbox_events
+                SET event_type='opportunity_action.sla_overdue.v1',
+                    aggregate_type='opportunity_action',
+                    aggregate_id='opportunity_action_aaaaaaaaaaaaaaaaaaaa'
+                """
+            )
+        )
+    config = ReviewNotificationConfig(
+        webhook_url="https://notify.example.com/review",
+        bearer_token=None,
+    )
+    delivery = repository.claim_next("worker-1", config, NOW)
+    assert delivery is not None
+    assert delivery.event_type == "opportunity_action.sla_overdue.v1"
+    assert delivery.aggregate_id == "opportunity_action_aaaaaaaaaaaaaaaaaaaa"
