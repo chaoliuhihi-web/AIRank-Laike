@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -13,6 +13,12 @@ from fastapi import APIRouter, Header, Path
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from airank_xinghe_adapter import (
+    YudaoDirectoryError,
+    YudaoReviewerDirectoryClient,
+    YudaoReviewerDirectorySnapshot,
+)
 
 
 router = APIRouter(prefix="/api/v1", tags=["evidence-review-routing"])
@@ -104,6 +110,18 @@ class ReviewerRoleRoutePutRequest(BaseModel):
     expected_version: Optional[int] = Field(default=None, ge=1)
 
 
+class ReviewerDirectoryBindingPutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    external_group_id: str = Field(min_length=1, max_length=128)
+    sync_enabled: bool = True
+    sync_interval_minutes: int = Field(default=60, ge=15, le=10_080)
+    default_priority: int = Field(default=100, ge=1, le=10_000)
+    default_max_active_assignments: int = Field(default=5, ge=1, le=100)
+    default_receives_escalations: bool = True
+    expected_version: Optional[int] = Field(default=None, ge=1)
+
+
 class ReviewerTeamMemberData(BaseModel):
     member_id: str
     user_id: str
@@ -150,6 +168,50 @@ class ReviewerRoleRouteData(BaseModel):
     updated_at: datetime
 
 
+class ReviewerDirectoryBindingData(BaseModel):
+    binding_id: str
+    team_id: str
+    team_name: str
+    reviewer_role: Literal["secondary", "adjudicator"]
+    external_source: Literal["yudao"] = "yudao"
+    external_group_id: str
+    status: Literal["active", "disabled"]
+    sync_enabled: bool
+    sync_interval_minutes: int
+    default_priority: int
+    default_max_active_assignments: int
+    default_receives_escalations: bool
+    last_sync_state: Literal[
+        "not_configured", "pending", "verified", "stale", "failed"
+    ]
+    last_sync_run_id: Optional[str]
+    last_synced_at: Optional[datetime]
+    next_sync_at: Optional[datetime]
+    last_error_code: Optional[str]
+    version: int
+    updated_at: datetime
+
+
+class ReviewerDirectorySyncRunData(BaseModel):
+    run_id: str
+    binding_id: str
+    team_id: str
+    reviewer_role: Literal["secondary", "adjudicator"]
+    external_group_id: str
+    status: Literal["running", "succeeded", "failed"]
+    endpoint_host: Optional[str]
+    response_sha256: Optional[str]
+    discovered_member_count: int = Field(ge=0)
+    active_member_count: int = Field(ge=0)
+    upserted_member_count: int = Field(ge=0)
+    disabled_member_count: int = Field(ge=0)
+    error_code: Optional[str]
+    retryable: bool
+    started_at: datetime
+    finished_at: Optional[datetime]
+    idempotent_replay: bool = False
+
+
 class ReviewerRoutingData(BaseModel):
     project_id: str
     routing_mode: Literal["unrestricted_legacy", "team_routed", "blocked"]
@@ -158,6 +220,8 @@ class ReviewerRoutingData(BaseModel):
     ]
     teams: list[ReviewerTeamData]
     routes: list[ReviewerRoleRouteData]
+    sync_bindings: list[ReviewerDirectoryBindingData]
+    recent_sync_runs: list[ReviewerDirectorySyncRunData]
     known_limitations: list[str]
 
 
@@ -449,6 +513,29 @@ class ReviewerRoutingRepository(Protocol):
         trace_id: str,
     ) -> ReviewerRoutingData: ...
 
+    def put_sync_binding(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        payload: ReviewerDirectoryBindingPutRequest,
+        actor: str,
+        trace_id: str,
+    ) -> ReviewerRoutingData: ...
+
+    def run_directory_sync(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        idempotency_key: str,
+        actor: str,
+        trace_id: str,
+        directory_client: YudaoReviewerDirectoryClient,
+    ) -> ReviewerRoutingData: ...
+
 
 class InMemoryReviewerRoutingRepository:
     def __init__(self) -> None:
@@ -458,6 +545,13 @@ class InMemoryReviewerRoutingRepository:
         self.members: dict[tuple[str, str], dict[tuple[str, str, str], dict[str, Any]]] = {}
         self.routes: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
         self.idempotency: dict[tuple[str, str, str], tuple[str, str]] = {}
+        self.sync_bindings: dict[
+            tuple[str, str], dict[tuple[str, str], dict[str, Any]]
+        ] = {}
+        self.sync_runs: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self.sync_idempotency: dict[
+            tuple[str, str, str, str], tuple[str, str]
+        ] = {}
 
     def get_routing(self, tenant_id: str, project_id: str) -> ReviewerRoutingData:
         with self.lock:
@@ -544,6 +638,307 @@ class InMemoryReviewerRoutingRepository:
             }
             return self._data(tenant_id, project_id)
 
+    def put_sync_binding(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        payload: ReviewerDirectoryBindingPutRequest,
+        actor: str,
+        trace_id: str,
+    ) -> ReviewerRoutingData:
+        del trace_id
+        with self.lock:
+            self._project(tenant_id, project_id)
+            team = self.teams.get((tenant_id, project_id), {}).get(team_id)
+            if not team or team["status"] != "active":
+                raise StarletteHTTPException(
+                    404, detail={"code": "EVIDENCE_REVIEW_TEAM_NOT_FOUND"}
+                )
+            key = (team_id, reviewer_role)
+            existing = self.sync_bindings.setdefault(
+                (tenant_id, project_id), {}
+            ).get(key)
+            if existing and payload.expected_version != existing["version"]:
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"},
+                )
+            if not existing and payload.expected_version is not None:
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"},
+                )
+            at = now_utc()
+            binding_id = (
+                existing["binding_id"]
+                if existing
+                else f"review_sync_binding_{uuid4().hex}"
+            )
+            self.sync_bindings[(tenant_id, project_id)][key] = {
+                "binding_id": binding_id,
+                "team_id": team_id,
+                "team_name": team["name"],
+                "reviewer_role": reviewer_role,
+                "external_source": "yudao",
+                "external_group_id": payload.external_group_id.strip(),
+                "status": "active",
+                "sync_enabled": payload.sync_enabled,
+                "sync_interval_minutes": payload.sync_interval_minutes,
+                "default_priority": payload.default_priority,
+                "default_max_active_assignments": payload.default_max_active_assignments,
+                "default_receives_escalations": payload.default_receives_escalations,
+                "last_sync_state": "pending",
+                "last_sync_run_id": existing.get("last_sync_run_id") if existing else None,
+                "last_synced_at": existing.get("last_synced_at") if existing else None,
+                "next_sync_at": at,
+                "last_error_code": None,
+                "version": (existing["version"] + 1 if existing else 1),
+                "updated_at": at,
+                "updated_by": actor,
+            }
+            team["external_source"] = "yudao"
+            team["external_group_id"] = self._team_external_group_id(
+                tenant_id, project_id, team_id
+            )
+            team["external_sync_state"] = "pending"
+            team["updated_at"] = at
+            return self._data(tenant_id, project_id)
+
+    def run_directory_sync(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        idempotency_key: str,
+        actor: str,
+        trace_id: str,
+        directory_client: YudaoReviewerDirectoryClient,
+    ) -> ReviewerRoutingData:
+        del trace_id
+        with self.lock:
+            self._project(tenant_id, project_id)
+            key = (team_id, reviewer_role)
+            binding = self.sync_bindings.get((tenant_id, project_id), {}).get(key)
+            if not binding or binding["status"] != "active":
+                raise StarletteHTTPException(
+                    404,
+                    detail={"code": "EVIDENCE_REVIEW_YUDAO_BINDING_NOT_FOUND"},
+                )
+            request_hash = canonical_sha256(
+                {
+                    "binding_id": binding["binding_id"],
+                    "binding_version": binding["version"],
+                    "external_group_id": binding["external_group_id"],
+                }
+            )
+            replay_key = (tenant_id, binding["binding_id"], idempotency_key, reviewer_role)
+            existing = self.sync_idempotency.get(replay_key)
+            if existing:
+                if existing[1] != request_hash:
+                    raise StarletteHTTPException(
+                        409, detail={"code": "IDEMPOTENCY_CONFLICT"}
+                    )
+                return self._data(
+                    tenant_id, project_id, replay_sync_run_id=existing[0]
+                )
+            run_id = f"review_sync_run_{uuid4().hex}"
+            started_at = now_utc()
+            binding_snapshot = dict(binding)
+        try:
+            snapshot = directory_client.fetch_department(
+                str(binding_snapshot["external_group_id"])
+            )
+        except YudaoDirectoryError as exc:
+            with self.lock:
+                at = now_utc()
+                binding["last_sync_state"] = "failed"
+                binding["last_sync_run_id"] = run_id
+                binding["last_error_code"] = exc.code
+                binding["next_sync_at"] = at + timedelta(
+                    minutes=binding["sync_interval_minutes"]
+                )
+                binding["updated_at"] = at
+                self._update_in_memory_team_sync_state(
+                    tenant_id, project_id, team_id, at
+                )
+                self.sync_runs.setdefault((tenant_id, project_id), []).append(
+                    {
+                        "run_id": run_id,
+                        "binding_id": binding["binding_id"],
+                        "team_id": team_id,
+                        "reviewer_role": reviewer_role,
+                        "external_group_id": binding["external_group_id"],
+                        "status": "failed",
+                        "endpoint_host": None,
+                        "response_sha256": None,
+                        "discovered_member_count": 0,
+                        "active_member_count": 0,
+                        "upserted_member_count": 0,
+                        "disabled_member_count": 0,
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                        "started_at": started_at,
+                        "finished_at": at,
+                        "idempotent_replay": False,
+                    }
+                )
+                self.sync_idempotency[replay_key] = (run_id, request_hash)
+            raise StarletteHTTPException(
+                503,
+                detail={
+                    "code": "EVIDENCE_REVIEW_YUDAO_SYNC_FAILED",
+                    "details": {"upstream_code": exc.code, "retryable": exc.retryable},
+                },
+            ) from exc
+        with self.lock:
+            current = self.sync_bindings[(tenant_id, project_id)].get(key)
+            if not current or current["version"] != binding_snapshot["version"]:
+                raise StarletteHTTPException(
+                    409, detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"}
+                )
+            counts = self._apply_in_memory_directory_snapshot(
+                tenant_id,
+                project_id,
+                current,
+                snapshot,
+                actor,
+            )
+            at = now_utc()
+            current["last_sync_state"] = "verified"
+            current["last_sync_run_id"] = run_id
+            current["last_synced_at"] = at
+            current["next_sync_at"] = at + timedelta(
+                minutes=current["sync_interval_minutes"]
+            )
+            current["last_error_code"] = None
+            current["updated_at"] = at
+            self._update_in_memory_team_sync_state(tenant_id, project_id, team_id, at)
+            self.sync_runs.setdefault((tenant_id, project_id), []).append(
+                {
+                    "run_id": run_id,
+                    "binding_id": current["binding_id"],
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                    "external_group_id": current["external_group_id"],
+                    "status": "succeeded",
+                    "endpoint_host": snapshot.endpoint_host,
+                    "response_sha256": snapshot.response_sha256,
+                    "discovered_member_count": len(snapshot.members),
+                    "active_member_count": counts["active"],
+                    "upserted_member_count": counts["upserted"],
+                    "disabled_member_count": counts["disabled"],
+                    "error_code": None,
+                    "retryable": False,
+                    "started_at": started_at,
+                    "finished_at": at,
+                    "idempotent_replay": False,
+                }
+            )
+            self.sync_idempotency[replay_key] = (run_id, request_hash)
+            return self._data(tenant_id, project_id)
+
+    def _apply_in_memory_directory_snapshot(
+        self,
+        tenant_id: str,
+        project_id: str,
+        binding: dict[str, Any],
+        snapshot: YudaoReviewerDirectorySnapshot,
+        actor: str,
+    ) -> dict[str, int]:
+        members = self.members.setdefault((tenant_id, project_id), {})
+        active_reviewers = [member for member in snapshot.members if member.enabled]
+        active_ids = {member.user_id for member in active_reviewers}
+        disabled = 0
+        for key, member in members.items():
+            if (
+                key[0] == binding["team_id"]
+                and key[2] == binding["reviewer_role"]
+                and member["membership_source"] == "yudao"
+                and member["status"] == "active"
+                and key[1] not in active_ids
+            ):
+                member["status"] = "disabled"
+                member["version"] += 1
+                member["updated_at"] = now_utc()
+                disabled += 1
+        upserted = 0
+        for reviewer in active_reviewers:
+            key = (binding["team_id"], reviewer.user_id, binding["reviewer_role"])
+            existing = members.get(key)
+            at = now_utc()
+            desired = {
+                "member_id": (
+                    existing["member_id"]
+                    if existing
+                    else f"review_member_{uuid4().hex}"
+                ),
+                "user_id": reviewer.user_id,
+                "display_name": reviewer.display_name or reviewer.username,
+                "reviewer_role": binding["reviewer_role"],
+                "priority": binding["default_priority"],
+                "max_active_assignments": binding[
+                    "default_max_active_assignments"
+                ],
+                "receives_escalations": binding[
+                    "default_receives_escalations"
+                ],
+                "status": "active",
+                "membership_source": "yudao",
+                "external_membership_verified": True,
+            }
+            if existing is not None and all(
+                existing.get(field) == value
+                for field, value in desired.items()
+                if field != "member_id"
+            ):
+                continue
+            members[key] = {
+                **desired,
+                "version": existing["version"] + 1 if existing else 1,
+                "updated_at": at,
+                "updated_by": actor,
+            }
+            upserted += 1
+        return {"active": len(active_ids), "upserted": upserted, "disabled": disabled}
+
+    def _team_external_group_id(
+        self, tenant_id: str, project_id: str, team_id: str
+    ) -> str | None:
+        groups = {
+            item["external_group_id"]
+            for (bound_team_id, _), item in self.sync_bindings.get(
+                (tenant_id, project_id), {}
+            ).items()
+            if bound_team_id == team_id and item["status"] == "active"
+        }
+        return next(iter(groups)) if len(groups) == 1 else None
+
+    def _update_in_memory_team_sync_state(
+        self, tenant_id: str, project_id: str, team_id: str, at: datetime
+    ) -> None:
+        team = self.teams[(tenant_id, project_id)][team_id]
+        states = [
+            item["last_sync_state"]
+            for (bound_team_id, _), item in self.sync_bindings.get(
+                (tenant_id, project_id), {}
+            ).items()
+            if bound_team_id == team_id and item["status"] == "active"
+        ]
+        state = "not_configured"
+        for candidate in ("failed", "stale", "pending", "verified"):
+            if candidate in states:
+                state = candidate
+                break
+        team["external_source"] = "yudao"
+        team["external_group_id"] = self._team_external_group_id(
+            tenant_id, project_id, team_id
+        )
+        team["external_sync_state"] = state
+        team["updated_at"] = at
+
     def _project(self, tenant_id: str, project_id: str) -> None:
         if (tenant_id, project_id) not in self.projects:
             raise StarletteHTTPException(404, detail={"code": "PROJECT_NOT_FOUND"})
@@ -553,6 +948,7 @@ class InMemoryReviewerRoutingRepository:
         tenant_id: str,
         project_id: str,
         replay_team_id: str | None = None,
+        replay_sync_run_id: str | None = None,
     ) -> ReviewerRoutingData:
         members = self.members.get((tenant_id, project_id), {})
         teams = []
@@ -590,12 +986,37 @@ class InMemoryReviewerRoutingRepository:
         ready = active_roles == set(REVIEWER_ROLES) and all(
             item.routing_ready for item in route_rows if item.status == "active"
         )
+        bindings = [
+            ReviewerDirectoryBindingData(**item)
+            for item in self.sync_bindings.get((tenant_id, project_id), {}).values()
+        ]
+        recent_runs = [
+            ReviewerDirectorySyncRunData(
+                **{
+                    **item,
+                    "idempotent_replay": item["run_id"] == replay_sync_run_id,
+                }
+            )
+            for item in reversed(
+                self.sync_runs.get((tenant_id, project_id), [])[-20:]
+            )
+        ]
+        external_states = {
+            item.external_sync_state for item in teams if item.status == "active"
+        }
+        external_sync_state = "not_configured"
+        for state in ("failed", "stale", "pending", "verified"):
+            if state in external_states:
+                external_sync_state = state
+                break
         return ReviewerRoutingData(
             project_id=project_id,
             routing_mode=("unrestricted_legacy" if not configured else "team_routed" if ready else "blocked"),
-            external_sync_state="not_configured",
+            external_sync_state=external_sync_state,
             teams=teams,
             routes=route_rows,
+            sync_bindings=bindings,
+            recent_sync_runs=recent_runs,
             known_limitations=[
                 "yudao_group_sync_not_verified",
                 "external_notification_delivery_not_verified",
@@ -732,6 +1153,638 @@ class MySQLReviewerRoutingRepository:
             self._audit(conn, tenant_id, project_id, actor, "evidence_review.route_configured", "evidence_review_route", route_id, trace_id, {"reviewer_role": reviewer_role, "team_id": payload.team_id, "version": version}, at)
             return self._data(conn, tenant_id, project_id)
 
+    def put_sync_binding(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        payload: ReviewerDirectoryBindingPutRequest,
+        actor: str,
+        trace_id: str,
+    ) -> ReviewerRoutingData:
+        at = now_utc()
+        with self.engine.begin() as conn:
+            self._active_team(conn, tenant_id, project_id, team_id)
+            lock = " FOR UPDATE" if self.engine.dialect.name == "mysql" else ""
+            existing = conn.execute(
+                text(
+                    "SELECT * FROM airank_evidence_review_team_sync_bindings "
+                    "WHERE tenant_id=:tenant_id AND project_id=:project_id "
+                    "AND team_id=:team_id AND reviewer_role=:reviewer_role"
+                    + lock
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                },
+            ).mappings().first()
+            if existing is None and payload.expected_version is not None:
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"},
+                )
+            if existing is not None and payload.expected_version != int(existing["version"]):
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"},
+                )
+            if existing is None:
+                binding_id = f"review_sync_binding_{uuid4().hex}"
+                version = 1
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_evidence_review_team_sync_bindings (
+                          id, tenant_id, project_id, team_id, reviewer_role,
+                          external_source, external_group_id, status, sync_enabled,
+                          sync_interval_minutes, default_priority,
+                          default_max_active_assignments,
+                          default_receives_escalations, last_sync_state,
+                          last_sync_run_id, last_synced_at, next_sync_at,
+                          last_error_code, version, created_by, updated_by,
+                          created_at, updated_at
+                        ) VALUES (
+                          :id, :tenant_id, :project_id, :team_id, :reviewer_role,
+                          'yudao', :external_group_id, 'active', :sync_enabled,
+                          :sync_interval, :default_priority, :default_max_active,
+                          :default_receives, 'pending', NULL, NULL, :next_sync_at,
+                          NULL, 1, :actor, :actor, :at, :at
+                        )
+                        """
+                    ),
+                    {
+                        "id": binding_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "team_id": team_id,
+                        "reviewer_role": reviewer_role,
+                        "external_group_id": payload.external_group_id.strip(),
+                        "sync_enabled": payload.sync_enabled,
+                        "sync_interval": payload.sync_interval_minutes,
+                        "default_priority": payload.default_priority,
+                        "default_max_active": payload.default_max_active_assignments,
+                        "default_receives": payload.default_receives_escalations,
+                        "next_sync_at": at,
+                        "actor": actor,
+                        "at": at,
+                    },
+                )
+            else:
+                binding_id = str(existing["id"])
+                version = int(existing["version"]) + 1
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_evidence_review_team_sync_bindings
+                        SET external_group_id=:external_group_id, status='active',
+                            sync_enabled=:sync_enabled,
+                            sync_interval_minutes=:sync_interval,
+                            default_priority=:default_priority,
+                            default_max_active_assignments=:default_max_active,
+                            default_receives_escalations=:default_receives,
+                            last_sync_state='pending', next_sync_at=:next_sync_at,
+                            last_error_code=NULL, version=:version,
+                            updated_by=:actor, updated_at=:at
+                        WHERE tenant_id=:tenant_id AND id=:id
+                        """
+                    ),
+                    {
+                        "external_group_id": payload.external_group_id.strip(),
+                        "sync_enabled": payload.sync_enabled,
+                        "sync_interval": payload.sync_interval_minutes,
+                        "default_priority": payload.default_priority,
+                        "default_max_active": payload.default_max_active_assignments,
+                        "default_receives": payload.default_receives_escalations,
+                        "next_sync_at": at,
+                        "version": version,
+                        "actor": actor,
+                        "at": at,
+                        "tenant_id": tenant_id,
+                        "id": binding_id,
+                    },
+                )
+            self._refresh_team_external_sync(
+                conn, tenant_id, project_id, team_id, actor, at
+            )
+            self._audit(
+                conn,
+                tenant_id,
+                project_id,
+                actor,
+                "evidence_review.yudao_binding_configured",
+                "evidence_review_team_sync_binding",
+                binding_id,
+                trace_id,
+                {
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                    "external_group_id": payload.external_group_id.strip(),
+                    "version": version,
+                },
+                at,
+            )
+            return self._data(conn, tenant_id, project_id)
+
+    def run_directory_sync(
+        self,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        reviewer_role: str,
+        idempotency_key: str,
+        actor: str,
+        trace_id: str,
+        directory_client: YudaoReviewerDirectoryClient,
+    ) -> ReviewerRoutingData:
+        started_at = now_utc()
+        lock = " FOR UPDATE" if self.engine.dialect.name == "mysql" else ""
+        with self.engine.begin() as conn:
+            self._active_team(conn, tenant_id, project_id, team_id)
+            binding = conn.execute(
+                text(
+                    "SELECT * FROM airank_evidence_review_team_sync_bindings "
+                    "WHERE tenant_id=:tenant_id AND project_id=:project_id "
+                    "AND team_id=:team_id AND reviewer_role=:reviewer_role "
+                    "AND status='active'" + lock
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                },
+            ).mappings().first()
+            if binding is None:
+                raise StarletteHTTPException(
+                    404,
+                    detail={"code": "EVIDENCE_REVIEW_YUDAO_BINDING_NOT_FOUND"},
+                )
+            request_hash = canonical_sha256(
+                {
+                    "binding_id": str(binding["id"]),
+                    "binding_version": int(binding["version"]),
+                    "external_group_id": str(binding["external_group_id"]),
+                }
+            )
+            replay = conn.execute(
+                text(
+                    "SELECT id, request_sha256 FROM "
+                    "airank_evidence_review_team_sync_runs "
+                    "WHERE tenant_id=:tenant_id AND binding_id=:binding_id "
+                    "AND idempotency_key=:idempotency_key"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "binding_id": binding["id"],
+                    "idempotency_key": idempotency_key,
+                },
+            ).mappings().first()
+            if replay is not None:
+                if str(replay["request_sha256"]) != request_hash:
+                    raise StarletteHTTPException(
+                        409, detail={"code": "IDEMPOTENCY_CONFLICT"}
+                    )
+                return self._data(
+                    conn,
+                    tenant_id,
+                    project_id,
+                    replay_sync_run_id=str(replay["id"]),
+                )
+            run_id = f"review_sync_run_{uuid4().hex}"
+            binding_snapshot = {
+                "id": str(binding["id"]),
+                "version": int(binding["version"]),
+                "external_group_id": str(binding["external_group_id"]),
+                "sync_interval_minutes": int(binding["sync_interval_minutes"]),
+            }
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_evidence_review_team_sync_runs (
+                      id, tenant_id, project_id, team_id, binding_id,
+                      reviewer_role, external_group_id, status, idempotency_key,
+                      request_sha256, requested_by, trace_id, endpoint_host,
+                      response_sha256, discovered_member_count,
+                      active_member_count, upserted_member_count,
+                      disabled_member_count, error_code, retryable, started_at,
+                      finished_at, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :team_id, :binding_id,
+                      :reviewer_role, :external_group_id, 'running',
+                      :idempotency_key, :request_sha256, :actor, :trace_id,
+                      NULL, NULL, 0, 0, 0, 0, NULL, 0, :started_at, NULL,
+                      :started_at
+                    )
+                    """
+                ),
+                {
+                    "id": run_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "team_id": team_id,
+                    "binding_id": binding["id"],
+                    "reviewer_role": reviewer_role,
+                    "external_group_id": binding["external_group_id"],
+                    "idempotency_key": idempotency_key,
+                    "request_sha256": request_hash,
+                    "actor": actor,
+                    "trace_id": trace_id,
+                    "started_at": started_at,
+                },
+            )
+            conn.execute(
+                text(
+                    "UPDATE airank_evidence_review_team_sync_bindings "
+                    "SET last_sync_state='pending', last_sync_run_id=:run_id, "
+                    "last_error_code=NULL, updated_by=:actor, updated_at=:at "
+                    "WHERE tenant_id=:tenant_id AND id=:binding_id"
+                ),
+                {
+                    "run_id": run_id,
+                    "actor": actor,
+                    "at": started_at,
+                    "tenant_id": tenant_id,
+                    "binding_id": binding["id"],
+                },
+            )
+            self._refresh_team_external_sync(
+                conn, tenant_id, project_id, team_id, actor, started_at
+            )
+        try:
+            snapshot = directory_client.fetch_department(
+                binding_snapshot["external_group_id"]
+            )
+        except YudaoDirectoryError as exc:
+            finished_at = now_utc()
+            with self.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_evidence_review_team_sync_runs
+                        SET status='failed', error_code=:error_code,
+                            retryable=:retryable, finished_at=:finished_at
+                        WHERE tenant_id=:tenant_id AND id=:run_id
+                        """
+                    ),
+                    {
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                        "finished_at": finished_at,
+                        "tenant_id": tenant_id,
+                        "run_id": run_id,
+                    },
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_evidence_review_team_sync_bindings
+                        SET last_sync_state='failed', last_sync_run_id=:run_id,
+                            last_error_code=:error_code, next_sync_at=:next_sync_at,
+                            updated_by=:actor, updated_at=:finished_at
+                        WHERE tenant_id=:tenant_id AND id=:binding_id
+                        """
+                    ),
+                    {
+                        "run_id": run_id,
+                        "error_code": exc.code,
+                        "next_sync_at": finished_at
+                        + timedelta(
+                            minutes=binding_snapshot["sync_interval_minutes"]
+                        ),
+                        "actor": actor,
+                        "finished_at": finished_at,
+                        "tenant_id": tenant_id,
+                        "binding_id": binding_snapshot["id"],
+                    },
+                )
+                self._refresh_team_external_sync(
+                    conn, tenant_id, project_id, team_id, actor, finished_at
+                )
+                self._audit(
+                    conn,
+                    tenant_id,
+                    project_id,
+                    actor,
+                    "evidence_review.yudao_sync_failed",
+                    "evidence_review_team_sync_run",
+                    run_id,
+                    trace_id,
+                    {
+                        "team_id": team_id,
+                        "reviewer_role": reviewer_role,
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    finished_at,
+                )
+            raise StarletteHTTPException(
+                503,
+                detail={
+                    "code": "EVIDENCE_REVIEW_YUDAO_SYNC_FAILED",
+                    "details": {"upstream_code": exc.code, "retryable": exc.retryable},
+                },
+            ) from exc
+
+        finished_at = now_utc()
+        with self.engine.begin() as conn:
+            current = conn.execute(
+                text(
+                    "SELECT * FROM airank_evidence_review_team_sync_bindings "
+                    "WHERE tenant_id=:tenant_id AND id=:binding_id" + lock
+                ),
+                {"tenant_id": tenant_id, "binding_id": binding_snapshot["id"]},
+            ).mappings().first()
+            if (
+                current is None
+                or int(current["version"]) != binding_snapshot["version"]
+                or str(current["external_group_id"])
+                != binding_snapshot["external_group_id"]
+                or str(current["status"]) != "active"
+            ):
+                conn.execute(
+                    text(
+                        "UPDATE airank_evidence_review_team_sync_runs "
+                        "SET status='failed', error_code='YUDAO_REVIEW_SYNC_BINDING_CHANGED', "
+                        "retryable=0, finished_at=:finished_at "
+                        "WHERE tenant_id=:tenant_id AND id=:run_id"
+                    ),
+                    {
+                        "finished_at": finished_at,
+                        "tenant_id": tenant_id,
+                        "run_id": run_id,
+                    },
+                )
+                raise StarletteHTTPException(
+                    409,
+                    detail={"code": "EVIDENCE_REVIEW_ROUTING_VERSION_CONFLICT"},
+                )
+            existing_members = conn.execute(
+                text(
+                    """
+                    SELECT id, yudao_user_id, display_name, priority,
+                           max_active_assignments, receives_escalations,
+                           membership_source, external_membership_verified,
+                           status, version
+                    FROM airank_evidence_review_team_members
+                    WHERE tenant_id=:tenant_id AND project_id=:project_id
+                      AND team_id=:team_id AND reviewer_role=:reviewer_role
+                    """
+                    + lock
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                },
+            ).mappings().all()
+            existing_by_user = {
+                str(item["yudao_user_id"]): item for item in existing_members
+            }
+            active_reviewers = [
+                member for member in snapshot.members if member.enabled
+            ]
+            active_user_ids = {member.user_id for member in active_reviewers}
+            disabled_count = 0
+            for user_id, member in existing_by_user.items():
+                if (
+                    str(member["membership_source"]) == "yudao"
+                    and str(member["status"]) == "active"
+                    and user_id not in active_user_ids
+                ):
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE airank_evidence_review_team_members
+                            SET status='disabled', external_membership_verified=0,
+                                version=version+1, updated_by=:actor,
+                                updated_at=:finished_at
+                            WHERE tenant_id=:tenant_id AND id=:id
+                            """
+                        ),
+                        {
+                            "actor": actor,
+                            "finished_at": finished_at,
+                            "tenant_id": tenant_id,
+                            "id": member["id"],
+                        },
+                    )
+                    disabled_count += 1
+            upserted_count = 0
+            for reviewer in active_reviewers:
+                existing = existing_by_user.get(reviewer.user_id)
+                display_name = reviewer.display_name or reviewer.username
+                if existing is None:
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO airank_evidence_review_team_members (
+                              id, tenant_id, project_id, team_id, yudao_user_id,
+                              display_name, reviewer_role, priority,
+                              max_active_assignments, receives_escalations,
+                              status, membership_source,
+                              external_membership_verified, version, created_by,
+                              updated_by, created_at, updated_at
+                            ) VALUES (
+                              :id, :tenant_id, :project_id, :team_id, :user_id,
+                              :display_name, :reviewer_role, :priority,
+                              :max_active, :receives, 'active', 'yudao', 1, 1,
+                              :actor, :actor, :at, :at
+                            )
+                            """
+                        ),
+                        {
+                            "id": f"review_member_{uuid4().hex}",
+                            "tenant_id": tenant_id,
+                            "project_id": project_id,
+                            "team_id": team_id,
+                            "user_id": reviewer.user_id,
+                            "display_name": display_name,
+                            "reviewer_role": reviewer_role,
+                            "priority": current["default_priority"],
+                            "max_active": current[
+                                "default_max_active_assignments"
+                            ],
+                            "receives": current[
+                                "default_receives_escalations"
+                            ],
+                            "actor": actor,
+                            "at": finished_at,
+                        },
+                    )
+                    upserted_count += 1
+                else:
+                    unchanged = (
+                        (existing["display_name"] or None) == display_name
+                        and int(existing["priority"])
+                        == int(current["default_priority"])
+                        and int(existing["max_active_assignments"])
+                        == int(current["default_max_active_assignments"])
+                        and bool(existing["receives_escalations"])
+                        == bool(current["default_receives_escalations"])
+                        and str(existing["status"]) == "active"
+                        and str(existing["membership_source"]) == "yudao"
+                        and bool(existing["external_membership_verified"])
+                    )
+                    if unchanged:
+                        continue
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE airank_evidence_review_team_members
+                            SET display_name=:display_name, priority=:priority,
+                                max_active_assignments=:max_active,
+                                receives_escalations=:receives, status='active',
+                                membership_source='yudao',
+                                external_membership_verified=1,
+                                version=version+1, updated_by=:actor,
+                                updated_at=:at
+                            WHERE tenant_id=:tenant_id AND id=:id
+                            """
+                        ),
+                        {
+                            "display_name": display_name,
+                            "priority": current["default_priority"],
+                            "max_active": current[
+                                "default_max_active_assignments"
+                            ],
+                            "receives": current[
+                                "default_receives_escalations"
+                            ],
+                            "actor": actor,
+                            "at": finished_at,
+                            "tenant_id": tenant_id,
+                            "id": existing["id"],
+                        },
+                    )
+                    upserted_count += 1
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_evidence_review_team_sync_runs
+                    SET status='succeeded', endpoint_host=:endpoint_host,
+                        response_sha256=:response_sha256,
+                        discovered_member_count=:discovered,
+                        active_member_count=:active_count,
+                        upserted_member_count=:upserted,
+                        disabled_member_count=:disabled,
+                        error_code=NULL, retryable=0, finished_at=:finished_at
+                    WHERE tenant_id=:tenant_id AND id=:run_id
+                    """
+                ),
+                {
+                    "endpoint_host": snapshot.endpoint_host,
+                    "response_sha256": snapshot.response_sha256,
+                    "discovered": len(snapshot.members),
+                    "active_count": len(active_user_ids),
+                    "upserted": upserted_count,
+                    "disabled": disabled_count,
+                    "finished_at": finished_at,
+                    "tenant_id": tenant_id,
+                    "run_id": run_id,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_evidence_review_team_sync_bindings
+                    SET last_sync_state='verified', last_sync_run_id=:run_id,
+                        last_synced_at=:finished_at, next_sync_at=:next_sync_at,
+                        last_error_code=NULL, updated_by=:actor,
+                        updated_at=:finished_at
+                    WHERE tenant_id=:tenant_id AND id=:binding_id
+                    """
+                ),
+                {
+                    "run_id": run_id,
+                    "finished_at": finished_at,
+                    "next_sync_at": finished_at
+                    + timedelta(minutes=int(current["sync_interval_minutes"])),
+                    "actor": actor,
+                    "tenant_id": tenant_id,
+                    "binding_id": binding_snapshot["id"],
+                },
+            )
+            self._refresh_team_external_sync(
+                conn, tenant_id, project_id, team_id, actor, finished_at
+            )
+            self._audit(
+                conn,
+                tenant_id,
+                project_id,
+                actor,
+                "evidence_review.yudao_sync_succeeded",
+                "evidence_review_team_sync_run",
+                run_id,
+                trace_id,
+                {
+                    "team_id": team_id,
+                    "reviewer_role": reviewer_role,
+                    "external_group_id": binding_snapshot["external_group_id"],
+                    "response_sha256": snapshot.response_sha256,
+                    "active_member_count": len(active_user_ids),
+                    "disabled_member_count": disabled_count,
+                },
+                finished_at,
+            )
+            return self._data(conn, tenant_id, project_id)
+
+    @staticmethod
+    def _refresh_team_external_sync(
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        team_id: str,
+        actor: str,
+        at: datetime,
+    ) -> None:
+        rows = conn.execute(
+            text(
+                """
+                SELECT external_group_id, last_sync_state
+                FROM airank_evidence_review_team_sync_bindings
+                WHERE tenant_id=:tenant_id AND project_id=:project_id
+                  AND team_id=:team_id AND status='active'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "team_id": team_id,
+            },
+        ).mappings().all()
+        states = {str(row["last_sync_state"]) for row in rows}
+        state = "not_configured"
+        for candidate in ("failed", "stale", "pending", "verified"):
+            if candidate in states:
+                state = candidate
+                break
+        groups = {str(row["external_group_id"]) for row in rows}
+        external_group_id = next(iter(groups)) if len(groups) == 1 else None
+        conn.execute(
+            text(
+                """
+                UPDATE airank_evidence_review_teams
+                SET external_source='yudao', external_group_id=:external_group_id,
+                    external_sync_state=:external_sync_state,
+                    version=version+1, updated_by=:actor, updated_at=:at
+                WHERE tenant_id=:tenant_id AND project_id=:project_id AND id=:team_id
+                """
+            ),
+            {
+                "external_group_id": external_group_id,
+                "external_sync_state": state,
+                "actor": actor,
+                "at": at,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "team_id": team_id,
+            },
+        )
+
     @staticmethod
     def _project(conn: Any, tenant_id: str, project_id: str) -> None:
         if conn.execute(text("SELECT id FROM airank_projects WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL"), {"tenant_id": tenant_id, "project_id": project_id}).first() is None:
@@ -755,7 +1808,14 @@ class MySQLReviewerRoutingRepository:
             )
         """), {"id": f"audit_{uuid4().hex}", "tenant_id": tenant_id, "project_id": project_id, "actor": actor, "event_type": event_type, "entity_type": entity_type, "entity_id": entity_id, "trace_id": trace_id, "payload_json": json.dumps(dict(payload), ensure_ascii=False, sort_keys=True), "at": at})
 
-    def _data(self, conn: Any, tenant_id: str, project_id: str, replay_team_id: str | None = None) -> ReviewerRoutingData:
+    def _data(
+        self,
+        conn: Any,
+        tenant_id: str,
+        project_id: str,
+        replay_team_id: str | None = None,
+        replay_sync_run_id: str | None = None,
+    ) -> ReviewerRoutingData:
         team_rows = conn.execute(text("SELECT * FROM airank_evidence_review_teams WHERE tenant_id=:tenant_id AND project_id=:project_id ORDER BY created_at, id"), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
         member_rows = conn.execute(text("SELECT * FROM airank_evidence_review_team_members WHERE tenant_id=:tenant_id AND project_id=:project_id ORDER BY priority, created_at, id"), {"tenant_id": tenant_id, "project_id": project_id}).mappings().all()
         members_by_team: dict[str, list[ReviewerTeamMemberData]] = {}
@@ -791,7 +1851,85 @@ class MySQLReviewerRoutingRepository:
             if state in external_states:
                 external_sync_state = state
                 break
-        return ReviewerRoutingData(project_id=project_id, routing_mode=("unrestricted_legacy" if not configured else "team_routed" if ready else "blocked"), external_sync_state=external_sync_state, teams=teams, routes=routes, known_limitations=["yudao_group_sync_not_verified", "external_notification_delivery_not_verified"])
+        binding_rows = conn.execute(
+            text(
+                """
+                SELECT binding.*, team.name AS team_name
+                FROM airank_evidence_review_team_sync_bindings binding
+                JOIN airank_evidence_review_teams team
+                  ON team.tenant_id=binding.tenant_id AND team.id=binding.team_id
+                WHERE binding.tenant_id=:tenant_id
+                  AND binding.project_id=:project_id
+                ORDER BY binding.reviewer_role, binding.created_at, binding.id
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+        bindings = [
+            ReviewerDirectoryBindingData(
+                binding_id=str(row["id"]),
+                team_id=str(row["team_id"]),
+                team_name=str(row["team_name"]),
+                reviewer_role=str(row["reviewer_role"]),
+                external_source="yudao",
+                external_group_id=str(row["external_group_id"]),
+                status=str(row["status"]),
+                sync_enabled=bool(row["sync_enabled"]),
+                sync_interval_minutes=int(row["sync_interval_minutes"]),
+                default_priority=int(row["default_priority"]),
+                default_max_active_assignments=int(
+                    row["default_max_active_assignments"]
+                ),
+                default_receives_escalations=bool(
+                    row["default_receives_escalations"]
+                ),
+                last_sync_state=str(row["last_sync_state"]),
+                last_sync_run_id=(
+                    str(row["last_sync_run_id"])
+                    if row["last_sync_run_id"] is not None
+                    else None
+                ),
+                last_synced_at=row["last_synced_at"],
+                next_sync_at=row["next_sync_at"],
+                last_error_code=row["last_error_code"],
+                version=int(row["version"]),
+                updated_at=row["updated_at"],
+            )
+            for row in binding_rows
+        ]
+        run_rows = conn.execute(
+            text(
+                """
+                SELECT * FROM airank_evidence_review_team_sync_runs
+                WHERE tenant_id=:tenant_id AND project_id=:project_id
+                ORDER BY started_at DESC, id DESC LIMIT 20
+                """
+            ),
+            {"tenant_id": tenant_id, "project_id": project_id},
+        ).mappings().all()
+        recent_runs = [
+            ReviewerDirectorySyncRunData(
+                run_id=str(row["id"]),
+                binding_id=str(row["binding_id"]),
+                team_id=str(row["team_id"]),
+                reviewer_role=str(row["reviewer_role"]),
+                external_group_id=str(row["external_group_id"]),
+                status=str(row["status"]),
+                endpoint_host=row["endpoint_host"],
+                response_sha256=row["response_sha256"],
+                discovered_member_count=int(row["discovered_member_count"]),
+                active_member_count=int(row["active_member_count"]),
+                upserted_member_count=int(row["upserted_member_count"]),
+                disabled_member_count=int(row["disabled_member_count"]),
+                error_code=row["error_code"],
+                retryable=bool(row["retryable"]),
+                started_at=row["started_at"],
+                finished_at=row["finished_at"],
+                idempotent_replay=str(row["id"]) == replay_sync_run_id,
+            )
+            for row in run_rows
+        ]
+        return ReviewerRoutingData(project_id=project_id, routing_mode=("unrestricted_legacy" if not configured else "team_routed" if ready else "blocked"), external_sync_state=external_sync_state, teams=teams, routes=routes, sync_bindings=bindings, recent_sync_runs=recent_runs, known_limitations=["yudao_group_sync_not_verified", "external_notification_delivery_not_verified"])
 
 
 def build_repository() -> ReviewerRoutingRepository:
@@ -800,6 +1938,7 @@ def build_repository() -> ReviewerRoutingRepository:
 
 
 REVIEWER_ROUTING_REPOSITORY: ReviewerRoutingRepository = build_repository()
+REVIEWER_DIRECTORY_CLIENT = YudaoReviewerDirectoryClient()
 
 
 @router.get(
@@ -903,6 +2042,77 @@ def put_reviewer_role_route(
             payload,
             trusted_actor(authenticated_actor),
             meta["trace_id"],
+        ),
+        meta=meta,
+    )
+
+
+@router.put(
+    "/projects/{project_id}/evidence-review-teams/{team_id}/sync-bindings/{reviewer_role}",
+    response_model=ReviewerRoutingResponse,
+)
+def put_reviewer_directory_binding(
+    project_id: str,
+    payload: ReviewerDirectoryBindingPutRequest,
+    team_id: str = Path(min_length=1, max_length=64),
+    reviewer_role: Literal["secondary", "adjudicator"] = Path(),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
+    permissions: Optional[str] = Header(
+        default=None, alias="X-AIRank-Permissions"
+    ),
+) -> ReviewerRoutingResponse:
+    require_review_admin(permissions)
+    meta = response_meta(trace_id)
+    return ReviewerRoutingResponse(
+        data=REVIEWER_ROUTING_REPOSITORY.put_sync_binding(
+            tenant_id,
+            project_id,
+            team_id,
+            reviewer_role,
+            payload,
+            trusted_actor(authenticated_actor),
+            meta["trace_id"],
+        ),
+        meta=meta,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/evidence-review-teams/{team_id}/sync-bindings/{reviewer_role}/runs",
+    response_model=ReviewerRoutingResponse,
+)
+def run_reviewer_directory_sync(
+    project_id: str,
+    team_id: str = Path(min_length=1, max_length=64),
+    reviewer_role: Literal["secondary", "adjudicator"] = Path(),
+    idempotency_key: str = Header(
+        min_length=8, max_length=160, alias="Idempotency-Key"
+    ),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(
+        default=None, alias="X-AIRank-User-Id"
+    ),
+    permissions: Optional[str] = Header(
+        default=None, alias="X-AIRank-Permissions"
+    ),
+) -> ReviewerRoutingResponse:
+    require_review_admin(permissions)
+    meta = response_meta(trace_id)
+    return ReviewerRoutingResponse(
+        data=REVIEWER_ROUTING_REPOSITORY.run_directory_sync(
+            tenant_id,
+            project_id,
+            team_id,
+            reviewer_role,
+            idempotency_key,
+            trusted_actor(authenticated_actor),
+            meta["trace_id"],
+            REVIEWER_DIRECTORY_CLIENT,
         ),
         meta=meta,
     )

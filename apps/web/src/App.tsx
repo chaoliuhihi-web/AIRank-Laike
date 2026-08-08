@@ -128,6 +128,7 @@ import {
   recordConsoleAction,
   recordPublicationEvidence,
   releaseEvidenceReviewAssignment,
+  putEvidenceReviewerDirectoryBinding,
   putEvidenceReviewerRoute,
   reviewBuyerQuestion,
   reviewContentAsset,
@@ -141,6 +142,7 @@ import {
   reviewSourceRegistryEntry,
   runBrandCheck,
   runEvidenceIntegrityAudit,
+  runEvidenceReviewerDirectorySync,
   storeAuthSession,
   updateProviderRoute,
   updateKnowledgeSyncPolicy,
@@ -2181,6 +2183,9 @@ function EvidencePage() {
   const [reviewMemberRole, setReviewMemberRole] = useState<"secondary" | "adjudicator">("secondary");
   const [reviewMemberCapacity, setReviewMemberCapacity] = useState(5);
   const [reviewRouteRole, setReviewRouteRole] = useState<"secondary" | "adjudicator">("secondary");
+  const [reviewDirectoryRole, setReviewDirectoryRole] = useState<"secondary" | "adjudicator">("secondary");
+  const [reviewDirectoryGroupId, setReviewDirectoryGroupId] = useState("");
+  const [reviewDirectoryInterval, setReviewDirectoryInterval] = useState(60);
   const [reviewInboxLoadingMore, setReviewInboxLoadingMore] = useState(false);
   const [reviewAssignmentAction, setReviewAssignmentAction] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
@@ -2640,6 +2645,57 @@ function EvidencePage() {
       await refreshReviewInbox();
     } catch (error) {
       setReviewRoutingError(error instanceof Error ? error.message : "审核角色路由保存失败");
+      await refreshReviewRouting().catch(() => undefined);
+    } finally {
+      setReviewRoutingBusy(null);
+    }
+  };
+  const submitReviewDirectoryBinding = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project.id || !reviewTeamId || !reviewDirectoryGroupId.trim()) return;
+    setReviewRoutingBusy("directory-binding");
+    setReviewRoutingError(null);
+    try {
+      const existingBinding = reviewRouting?.sync_bindings.find(
+        (binding) => binding.team_id === reviewTeamId
+          && binding.reviewer_role === reviewDirectoryRole,
+      );
+      setReviewRouting(await putEvidenceReviewerDirectoryBinding(
+        project.id,
+        reviewTeamId,
+        reviewDirectoryRole,
+        {
+          externalGroupId: reviewDirectoryGroupId,
+          syncIntervalMinutes: reviewDirectoryInterval,
+          defaultMaxActiveAssignments: reviewMemberCapacity,
+          expectedVersion: existingBinding?.version,
+        },
+      ));
+      setReviewDirectoryGroupId("");
+    } catch (error) {
+      setReviewRoutingError(error instanceof Error ? error.message : "Yudao 审核组绑定失败");
+      await refreshReviewRouting().catch(() => undefined);
+    } finally {
+      setReviewRoutingBusy(null);
+    }
+  };
+  const runReviewDirectorySync = async (
+    teamId: string,
+    reviewerRole: "secondary" | "adjudicator",
+  ) => {
+    if (!project.id) return;
+    const busyKey = `directory-sync:${teamId}:${reviewerRole}`;
+    setReviewRoutingBusy(busyKey);
+    setReviewRoutingError(null);
+    try {
+      setReviewRouting(await runEvidenceReviewerDirectorySync(
+        project.id,
+        teamId,
+        reviewerRole,
+      ));
+      await refreshReviewInbox();
+    } catch (error) {
+      setReviewRoutingError(error instanceof Error ? error.message : "Yudao 审核组同步失败");
       await refreshReviewRouting().catch(() => undefined);
     } finally {
       setReviewRoutingBusy(null);
@@ -3106,7 +3162,7 @@ function EvidencePage() {
       </div>
       <Panel title="审核团队与角色路由">
         <p className="rail-caption">
-          未配置路由时系统明确处于兼容模式；一旦配置，第二审核与第三人裁决只向对应团队成员开放，并按成员的活跃领取上限控制容量。手工成员仅是 AIRank 本地绑定，不代表 Yudao 成员资格已同步；外部通知也尚未验证送达。
+          未配置路由时系统明确处于兼容模式；一旦配置，第二审核与第三人裁决只向对应团队成员开放，并按成员的活跃领取上限控制容量。可按角色绑定 Yudao 部门并保留每次目录响应哈希；手工成员仍不代表外部资格，Yudao 服务凭证只允许由服务端安全注入。外部通知送达仍未验证。
         </p>
         {reviewRoutingError && <DataStateCard title="审核团队路由操作失败" desc={reviewRoutingError} tone="danger" />}
         {reviewRouting && (
@@ -3115,6 +3171,7 @@ function EvidencePage() {
               <div><dt>路由模式</dt><dd><Badge tone={reviewRouting.routing_mode === "team_routed" ? "success" : reviewRouting.routing_mode === "blocked" ? "danger" : "warning"}>{reviewRouting.routing_mode}</Badge></dd></div>
               <div><dt>审核团队</dt><dd>{reviewRouting.teams.length}</dd></div>
               <div><dt>角色路由</dt><dd>{reviewRouting.routes.length} / 2</dd></div>
+              <div><dt>Yudao 绑定</dt><dd>{reviewRouting.sync_bindings.length} / 2</dd></div>
               <div><dt>外部同步</dt><dd>{reviewRouting.external_sync_state}</dd></div>
             </dl>
             <div className="review-routing-layout">
@@ -3139,6 +3196,15 @@ function EvidencePage() {
                   <label>目标团队<select required value={reviewTeamId} onChange={(event) => setReviewTeamId(event.target.value)}><option value="">请选择</option>{reviewRouting.teams.filter((team) => team.status === "active").map((team) => <option value={team.team_id} key={team.team_id}>{team.name}</option>)}</select></label>
                   <button className="airank-console-primary-button" type="submit" disabled={reviewRoutingBusy !== null || !reviewTeamId}>{reviewRoutingBusy === "route" ? "保存中…" : "保存角色路由"}</button>
                 </form>
+                <form className="review-routing-form" onSubmit={(event) => void submitReviewDirectoryBinding(event)}>
+                  <strong>4. 绑定 Yudao 审核组</strong>
+                  <label>审核团队<select required value={reviewTeamId} onChange={(event) => setReviewTeamId(event.target.value)}><option value="">请选择</option>{reviewRouting.teams.filter((team) => team.status === "active").map((team) => <option value={team.team_id} key={team.team_id}>{team.name}</option>)}</select></label>
+                  <label>同步角色<select value={reviewDirectoryRole} onChange={(event) => setReviewDirectoryRole(event.target.value as typeof reviewDirectoryRole)}><option value="secondary">第二审核</option><option value="adjudicator">第三人裁决</option></select></label>
+                  <label>Yudao 部门 ID<input required maxLength={128} value={reviewDirectoryGroupId} onChange={(event) => setReviewDirectoryGroupId(event.target.value)} placeholder="只填写部门 ID，不填写 Token" /></label>
+                  <label>同步周期（分钟）<input type="number" min={15} max={10080} value={reviewDirectoryInterval} onChange={(event) => setReviewDirectoryInterval(Math.max(15, Math.min(10080, Number(event.target.value) || 60)))} /></label>
+                  <small>同步后的成员按当前“同时领取上限”初始化；目录内容未变化时不会制造成员新版本。</small>
+                  <button className="airank-console-primary-button" type="submit" disabled={reviewRoutingBusy !== null || !reviewTeamId || !reviewDirectoryGroupId.trim()}>{reviewRoutingBusy === "directory-binding" ? "保存中…" : "保存 Yudao 绑定"}</button>
+                </form>
               </div>
               <div className="review-routing-summary">
                 {reviewRouting.routes.length === 0 ? (
@@ -3157,6 +3223,32 @@ function EvidencePage() {
                     {team.members.map((member) => <small key={member.member_id}>{member.display_name || member.user_id} · {member.reviewer_role === "secondary" ? "第二审核" : "第三人裁决"} · 上限 {member.max_active_assignments} · 外部资格{member.external_membership_verified ? "已验证" : "未验证"}</small>)}
                   </article>
                 ))}
+                {reviewRouting.sync_bindings.length === 0 ? (
+                  <DataStateCard title="尚未绑定 Yudao 审核组" desc="团队成员可先手工维护，但外部资格固定显示未验证。配置服务端凭证和部门绑定后，才能执行真实目录同步。" tone="warning" />
+                ) : reviewRouting.sync_bindings.map((binding) => {
+                  const busyKey = `directory-sync:${binding.team_id}:${binding.reviewer_role}`;
+                  const latestRun = reviewRouting.recent_sync_runs.find(
+                    (run) => run.binding_id === binding.binding_id,
+                  );
+                  return (
+                    <article className="review-routing-card" key={binding.binding_id}>
+                      <div>
+                        <strong>Yudao · {binding.reviewer_role === "secondary" ? "第二审核" : "第三人裁决"}</strong>
+                        <small>{binding.team_name} · 部门 {binding.external_group_id} · binding v{binding.version}</small>
+                      </div>
+                      <Badge tone={binding.last_sync_state === "verified" ? "success" : binding.last_sync_state === "failed" ? "danger" : "warning"}>{binding.last_sync_state}</Badge>
+                      <small>周期 {binding.sync_interval_minutes} 分钟 · 下次 {binding.next_sync_at ? formatDateTime(binding.next_sync_at) : "未安排"}</small>
+                      {latestRun && (
+                        <small>
+                          最近 {latestRun.status} · 发现 {latestRun.discovered_member_count} · 变更 {latestRun.upserted_member_count} · 停用 {latestRun.disabled_member_count}
+                          {latestRun.response_sha256 ? ` · 响应 ${latestRun.response_sha256.slice(0, 12)}…` : ""}
+                          {latestRun.error_code ? ` · ${latestRun.error_code}${latestRun.retryable ? "（可重试）" : ""}` : ""}
+                        </small>
+                      )}
+                      <button className="outline-button" type="button" disabled={reviewRoutingBusy !== null || !binding.sync_enabled} onClick={() => void runReviewDirectorySync(binding.team_id, binding.reviewer_role)}>{reviewRoutingBusy === busyKey ? "同步中…" : "立即同步目录"}</button>
+                    </article>
+                  );
+                })}
               </div>
             </div>
           </>
@@ -3241,7 +3333,7 @@ function EvidencePage() {
       </Panel>
       <Panel title={`SLA 升级运营 · ${reviewEscalations?.escalation_count ?? 0}`}>
         <p className="rail-caption">
-          这里只展示 Scheduler 已持久写入 Outbox 的真实逾期事件。pending 只表示等待外部消费者处理，published 也只表示事件已发布；在取得飞书、邮件或短信回执前，系统统一显示“外部送达未验证”。
+          这里只展示 Scheduler 已持久写入 Outbox 的真实逾期事件。pending 只表示等待 Consumer；只有安全 HTTPS Webhook 返回成功并写入不可变渠道回执，才显示“外部送达已验证”。未配置客户 Webhook、网络失败或仅有 Outbox 事件都不能冒充送达。
         </p>
         {reviewEscalationError && <DataStateCard title="SLA 升级事件读取失败" desc={reviewEscalationError} tone="danger" />}
         {reviewEscalations && (
@@ -3249,10 +3341,10 @@ function EvidencePage() {
             <dl className="evidence-metadata review-inbox-metrics">
               <div><dt>持久升级事件</dt><dd>{reviewEscalations.escalation_count}</dd></div>
               <div><dt>Outbox 待处理</dt><dd>{reviewEscalations.pending_count}</dd></div>
-              <div><dt>事件已发布</dt><dd>{reviewEscalations.published_count}</dd></div>
+              <div><dt>已取得渠道回执</dt><dd>{reviewEscalations.published_count}</dd></div>
               <div><dt>处理失败</dt><dd>{reviewEscalations.failed_count}</dd></div>
               <div><dt>已取消</dt><dd>{reviewEscalations.canceled_count}</dd></div>
-              <div><dt>外部送达已验证</dt><dd>0</dd></div>
+              <div><dt>外部送达已验证</dt><dd>{reviewEscalations.escalations.filter((event) => event.external_delivery_verified).length}</dd></div>
             </dl>
             {reviewEscalations.escalations.length === 0 ? (
               <DataStateCard
@@ -3276,12 +3368,14 @@ function EvidencePage() {
                         {event.routing_team_id ? ` · 团队 ${event.routing_team_id} · route v${event.routing_route_version}` : " · 未配置团队"}
                       </small>
                       <small>可接收升级 {event.eligible_recipient_count} 人 · 外部成员同步 {event.external_sync_state}</small>
+                      {event.delivery_channel && <small>渠道 {event.delivery_channel} · 尝试 {event.delivery_attempt_count} 次 · 端点 {event.delivery_endpoint_host || "未记录"}</small>}
+                      {event.delivery_response_sha256 && <small>回执响应 {event.delivery_response_status ?? "-"} · hash {event.delivery_response_sha256.slice(0, 12)}…{event.provider_receipt_id ? ` · provider ${event.provider_receipt_id}` : ""}</small>}
                     </div>
                     <div className="review-inbox-actions">
                       <Badge tone={event.outbox_status === "failed" ? "danger" : event.outbox_status === "published" ? "success" : "warning"}>
                         Outbox {event.outbox_status}
                       </Badge>
-                      <small>外部送达未验证</small>
+                      <small>{event.external_delivery_verified ? `外部送达已验证 · ${event.delivered_at ? formatDateTime(event.delivered_at) : "已记录"}` : "外部送达未验证"}</small>
                     </div>
                   </article>
                 ))}

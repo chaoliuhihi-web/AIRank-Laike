@@ -37,6 +37,18 @@ from .page_audit import (
     run_next_page_audit_job,
 )
 from .scan import ScanWorkerError, run_next_real_scan_job
+from .reviewer_directory_sync import (
+    ReviewerDirectorySyncWorkerError,
+    build_reviewer_directory_sync_repository,
+    run_next_reviewer_directory_sync_job,
+)
+from airank_xinghe_adapter import YudaoReviewerDirectoryClient
+from .review_notification import (
+    MySQLReviewNotificationRepository,
+    ReviewNotificationError,
+    ReviewNotificationWebhookClient,
+    run_next_review_notification,
+)
 
 
 JOB_TYPE_FILTERS: dict[str, set[str]] = {
@@ -46,12 +58,15 @@ JOB_TYPE_FILTERS: dict[str, set[str]] = {
         "page.audit",
         "citation.capture",
         "knowledge.source.sync",
+        "reviewer.directory.sync",
     },
     "publish": {"publish.package"},
     "scan": {"scan.provider"},
     "page-audit": {"page.audit"},
     "citation-capture": {"citation.capture"},
     "knowledge-sync": {"knowledge.source.sync"},
+    "reviewer-directory-sync": {"reviewer.directory.sync"},
+    "review-notification": {"__outbox_review_notification__"},
 }
 
 
@@ -131,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--job-type",
-        choices=("all", "publish", "scan", "page-audit", "citation-capture", "knowledge-sync"),
+        choices=("all", "publish", "scan", "page-audit", "citation-capture", "knowledge-sync", "reviewer-directory-sync", "review-notification"),
         default="all",
         help="limit this process to one governed job family",
     )
@@ -192,6 +207,17 @@ def main() -> int:
     citation_capture_service = build_citation_capture_service()
     knowledge_sync_repository = MySQLKnowledgeSyncExecutionRepository(database_url)
     knowledge_sync_service = build_knowledge_sync_service()
+    reviewer_directory_repository = build_reviewer_directory_sync_repository(database_url)
+    reviewer_directory_client = YudaoReviewerDirectoryClient()
+    review_notification_repository = MySQLReviewNotificationRepository(
+        database_url,
+        tenant_id=scope.tenant_id,
+        project_id=scope.project_id,
+    )
+    review_notification_client = ReviewNotificationWebhookClient()
+    if args.job_type == "review-notification" and not review_notification_client.config.configured:
+        print(json.dumps({"status": "blocked", "error_code": "REVIEW_NOTIFICATION_NOT_CONFIGURED"}))
+        return 2
     try:
         citation_object_storage = build_object_storage_from_env()
     except ObjectStorageError as exc:
@@ -217,6 +243,8 @@ def main() -> int:
         page_audit_result = None
         citation_capture_result = None
         knowledge_sync_result = None
+        reviewer_directory_sync_result = None
+        review_notification_result = None
         try:
             if args.job_type in {"all", "publish"}:
                 receipt = run_next_publish_job(
@@ -261,6 +289,35 @@ def main() -> int:
                     knowledge_sync_repository,
                     knowledge_sync_service,
                     citation_object_storage,
+                    worker_id=worker_id,
+                )
+            if (
+                receipt is None
+                and scan_result is None
+                and page_audit_result is None
+                and citation_capture_result is None
+                and knowledge_sync_result is None
+                and args.job_type in {"all", "reviewer-directory-sync"}
+            ):
+                reviewer_directory_sync_result = run_next_reviewer_directory_sync_job(
+                    store,
+                    reviewer_directory_repository,
+                    reviewer_directory_client,
+                    worker_id=worker_id,
+                )
+            if (
+                receipt is None
+                and scan_result is None
+                and page_audit_result is None
+                and citation_capture_result is None
+                and knowledge_sync_result is None
+                and reviewer_directory_sync_result is None
+                and args.job_type in {"all", "review-notification"}
+                and review_notification_client.config.configured
+            ):
+                review_notification_result = run_next_review_notification(
+                    review_notification_repository,
+                    review_notification_client,
                     worker_id=worker_id,
                 )
         except PublisherError as exc:
@@ -328,6 +385,32 @@ def main() -> int:
                     ensure_ascii=False,
                 )
             )
+        except ReviewerDirectorySyncWorkerError as exc:
+            processed_count += 1
+            failed_count += 1
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except ReviewNotificationError as exc:
+            processed_count += 1
+            failed_count += 1
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "retryable": exc.retryable,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             if receipt is not None:
                 print(
@@ -361,6 +444,10 @@ def main() -> int:
                 )
             elif knowledge_sync_result is not None:
                 print(json.dumps(knowledge_sync_result.to_record(), ensure_ascii=False))
+            elif reviewer_directory_sync_result is not None:
+                print(json.dumps(reviewer_directory_sync_result.to_record(), ensure_ascii=False))
+            elif review_notification_result is not None:
+                print(json.dumps(review_notification_result.to_record(), ensure_ascii=False))
             handled = any(
                 item is not None
                 for item in (
@@ -369,6 +456,8 @@ def main() -> int:
                     page_audit_result,
                     citation_capture_result,
                     knowledge_sync_result,
+                    reviewer_directory_sync_result,
+                    review_notification_result,
                 )
             )
             if handled:

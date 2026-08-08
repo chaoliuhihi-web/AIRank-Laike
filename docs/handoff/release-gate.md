@@ -1128,3 +1128,42 @@ Decision:
 ### Decision
 
 - Internal project reviewer routing is now a durable, capacity-bounded engineering capability. AIRank remains commercial `NO-GO` until external delivery, customer reviewer quality and the existing production infrastructure/Consumer gates pass.
+
+## Yudao reviewer-directory synchronization gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0029` adds role-scoped Yudao directory bindings and immutable synchronization runs. Bindings retain the external department ID, interval, next-due time and configuration fingerprint; runs retain response SHA-256 and member change counts.
+- The adapter reads the configured Yudao department and enabled-user endpoints, returns only reviewer identity fields required for routing, fails closed, and never puts credentials in job payloads, API responses or synchronization records.
+- The shared Scheduler emits tenant/project-scoped `airank.reviewer-directory-sync.v1` jobs. The Worker rechecks the binding ID, version, team and reviewer role before network access. Unchanged source snapshots do not create new member versions; missing source users are disabled.
+- Contract, adapter, API, Scheduler and Worker tests pass. Real MySQL exercised manual and scheduled synchronization through a protocol-faithful directory fixture, then proved a second unchanged snapshot produced zero member updates and no version churn.
+- Evidence Center exposes binding configuration, immediate synchronization and immutable run hashes/counts while stating that credentials are server-side only. The current project correctly shows no production binding instead of claiming Yudao verification.
+
+### Still blocked
+
+- No production Yudao reviewer-directory credentials or customer department were supplied. The fixture proves AIRank behavior, not that a production member currently belongs to a real customer group.
+- Production Yudao login/permission-info remains a separate release requirement from directory synchronization.
+
+### Decision
+
+- The Yudao directory integration is implemented and testable, but external membership proof remains `blocked` until a production customer directory is synchronized and audited.
+
+## Review-notification delivery receipt gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0030` adds durable notification deliveries and append-only per-attempt receipts for SLA escalation Outbox events.
+- The notification Consumer accepts only a server-injected public HTTPS Webhook, uses DNS-pinned outbound transport without redirects, and retries only 408/425/429/5xx with bounded backoff. Bearer credentials are never persisted.
+- Each attempt stores request/response SHA-256, response status, connected IP, endpoint host and upstream receipt ID. An Outbox event becomes `published` only after a 2xx response and a successful receipt are committed; the API returns `external_delivery_verified=true` only under the same condition.
+- Unit coverage proves retry-to-success, terminal failure and missing-configuration fail-closed behavior. Real MySQL plus a protocol-faithful HTTP 202 fixture proves the receipt is visible through the escalation API and that the injected secret is absent from persisted delivery data.
+- Evidence Center explains the distinction between pending Outbox work and verified external delivery. The live project shows no verified delivery because no customer Webhook is configured. Desktop and mobile have no page-level horizontal overflow; the browser console has zero warnings/errors.
+
+### Still blocked
+
+- No customer-owned HTTPS Webhook or downstream channel account was supplied, so real external delivery and recipient receipt remain unverified.
+- Repeated escalation levels, on-call rotation and automatic workload balancing remain `partial`.
+- The real customer reviewer benchmark remains 0/20, Cohen's kappa is unavailable, and engineering fixtures do not establish reviewer quality.
+
+### Decision
+
+- AIRank now has truthful delivery semantics and an immutable channel-attempt audit trail. It remains commercial `NO-GO` until a customer channel, production reviewer identity, reviewer-quality benchmark and existing infrastructure/Consumer gates pass.

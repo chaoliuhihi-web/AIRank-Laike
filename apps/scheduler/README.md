@@ -1,10 +1,11 @@
 # AIRank Scheduler
 
-The scheduler handles three durable workflows:
+The scheduler handles four durable workflows:
 
 - turns due `T+7/T+14/T+30` observation windows into new `ScanRun` tasks;
 - queues due knowledge-source synchronization jobs; and
-- persists reviewer-SLA overdue events to `airank_outbox_events`.
+- persists reviewer-SLA overdue events to `airank_outbox_events`; and
+- queues due Yudao reviewer-directory bindings as `reviewer.directory.sync` jobs.
 
 Retest dispatch clones the baseline tasks' frozen prompt/request contract,
 creates fresh sessions, and lets the normal governed Worker collect evidence.
@@ -17,9 +18,14 @@ event contract is `evidence_review.sla_overdue.v1` with payload schema
 locks and rechecks the case so a review completed after the initial scan does
 not produce a stale escalation. A deterministic event ID makes replay
 idempotent. `pending` means only that a durable Outbox event exists; even
-`published` is not an external delivery receipt. Until a separate consumer and
-channel receipt contract are implemented, customer UI/API must keep external
-delivery unverified.
+`published` is accepted as external delivery only when the notification
+Consumer has persisted a successful immutable channel receipt. A plain Outbox
+row or failed attempt remains externally unverified.
+
+Reviewer-directory scheduling stores only binding IDs, versions, roles and the
+external department ID. Service credentials remain in Worker process secrets.
+The Worker rechecks the binding version before the Yudao call, so configuration
+changes after dispatch fail closed instead of syncing the wrong group.
 
 When reviewer routing is configured, the same transaction resolves a durable
 route snapshot into the event: team ID, route version, eligible escalation

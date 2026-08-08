@@ -644,7 +644,15 @@ export type EvidenceReviewEscalationList = {
     eligible_recipient_count: number;
     external_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
     outbox_status: "pending" | "published" | "failed" | "canceled";
-    external_delivery_verified: false;
+    external_delivery_verified: boolean;
+    delivery_channel: "webhook" | null;
+    delivery_attempt_count: number;
+    delivery_receipt_id: string | null;
+    provider_receipt_id: string | null;
+    delivered_at: string | null;
+    delivery_endpoint_host: string | null;
+    delivery_response_status: number | null;
+    delivery_response_sha256: string | null;
   }>;
 };
 
@@ -691,6 +699,46 @@ export type EvidenceReviewerRouting = {
     escalation_recipient_count: number;
     routing_ready: boolean;
     updated_at: string;
+  }>;
+  sync_bindings: Array<{
+    binding_id: string;
+    team_id: string;
+    team_name: string;
+    reviewer_role: "secondary" | "adjudicator";
+    external_source: "yudao";
+    external_group_id: string;
+    status: "active" | "disabled";
+    sync_enabled: boolean;
+    sync_interval_minutes: number;
+    default_priority: number;
+    default_max_active_assignments: number;
+    default_receives_escalations: boolean;
+    last_sync_state: "not_configured" | "pending" | "verified" | "stale" | "failed";
+    last_sync_run_id: string | null;
+    last_synced_at: string | null;
+    next_sync_at: string | null;
+    last_error_code: string | null;
+    version: number;
+    updated_at: string;
+  }>;
+  recent_sync_runs: Array<{
+    run_id: string;
+    binding_id: string;
+    team_id: string;
+    reviewer_role: "secondary" | "adjudicator";
+    external_group_id: string;
+    status: "running" | "succeeded" | "failed";
+    endpoint_host: string | null;
+    response_sha256: string | null;
+    discovered_member_count: number;
+    active_member_count: number;
+    upserted_member_count: number;
+    disabled_member_count: number;
+    error_code: string | null;
+    retryable: boolean;
+    started_at: string;
+    finished_at: string | null;
+    idempotent_replay: boolean;
   }>;
   known_limitations: string[];
 };
@@ -1937,6 +1985,64 @@ export async function putEvidenceReviewerRoute(
   );
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Reviewer route request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
+}
+
+export async function putEvidenceReviewerDirectoryBinding(
+  projectId: string,
+  teamId: string,
+  reviewerRole: "secondary" | "adjudicator",
+  input: {
+    externalGroupId: string;
+    syncIntervalMinutes: number;
+    defaultMaxActiveAssignments: number;
+    expectedVersion?: number;
+  },
+): Promise<EvidenceReviewerRouting> {
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-teams/${encodeURIComponent(teamId)}/sync-bindings/${reviewerRole}`,
+    {
+      method: "PUT",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_directory_binding"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        external_group_id: input.externalGroupId.trim(),
+        sync_enabled: true,
+        sync_interval_minutes: input.syncIntervalMinutes,
+        default_priority: 100,
+        default_max_active_assignments: input.defaultMaxActiveAssignments,
+        default_receives_escalations: true,
+        expected_version: input.expectedVersion,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Reviewer directory binding request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
+}
+
+export async function runEvidenceReviewerDirectorySync(
+  projectId: string,
+  teamId: string,
+  reviewerRole: "secondary" | "adjudicator",
+): Promise<EvidenceReviewerRouting> {
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-review-teams/${encodeURIComponent(teamId)}/sync-bindings/${reviewerRole}/runs`,
+    {
+      method: "POST",
+      headers: {
+        ...buildApiHeaders("trc_web_evidence_review_directory_sync"),
+        "Idempotency-Key": `review-directory-sync-${randomPart}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Reviewer directory sync request failed with ${response.status}`));
   }
   return ((await response.json()) as { data: EvidenceReviewerRouting }).data;
 }

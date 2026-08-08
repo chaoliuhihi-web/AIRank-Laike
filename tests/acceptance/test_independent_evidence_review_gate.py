@@ -90,7 +90,7 @@ def test_review_assignment_has_persistent_lease_sla_and_blind_owner_contract() -
     assert "我已领取 · 租约至" in web
 
 
-def test_review_sla_escalation_uses_real_outbox_without_fake_delivery() -> None:
+def test_review_sla_escalation_requires_immutable_channel_receipt_for_delivery() -> None:
     scheduler = read("apps/scheduler/airank_scheduler/review_escalation.py")
     scheduler_main = read("apps/scheduler/airank_scheduler/main.py")
     routes = read("apps/api/evidence_review_routes.py")
@@ -98,6 +98,10 @@ def test_review_sla_escalation_uses_real_outbox_without_fake_delivery() -> None:
         "packages/contracts/evidence_review_escalation_response.schema.json"
     )
     web = read("apps/web/src/App.tsx")
+    consumer = read("apps/worker/airank_worker/review_notification.py")
+    delivery_migration = read(
+        "apps/api/alembic/versions/20260809_0030_review_notification_delivery.py"
+    )
 
     for token in (
         "evidence_review.sla_overdue.v1",
@@ -110,11 +114,21 @@ def test_review_sla_escalation_uses_real_outbox_without_fake_delivery() -> None:
     assert "review_escalation_scheduler.preview" in scheduler_main
     assert "review_escalation_scheduler.dispatch_overdue" in scheduler_main
     assert '"/projects/{project_id}/evidence-review-escalations"' in routes
-    assert '"external_delivery_verified": { "const": false }' in contract
+    assert '"external_delivery_verified": { "type": "boolean" }' in contract
+    for token in (
+        "SafeOutboundClient",
+        "airank.review-notification-webhook.v1",
+        "airank_notification_delivery_receipts",
+        "response_sha256",
+        "provider_receipt_id",
+        "REVIEW_NOTIFICATION_NOT_CONFIGURED",
+    ):
+        assert token in consumer or token in delivery_migration
     assert "SLA 升级运营" in web
     assert "外部送达未验证" in web
+    assert "外部送达已验证" in web
     assert "reviewEscalations.canceled_count" in web
-    assert "系统不会把动态逾期状态冒充已通知" in web
+    assert "不能冒充送达" in web
 
 
 def test_review_team_routing_is_persistent_capacity_bounded_and_truthful() -> None:
@@ -152,7 +166,7 @@ def test_review_team_routing_is_persistent_capacity_bounded_and_truthful() -> No
     assert '"eligible_recipient_count"' in scheduler
     assert "审核团队与角色路由" in web
     assert "外部资格" in web
-    assert "不代表 Yudao 成员资格已同步" in web
+    assert "手工成员仍不代表外部资格" in web
 
 
 def test_review_quality_has_real_agreement_and_kappa_gate() -> None:

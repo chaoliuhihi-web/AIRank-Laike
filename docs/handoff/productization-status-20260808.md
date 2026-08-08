@@ -4,7 +4,7 @@
 
 状态：`partial / no-go for commercial launch`。
 
-已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”“同口径复测归因”和安全持久复测调度后端切片，以及 API 认证边界、样本证据中心、任务中心、事实/内容审核 UI、四平台同轮 API 真实重复采样、统一安全出站、官网可提取性审计和引用来源页不可变存证；但生产 Yudao 认证、浏览器/App 高等级证据、真实外部发布、真实时间流逝后的观察窗口和带项目数据的浏览器客户报告尚未全部通过，不得宣称商业可用。
+已经完成“吸收矩阵”“测量可信度第一切片”“内部 Skill Registry”“事实证据链”“审核后发布快照”“同口径复测归因”和安全持久复测调度后端切片，以及 API 认证边界、样本证据中心、任务中心、事实/内容审核 UI、四平台同轮 API 真实重复采样、统一安全出站、官网可提取性审计、引用来源页不可变存证、审核团队路由、Yudao 审核目录同步和通知渠道回执；但生产 Yudao 认证/真实目录、浏览器/App 高等级证据、客户 Webhook、真实外部发布、真实时间流逝后的观察窗口和带项目数据的浏览器客户报告尚未全部通过，不得宣称商业可用。
 
 ## 本轮已落地
 
@@ -117,11 +117,14 @@
 107. 项目复核待办新增正式持久任务分派：Alembic `20260809_0027` 增加 assignment 与 append-only event 两张表，生成式 active slot 唯一约束与 case 行锁共同阻止同一 case/role 被并发重复领取。领取、幂等重放、续租、主动释放、租约过期、接管和提交完成均有版本与事件；续租只延长 lease，不重置二审 24h/裁决 4h SLA，直接提交会在无人持有时原子自动领取并完成。API 永不返回 `assigned_to`，其他账号在有效租约期内既看不到任务，也无法提交冲突决定。真实 MySQL 双线程证明两个审核人并发领取只有一个成功；浏览器按“待领取 1/逾期 1 → 领取 → 他人待办 0 → 续租 → 释放 → 重新领取 → 不可变回答/精确 Claim/来源/二审表单”完整验收，1543px 与 390×844 无横向溢出，干净页 console `0 error / 0 warning`；隔离租户在 61 张 tenant 表中清理后为 0 行。全仓 `449 passed, 30 skipped`，真实 MySQL `28 passed, 2 skipped`。团队路由、自动升级通知和真实客户 20 条 benchmark 仍为 `partial/blocked`。
 108. 审核 SLA 新增真实持久升级链路：统一 Scheduler 在租户/项目范围内扫描待二审与待裁决 case，二审沿用 24h、裁决沿用 4h 原始截止时间，稳定事件 ID 保证重跑不重复；写入 `airank_outbox_events` 前会锁定并重算 case，扫描后已完成、角色变化或截止时间变化时零写入。版本化事件为 `evidence_review.sla_overdue.v1` / `airank.evidence-review-sla-escalation.v1`，payload 明确 `delivery_claim=outbox_pending_not_delivered`；公开 API 不返回 `assigned_to/assignment_id` 并固定 `external_delivery_verified=false`。证据中心新增 SLA 升级运营区，真实 MySQL/浏览器显示 1 条可执行逾期、1 条 pending 持久事件、0 published、0 failed、0 外部送达；事件卡仍能下钻不可变回答、精确 Claim、来源原文和第二人复核。桌面与 390×844 移动端无页面级横向溢出，console `0 error / 0 warning`，全部 API 为 200；隔离验收租户在 61 张 tenant 表中清理后为 0。外部通知 Consumer、渠道回执、团队路由、失败重试和重复升级策略仍为 `partial/blocked`，不能把 Outbox 状态包装成已通知。
 109. 审核团队路由完成 AIRank 自有持久实现：Alembic `20260809_0028` 增加项目审核团队、角色成员和角色路由三张表，真实库达到 72 张 AIRank 表。成员保存 priority、并发领取上限、是否接收升级、来源和外部资格验证状态；手工绑定固定为 `external_membership_verified=false`。项目无路由时兼容 `unrestricted_legacy`；配置任一路由后，另一角色未配置、团队停用/为空、账号非成员或容量耗尽均失败关闭，两个角色都可用才返回 `team_routed`。领取事务锁定成员再统计活跃任务，SLA Outbox 保存团队/路由版本/接收人数/外部同步状态而不保存成员身份。真实 MySQL 证明非成员待办为 0 且领取返回 403、并发唯一领取继续通过、升级解析 2 名接收者；真实浏览器完成创建团队、两角色成员和两条路由，桌面与 390×844 均无横向溢出，console `0 error / 0 warning`。浏览器 QA 的 2 路由、2 成员、1 团队及 5 条对应审计已精确清理。默认全仓 `462 passed, 30 skipped`，Python 3.11 严格真实 MySQL 门禁 `28 passed, 2 skipped`，Node 24 构建与 npm production audit 0 漏洞。Yudao 组同步、外部通知 Consumer/回执、轮值均衡和真实客户 0/20 benchmark 仍保持 `partial/blocked`。
+110. 深度吸收 `TokHub` 的 Provider/目录探测边界与 AIRank 的契约隔离原则，新增 `20260809_0029` Yudao 审核目录绑定和不可变同步运行：按 secondary/adjudicator 角色绑定 Yudao 部门，服务端通过受信配置读取部门与启用用户，响应只保留用户 ID、用户名、显示名、部门和启用状态，不采集邮箱或手机号；每次保存响应 SHA-256、成员数、增删改计数和错误状态。Scheduler 只投递不含凭证的 `airank.reviewer-directory-sync.v1` 任务，Worker 在联网前复核 binding ID/version/团队/角色；相同目录快照不会制造成员新版本，目录中消失的成员会被停用，真实 Yudao 同步成员才标记 `external_membership_verified=true`。适配器、API、Scheduler、Worker 和真实 MySQL 协议替身链路均已通过；生产 Yudao 凭证和真实客户部门仍未提供，因此外部 E2E 保持 `blocked`。
+111. 将审核 SLA 从“持久 Outbox”推进到可证明送达的渠道 Consumer：Alembic `20260809_0030` 增加通知投递及 append-only attempt 回执；Worker 仅接受服务端安全注入的公共 HTTPS Webhook，通过 DNS 固定出站、禁止重定向，按 408/425/429/5xx 做有界退避。每次请求保存 request/response hash、响应状态、连接 IP、端点 host 和上游 receipt ID，但不保存 Bearer token；只有 2xx 且成功回执已与 Outbox 同事务持久化，事件才变为 `published`，API 才返回 `external_delivery_verified=true`。单元测试覆盖重试成功、终止失败和缺配置失败关闭；真实 MySQL 协议替身返回 HTTP 202/receipt，证明回执可追溯且数据库不含测试 token。客户 Webhook 尚未提供，所以真实外部送达仍保持 `blocked`。
+112. 证据中心补齐 Yudao 角色绑定、即时同步、运行 hash/计数和通知回执表达。当前真实项目在未配置外部能力时如实显示 `unrestricted_legacy`、尚未绑定 Yudao、外部通知未验证，并明确“只有安全 HTTPS Webhook 成功且写入不可变回执才算送达”。1024px 桌面端无页面级横向溢出；移动窄视口同样无溢出，控制台均为 `0 error / 0 warning`。本轮默认全仓 `477 passed, 30 skipped`、真实 MySQL `28 passed, 2 skipped`、Node 24 production build 和 npm production audit 0 漏洞，吸收矩阵仍为 13 sources / 67 rows / 21 GEO skills。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `462 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `477 passed, 30 skipped`；真实 MySQL、生产 Yudao、客户 Webhook 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -137,8 +140,8 @@
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260809_0028`；72 张 AIRank 表校验通过；新增审核团队、角色成员与 secondary/adjudicator 路由，并继续覆盖独立复核 assignment/事件台账、active slot 唯一约束、项目证据完整性巡检、来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
-- 本地真实 MySQL integration：Python 3.11 严格门禁 `28 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增团队路由、非成员失败关闭、成员容量和 SLA 接收人数快照，并继续覆盖审核 SLA 持久升级、幂等回放、写入前 case 重检、真实并发任务领取、续租/SLA、释放、过期接管、自动完成和事件审计，以及 v2 源证据与派生状态巡检、v7 确定性离线评审 ZIP、来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0028`。
+- MySQL：Alembic `20260809_0030`；76 张 AIRank 表校验通过；新增 Yudao 目录绑定/同步运行、通知投递/不可变回执，并继续覆盖审核团队、角色成员与 secondary/adjudicator 路由、独立复核 assignment/事件台账、active slot 唯一约束、项目证据完整性巡检、来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
+- 本地真实 MySQL integration：Python 3.11 严格门禁 `28 passed, 2 skipped`（生产 Yudao 与独立 S3 开关按环境跳过）。新增协议替身驱动的 Yudao 手工/定时同步、相同快照不制造版本、通知 HTTP 202 回执和 token 不落库证明，并继续覆盖团队路由、非成员失败关闭、成员容量和 SLA 接收人数快照、审核 SLA 持久升级、幂等回放、写入前 case 重检、真实并发任务领取、续租/SLA、释放、过期接管、自动完成和事件审计，以及 v2 源证据与派生状态巡检、v7 确定性离线评审 ZIP、来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0030`。
 - 页面干预真实 MySQL 验收：通用 FAQ 蓝图继续通过来源→事实→批准→审核→`airank.publish-snapshot.v2`；专用比较使用 2 主体×10 维度生成 20 条 Claim/Support，专用解释使用七类角色/12 条事实/1400+ 证据字符生成 12 条 Claim/Support，两者均通过内容审校和不可变导出。所有测试租户都在 finally 清理，避免把验收事实冒充客户数据。
 - 专用内容真实 HTTP/MySQL 验收：独立 3.11 API 进程和隔离租户通过登录、项目、32 个来源/主体事实、逐事实审核、Comparison/Explainer 创建、内容审校与 export 发布包；客户端伪造的创建人/审核人均被认证会话 `http-qa` 覆盖。结果为 Comparison 10 段/20 Claim/20 Support、Explainer 7 段/12 Claim/12 Support，两个发布包均为 `packaged`；验收后 62 张租户表合计 0 行残留。
 - 发布中心真实浏览器/MySQL 验收：隔离租户从已批准内容点击创建 export 不可变包，绑定真实 URL、不可变截图对象及 SHA-256、已完成 baseline 后变为 `published`，并持久化 4 个 scheduled 观察窗口；快照创建人与证据登记人均由可信会话 `browser-publish-qa` 覆盖。API 对单边截图字段返回 422，对 hash 不匹配返回 `409 PUBLICATION_SCREENSHOT_EVIDENCE_INVALID`；1024px 桌面及移动窄视口均无页面级横向溢出，console `0 error / 0 warning`，隔离租户数据随后精确清理为 0。
@@ -147,14 +150,14 @@
 - 公开来源自动同步浏览器验收：真实登录后在事实库导入客户授权的 `https://example.com/`，启用每天检查；首次 Worker 保存原始 HTML/可见正文双对象和运行元数据，页面显示 `changed`、当前 v2、旧 v1 stale、证据 hash；随后点击“立即检查”，第二次显示 `unchanged` 且版本仍为 v2。1024px 桌面端无页面级横向溢出，console `0 error / 0 warning`；8 条审计、2 个 run/job、2 个来源修订和 4 个对象引用随后精确清理为 0，两个内容文件移入隔离临时目录。
 - Provider 路由控制浏览器验收：真实登录后设置页读取 4 条 manifest，千问/豆包/DeepSeek 显示已配置，未安全注入凭证的 Kimi 明确显示 `not configured` 且控制按钮禁用；DeepSeek 优先级从 0 热更新到 25 再恢复为 0，控制版本递增至 v4，4 条追加式事件均绑定可信操作者且敏感字段扫描为 0。移动视口页面无外层横向溢出，宽表只在卡片内部滚动，console `0 error / 0 warning`。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 最新严格上线门禁（审核团队路由提交与干净输入基线均为 `f70ceeb`）：工作树、GitHub/Gitee `main` 同步、diff、运行产物、Python 3.11.15、Node 24.14.0、195 个 contract、6 个 crawler-lite、78 个 acceptance、12 个 scheduler、35 个 worker、48 个 evidence、23 个 outbound security、26 个 Provider Gateway、7/7 原生引用 benchmark、全部分包测试、10 个核心 Skill 30/30、Web 构建、真实 MySQL 28/2、离线 SQL 与真实 Alembic `0028` 均为 `PASS`；默认全量测试另为 462 passed / 30 skipped。总状态仍为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；在 `--require-optional-capabilities` 下，外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；消费端 L3 真实生成仍为 `0/4`，千问/DeepSeek 为验证码阻塞，豆包/Kimi 为登录阻塞。审核团队/角色/容量路由与 SLA 快照的通过不替代 Yudao 组同步、外部通知送达、Citation Support、Consumer Web/App、真实客户 benchmark 或生产站点门禁。
+- 最新干净提交严格门禁将在本切片提交并同步 GitHub/Gitee 后重跑；提交前完整回归已通过默认全量 `477 passed, 30 skipped`、真实 MySQL `28 passed, 2 skipped`、Node 24.14.0 production build、npm production audit 0 漏洞、离线 SQL与真实 Alembic `0030`。总状态继续为 `BLOCKED`：生产 API 强制认证/Yudao 未配置，生产 HTTPS S3/MinIO 未配置；外部 Crawler/KB/内容/workflow/Hermes 仍为 `dev_only`；Consumer 浏览器 L3 仍为 `0/4`；生产 Yudao 目录和客户 HTTPS Webhook 未接入。工程协议替身通过不能替代真实外部身份、渠道送达、客户 reviewer benchmark、Citation Support、Consumer Web/App 或生产站点门禁。
 
 ## 下一实施顺序
 
 1. 保持四平台 API 重复门禁和 7/7 Provider 原生引用 benchmark 持续回归，将千问已验证的原生来源契约扩展到豆包、Kimi、DeepSeek 的官方可用搜索结构，并完成 Kimi 凭证轮换与 DeepSeek 新型号迁移；当前结果不外推为 Consumer、引用支持或增长结论。
 2. 接通真实 Yudao 登录与 permission-info，在生产配置下验证 token 撤销、跨租户、超时和并发请求；当前浏览器验收只证明 `dev_only` 认证边界。
 3. 完成四个平台独立登录态 Web/App 采集环境；Web 采集器已有不可变截图、来源面板状态和全新会话硬门禁，但当前四个平台均被登录或验证码阻断；Consumer App 仍未实现。
-4. 在已完成的盲态双人复核、精确 Claim、游标队列、持久任务租约、内部审核团队/角色/容量路由和 SLA 升级 Outbox 基础上，补 Yudao 组/成员同步、外部通知 Consumer/渠道回执、失败恢复、重复升级、轮值均衡、抽检策略及真实客户人工标注集；当前 0/20 benchmark 和不可估计 kappa 必须保持阻断，不能用工程测试样本替代客户审核质量，也不能把 Outbox published 包装成送达。
+4. 在已完成的盲态双人复核、精确 Claim、游标队列、持久任务租约、内部团队路由、Yudao 目录同步契约和通知渠道回执基础上，用真实生产 Yudao 部门及客户 HTTPS Webhook 完成外部 E2E，再补重复升级、轮值均衡、抽检策略及真实客户人工标注集；当前 0/20 benchmark 和不可估计 kappa 必须保持阻断，不能用工程协议替身替代客户审核质量或真实渠道送达。
 5. 在已完成数据库分布式容量租约与优先级多上游路由基础上，补动态择优、管理 API、长时崩溃恢复和负载压测；配额耗尽与幂等冲突继续禁止通过备用路由绕过。
 6. 在已完成的客户授权公开来源自动同步、不可变版本和旧事实失效基础上，补局部重嵌入、混合检索、私有连接器与批量站点来源；当前 `lexical_only` 仍不得包装成语义检索，也不得自动发现未授权站点。
 7. 为已完成的专用 Explainer/Comparison 补真实客户内容质量与公平性 benchmark、3–4 主体工作台、完整 Schema.org validator、页面审计缺口自动编排和外部 CMS 模板；本地代码与真实 MySQL 闭环不等于客户内容已经通过人工质量基准。

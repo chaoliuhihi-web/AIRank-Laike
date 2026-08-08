@@ -85,6 +85,7 @@ from apps.api.evidence_review_routes import (
 )
 from apps.api.reviewer_routing_routes import (
     MySQLReviewerRoutingRepository,
+    ReviewerDirectoryBindingPutRequest,
     ReviewerRoleRoutePutRequest,
     ReviewerTeamCreateRequest,
     ReviewerTeamMemberUpsertRequest,
@@ -105,6 +106,7 @@ from airank_provider_gateway import (
     ProviderRequestContext,
     resolve_provider_routes,
 )
+from airank_outbound_security import OutboundResponse
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "worker"))
@@ -120,13 +122,27 @@ from airank_worker import (  # noqa: E402
     ScanWorkerError,
     run_next_real_scan_job,
     run_next_publish_job,
+    run_next_reviewer_directory_sync_job,
+    MySQLReviewNotificationRepository,
+    ReviewNotificationConfig,
+    ReviewNotificationWebhookClient,
+    run_next_review_notification,
 )
-from airank_scheduler import MySQLReviewEscalationScheduler  # noqa: E402
-from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig  # noqa: E402
+from airank_scheduler import (  # noqa: E402
+    MySQLReviewEscalationScheduler,
+    MySQLReviewerDirectorySyncScheduler,
+)
+from airank_xinghe_adapter import (  # noqa: E402
+    CapabilityProbe,
+    CapabilityStatus,
+    ProbeConfig,
+    YudaoReviewer,
+    YudaoReviewerDirectorySnapshot,
+)
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0028"
+EXPECTED_ALEMBIC_HEAD = "20260809_0030"
 
 
 def require_real_flag(flag: str) -> None:
@@ -192,11 +208,15 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 72
+        assert table_count == 76
         for table_name in (
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
             "airank_evidence_review_routes",
+            "airank_evidence_review_team_sync_bindings",
+            "airank_evidence_review_team_sync_runs",
+            "airank_notification_deliveries",
+            "airank_notification_delivery_receipts",
         ):
             assert conn.execute(
                 text(
@@ -4123,17 +4143,137 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             "trace-review-team",
         )
         review_team_id = routing.teams[0].team_id
-        for reviewer in ("reviewer-2", "reviewer-3"):
-            routing_repo.upsert_member(
-                tenant_id,
-                project.project_id,
-                review_team_id,
-                reviewer,
-                "secondary",
-                ReviewerTeamMemberUpsertRequest(max_active_assignments=2),
-                "review-admin",
-                f"trace-review-member-{reviewer}",
+        binding_routing = routing_repo.put_sync_binding(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "secondary",
+            ReviewerDirectoryBindingPutRequest(
+                external_group_id="42",
+                sync_interval_minutes=60,
+                default_max_active_assignments=2,
+            ),
+            "review-admin",
+            "trace-review-yudao-binding",
+        )
+        assert binding_routing.external_sync_state == "pending"
+        assert binding_routing.sync_bindings[0].external_group_id == "42"
+
+        directory_snapshot = YudaoReviewerDirectorySnapshot(
+            department_id="42",
+            department_name="Evidence reviewers",
+            members=(
+                YudaoReviewer(
+                    user_id="reviewer-2",
+                    username="reviewer.two",
+                    display_name="Reviewer Two",
+                    department_id="42",
+                    enabled=True,
+                ),
+                YudaoReviewer(
+                    user_id="reviewer-3",
+                    username="reviewer.three",
+                    display_name="Reviewer Three",
+                    department_id="42",
+                    enabled=True,
+                ),
+            ),
+            response_sha256="c" * 64,
+            endpoint_host="yudao.integration.invalid",
+        )
+
+        class FakeReviewerDirectoryClient:
+            @staticmethod
+            def fetch_department(department_id: str) -> YudaoReviewerDirectorySnapshot:
+                assert department_id == "42"
+                return directory_snapshot
+
+        synced_routing = routing_repo.run_directory_sync(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "secondary",
+            "mysql-review-directory-sync-1",
+            "review-admin",
+            "trace-review-yudao-sync-1",
+            FakeReviewerDirectoryClient(),  # type: ignore[arg-type]
+        )
+        assert synced_routing.external_sync_state == "verified"
+        assert synced_routing.recent_sync_runs[0].status == "succeeded"
+        assert synced_routing.recent_sync_runs[0].upserted_member_count == 2
+        secondary_versions = {
+            member.user_id: member.version
+            for member in synced_routing.teams[0].members
+            if member.reviewer_role == "secondary"
+        }
+        unchanged_routing = routing_repo.run_directory_sync(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "secondary",
+            "mysql-review-directory-sync-2",
+            "review-admin",
+            "trace-review-yudao-sync-2",
+            FakeReviewerDirectoryClient(),  # type: ignore[arg-type]
+        )
+        assert unchanged_routing.recent_sync_runs[0].upserted_member_count == 0
+        assert {
+            member.user_id: member.version
+            for member in unchanged_routing.teams[0].members
+            if member.reviewer_role == "secondary"
+        } == secondary_versions
+        replayed_routing = routing_repo.run_directory_sync(
+            tenant_id,
+            project.project_id,
+            review_team_id,
+            "secondary",
+            "mysql-review-directory-sync-2",
+            "review-admin",
+            "trace-review-yudao-sync-replay",
+            FakeReviewerDirectoryClient(),  # type: ignore[arg-type]
+        )
+        assert len(replayed_routing.recent_sync_runs) == 2
+        assert replayed_routing.recent_sync_runs[0].idempotent_replay is True
+        directory_due_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE airank_evidence_review_team_sync_bindings "
+                    "SET next_sync_at=:due_at WHERE tenant_id=:tenant_id AND id=:binding_id"
+                ),
+                {
+                    "due_at": directory_due_at,
+                    "tenant_id": tenant_id,
+                    "binding_id": replayed_routing.sync_bindings[0].binding_id,
+                },
             )
+        directory_scheduler = MySQLReviewerDirectorySyncScheduler(
+            database_url(),
+            tenant_id=tenant_id,
+            project_id=project.project_id,
+            scheduler_id="integration-review-directory-scheduler",
+        )
+        assert directory_scheduler.preview().due_binding_count == 1
+        scheduled_directory_jobs = directory_scheduler.dispatch_due(limit=10)
+        assert len(scheduled_directory_jobs) == 1
+        directory_job = scheduled_directory_jobs[0]
+        directory_outcome = run_next_reviewer_directory_sync_job(
+            MySQLJobLeaseStore(
+                database_url(),
+                tenant_id=tenant_id,
+                project_id=project.project_id,
+                job_id=directory_job.job_id,
+            ),
+            routing_repo,
+            FakeReviewerDirectoryClient(),  # type: ignore[arg-type]
+            worker_id="integration-review-directory-worker",
+        )
+        assert directory_outcome is not None
+        assert directory_outcome.status == "succeeded"
+        assert directory_outcome.upserted_member_count == 0
+        assert routing_repo.get_routing(
+            tenant_id, project.project_id
+        ).recent_sync_runs[0].run_id == directory_outcome.run_id
         routing_repo.upsert_member(
             tenant_id,
             project.project_id,
@@ -4163,13 +4303,39 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
             "trace-review-route-adjudicator",
         )
         assert routing.routing_mode == "team_routed"
-        assert routing.external_sync_state == "not_configured"
+        assert routing.external_sync_state == "verified"
         assert all(route.routing_ready for route in routing.routes)
+        assert all(
+            member.external_membership_verified
+            for team in routing.teams
+            for member in team.members
+            if member.reviewer_role == "secondary"
+        )
         assert all(
             not member.external_membership_verified
             for team in routing.teams
             for member in team.members
+            if member.reviewer_role == "adjudicator"
         )
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM airank_evidence_review_team_sync_runs "
+                    "WHERE tenant_id=:tenant_id AND binding_id=:binding_id"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "binding_id": routing.sync_bindings[0].binding_id,
+                },
+            ).scalar_one() == 3
+            assert conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM airank_audit_events "
+                    "WHERE tenant_id=:tenant_id "
+                    "AND event_type='evidence_review.yudao_sync_succeeded'"
+                ),
+                {"tenant_id": tenant_id},
+            ).scalar_one() == 3
         escalation_at = datetime.now(timezone.utc)
         with engine.begin() as conn:
             conn.execute(
@@ -4233,6 +4399,75 @@ def test_real_mysql_independent_evidence_review_agreement_and_adjudication() -> 
         assert outbox_payload["eligible_recipient_count"] == 2
         assert "assigned_to" not in outbox_payload
         assert "assignment_id" not in outbox_payload
+
+        class FakeReviewNotificationHttpClient:
+            @staticmethod
+            def request(method: str, url: str, *, headers=None, body=None):
+                assert method == "POST"
+                assert url == "https://notify.integration.invalid/review"
+                assert headers["Idempotency-Key"] == escalated[0].event_id
+                assert b'"case_id"' in body
+                return OutboundResponse(
+                    status=202,
+                    headers={"x-request-id": "integration-notification-receipt"},
+                    body=b'{"accepted":true}',
+                    final_url=url,
+                    redirect_count=0,
+                    connected_ip="93.184.216.34",
+                )
+
+        notification_receipt = run_next_review_notification(
+            MySQLReviewNotificationRepository(
+                database_url(),
+                tenant_id=tenant_id,
+                project_id=project.project_id,
+            ),
+            ReviewNotificationWebhookClient(
+                ReviewNotificationConfig(
+                    webhook_url="https://notify.integration.invalid/review",
+                    bearer_token="integration-secret-not-persisted",
+                ),
+                http_client=FakeReviewNotificationHttpClient(),
+            ),
+            worker_id="integration-review-notification-worker",
+        )
+        assert notification_receipt is not None
+        assert notification_receipt.status == "succeeded"
+        delivered_escalation = MySQLEvidenceReviewEscalationRepository(
+            database_url()
+        ).list_escalations(tenant_id, project.project_id, None, 50).escalations[0]
+        assert delivered_escalation.outbox_status == "published"
+        assert delivered_escalation.external_delivery_verified is True
+        assert delivered_escalation.delivery_channel == "webhook"
+        assert delivered_escalation.delivery_attempt_count == 1
+        assert delivered_escalation.provider_receipt_id == "integration-notification-receipt"
+        assert delivered_escalation.delivery_response_status == 202
+        assert delivered_escalation.delivery_response_sha256
+        with engine.connect() as conn:
+            persisted_notification = json.dumps(
+                {
+                    "delivery": dict(
+                        conn.execute(
+                            text(
+                                "SELECT * FROM airank_notification_deliveries "
+                                "WHERE tenant_id=:tenant_id AND outbox_event_id=:event_id"
+                            ),
+                            {"tenant_id": tenant_id, "event_id": escalated[0].event_id},
+                        ).mappings().one()
+                    ),
+                    "receipt": dict(
+                        conn.execute(
+                            text(
+                                "SELECT * FROM airank_notification_delivery_receipts "
+                                "WHERE tenant_id=:tenant_id AND outbox_event_id=:event_id"
+                            ),
+                            {"tenant_id": tenant_id, "event_id": escalated[0].event_id},
+                        ).mappings().one()
+                    ),
+                },
+                default=str,
+            )
+        assert "integration-secret-not-persisted" not in persisted_notification
 
         with pytest.raises(StarletteHTTPException) as self_review:
             review_repo.submit_decision(

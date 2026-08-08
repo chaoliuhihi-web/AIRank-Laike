@@ -269,7 +269,15 @@ class EvidenceReviewEscalationData(BaseModel):
         "not_configured", "pending", "verified", "stale", "failed"
     ]
     outbox_status: Literal["pending", "published", "failed", "canceled"]
-    external_delivery_verified: Literal[False] = False
+    external_delivery_verified: bool = False
+    delivery_channel: Optional[Literal["webhook"]] = None
+    delivery_attempt_count: int = Field(default=0, ge=0)
+    delivery_receipt_id: Optional[str] = None
+    provider_receipt_id: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+    delivery_endpoint_host: Optional[str] = None
+    delivery_response_status: Optional[int] = None
+    delivery_response_sha256: Optional[str] = None
 
 
 class EvidenceReviewEscalationListData(BaseModel):
@@ -2534,7 +2542,7 @@ class MySQLEvidenceReviewEscalationRepository:
         status: Optional[str],
         limit: int,
     ) -> EvidenceReviewEscalationListData:
-        status_clause = " AND status=:status" if status else ""
+        status_clause = " AND event.status=:status" if status else ""
         params: dict[str, Any] = {
             "tenant_id": tenant_id,
             "project_id": project_id,
@@ -2573,11 +2581,29 @@ class MySQLEvidenceReviewEscalationRepository:
             rows = conn.execute(
                 text(
                     f"""
-                    SELECT id, aggregate_id, status, payload_json, created_at
-                    FROM airank_outbox_events
-                    WHERE tenant_id=:tenant_id AND project_id=:project_id
-                      AND event_type=:event_type{status_clause}
-                    ORDER BY created_at DESC, id DESC
+                    SELECT event.id, event.aggregate_id, event.status,
+                           event.payload_json, event.created_at,
+                           delivery.channel AS delivery_channel,
+                           delivery.attempt_count AS delivery_attempt_count,
+                           receipt.id AS delivery_receipt_id,
+                           receipt.provider_receipt_id,
+                           receipt.finished_at AS delivered_at,
+                           receipt.endpoint_host AS delivery_endpoint_host,
+                           receipt.response_status AS delivery_response_status,
+                           receipt.response_sha256 AS delivery_response_sha256,
+                           receipt.status AS delivery_receipt_status
+                    FROM airank_outbox_events event
+                    LEFT JOIN airank_notification_deliveries delivery
+                      ON delivery.tenant_id=event.tenant_id
+                     AND delivery.outbox_event_id=event.id
+                     AND delivery.channel='webhook'
+                    LEFT JOIN airank_notification_delivery_receipts receipt
+                      ON receipt.tenant_id=delivery.tenant_id
+                     AND receipt.id=delivery.latest_receipt_id
+                    WHERE event.tenant_id=:tenant_id
+                      AND event.project_id=:project_id
+                      AND event.event_type=:event_type{status_clause}
+                    ORDER BY event.created_at DESC, event.id DESC
                     LIMIT :limit
                     """
                 ),
@@ -2617,7 +2643,22 @@ class MySQLEvidenceReviewEscalationRepository:
                     ),
                     external_sync_state=str(payload["external_sync_state"]),
                     outbox_status=str(row["status"]),
-                    external_delivery_verified=False,
+                    external_delivery_verified=(
+                        str(row["delivery_receipt_status"] or "") == "succeeded"
+                        and str(row["status"]) == "published"
+                    ),
+                    delivery_channel=row["delivery_channel"],
+                    delivery_attempt_count=int(row["delivery_attempt_count"] or 0),
+                    delivery_receipt_id=(
+                        str(row["delivery_receipt_id"])
+                        if row["delivery_receipt_id"] is not None
+                        else None
+                    ),
+                    provider_receipt_id=row["provider_receipt_id"],
+                    delivered_at=row["delivered_at"],
+                    delivery_endpoint_host=row["delivery_endpoint_host"],
+                    delivery_response_status=row["delivery_response_status"],
+                    delivery_response_sha256=row["delivery_response_sha256"],
                 )
             except (KeyError, TypeError, ValueError):
                 raise StarletteHTTPException(

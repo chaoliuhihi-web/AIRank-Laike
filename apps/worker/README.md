@@ -16,6 +16,8 @@ AIRank 异步任务。
 - **publish** — 发布包生成和发布状态追踪
 - **retest** — 复测
 - **report** — 高管报告生成
+- **reviewer.directory.sync** — 从服务端配置的 Yudao 部门增量同步审核成员，不保存目录凭证
+- **review-notification** — 消费审核 SLA Outbox，通过安全 HTTPS Webhook 发送并保存不可变渠道回执
 
 任务失败必须有结构化原因，不能长期停留在 `queued`。
 
@@ -90,6 +92,28 @@ tenant/project/job scope is supplied. A global production worker requires both
 `AIRANK_WORKER_GLOBAL_SCOPE_ENABLED=true` and `--allow-global-scope`.
 `--dry-run` reports scoped counts and the next job ID without claiming or
 calling a Provider; `--drain` and `--max-jobs` provide bounded acceptance runs.
+
+## Reviewer directory and notification delivery
+
+`reviewer.directory.sync` validates the binding version captured by Scheduler,
+then calls the Yudao department/user APIs through the adapter boundary. Missing
+members are disabled, unchanged members do not receive artificial new versions,
+and each success/failure keeps its response hash and counts. Credentials come
+only from `YUDAO_REVIEW_DIRECTORY_*` or the shared server-side Yudao variables.
+
+`review-notification` is an Outbox Consumer rather than an async-job handler. It
+requires `AIRANK_REVIEW_NOTIFICATION_WEBHOOK_URL` and accepts only a public
+HTTPS endpoint through the DNS-pinned outbound client. Retryable failures use
+bounded exponential backoff. Every attempt is immutable; the Outbox changes to
+`published` and the API reports external delivery verified only after a 2xx
+receipt is stored. The bearer token is never written to MySQL, response bodies
+are represented by SHA-256, and missing configuration leaves Outbox untouched.
+
+```bash
+PYTHONPATH=.:apps/api:apps/worker:packages/domain/src:packages/evidence/src:packages/outbound-security/src:packages/xinghe-adapter/src \
+  AIRANK_DATABASE_URL="$AIRANK_DATABASE_URL" \
+  python3 -m airank_worker.main --tenant-id tenant_id --job-type review-notification --once
+```
 
 ## M2 mock scan provider
 

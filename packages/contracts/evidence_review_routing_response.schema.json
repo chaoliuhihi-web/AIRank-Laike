@@ -9,7 +9,7 @@
     "data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["project_id", "routing_mode", "external_sync_state", "teams", "routes", "known_limitations"],
+      "required": ["project_id", "routing_mode", "external_sync_state", "teams", "routes", "sync_bindings", "recent_sync_runs", "known_limitations"],
       "properties": {
         "project_id": { "type": "string", "minLength": 1 },
         "routing_mode": { "enum": ["unrestricted_legacy", "team_routed", "blocked"] },
@@ -60,6 +60,15 @@
             }
           }
         },
+        "sync_bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/syncBinding" }
+        },
+        "recent_sync_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/syncRun" },
+          "maxItems": 20
+        },
         "known_limitations": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
@@ -89,6 +98,56 @@
         "external_membership_verified": { "type": "boolean" },
         "version": { "type": "integer", "minimum": 1 },
         "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "syncBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_id", "team_id", "team_name", "reviewer_role", "external_source", "external_group_id", "status", "sync_enabled", "sync_interval_minutes", "default_priority", "default_max_active_assignments", "default_receives_escalations", "last_sync_state", "last_sync_run_id", "last_synced_at", "next_sync_at", "last_error_code", "version", "updated_at"],
+      "properties": {
+        "binding_id": { "type": "string", "minLength": 1 },
+        "team_id": { "type": "string", "minLength": 1 },
+        "team_name": { "type": "string", "minLength": 1 },
+        "reviewer_role": { "$ref": "#/$defs/reviewerRole" },
+        "external_source": { "const": "yudao" },
+        "external_group_id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["active", "disabled"] },
+        "sync_enabled": { "type": "boolean" },
+        "sync_interval_minutes": { "type": "integer", "minimum": 15, "maximum": 10080 },
+        "default_priority": { "type": "integer", "minimum": 1 },
+        "default_max_active_assignments": { "type": "integer", "minimum": 1 },
+        "default_receives_escalations": { "type": "boolean" },
+        "last_sync_state": { "$ref": "#/$defs/externalSyncState" },
+        "last_sync_run_id": { "type": ["string", "null"] },
+        "last_synced_at": { "type": ["string", "null"], "format": "date-time" },
+        "next_sync_at": { "type": ["string", "null"], "format": "date-time" },
+        "last_error_code": { "type": ["string", "null"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "syncRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "binding_id", "team_id", "reviewer_role", "external_group_id", "status", "endpoint_host", "response_sha256", "discovered_member_count", "active_member_count", "upserted_member_count", "disabled_member_count", "error_code", "retryable", "started_at", "finished_at", "idempotent_replay"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "binding_id": { "type": "string", "minLength": 1 },
+        "team_id": { "type": "string", "minLength": 1 },
+        "reviewer_role": { "$ref": "#/$defs/reviewerRole" },
+        "external_group_id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["running", "succeeded", "failed"] },
+        "endpoint_host": { "type": ["string", "null"] },
+        "response_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "discovered_member_count": { "type": "integer", "minimum": 0 },
+        "active_member_count": { "type": "integer", "minimum": 0 },
+        "upserted_member_count": { "type": "integer", "minimum": 0 },
+        "disabled_member_count": { "type": "integer", "minimum": 0 },
+        "error_code": { "type": ["string", "null"] },
+        "retryable": { "type": "boolean" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": ["string", "null"], "format": "date-time" },
+        "idempotent_replay": { "type": "boolean" }
       }
     },
     "meta": {

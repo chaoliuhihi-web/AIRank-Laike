@@ -44,7 +44,15 @@
               "eligible_recipient_count",
               "external_sync_state",
               "outbox_status",
-              "external_delivery_verified"
+              "external_delivery_verified",
+              "delivery_channel",
+              "delivery_attempt_count",
+              "delivery_receipt_id",
+              "provider_receipt_id",
+              "delivered_at",
+              "delivery_endpoint_host",
+              "delivery_response_status",
+              "delivery_response_sha256"
             ],
             "properties": {
               "event_id": { "type": "string", "minLength": 1 },
@@ -60,7 +68,15 @@
               "eligible_recipient_count": { "type": "integer", "minimum": 0 },
               "external_sync_state": { "enum": ["not_configured", "pending", "verified", "stale", "failed"] },
               "outbox_status": { "enum": ["pending", "published", "failed", "canceled"] },
-              "external_delivery_verified": { "const": false }
+              "external_delivery_verified": { "type": "boolean" },
+              "delivery_channel": { "enum": ["webhook", null] },
+              "delivery_attempt_count": { "type": "integer", "minimum": 0 },
+              "delivery_receipt_id": { "type": ["string", "null"] },
+              "provider_receipt_id": { "type": ["string", "null"] },
+              "delivered_at": { "type": ["string", "null"], "format": "date-time" },
+              "delivery_endpoint_host": { "type": ["string", "null"] },
+              "delivery_response_status": { "type": ["integer", "null"] },
+              "delivery_response_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" }
             }
           }
         }

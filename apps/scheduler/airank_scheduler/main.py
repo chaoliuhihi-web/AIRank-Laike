@@ -11,6 +11,7 @@ from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
 from .knowledge_sync import MySQLKnowledgeSyncScheduler
 from .retest import MySQLRetestScheduler
 from .review_escalation import MySQLReviewEscalationScheduler
+from .reviewer_directory_sync import MySQLReviewerDirectorySyncScheduler
 
 
 def _clean(value: object) -> str | None:
@@ -93,6 +94,12 @@ def main() -> int:
         project_id=project_id,
         scheduler_id=scheduler_id,
     )
+    reviewer_directory_scheduler = MySQLReviewerDirectorySyncScheduler(
+        database_url,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        scheduler_id=scheduler_id,
+    )
     if args.dry_run:
         retest_preview = scheduler.preview().to_record()
         knowledge_preview = (
@@ -104,6 +111,11 @@ def main() -> int:
             {"skipped": "window_id scope only"}
             if window_id
             else review_escalation_scheduler.preview().to_record()
+        )
+        reviewer_directory_preview = (
+            {"skipped": "window_id scope only"}
+            if window_id
+            else reviewer_directory_scheduler.preview().to_record()
         )
         print(
             json.dumps(
@@ -118,6 +130,7 @@ def main() -> int:
                     "retest": retest_preview,
                     "knowledge_sync": knowledge_preview,
                     "review_escalation": review_escalation_preview,
+                    "reviewer_directory_sync": reviewer_directory_preview,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -154,6 +167,11 @@ def main() -> int:
             if window_id
             else review_escalation_scheduler.dispatch_overdue(limit=args.limit)
         )
+        reviewer_directory_dispatched = (
+            []
+            if window_id
+            else reviewer_directory_scheduler.dispatch_due(limit=args.limit)
+        )
         print(
             json.dumps(
                 {
@@ -165,6 +183,9 @@ def main() -> int:
                     ],
                     "review_escalations": [
                         item.to_record() for item in review_escalations
+                    ],
+                    "reviewer_directory_sync_dispatched": [
+                        item.to_record() for item in reviewer_directory_dispatched
                     ],
                 },
                 ensure_ascii=False,

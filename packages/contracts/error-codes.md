@@ -102,6 +102,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | `EVIDENCE_REVIEW_ROUTING_UNAVAILABLE` | 409 | 当前角色已配置路由，但目标团队未处于可用状态 |
 | `EVIDENCE_REVIEW_ROUTING_FORBIDDEN` | 403 | 当前账号不是该角色已配置团队的有效成员 |
 | `EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED` | 409 | 当前审核人的活跃领取数已经达到团队配置上限 |
+| `EVIDENCE_REVIEW_YUDAO_BINDING_NOT_FOUND` | 404 | 审核团队的指定角色尚未绑定 Yudao 部门目录 |
+| `EVIDENCE_REVIEW_YUDAO_SYNC_FAILED` | 503 | Yudao 审核目录未配置、鉴权失败、不可用或返回无效数据；失败运行会持久保存但不会把旧成员冒充已验证 |
 | `EVIDENCE_REVIEW_ESCALATION_INVALID` | 409 | 持久升级事件不符合版本化 SLA Outbox 契约，拒绝展示为运营事实 |
 | `EVIDENCE_REVIEW_LABEL_INVALID` | 409 | 决定标签不属于该引用支持或事实准确性任务的允许集合 |
 | `EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN` | 409 | 第二复核人或裁决人必须与之前的审核人不同 |

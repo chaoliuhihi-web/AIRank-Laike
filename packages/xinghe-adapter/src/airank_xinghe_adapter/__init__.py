@@ -7,6 +7,13 @@ from .capability import (
     ProbeConfig,
     probe_capabilities,
 )
+from .reviewer_directory import (
+    YudaoDirectoryError,
+    YudaoReviewer,
+    YudaoReviewerDirectoryClient,
+    YudaoReviewerDirectoryConfig,
+    YudaoReviewerDirectorySnapshot,
+)
 
 __all__ = [
     "CapabilityProbe",
@@ -14,4 +21,9 @@ __all__ = [
     "CapabilityStatus",
     "ProbeConfig",
     "probe_capabilities",
+    "YudaoDirectoryError",
+    "YudaoReviewer",
+    "YudaoReviewerDirectoryClient",
+    "YudaoReviewerDirectoryConfig",
+    "YudaoReviewerDirectorySnapshot",
 ]

@@ -12,6 +12,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api import reviewer_routing_routes
 from apps.api.main import app
+from airank_xinghe_adapter import (
+    YudaoDirectoryError,
+    YudaoReviewer,
+    YudaoReviewerDirectorySnapshot,
+)
 
 
 CONTRACT = (
@@ -54,6 +59,8 @@ def test_routing_defaults_to_explicit_legacy_mode(client: TestClient) -> None:
         "external_sync_state": "not_configured",
         "teams": [],
         "routes": [],
+        "sync_bindings": [],
+        "recent_sync_runs": [],
         "known_limitations": [
             "yudao_group_sync_not_verified",
             "external_notification_delivery_not_verified",
@@ -250,3 +257,144 @@ def test_reviewer_routing_mutations_require_admin_permission_when_enforced(
 
     reviewer_routing_routes.require_review_admin("airank:review:admin")
     reviewer_routing_routes.require_review_admin("airank:review:*")
+
+
+def test_yudao_directory_binding_sync_is_versioned_idempotent_and_truthful(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = client.post(
+        "/api/v1/projects/project_1/evidence-review-teams",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "review-admin",
+            "Idempotency-Key": "review-yudao-team-001",
+        },
+        json={"name": "Yudao 证据复核组"},
+    ).json()["data"]
+    team_id = created["teams"][0]["team_id"]
+    binding = client.put(
+        f"/api/v1/projects/project_1/evidence-review-teams/{team_id}/sync-bindings/secondary",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "review-admin",
+        },
+        json={
+            "external_group_id": "42",
+            "sync_interval_minutes": 60,
+            "default_priority": 20,
+            "default_max_active_assignments": 3,
+            "default_receives_escalations": True,
+        },
+    )
+    assert binding.status_code == 200
+    validate(binding.json())
+    assert binding.json()["data"]["teams"][0]["external_source"] == "yudao"
+    assert binding.json()["data"]["teams"][0]["external_sync_state"] == "pending"
+    assert binding.json()["data"]["sync_bindings"][0]["external_group_id"] == "42"
+
+    class FakeDirectory:
+        def fetch_department(self, department_id: str):
+            assert department_id == "42"
+            return YudaoReviewerDirectorySnapshot(
+                department_id="42",
+                department_name="Yudao 证据复核组",
+                members=(
+                    YudaoReviewer("8", "reviewer-8", "复核员八号", "42", True),
+                    YudaoReviewer("9", "reviewer-9", "复核员九号", "42", True),
+                ),
+                response_sha256="a" * 64,
+                endpoint_host="yudao.example.test",
+            )
+
+    monkeypatch.setattr(
+        reviewer_routing_routes, "REVIEWER_DIRECTORY_CLIENT", FakeDirectory()
+    )
+    headers = {
+        "tenant-id": "tenant_1",
+        "X-AIRank-User-Id": "review-admin",
+        "Idempotency-Key": "review-yudao-sync-001",
+    }
+    synced = client.post(
+        f"/api/v1/projects/project_1/evidence-review-teams/{team_id}/sync-bindings/secondary/runs",
+        headers=headers,
+    )
+    assert synced.status_code == 200
+    validate(synced.json())
+    data = synced.json()["data"]
+    assert data["teams"][0]["external_sync_state"] == "verified"
+    assert data["sync_bindings"][0]["last_sync_state"] == "verified"
+    assert data["recent_sync_runs"][0]["status"] == "succeeded"
+    assert data["recent_sync_runs"][0]["active_member_count"] == 2
+    assert data["recent_sync_runs"][0]["idempotent_replay"] is False
+    assert {member["user_id"] for member in data["teams"][0]["members"]} == {
+        "8",
+        "9",
+    }
+    assert all(
+        member["membership_source"] == "yudao"
+        and member["external_membership_verified"] is True
+        for member in data["teams"][0]["members"]
+    )
+
+    replay = client.post(
+        f"/api/v1/projects/project_1/evidence-review-teams/{team_id}/sync-bindings/secondary/runs",
+        headers=headers,
+    )
+    assert replay.status_code == 200
+    assert len(replay.json()["data"]["recent_sync_runs"]) == 1
+    assert replay.json()["data"]["recent_sync_runs"][0]["idempotent_replay"] is True
+
+
+def test_yudao_directory_failure_is_persisted_without_verified_members(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team_id = client.post(
+        "/api/v1/projects/project_1/evidence-review-teams",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "review-admin",
+            "Idempotency-Key": "review-yudao-team-002",
+        },
+        json={"name": "不可用目录组"},
+    ).json()["data"]["teams"][0]["team_id"]
+    client.put(
+        f"/api/v1/projects/project_1/evidence-review-teams/{team_id}/sync-bindings/adjudicator",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "review-admin",
+        },
+        json={"external_group_id": "99"},
+    )
+
+    class FailedDirectory:
+        def fetch_department(self, _department_id: str):
+            raise YudaoDirectoryError(
+                "YUDAO_REVIEW_DIRECTORY_AUTH_FAILED",
+                "credentials rejected",
+                retryable=False,
+            )
+
+    monkeypatch.setattr(
+        reviewer_routing_routes, "REVIEWER_DIRECTORY_CLIENT", FailedDirectory()
+    )
+    failed = client.post(
+        f"/api/v1/projects/project_1/evidence-review-teams/{team_id}/sync-bindings/adjudicator/runs",
+        headers={
+            "tenant-id": "tenant_1",
+            "X-AIRank-User-Id": "review-admin",
+            "Idempotency-Key": "review-yudao-sync-002",
+        },
+    )
+    assert failed.status_code == 503
+    assert failed.json()["error"]["code"] == "EVIDENCE_REVIEW_YUDAO_SYNC_FAILED"
+
+    current = client.get(
+        "/api/v1/projects/project_1/evidence-review-routing",
+        headers={"tenant-id": "tenant_1"},
+    )
+    validate(current.json())
+    data = current.json()["data"]
+    assert data["teams"][0]["external_sync_state"] == "failed"
+    assert data["teams"][0]["members"] == []
+    assert data["recent_sync_runs"][0]["status"] == "failed"
+    assert data["recent_sync_runs"][0]["error_code"] == "YUDAO_REVIEW_DIRECTORY_AUTH_FAILED"

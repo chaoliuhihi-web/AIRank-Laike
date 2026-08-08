@@ -11,15 +11,23 @@ from .review_escalation import (
     ReviewEscalationDispatchRecord,
     ReviewEscalationQueuePreview,
 )
+from .reviewer_directory_sync import (
+    MySQLReviewerDirectorySyncScheduler,
+    ReviewerDirectorySyncDispatchRecord,
+    ReviewerDirectorySyncQueuePreview,
+)
 
 __all__ = [
     "KnowledgeSyncDispatchRecord",
     "KnowledgeSyncQueuePreview",
     "MySQLKnowledgeSyncScheduler",
     "MySQLReviewEscalationScheduler",
+    "MySQLReviewerDirectorySyncScheduler",
     "MySQLRetestScheduler",
     "ReviewEscalationDispatchRecord",
     "ReviewEscalationQueuePreview",
+    "ReviewerDirectorySyncDispatchRecord",
+    "ReviewerDirectorySyncQueuePreview",
     "RetestDispatchRecord",
     "RetestQueuePreview",
 ]

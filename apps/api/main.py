@@ -171,6 +171,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "EVIDENCE_REVIEW_ROUTING_UNAVAILABLE": (409, "Evidence review routing is not ready"),
     "EVIDENCE_REVIEW_ROUTING_FORBIDDEN": (403, "Current actor is not routed for this review role"),
     "EVIDENCE_REVIEW_ROUTING_CAPACITY_REACHED": (409, "Reviewer active assignment capacity is reached"),
+    "EVIDENCE_REVIEW_YUDAO_BINDING_NOT_FOUND": (404, "Yudao reviewer directory binding was not found"),
+    "EVIDENCE_REVIEW_YUDAO_SYNC_FAILED": (503, "Yudao reviewer directory synchronization failed"),
     "EVIDENCE_REVIEW_ESCALATION_INVALID": (409, "Evidence review escalation payload is invalid"),
     "EVIDENCE_REVIEW_LABEL_INVALID": (409, "Evidence review label is invalid for this case"),
     "EVIDENCE_REVIEW_SELF_REVIEW_FORBIDDEN": (409, "Independent review requires a different reviewer"),
