@@ -1589,6 +1589,76 @@ button:disabled {
   margin-top: 14px;
 }
 
+.citation-evidence-item {
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.citation-capture-toolbar,
+.citation-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.citation-capture-toolbar .table-action,
+.citation-review-actions .table-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.citation-source-capture {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.citation-source-capture > summary {
+  cursor: pointer;
+  color: var(--console-primary);
+  font-weight: 800;
+}
+
+.citation-capture-metadata {
+  margin-bottom: 12px;
+}
+
+.citation-source-segment {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--console-border);
+}
+
+.citation-source-segment small,
+.citation-capture-error {
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+}
+
+.citation-source-segment p {
+  margin: 8px 0 0;
+  color: var(--console-text-strong);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.citation-capture-error {
+  color: var(--console-danger);
+}
+
+.citation-claim-button {
+  width: auto;
+  margin-top: 12px;
+}
+
 .evidence-json {
   margin-top: 14px;
 }

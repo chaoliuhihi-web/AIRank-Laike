@@ -73,6 +73,8 @@ FactAtom 必须执行两层控制：
 
 - 大对象进入对象存储，使用按租户隔离的路径前缀。
 - 对象引用写 `airank_object_refs`，保存 `sha256` 和 `content_type`。
+- 引用来源页必须经统一安全出站客户端抓取，实际连接固定到已验证公网 IP；每次重定向重新校验，跨 origin 不转发敏感 header。
+- 引用原始页面和规范化可见文本分别按内容寻址保存；支持度复核必须绑定已完成 capture、原始对象 hash、确定性文本 segment 和精确字符边界，不能只引用可编辑 URL 或人工粘贴文本。
 - 删除项目时默认软删除；物理删除需要独立 runbook。
 - 报告下载应写 download receipt 或 audit event。
 

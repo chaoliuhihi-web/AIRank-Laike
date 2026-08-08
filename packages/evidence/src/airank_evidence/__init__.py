@@ -13,6 +13,7 @@ from .evidence_snapshot import EvidenceSnapshot
 from .gap import generate_gap_from_citations
 from .object_storage import (
     FilesystemObjectStorage,
+    ObjectStorage,
     ObjectStorageError,
     S3CompatibleObjectStorage,
     StoredObject,
@@ -36,6 +37,7 @@ __all__ = [
     "EvidenceSnapshot",
     "FilesystemObjectStorage",
     "ObjectStorageError",
+    "ObjectStorage",
     "ReportConclusion",
     "SourceCitation",
     "S3CompatibleObjectStorage",

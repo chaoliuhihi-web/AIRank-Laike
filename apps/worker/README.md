@@ -6,6 +6,7 @@ AIRank 异步任务。
 
 - **scan** — AI 平台扫描和半自动采样导入
 - **attribution** — 引用来源归因
+- **citation.capture** — 通过统一安全出站客户端抓取引用来源页，保存原始页、正文、哈希和精确片段边界
 - **fact-extract** — 资料到可信事实卡内部事实元（FactAtom）
 - **content** — 内容资产生成，按 4 大类组织：
   - `website/` — 官网资产（事实页、服务页、案例页、FAQ、对比页、价格页、方案页）

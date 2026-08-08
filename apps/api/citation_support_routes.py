@@ -60,9 +60,29 @@ class CitationSupportReviewCreateRequest(BaseModel):
     source_excerpt: str = Field(min_length=1, max_length=20_000)
     source_content_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     source_object_ref_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    source_capture_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    source_segment_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    source_start: Optional[int] = Field(default=None, ge=0)
+    source_end: Optional[int] = Field(default=None, gt=0)
     rationale: str = Field(min_length=1, max_length=4_000)
     review_method: Literal["human", "ai_assisted"] = "human"
     reviewed_by: str = Field(min_length=1, max_length=64)
+
+
+def exact_source_excerpt(
+    payload: CitationSupportReviewCreateRequest, segment: Mapping[str, Any]
+) -> bool:
+    if payload.source_start is None or payload.source_end is None:
+        return False
+    segment_start = int(segment["source_start"])
+    segment_end = int(segment["source_end"])
+    if not (
+        segment_start <= payload.source_start < payload.source_end <= segment_end
+    ):
+        return False
+    relative_start = payload.source_start - segment_start
+    relative_end = payload.source_end - segment_start
+    return str(segment["segment_text"])[relative_start:relative_end] == payload.source_excerpt
 
 
 class CitationClaimData(BaseModel):
@@ -88,6 +108,10 @@ class CitationSupportReviewData(BaseModel):
     source_excerpt: str
     source_content_sha256: str
     source_object_ref_id: Optional[str]
+    source_capture_id: Optional[str]
+    source_segment_id: Optional[str]
+    source_start: Optional[int]
+    source_end: Optional[int]
     rationale: str
     review_method: str
     reviewed_by: str
@@ -146,6 +170,8 @@ class InMemoryCitationSupportRepository:
         self.samples: dict[tuple[str, str], dict[str, str]] = {}
         self.citations: dict[str, dict[str, str]] = {}
         self.objects: dict[str, dict[str, str]] = {}
+        self.captures: dict[str, dict[str, str]] = {}
+        self.segments: dict[str, dict[str, Any]] = {}
         self.claims: dict[str, CitationClaimData] = {}
         self.reviews: list[CitationSupportReviewData] = []
 
@@ -185,6 +211,34 @@ class InMemoryCitationSupportRepository:
             "sha256": sha256,
             "kind": kind,
             "citation_id": citation_id,
+        }
+
+    def seed_source_capture(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        capture_id: str,
+        citation_id: str,
+        raw_object_ref_id: str,
+        content_sha256: str,
+        segment_id: str,
+        segment_text: str,
+        segment_start: int = 0,
+    ) -> None:
+        self.captures[capture_id] = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "citation_id": citation_id,
+            "raw_object_ref_id": raw_object_ref_id,
+            "content_sha256": content_sha256,
+            "status": "completed",
+        }
+        self.segments[segment_id] = {
+            "capture_id": capture_id,
+            "source_start": segment_start,
+            "source_end": segment_start + len(segment_text),
+            "segment_text": segment_text,
         }
 
     def create_claim(
@@ -319,6 +373,24 @@ class InMemoryCitationSupportRepository:
             raise StarletteHTTPException(
                 409, detail={"code": "CITATION_SUPPORT_EVIDENCE_INVALID"}
             )
+        if payload.evidence_grade == "source_page_snapshot":
+            capture = self.captures.get(payload.source_capture_id or "")
+            segment = self.segments.get(payload.source_segment_id or "")
+            if (
+                capture is None
+                or segment is None
+                or capture["tenant_id"] != tenant_id
+                or capture["project_id"] != project_id
+                or capture["citation_id"] != payload.citation_id
+                or capture["status"] != "completed"
+                or capture["raw_object_ref_id"] != payload.source_object_ref_id
+                or capture["content_sha256"] != payload.source_content_sha256
+                or segment["capture_id"] != payload.source_capture_id
+                or not exact_source_excerpt(payload, segment)
+            ):
+                raise StarletteHTTPException(
+                    409, detail={"code": "CITATION_SUPPORT_EVIDENCE_INVALID"}
+                )
 
     @staticmethod
     def _review_data(
@@ -342,6 +414,10 @@ class InMemoryCitationSupportRepository:
             review_method=payload.review_method,
             reviewed_by=payload.reviewed_by,
             reviewed_at=reviewed_at,
+            source_capture_id=payload.source_capture_id,
+            source_segment_id=payload.source_segment_id,
+            source_start=payload.source_start,
+            source_end=payload.source_end,
         )
         return CitationSupportReviewData(
             review_id=model.id,
@@ -352,6 +428,10 @@ class InMemoryCitationSupportRepository:
             source_excerpt=model.source_excerpt,
             source_content_sha256=model.source_content_sha256,
             source_object_ref_id=model.source_object_ref_id,
+            source_capture_id=model.source_capture_id,
+            source_segment_id=model.source_segment_id,
+            source_start=model.source_start,
+            source_end=model.source_end,
             rationale=model.rationale,
             review_method=model.review_method,
             reviewed_by=model.reviewed_by,
@@ -502,6 +582,10 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                 review_method=payload.review_method,
                 reviewed_by=payload.reviewed_by,
                 reviewed_at=reviewed_at,
+                source_capture_id=payload.source_capture_id,
+                source_segment_id=payload.source_segment_id,
+                source_start=payload.source_start,
+                source_end=payload.source_end,
             )
             supersedes = str(previous[0]) if previous else None
             conn.execute(
@@ -510,12 +594,14 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                     INSERT INTO airank_citation_support_reviews (
                       id, tenant_id, project_id, claim_id, citation_id, support_label,
                       evidence_grade, source_excerpt, source_content_sha256,
-                      source_object_ref_id, rationale, review_method, reviewed_by,
+                      source_object_ref_id, source_capture_id, source_segment_id,
+                      source_start, source_end, rationale, review_method, reviewed_by,
                       reviewed_at, supersedes_review_id, created_at
                     ) VALUES (
                       :id, :tenant_id, :project_id, :claim_id, :citation_id, :support_label,
                       :evidence_grade, :source_excerpt, :source_content_sha256,
-                      :source_object_ref_id, :rationale, :review_method, :reviewed_by,
+                      :source_object_ref_id, :source_capture_id, :source_segment_id,
+                      :source_start, :source_end, :rationale, :review_method, :reviewed_by,
                       :reviewed_at, :supersedes_review_id, :created_at
                     )
                     """
@@ -531,6 +617,10 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
                     "source_excerpt": model.source_excerpt,
                     "source_content_sha256": model.source_content_sha256,
                     "source_object_ref_id": model.source_object_ref_id,
+                    "source_capture_id": model.source_capture_id,
+                    "source_segment_id": model.source_segment_id,
+                    "source_start": model.source_start,
+                    "source_end": model.source_end,
                     "rationale": model.rationale,
                     "review_method": model.review_method,
                     "reviewed_by": model.reviewed_by,
@@ -603,8 +693,48 @@ class MySQLCitationSupportRepository(InMemoryCitationSupportRepository):
             if (
                 metadata.get("kind") != "citation_source_page"
                 or metadata.get("citation_id") != payload.citation_id
+                or metadata.get("capture_id") != payload.source_capture_id
             ):
                 raise StarletteHTTPException(409, detail={"code": "CITATION_SUPPORT_EVIDENCE_INVALID"})
+            source_row = conn.execute(
+                text(
+                    """
+                    SELECT cap.status, cap.citation_id, cap.raw_object_ref_id,
+                           cap.content_sha256, seg.capture_id,
+                           seg.source_start AS segment_start,
+                           seg.source_end AS segment_end, seg.segment_text
+                    FROM airank_citation_source_captures cap
+                    JOIN airank_citation_source_segments seg
+                      ON seg.tenant_id=cap.tenant_id AND seg.capture_id=cap.id
+                    WHERE cap.tenant_id=:tenant_id AND cap.project_id=:project_id
+                      AND cap.id=:capture_id AND seg.id=:segment_id
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "capture_id": payload.source_capture_id or "",
+                    "segment_id": payload.source_segment_id or "",
+                },
+            ).mappings().first()
+            if (
+                source_row is None
+                or str(source_row["status"]) != "completed"
+                or str(source_row["citation_id"]) != payload.citation_id
+                or str(source_row["raw_object_ref_id"] or "") != payload.source_object_ref_id
+                or str(source_row["content_sha256"] or "") != payload.source_content_sha256
+                or not exact_source_excerpt(
+                    payload,
+                    {
+                        "source_start": int(source_row["segment_start"]),
+                        "source_end": int(source_row["segment_end"]),
+                        "segment_text": str(source_row["segment_text"]),
+                    },
+                )
+            ):
+                raise StarletteHTTPException(
+                    409, detail={"code": "CITATION_SUPPORT_EVIDENCE_INVALID"}
+                )
 
 
 def claim_row(row: Mapping[str, Any]) -> CitationClaimData:
@@ -633,6 +763,10 @@ def review_model_data(model: CitationSupportReview, supersedes: Optional[str]) -
         source_excerpt=model.source_excerpt,
         source_content_sha256=model.source_content_sha256,
         source_object_ref_id=model.source_object_ref_id,
+        source_capture_id=model.source_capture_id,
+        source_segment_id=model.source_segment_id,
+        source_start=model.source_start,
+        source_end=model.source_end,
         rationale=model.rationale,
         review_method=model.review_method,
         reviewed_by=model.reviewed_by,
@@ -658,6 +792,14 @@ def review_row(row: Mapping[str, Any]) -> CitationSupportReviewData:
         review_method=str(row["review_method"]),
         reviewed_by=str(row["reviewed_by"]),
         reviewed_at=row["reviewed_at"],
+        source_capture_id=(
+            str(row["source_capture_id"]) if row.get("source_capture_id") else None
+        ),
+        source_segment_id=(
+            str(row["source_segment_id"]) if row.get("source_segment_id") else None
+        ),
+        source_start=(int(row["source_start"]) if row.get("source_start") is not None else None),
+        source_end=(int(row["source_end"]) if row.get("source_end") is not None else None),
     )
     return review_model_data(model, str(row["supersedes_review_id"]) if row["supersedes_review_id"] else None)
 
@@ -699,6 +841,10 @@ def build_bundle(
             review_method=item.review_method,
             reviewed_by=item.reviewed_by,
             reviewed_at=item.reviewed_at,
+            source_capture_id=item.source_capture_id,
+            source_segment_id=item.source_segment_id,
+            source_start=item.source_start,
+            source_end=item.source_end,
         )
         for item in reviews
     )

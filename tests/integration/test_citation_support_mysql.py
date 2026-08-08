@@ -186,8 +186,32 @@ def test_real_mysql_citation_selection_and_support_are_separate_append_only_evid
         assert support_repository.get_bundle(tenant_id, snapshot_id).metrics.citation_support_rate is None
 
         source_object_id = f"object_{uuid4().hex[:16]}"
+        source_capture_id = f"citation_capture_{uuid4().hex[:16]}"
+        source_segment_id = f"citation_segment_{uuid4().hex[:16]}"
+        source_job_id = f"job_citation_capture_{uuid4().hex[:16]}"
         source_sha256 = "e" * 64
+        source_excerpt = "来源页面明确说明结论可下钻到原始证据。"
         with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_async_jobs (
+                      id, tenant_id, project_id, job_type, status, priority,
+                      scheduled_at, timeout_seconds, attempt_count, max_attempts,
+                      payload_json, created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, 'citation.capture', 'succeeded', 25,
+                      :created_at, 120, 1, 3, JSON_OBJECT(), :created_at, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": source_job_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
             conn.execute(
                 text(
                     """
@@ -207,8 +231,72 @@ def test_real_mysql_citation_selection_and_support_are_separate_append_only_evid
                     "object_uri": f"s3://evidence/{source_object_id}.html",
                     "sha256": source_sha256,
                     "metadata_json": json.dumps(
-                        {"kind": "citation_source_page", "citation_id": citation_id}
+                        {
+                            "kind": "citation_source_page",
+                            "citation_id": citation_id,
+                            "capture_id": source_capture_id,
+                        }
                     ),
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_citation_source_captures (
+                      id, tenant_id, project_id, citation_id, job_id,
+                      idempotency_key, request_sha256, requested_url, final_url,
+                      status, capture_version, evidence_grade, response_status,
+                      content_type, response_bytes, content_sha256,
+                      visible_text_sha256, raw_object_ref_id, connected_ip,
+                      redirect_count, requested_by, started_at, completed_at,
+                      created_at, updated_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :citation_id, :job_id,
+                      :idempotency_key, :request_sha256, 'https://example.com/source',
+                      'https://example.com/source', 'completed',
+                      'airank.citation-source-capture.v1', 'source_page_dns_pinned',
+                      200, 'text/html', 512, :content_sha256,
+                      :visible_text_sha256, :raw_object_ref_id, '93.184.216.34',
+                      0, 'integration-reviewer', :created_at, :created_at,
+                      :created_at, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": source_capture_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "citation_id": citation_id,
+                    "job_id": source_job_id,
+                    "idempotency_key": f"integration-{source_capture_id}",
+                    "request_sha256": "f" * 64,
+                    "content_sha256": source_sha256,
+                    "visible_text_sha256": hashlib.sha256(source_excerpt.encode()).hexdigest(),
+                    "raw_object_ref_id": source_object_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_citation_source_segments (
+                      id, tenant_id, project_id, capture_id, segment_index,
+                      source_start, source_end, segment_text, segment_sha256, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :capture_id, 0,
+                      0, :source_end, :segment_text, :segment_sha256, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": source_segment_id,
+                    "tenant_id": tenant_id,
+                    "project_id": project.project_id,
+                    "capture_id": source_capture_id,
+                    "source_end": len(source_excerpt),
+                    "segment_text": source_excerpt,
+                    "segment_sha256": hashlib.sha256(source_excerpt.encode()).hexdigest(),
                     "created_at": datetime.now(timezone.utc),
                 },
             )
@@ -219,9 +307,13 @@ def test_real_mysql_citation_selection_and_support_are_separate_append_only_evid
                 citation_id=citation_id,
                 support_label="supports",
                 evidence_grade="source_page_snapshot",
-                source_excerpt="来源页面明确说明结论可下钻到原始证据。",
+                source_excerpt=source_excerpt,
                 source_content_sha256=source_sha256,
                 source_object_ref_id=source_object_id,
+                source_capture_id=source_capture_id,
+                source_segment_id=source_segment_id,
+                source_start=0,
+                source_end=len(source_excerpt),
                 rationale="人工核对不可变来源页面后确认支持。",
                 reviewed_by="integration-reviewer",
             ),

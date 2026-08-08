@@ -48,6 +48,51 @@ def test_only_human_reviewed_source_page_snapshots_enter_commercial_support_rate
     assert "provisional_reviews_excluded_from_support_rate" in evidence
     assert 'metadata.get("kind") != "citation_source_page"' in routes
     assert 'metadata.get("citation_id") != payload.citation_id' in routes
+    assert 'metadata.get("capture_id") != payload.source_capture_id' in routes
+    for required in (
+        "source_capture_id",
+        "source_segment_id",
+        "source_start",
+        "source_end",
+        "exact_source_excerpt",
+    ):
+        assert required in evidence or required in routes
+
+
+def test_citation_source_pages_are_captured_as_immutable_worker_evidence() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260808_0014_citation_source_captures.py"
+    ).read_text(encoding="utf-8")
+    route = (ROOT / "apps" / "api" / "citation_capture_routes.py").read_text(encoding="utf-8")
+    worker = (
+        ROOT / "apps" / "worker" / "airank_worker" / "citation_capture.py"
+    ).read_text(encoding="utf-8")
+    crawler = (
+        ROOT
+        / "packages"
+        / "crawler-lite"
+        / "src"
+        / "airank_crawler_lite"
+        / "source_capture.py"
+    ).read_text(encoding="utf-8")
+
+    for required in (
+        "airank_citation_source_captures",
+        "airank_citation_source_segments",
+        "raw_object_ref_id",
+        "visible_text_sha256",
+    ):
+        assert required in migration
+    assert "citation.capture" in route
+    assert "source_page_dns_pinned" in crawler
+    assert '"kind": "citation_source_page"' in worker
+    assert '"kind": "citation_source_text"' in worker
+    assert "stored citation object hash does not match capture result" in worker
 
 
 def test_frontend_never_equates_selected_citations_with_support() -> None:
@@ -58,3 +103,6 @@ def test_frontend_never_equates_selected_citations_with_support() -> None:
     assert "人工核对 + 不可变来源页面" in app
     assert "可交付支持率" in app
     assert "fetchCitationSupport" in api
+    assert "抓取来源页" in app
+    assert "原文边界" in app
+    assert "createCitationSupportReview" in api

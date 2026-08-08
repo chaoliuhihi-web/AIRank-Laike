@@ -53,6 +53,18 @@ def review(
         review_method="human",
         reviewed_by="reviewer_2",
         reviewed_at=reviewed_at,
+        source_capture_id=(
+            "capture_1" if grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT else None
+        ),
+        source_segment_id=(
+            "segment_1" if grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT else None
+        ),
+        source_start=0 if grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT else None,
+        source_end=(
+            len("产品文档说明每条结论都可以回到原始样本。")
+            if grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT
+            else None
+        ),
     )
 
 

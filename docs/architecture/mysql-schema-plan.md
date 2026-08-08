@@ -43,6 +43,8 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_source_citations` | 回答引用和来源归因 | 是 |
 | `airank_answer_claims` | 回答内具体断言、精确字符边界和回答 hash | 是 |
 | `airank_citation_support_reviews` | 断言—引用支持/矛盾/不足的追加式人工复核 | 是 |
+| `airank_citation_source_captures` | 引用来源页不可变抓取、网络元数据与双对象引用 | 是 |
+| `airank_citation_source_segments` | 来源正文确定性切片与精确字符边界 | 是 |
 | `airank_page_audit_runs` | 官网技术可提取性运行、原始响应摘要、规则版本与独立技术分 | 是 |
 | `airank_page_audit_findings` | 页面审计逐规则证据、扣分与整改建议 | 是 |
 | `airank_fact_atoms` | 可信事实卡内部 FactAtom，含可信等级、可公开程度、来源片段、风险提示 | 是 |
@@ -153,6 +155,8 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_source_citations` | `tenant_id` | `project_id` | 按 snapshot 回溯引用，按 host 做来源统计 | `idx_airank_citations_snapshot`、`idx_airank_citations_host` 覆盖 |
 | `airank_answer_claims` | `tenant_id` | `project_id` | 按回答下钻断言、按边界/hash 幂等登记 | `uk_airank_answer_claim_boundary`、`idx_airank_answer_claim_project` 覆盖 |
 | `airank_citation_support_reviews` | `tenant_id` | `project_id` | 按 claim/citation 读取追加历史，按证据等级统计可交付支持度 | `idx_airank_citation_support_claim`、`idx_airank_citation_support_project` 覆盖 |
+| `airank_citation_source_captures` | `tenant_id` | `project_id` | 按 citation 回溯抓取历史，按状态领取/排障 | citation、status、idempotency、job 索引覆盖 |
+| `airank_citation_source_segments` | `tenant_id` | `project_id` | 按 capture 和 segment index 重建完整正文、校验精确审核边界 | capture/index 唯一索引覆盖 |
 | `airank_page_audit_runs` | `tenant_id` | `project_id` | 项目页面审计历史、按状态领取/回查、幂等创建 | `uk_airank_page_audit_idempotency`、`uk_airank_page_audit_job`、`idx_airank_page_audit_project`、`idx_airank_page_audit_status` 覆盖 |
 | `airank_page_audit_findings` | `tenant_id` | `project_id` | 按运行下钻规则、按严重度/状态筛选 | `uk_airank_page_audit_rule`、`idx_airank_page_audit_finding_project` 覆盖 |
 | `airank_fact_atoms` | `tenant_id` | `project_id` | 事实库列表、可信等级/公开等级筛选、事实类型筛选 | `idx_airank_fact_atoms_project_status`、`idx_airank_fact_atoms_trust`、`idx_airank_fact_atoms_type` 覆盖 |

@@ -52,6 +52,8 @@
             "PAGE_AUDIT_URL_INVALID",
             "PAGE_AUDIT_NOT_FOUND",
             "CITATION_NOT_FOUND",
+            "CITATION_CAPTURE_NOT_FOUND",
+            "CITATION_CAPTURE_URL_INVALID",
             "CITATION_CLAIM_NOT_FOUND",
             "CITATION_SUPPORT_EVIDENCE_INVALID",
             "FACT_NOT_FOUND",

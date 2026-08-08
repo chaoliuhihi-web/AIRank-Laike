@@ -94,6 +94,17 @@ def test_source_page_snapshot_human_review_can_enter_support_rate(client: TestCl
         kind="citation_source_page",
         citation_id="citation_1",
     )
+    source_excerpt = "来源页面直接支持该断言。"
+    repository.seed_source_capture(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        capture_id="capture_source_page_1",
+        citation_id="citation_1",
+        raw_object_ref_id="object_source_page_1",
+        content_sha256="b" * 64,
+        segment_id="segment_source_page_1",
+        segment_text=source_excerpt,
+    )
     reviewed = client.post(
         f"/api/v1/citation-claims/{claim_id}/reviews",
         headers={"tenant-id": "tenant_1"},
@@ -101,9 +112,13 @@ def test_source_page_snapshot_human_review_can_enter_support_rate(client: TestCl
             "citation_id": "citation_1",
             "support_label": "supports",
             "evidence_grade": "source_page_snapshot",
-            "source_excerpt": "来源页面直接支持该断言。",
+            "source_excerpt": source_excerpt,
             "source_content_sha256": "b" * 64,
             "source_object_ref_id": "object_source_page_1",
+            "source_capture_id": "capture_source_page_1",
+            "source_segment_id": "segment_source_page_1",
+            "source_start": 0,
+            "source_end": len(source_excerpt),
             "rationale": "人工核对不可变页面快照后确认支持。",
             "review_method": "human",
             "reviewed_by": "reviewer_1",
@@ -117,6 +132,53 @@ def test_source_page_snapshot_human_review_can_enter_support_rate(client: TestCl
     ).json()["data"]["metrics"]
     assert metrics["commercially_verified_review_count"] == 1
     assert metrics["citation_support_rate"] == 1.0
+
+
+def test_source_page_snapshot_requires_exact_saved_source_boundary(client: TestClient) -> None:
+    claim_id = create_claim(client)
+    repository = citation_support_routes.CITATION_SUPPORT_REPOSITORY
+    assert isinstance(repository, citation_support_routes.InMemoryCitationSupportRepository)
+    repository.seed_source_object(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        object_ref_id="object_source_page_1",
+        sha256="b" * 64,
+        kind="citation_source_page",
+        citation_id="citation_1",
+    )
+    repository.seed_source_capture(
+        tenant_id="tenant_1",
+        project_id="project_1",
+        capture_id="capture_source_page_1",
+        citation_id="citation_1",
+        raw_object_ref_id="object_source_page_1",
+        content_sha256="b" * 64,
+        segment_id="segment_source_page_1",
+        segment_text="来源页面直接支持该断言。",
+    )
+
+    response = client.post(
+        f"/api/v1/citation-claims/{claim_id}/reviews",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "citation_id": "citation_1",
+            "support_label": "supports",
+            "evidence_grade": "source_page_snapshot",
+            "source_excerpt": "页面直接支持",
+            "source_content_sha256": "b" * 64,
+            "source_object_ref_id": "object_source_page_1",
+            "source_capture_id": "capture_source_page_1",
+            "source_segment_id": "segment_source_page_1",
+            "source_start": 0,
+            "source_end": len("页面直接支持"),
+            "rationale": "边界与文本不一致，不能进入商业指标。",
+            "review_method": "human",
+            "reviewed_by": "reviewer_1",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CITATION_SUPPORT_EVIDENCE_INVALID"
 
 
 def test_provider_excerpt_must_match_immutable_cited_text(client: TestClient) -> None:

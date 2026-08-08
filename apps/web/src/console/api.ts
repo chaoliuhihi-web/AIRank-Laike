@@ -329,6 +329,10 @@ export type CitationSupportBundle = {
     source_excerpt: string;
     source_content_sha256: string;
     source_object_ref_id: string | null;
+    source_capture_id: string | null;
+    source_segment_id: string | null;
+    source_start: number | null;
+    source_end: number | null;
     rationale: string;
     review_method: "human" | "ai_assisted";
     reviewed_by: string;
@@ -347,6 +351,43 @@ export type CitationSupportBundle = {
     citation_support_rate: number | null;
     known_limitations: string[];
   };
+};
+
+export type CitationSourceCapture = {
+  capture_id: string;
+  tenant_id: string;
+  project_id: string;
+  citation_id: string;
+  job_id: string;
+  requested_url: string;
+  final_url: string | null;
+  status: "queued" | "running" | "completed" | "blocked" | "failed";
+  capture_version: string;
+  evidence_grade: string | null;
+  response_status: number | null;
+  content_type: string | null;
+  response_bytes: number | null;
+  content_sha256: string | null;
+  visible_text_sha256: string | null;
+  raw_object_ref_id: string | null;
+  text_object_ref_id: string | null;
+  connected_ip: string | null;
+  redirect_count: number | null;
+  error_code: string | null;
+  error_message: string | null;
+  requested_by: string;
+  segments: Array<{
+    segment_id: string;
+    segment_index: number;
+    source_start: number;
+    source_end: number;
+    segment_text: string;
+    segment_sha256: string;
+  }>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  idempotent_replay: boolean;
 };
 
 export type MeasurementQualityReport = {
@@ -1165,6 +1206,107 @@ export function fetchAnswerSample(snapshotId: string, signal?: AbortSignal): Pro
 
 export function fetchCitationSupport(snapshotId: string, signal?: AbortSignal): Promise<CitationSupportBundle> {
   return fetchData(`/api/v1/samples/${snapshotId}/citation-support`, "trc_web_citation_support", signal);
+}
+
+export async function createCitationClaim(
+  snapshotId: string,
+  answerStart: number,
+  answerEnd: number,
+): Promise<CitationSupportBundle["claims"][number]> {
+  const session = getStoredAuthSession();
+  const response = await fetch(`/api/v1/samples/${encodeURIComponent(snapshotId)}/citation-claims`, {
+    method: "POST",
+    headers: { ...buildApiHeaders("trc_web_citation_claim"), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      answer_start: answerStart,
+      answer_end: answerEnd,
+      extraction_method: "manual",
+      created_by: session?.user.userId ?? "console-operator",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Citation claim request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: CitationSupportBundle["claims"][number] }).data;
+}
+
+export async function createCitationSourceCapture(citationId: string): Promise<CitationSourceCapture> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(`/api/v1/citations/${encodeURIComponent(citationId)}/source-captures`, {
+    method: "POST",
+    headers: { ...buildApiHeaders("trc_web_citation_capture"), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      idempotency_key: `citation-capture-${randomPart}`,
+      requested_by: session?.user.userId ?? "console-operator",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Citation capture request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: CitationSourceCapture }).data;
+}
+
+export function fetchCitationSourceCaptures(
+  citationId: string,
+  signal?: AbortSignal,
+): Promise<CitationSourceCapture[]> {
+  return fetchData(
+    `/api/v1/citations/${encodeURIComponent(citationId)}/source-captures`,
+    "trc_web_citation_captures",
+    signal,
+  );
+}
+
+export function fetchCitationSourceCapture(
+  captureId: string,
+  signal?: AbortSignal,
+): Promise<CitationSourceCapture> {
+  return fetchData(
+    `/api/v1/citation-source-captures/${encodeURIComponent(captureId)}`,
+    "trc_web_citation_capture",
+    signal,
+  );
+}
+
+export async function createCitationSupportReview(
+  claimId: string,
+  input: {
+    citationId: string;
+    supportLabel: "supports" | "contradicts" | "insufficient";
+    sourceExcerpt: string;
+    sourceContentSha256: string;
+    sourceObjectRefId: string;
+    sourceCaptureId: string;
+    sourceSegmentId: string;
+    sourceStart: number;
+    sourceEnd: number;
+  },
+): Promise<CitationSupportBundle["reviews"][number]> {
+  const session = getStoredAuthSession();
+  const response = await fetch(`/api/v1/citation-claims/${encodeURIComponent(claimId)}/reviews`, {
+    method: "POST",
+    headers: { ...buildApiHeaders("trc_web_citation_review"), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      citation_id: input.citationId,
+      support_label: input.supportLabel,
+      evidence_grade: "source_page_snapshot",
+      source_excerpt: input.sourceExcerpt,
+      source_content_sha256: input.sourceContentSha256,
+      source_object_ref_id: input.sourceObjectRefId,
+      source_capture_id: input.sourceCaptureId,
+      source_segment_id: input.sourceSegmentId,
+      source_start: input.sourceStart,
+      source_end: input.sourceEnd,
+      rationale: "人工在证据中心核对不可变来源页面片段与回答断言。",
+      review_method: "human",
+      reviewed_by: session?.user.userId ?? "console-reviewer",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Citation review request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: CitationSupportBundle["reviews"][number] }).data;
 }
 
 export function fetchMeasurementQuality(

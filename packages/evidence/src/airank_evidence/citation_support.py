@@ -89,6 +89,10 @@ class CitationSupportReview:
     review_method: str
     reviewed_by: str
     reviewed_at: datetime
+    source_capture_id: str | None = None
+    source_segment_id: str | None = None
+    source_start: int | None = None
+    source_end: int | None = None
 
     def __post_init__(self) -> None:
         if not self.source_excerpt.strip():
@@ -100,14 +104,33 @@ class CitationSupportReview:
         if self.review_method not in {"human", "ai_assisted"}:
             raise ValueError("citation support review method is invalid")
         if self.evidence_grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT:
-            if not self.source_object_ref_id:
-                raise ValueError("source page support requires an immutable source object")
+            if not all(
+                (
+                    self.source_object_ref_id,
+                    self.source_capture_id,
+                    self.source_segment_id,
+                )
+            ):
+                raise ValueError(
+                    "source page support requires an immutable capture, object, and segment"
+                )
+            if (
+                self.source_start is None
+                or self.source_end is None
+                or self.source_start < 0
+                or self.source_end <= self.source_start
+            ):
+                raise ValueError("source page support requires an exact source boundary")
 
     @property
     def commercially_verified(self) -> bool:
         return (
             self.evidence_grade == CitationSupportEvidenceGrade.SOURCE_PAGE_SNAPSHOT
             and self.review_method == "human"
+            and self.source_capture_id is not None
+            and self.source_segment_id is not None
+            and self.source_start is not None
+            and self.source_end is not None
         )
 
 

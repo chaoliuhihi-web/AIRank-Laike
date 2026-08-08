@@ -78,6 +78,14 @@ FACT_DISCLOSURE_FORBIDDEN
 | `PAGE_AUDIT_URL_INVALID` | 400 | 页面 URL 不符合安全出站策略或格式无效 |
 | `PAGE_AUDIT_NOT_FOUND` | 404 | 页面审计运行不存在或不属于当前租户项目 |
 
+## 引用来源抓取与支持度
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `CITATION_CAPTURE_NOT_FOUND` | 404 | 引用来源抓取不存在或不属于当前租户 |
+| `CITATION_CAPTURE_URL_INVALID` | 409 | Provider 返回的引用 URL 缺失或不符合安全抓取格式 |
+| `CITATION_SUPPORT_EVIDENCE_INVALID` | 409 | 支持度审核未绑定匹配的不可变来源、片段或精确字符边界 |
+
 ## 事实和内容
 
 | 错误码 | HTTP | 说明 |

@@ -84,7 +84,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0013"
+EXPECTED_ALEMBIC_HEAD = "20260808_0014"
 
 
 def require_real_flag(flag: str) -> None:
@@ -150,7 +150,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 52
+        assert table_count == 54
 
         url_columns = (
             ("airank_projects", "website_url"),
@@ -161,6 +161,8 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             ("airank_publish_packages", "published_url"),
             ("airank_object_refs", "object_uri"),
             ("airank_question_observation_batches", "source_uri"),
+            ("airank_citation_source_captures", "requested_url"),
+            ("airank_citation_source_captures", "final_url"),
         )
         for table_name, column_name in url_columns:
             url_length = conn.execute(

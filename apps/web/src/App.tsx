@@ -68,6 +68,9 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  createCitationClaim,
+  createCitationSourceCapture,
+  createCitationSupportReview,
   createPageAudit,
   fetchQuestionObservationBatches,
   fetchAnswerSample,
@@ -77,6 +80,8 @@ import {
   fetchConsoleOverview,
   fetchContentAssets,
   fetchCitationSupport,
+  fetchCitationSourceCapture,
+  fetchCitationSourceCaptures,
   fetchEvidenceObject,
   fetchFactConflicts,
   fetchFacts,
@@ -118,6 +123,7 @@ import {
   type ConsoleMetricCard,
   type ConsoleOverview,
   type CitationSupportBundle,
+  type CitationSourceCapture,
   type FactConflict,
   type GovernedContentAsset,
   type FactRevision,
@@ -1814,6 +1820,9 @@ function EvidencePage() {
   const [objectPreviewError, setObjectPreviewError] = useState<string | null>(null);
   const [citationSupport, setCitationSupport] = useState<CitationSupportBundle | null>(null);
   const [citationSupportError, setCitationSupportError] = useState<string | null>(null);
+  const [citationCaptures, setCitationCaptures] = useState<Record<string, CitationSourceCapture[]>>({});
+  const [citationAction, setCitationAction] = useState<string | null>(null);
+  const [citationActionError, setCitationActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) return;
@@ -1931,6 +1940,36 @@ function EvidencePage() {
     return () => controller.abort();
   }, [selected?.snapshot_id]);
 
+  useEffect(() => {
+    const citations = selected?.citations ?? [];
+    if (citations.length === 0) {
+      setCitationCaptures({});
+      setCitationActionError(null);
+      return;
+    }
+    const controller = new AbortController();
+    Promise.all(
+      citations.map(async (citation) => {
+        const rows = await fetchCitationSourceCaptures(citation.citation_id, controller.signal);
+        if (rows[0]) {
+          const detail = await fetchCitationSourceCapture(rows[0].capture_id, controller.signal);
+          return [citation.citation_id, [detail, ...rows.slice(1)]] as const;
+        }
+        return [citation.citation_id, []] as const;
+      }),
+    )
+      .then((entries) => {
+        setCitationCaptures(Object.fromEntries(entries));
+        setCitationActionError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setCitationCaptures({});
+        setCitationActionError(error instanceof Error ? error.message : "引用来源抓取接口不可用");
+      });
+    return () => controller.abort();
+  }, [selected?.citations]);
+
   const openSample = async (snapshotId: string) => {
     setLoadingDetail(snapshotId);
     setDetailError(null);
@@ -1940,6 +1979,77 @@ function EvidencePage() {
       setDetailError(error instanceof Error ? error.message : "样本详情接口不可用");
     } finally {
       setLoadingDetail(null);
+    }
+  };
+  const reloadCitationCapture = async (citationId: string, captureId?: string) => {
+    const rows = await fetchCitationSourceCaptures(citationId);
+    const detailId = captureId || rows[0]?.capture_id;
+    const detail = detailId ? await fetchCitationSourceCapture(detailId) : null;
+    const withoutDetail = detail ? rows.filter((row) => row.capture_id !== detail.capture_id) : rows;
+    setCitationCaptures((current) => ({
+      ...current,
+      [citationId]: detail ? [detail, ...withoutDetail] : rows,
+    }));
+  };
+  const refreshCitationSupport = async () => {
+    if (!selected?.snapshot_id) return;
+    setCitationSupport(await fetchCitationSupport(selected.snapshot_id));
+  };
+  const registerFullAnswerClaim = async () => {
+    if (!selected || selected.sample_status !== "valid" || !selected.answer_text.trim()) return;
+    setCitationAction("claim");
+    setCitationActionError(null);
+    try {
+      await createCitationClaim(selected.snapshot_id, 0, selected.answer_text.length);
+      await refreshCitationSupport();
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "回答断言登记失败");
+    } finally {
+      setCitationAction(null);
+    }
+  };
+  const startCitationCapture = async (citationId: string) => {
+    setCitationAction(`capture:${citationId}`);
+    setCitationActionError(null);
+    try {
+      const created = await createCitationSourceCapture(citationId);
+      await reloadCitationCapture(citationId, created.capture_id);
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "引用来源抓取创建失败");
+    } finally {
+      setCitationAction(null);
+    }
+  };
+  const reviewCitationSegment = async (
+    citationId: string,
+    capture: CitationSourceCapture,
+    segment: CitationSourceCapture["segments"][number],
+    supportLabel: "supports" | "contradicts" | "insufficient",
+  ) => {
+    const claim = citationSupport?.claims[0];
+    if (!claim || !capture.content_sha256 || !capture.raw_object_ref_id) {
+      setCitationActionError("请先登记回答断言，并等待来源抓取完成后再复核。");
+      return;
+    }
+    setCitationAction(`review:${citationId}:${supportLabel}`);
+    setCitationActionError(null);
+    try {
+      await createCitationSupportReview(claim.claim_id, {
+        citationId,
+        supportLabel,
+        sourceExcerpt: segment.segment_text,
+        sourceContentSha256: capture.content_sha256,
+        sourceObjectRefId: capture.raw_object_ref_id,
+        sourceCaptureId: capture.capture_id,
+        sourceSegmentId: segment.segment_id,
+        sourceStart: segment.source_start,
+        sourceEnd: segment.source_end,
+      });
+      await refreshCitationSupport();
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "引用支持度复核失败");
+    } finally {
+      setCitationAction(null);
     }
   };
   const selectedProviderRequest = selected?.request_metadata.provider_request;
@@ -2035,13 +2145,61 @@ function EvidencePage() {
           <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>
             {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc={selected.sample_status === "valid" ? "无引用是有效证据状态，不补造来源。" : "任务未产生有效回答，不把空引用误写成有效证据结论。"} tone="warning" /> : (
               <ol className="evidence-citations">
-                {selected.citations.map((citation) => (
-                  <li key={citation.citation_id}><a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a><span>{citation.cited_text || "Provider 未返回引用原文"}</span></li>
-                ))}
+                {selected.citations.map((citation) => {
+                  const capture = citationCaptures[citation.citation_id]?.[0];
+                  return (
+                    <li key={citation.citation_id} className="citation-evidence-item">
+                      <a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.host || citation.url}<ExternalLink size={14} /></a>
+                      <span>{citation.cited_text || "Provider 未返回引用原文"}</span>
+                      <div className="citation-capture-toolbar">
+                        <Badge tone={capture?.status === "completed" ? "success" : capture?.status === "blocked" || capture?.status === "failed" ? "danger" : "warning"}>
+                          {capture ? `来源抓取 ${capture.status}` : "来源页未抓取"}
+                        </Badge>
+                        <button
+                          className="table-action"
+                          type="button"
+                          disabled={citationAction === `capture:${citation.citation_id}`}
+                          onClick={() => void startCitationCapture(citation.citation_id)}
+                        >
+                          {citationAction === `capture:${citation.citation_id}` ? "入队中" : capture ? "重新抓取" : "抓取来源页"}
+                        </button>
+                        {capture && capture.status !== "completed" && (
+                          <button className="table-action" type="button" onClick={() => void reloadCitationCapture(citation.citation_id, capture.capture_id)}>
+                            <RotateCw size={13} />刷新状态
+                          </button>
+                        )}
+                      </div>
+                      {capture?.status === "completed" && (
+                        <details className="citation-source-capture">
+                          <summary>查看不可变来源正文与审核入口</summary>
+                          <dl className="evidence-metadata citation-capture-metadata">
+                            <div><dt>内容 SHA-256</dt><dd>{capture.content_sha256}</dd></div>
+                            <div><dt>抓取网络证据</dt><dd>{capture.connected_ip} · {capture.evidence_grade}</dd></div>
+                            <div><dt>最终 URL</dt><dd>{capture.final_url}</dd></div>
+                            <div><dt>片段数量</dt><dd>{capture.segments.length}</dd></div>
+                          </dl>
+                          {capture.segments.map((segment) => (
+                            <article className="citation-source-segment" key={segment.segment_id}>
+                              <small>原文边界 {segment.source_start}–{segment.source_end} · {segment.segment_sha256.slice(0, 12)}…</small>
+                              <p>{segment.segment_text}</p>
+                              <div className="citation-review-actions">
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "supports")}>人工确认支持</button>
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "contradicts")}>人工确认矛盾</button>
+                                <button type="button" className="table-action" disabled={!citationSupport?.claims.length || citationAction?.startsWith(`review:${citation.citation_id}`)} onClick={() => void reviewCitationSegment(citation.citation_id, capture, segment, "insufficient")}>证据不足</button>
+                              </div>
+                            </article>
+                          ))}
+                        </details>
+                      )}
+                      {capture && capture.status !== "completed" && capture.error_code && <span className="citation-capture-error">{capture.error_code} · {capture.error_message || "抓取未完成"}</span>}
+                    </li>
+                  );
+                })}
               </ol>
             )}
             <div className="citation-support-separator" />
             <strong>引用选择 ≠ 引用支持</strong>
+            {citationActionError && <DataStateCard title="引用证据操作失败" desc={citationActionError} tone="danger" />}
             {citationSupportError && <DataStateCard title="引用支持度读取失败" desc={citationSupportError} tone="danger" />}
             {citationSupport && (
               <>
@@ -2060,6 +2218,11 @@ function EvidencePage() {
                     desc={citationSupport.metrics.known_limitations.map((item) => citationSupportLimitationLabels[item] ?? item).join(" · ")}
                     tone="warning"
                   />
+                )}
+                {selected.sample_status === "valid" && citationSupport.claims.length === 0 && (
+                  <button className="primary-button citation-claim-button" type="button" disabled={citationAction === "claim"} onClick={() => void registerFullAnswerClaim()}>
+                    {citationAction === "claim" ? "登记中" : "登记整段回答为待核验断言"}
+                  </button>
                 )}
                 {citationSupport.claims.length > 0 && (
                   <ol className="evidence-citations citation-claims">
