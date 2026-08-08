@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, Header
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -73,6 +73,24 @@ class CitationCaptureCreateRequest(BaseModel):
     requested_by: str = Field(min_length=1, max_length=64)
 
 
+class CitationCaptureBatchCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    requested_by: str = Field(min_length=1, max_length=64)
+    citation_ids: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("citation_ids")
+    @classmethod
+    def validate_citation_ids(cls, values: list[str]) -> list[str]:
+        normalized = [str(value).strip() for value in values]
+        if any(not value or len(value) > 64 for value in normalized):
+            raise ValueError("citation ids must contain 1 to 64 characters")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("citation ids must be unique")
+        return normalized
+
+
 class CitationSourceSegmentData(BaseModel):
     segment_id: str
     segment_index: int
@@ -106,6 +124,7 @@ class CitationSourceCaptureData(BaseModel):
     error_message: Optional[str] = None
     requested_by: str
     segments: list[CitationSourceSegmentData]
+    segments_loaded: bool = True
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
@@ -122,36 +141,87 @@ class CitationSourceCaptureListResponse(BaseModel):
     meta: dict[str, str]
 
 
+class CitationCaptureBatchData(BaseModel):
+    snapshot_id: str
+    requested_count: int
+    queued_count: int
+    idempotent_replay_count: int
+    captures: list[CitationSourceCaptureData]
+
+
+class CitationCaptureBatchResponse(BaseModel):
+    data: CitationCaptureBatchData
+    meta: dict[str, str]
+
+
 class CitationCaptureRepository(Protocol):
     def create(
-        self, tenant_id: str, citation_id: str, payload: CitationCaptureCreateRequest
+        self,
+        tenant_id: str,
+        citation_id: str,
+        payload: CitationCaptureCreateRequest,
+        *,
+        request_context_sha256: str | None = None,
     ) -> CitationSourceCaptureData: ...
 
     def list(self, tenant_id: str, citation_id: str) -> list[CitationSourceCaptureData]: ...
 
     def get(self, tenant_id: str, capture_id: str) -> CitationSourceCaptureData: ...
 
+    def snapshot_citation_ids(self, tenant_id: str, snapshot_id: str) -> list[str]: ...
+
+    def validate_batch(
+        self, tenant_id: str, snapshot_id: str, citation_ids: list[str]
+    ) -> None: ...
+
+    def list_latest_by_snapshot(
+        self, tenant_id: str, snapshot_id: str
+    ) -> list[CitationSourceCaptureData]: ...
+
 
 class InMemoryCitationCaptureRepository:
     def __init__(self) -> None:
-        self._citations: dict[tuple[str, str], tuple[str, str]] = {}
+        self._citations: dict[tuple[str, str], tuple[str, str, str, int]] = {}
         self._captures: dict[tuple[str, str], CitationSourceCaptureData] = {}
         self._idempotency: dict[tuple[str, str, str], tuple[str, str]] = {}
         self._lock = Lock()
 
     def seed_citation(
-        self, *, tenant_id: str, citation_id: str, project_id: str, url: str
+        self,
+        *,
+        tenant_id: str,
+        citation_id: str,
+        project_id: str,
+        url: str,
+        snapshot_id: str = "snapshot_1",
+        citation_order: int = 1,
     ) -> None:
-        self._citations[(tenant_id, citation_id)] = (project_id, validate_source_url(url))
+        self._citations[(tenant_id, citation_id)] = (
+            project_id,
+            validate_source_url(url),
+            snapshot_id,
+            citation_order,
+        )
 
     def create(
-        self, tenant_id: str, citation_id: str, payload: CitationCaptureCreateRequest
+        self,
+        tenant_id: str,
+        citation_id: str,
+        payload: CitationCaptureCreateRequest,
+        *,
+        request_context_sha256: str | None = None,
     ) -> CitationSourceCaptureData:
         citation = self._citations.get((tenant_id, citation_id))
         if citation is None:
             raise StarletteHTTPException(404, detail={"code": "CITATION_NOT_FOUND"})
-        project_id, requested_url = citation
-        request_sha256 = capture_request_sha256(tenant_id, project_id, citation_id, requested_url)
+        project_id, requested_url, _snapshot_id, _citation_order = citation
+        request_sha256 = capture_request_sha256(
+            tenant_id,
+            project_id,
+            citation_id,
+            requested_url,
+            request_context_sha256=request_context_sha256,
+        )
         key = (tenant_id, project_id, payload.idempotency_key)
         with self._lock:
             existing = self._idempotency.get(key)
@@ -199,13 +269,66 @@ class InMemoryCitationCaptureRepository:
                 404, detail={"code": "CITATION_CAPTURE_NOT_FOUND"}
             ) from exc
 
+    def snapshot_citation_ids(self, tenant_id: str, snapshot_id: str) -> list[str]:
+        rows = [
+            (citation_order, citation_id)
+            for (row_tenant, citation_id), (
+                _project_id,
+                _url,
+                row_snapshot_id,
+                citation_order,
+            ) in self._citations.items()
+            if row_tenant == tenant_id and row_snapshot_id == snapshot_id
+        ]
+        return [citation_id for _order, citation_id in sorted(rows)]
+
+    def validate_batch(
+        self, tenant_id: str, snapshot_id: str, citation_ids: list[str]
+    ) -> None:
+        allowed_ids = set(self.snapshot_citation_ids(tenant_id, snapshot_id))
+        if any(citation_id not in allowed_ids for citation_id in citation_ids):
+            raise StarletteHTTPException(
+                404, detail={"code": "CITATION_NOT_FOUND_IN_SNAPSHOT"}
+            )
+        for citation_id in citation_ids:
+            citation = self._citations[(tenant_id, citation_id)]
+            try:
+                validate_source_url(citation[1])
+            except ValueError as exc:
+                raise StarletteHTTPException(
+                    409,
+                    detail={
+                        "code": "CITATION_CAPTURE_URL_INVALID",
+                        "details": {"citation_id": citation_id, "reason": str(exc)},
+                    },
+                ) from exc
+
+    def list_latest_by_snapshot(
+        self, tenant_id: str, snapshot_id: str
+    ) -> list[CitationSourceCaptureData]:
+        latest: list[CitationSourceCaptureData] = []
+        for citation_id in self.snapshot_citation_ids(tenant_id, snapshot_id):
+            rows = self.list(tenant_id, citation_id)
+            if rows:
+                latest.append(
+                    rows[0].model_copy(
+                        update={"segments": [], "segments_loaded": False}
+                    )
+                )
+        return latest
+
 
 class MySQLCitationCaptureRepository:
     def __init__(self, database_url: str) -> None:
         self.engine = create_engine(database_url, pool_pre_ping=True)
 
     def create(
-        self, tenant_id: str, citation_id: str, payload: CitationCaptureCreateRequest
+        self,
+        tenant_id: str,
+        citation_id: str,
+        payload: CitationCaptureCreateRequest,
+        *,
+        request_context_sha256: str | None = None,
     ) -> CitationSourceCaptureData:
         now = utc_now().replace(tzinfo=None)
         with self.engine.begin() as conn:
@@ -230,7 +353,11 @@ class MySQLCitationCaptureRepository:
                 ) from exc
             project_id = str(citation["project_id"])
             request_sha256 = capture_request_sha256(
-                tenant_id, project_id, citation_id, requested_url
+                tenant_id,
+                project_id,
+                citation_id,
+                requested_url,
+                request_context_sha256=request_context_sha256,
             )
             existing = conn.execute(
                 text(
@@ -339,7 +466,7 @@ class MySQLCitationCaptureRepository:
                 ),
                 {"tenant_id": tenant_id, "citation_id": citation_id},
             ).mappings().all()
-        return [capture_row(row, segments=[]) for row in rows]
+        return [capture_row(row, segments=[], segments_loaded=False) for row in rows]
 
     def get(self, tenant_id: str, capture_id: str) -> CitationSourceCaptureData:
         with self.engine.begin() as conn:
@@ -377,19 +504,141 @@ class MySQLCitationCaptureRepository:
         ]
         return capture_row(row, segments=segments)
 
+    def snapshot_citation_ids(self, tenant_id: str, snapshot_id: str) -> list[str]:
+        with self.engine.begin() as conn:
+            snapshot = conn.execute(
+                text(
+                    "SELECT id FROM airank_answer_snapshots "
+                    "WHERE tenant_id=:tenant_id AND id=:snapshot_id"
+                ),
+                {"tenant_id": tenant_id, "snapshot_id": snapshot_id},
+            ).first()
+            if snapshot is None:
+                raise StarletteHTTPException(
+                    404, detail={"code": "ANSWER_SNAPSHOT_NOT_FOUND"}
+                )
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT id FROM airank_source_citations
+                    WHERE tenant_id=:tenant_id AND snapshot_id=:snapshot_id
+                    ORDER BY citation_order, id
+                    LIMIT 1000
+                    """
+                ),
+                {"tenant_id": tenant_id, "snapshot_id": snapshot_id},
+            ).scalars().all()
+        return [str(value) for value in rows]
+
+    def validate_batch(
+        self, tenant_id: str, snapshot_id: str, citation_ids: list[str]
+    ) -> None:
+        citation_params = {
+            f"citation_id_{index}": citation_id
+            for index, citation_id in enumerate(citation_ids)
+        }
+        citation_placeholders = ", ".join(
+            f":citation_id_{index}" for index in range(len(citation_ids))
+        )
+        with self.engine.begin() as conn:
+            snapshot = conn.execute(
+                text(
+                    "SELECT id FROM airank_answer_snapshots "
+                    "WHERE tenant_id=:tenant_id AND id=:snapshot_id"
+                ),
+                {"tenant_id": tenant_id, "snapshot_id": snapshot_id},
+            ).first()
+            if snapshot is None:
+                raise StarletteHTTPException(
+                    404, detail={"code": "ANSWER_SNAPSHOT_NOT_FOUND"}
+                )
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT id, url FROM airank_source_citations
+                    WHERE tenant_id=:tenant_id AND snapshot_id=:snapshot_id
+                      AND id IN ({citation_placeholders})
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "snapshot_id": snapshot_id,
+                    **citation_params,
+                },
+            ).mappings().all()
+        citations = {str(row["id"]): str(row["url"] or "") for row in rows}
+        if any(citation_id not in citations for citation_id in citation_ids):
+            raise StarletteHTTPException(
+                404, detail={"code": "CITATION_NOT_FOUND_IN_SNAPSHOT"}
+            )
+        for citation_id in citation_ids:
+            try:
+                validate_source_url(citations[citation_id])
+            except ValueError as exc:
+                raise StarletteHTTPException(
+                    409,
+                    detail={
+                        "code": "CITATION_CAPTURE_URL_INVALID",
+                        "details": {"citation_id": citation_id, "reason": str(exc)},
+                    },
+                ) from exc
+
+    def list_latest_by_snapshot(
+        self, tenant_id: str, snapshot_id: str
+    ) -> list[CitationSourceCaptureData]:
+        self.snapshot_citation_ids(tenant_id, snapshot_id)
+        with self.engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT capture.*
+                    FROM airank_citation_source_captures capture
+                    INNER JOIN airank_source_citations citation
+                      ON citation.id=capture.citation_id
+                     AND citation.tenant_id=capture.tenant_id
+                    WHERE capture.tenant_id=:tenant_id
+                      AND citation.snapshot_id=:snapshot_id
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM airank_citation_source_captures newer
+                        WHERE newer.tenant_id=capture.tenant_id
+                          AND newer.citation_id=capture.citation_id
+                          AND (
+                            newer.created_at > capture.created_at
+                            OR (newer.created_at = capture.created_at AND newer.id > capture.id)
+                          )
+                      )
+                    ORDER BY citation.citation_order, citation.id
+                    LIMIT 1000
+                    """
+                ),
+                {"tenant_id": tenant_id, "snapshot_id": snapshot_id},
+            ).mappings().all()
+        return [
+            capture_row(row, segments=[], segments_loaded=False) for row in rows
+        ]
+
 
 def capture_request_sha256(
-    tenant_id: str, project_id: str, citation_id: str, requested_url: str
+    tenant_id: str,
+    project_id: str,
+    citation_id: str,
+    requested_url: str,
+    *,
+    request_context_sha256: str | None = None,
 ) -> str:
+    payload = {
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "citation_id": citation_id,
+        "requested_url": requested_url,
+        "capture_version": CITATION_CAPTURE_VERSION,
+    }
+    if request_context_sha256 is not None:
+        payload["request_context_sha256"] = request_context_sha256
     return hashlib.sha256(
         json.dumps(
-            {
-                "tenant_id": tenant_id,
-                "project_id": project_id,
-                "citation_id": citation_id,
-                "requested_url": requested_url,
-                "capture_version": CITATION_CAPTURE_VERSION,
-            },
+            payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -397,7 +646,12 @@ def capture_request_sha256(
     ).hexdigest()
 
 
-def capture_row(row: Any, *, segments: list[CitationSourceSegmentData]) -> CitationSourceCaptureData:
+def capture_row(
+    row: Any,
+    *,
+    segments: list[CitationSourceSegmentData],
+    segments_loaded: bool = True,
+) -> CitationSourceCaptureData:
     return CitationSourceCaptureData(
         capture_id=str(row["id"]),
         tenant_id=str(row["tenant_id"]),
@@ -426,6 +680,7 @@ def capture_row(row: Any, *, segments: list[CitationSourceSegmentData]) -> Citat
         error_message=str(row["error_message"]) if row["error_message"] else None,
         requested_by=str(row["requested_by"]),
         segments=segments,
+        segments_loaded=segments_loaded,
         started_at=as_utc(row["started_at"]) if row["started_at"] else None,
         completed_at=as_utc(row["completed_at"]) if row["completed_at"] else None,
         created_at=as_utc(row["created_at"]),
@@ -465,6 +720,60 @@ def create_citation_source_capture(
     )
 
 
+@router.post(
+    "/answer-snapshots/{snapshot_id}/citation-source-captures:batch",
+    response_model=CitationCaptureBatchResponse,
+    status_code=202,
+)
+def create_citation_source_capture_batch(
+    snapshot_id: str,
+    payload: CitationCaptureBatchCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+) -> CitationCaptureBatchResponse:
+    actor = trusted_actor(payload.requested_by, authenticated_actor)
+    CITATION_CAPTURE_REPOSITORY.validate_batch(
+        tenant_id, snapshot_id, payload.citation_ids
+    )
+    request_context_sha256 = hashlib.sha256(
+        json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "snapshot_id": snapshot_id,
+                "citation_ids": payload.citation_ids,
+                "capture_version": CITATION_CAPTURE_VERSION,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    idempotency_prefix = hashlib.sha256(payload.idempotency_key.encode()).hexdigest()[:24]
+    captures = [
+        CITATION_CAPTURE_REPOSITORY.create(
+            tenant_id,
+            citation_id,
+            CitationCaptureCreateRequest(
+                idempotency_key=f"citation-batch-{idempotency_prefix}-{index:02d}",
+                requested_by=actor,
+            ),
+            request_context_sha256=request_context_sha256,
+        )
+        for index, citation_id in enumerate(payload.citation_ids)
+    ]
+    replay_count = sum(1 for capture in captures if capture.idempotent_replay)
+    return CitationCaptureBatchResponse(
+        data=CitationCaptureBatchData(
+            snapshot_id=snapshot_id,
+            requested_count=len(captures),
+            queued_count=len(captures) - replay_count,
+            idempotent_replay_count=replay_count,
+            captures=captures,
+        ),
+        meta=response_meta(trace_id),
+    )
+
+
 @router.get(
     "/citations/{citation_id}/source-captures",
     response_model=CitationSourceCaptureListResponse,
@@ -476,6 +785,23 @@ def list_citation_source_captures(
 ) -> CitationSourceCaptureListResponse:
     return CitationSourceCaptureListResponse(
         data=CITATION_CAPTURE_REPOSITORY.list(tenant_id, citation_id),
+        meta=response_meta(trace_id),
+    )
+
+
+@router.get(
+    "/answer-snapshots/{snapshot_id}/citation-source-captures/latest",
+    response_model=CitationSourceCaptureListResponse,
+)
+def list_latest_citation_source_captures(
+    snapshot_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> CitationSourceCaptureListResponse:
+    return CitationSourceCaptureListResponse(
+        data=CITATION_CAPTURE_REPOSITORY.list_latest_by_snapshot(
+            tenant_id, snapshot_id
+        ),
         meta=response_meta(trace_id),
     )
 

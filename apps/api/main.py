@@ -148,6 +148,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "PAGE_AUDIT_URL_INVALID": (400, "Page audit URL is invalid"),
     "PAGE_AUDIT_NOT_FOUND": (404, "Page audit run not found"),
     "CITATION_NOT_FOUND": (404, "Citation not found"),
+    "CITATION_NOT_FOUND_IN_SNAPSHOT": (404, "Citation not found in answer snapshot"),
+    "ANSWER_SNAPSHOT_NOT_FOUND": (404, "Answer snapshot not found"),
     "CITATION_CAPTURE_NOT_FOUND": (404, "Citation source capture not found"),
     "CITATION_CAPTURE_URL_INVALID": (409, "Citation source URL is invalid"),
     "CITATION_CLAIM_NOT_FOUND": (404, "Citation claim not found"),

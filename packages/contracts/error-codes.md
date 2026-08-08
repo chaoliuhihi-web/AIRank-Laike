@@ -132,6 +132,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `CITATION_NOT_FOUND` | 404 | 引用不存在，或不属于当前断言与样本 |
+| `CITATION_NOT_FOUND_IN_SNAPSHOT` | 404 | 批量抓取中的引用不属于指定回答快照；整批不入队 |
+| `ANSWER_SNAPSHOT_NOT_FOUND` | 404 | 回答快照不存在或不属于当前租户 |
 | `CITATION_CLAIM_NOT_FOUND` | 404 | 回答断言不存在或不属于当前租户 |
 | `CITATION_SUPPORT_EVIDENCE_INVALID` | 409 | 断言边界、来源摘要、对象 hash 或证据等级不满足支持度复核门禁 |
 

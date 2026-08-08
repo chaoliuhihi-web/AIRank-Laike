@@ -7,6 +7,7 @@ import os
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
 from airank_crawler_lite import CitationSourceCaptureResult, CitationSourceSegment
@@ -20,12 +21,14 @@ from apps.api.citation_capture_routes import (
     CitationCaptureCreateRequest,
     MySQLCitationCaptureRepository,
 )
+from apps.api import citation_capture_routes
 from apps.api.main import (
     BuyerQuestionCreateRequest,
     MySQLProjectRepository,
     MySQLScanRepository,
     ProjectCreateRequest,
     ScanRunCreateRequest,
+    app,
 )
 
 
@@ -69,7 +72,9 @@ class FakeCaptureService:
         return self.result
 
 
-def test_real_mysql_citation_capture_persists_objects_segments_and_job(tmp_path) -> None:
+def test_real_mysql_citation_capture_persists_objects_segments_and_job(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     if os.getenv("AIRANK_RUN_REAL_MYSQL") != "1":
         pytest.skip("set AIRANK_RUN_REAL_MYSQL=1 to run real integration checks")
     tenant_id = f"tenant_citation_capture_{uuid4().hex[:10]}"
@@ -142,6 +147,7 @@ def test_real_mysql_citation_capture_persists_objects_segments_and_job(tmp_path)
         task = scan_repository.list_tasks(tenant_id, run.run_id)[0]
         snapshot_id = f"snapshot_{uuid4().hex[:16]}"
         citation_id = f"citation_{uuid4().hex[:16]}"
+        citation_id_2 = f"citation_{uuid4().hex[:16]}"
         answer_text = "应保存原始回答、引用 URL 和来源网页快照。"
         with engine.begin() as conn:
             conn.execute(
@@ -190,41 +196,89 @@ def test_real_mysql_citation_capture_persists_objects_segments_and_job(tmp_path)
                       id, tenant_id, project_id, snapshot_id, citation_order,
                       title, url, host, source_type, cited_text, created_at
                     ) VALUES (
-                      :id, :tenant_id, :project_id, :snapshot_id, 1,
+                      :id, :tenant_id, :project_id, :snapshot_id, :citation_order,
                       '可信来源', :url, 'example.com', 'provider_native',
                       '每条结论都应关联原始证据。', :created_at
                     )
                     """
                 ),
-                {
-                    "id": citation_id,
-                    "tenant_id": tenant_id,
-                    "project_id": project.project_id,
-                    "snapshot_id": snapshot_id,
-                    "url": source_url,
-                    "created_at": datetime.now(timezone.utc),
-                },
+                [
+                    {
+                        "id": citation_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "snapshot_id": snapshot_id,
+                        "citation_order": 1,
+                        "url": source_url,
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                    {
+                        "id": citation_id_2,
+                        "tenant_id": tenant_id,
+                        "project_id": project.project_id,
+                        "snapshot_id": snapshot_id,
+                        "citation_order": 2,
+                        "url": source_url,
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                ],
             )
 
-        queued = capture_repository.create(
-            tenant_id,
-            citation_id,
-            CitationCaptureCreateRequest(
-                idempotency_key=f"capture-{uuid4().hex}",
-                requested_by="integration-operator",
-            ),
+        monkeypatch.setattr(
+            citation_capture_routes,
+            "CITATION_CAPTURE_REPOSITORY",
+            capture_repository,
         )
+        client = TestClient(app)
+        batch_payload = {
+            "idempotency_key": f"capture-batch-{uuid4().hex}",
+            "requested_by": "spoofed-operator",
+            "citation_ids": [citation_id, citation_id_2],
+        }
+        batch_response = client.post(
+            f"/api/v1/answer-snapshots/{snapshot_id}/citation-source-captures:batch",
+            headers={"tenant-id": tenant_id, "X-AIRank-User-Id": "integration-operator"},
+            json=batch_payload,
+        )
+        assert batch_response.status_code == 202
+        assert batch_response.json()["data"]["queued_count"] == 2
+        assert batch_response.json()["data"]["idempotent_replay_count"] == 0
+        queued_rows = batch_response.json()["data"]["captures"]
+        assert all(row["requested_by"] == "integration-operator" for row in queued_rows)
+
+        replay_response = client.post(
+            f"/api/v1/answer-snapshots/{snapshot_id}/citation-source-captures:batch",
+            headers={"tenant-id": tenant_id, "X-AIRank-User-Id": "integration-operator"},
+            json=batch_payload,
+        )
+        assert replay_response.status_code == 202
+        assert replay_response.json()["data"]["queued_count"] == 0
+        assert replay_response.json()["data"]["idempotent_replay_count"] == 2
+        assert [row["capture_id"] for row in replay_response.json()["data"]["captures"]] == [
+            row["capture_id"] for row in queued_rows
+        ]
+
+        latest_response = client.get(
+            f"/api/v1/answer-snapshots/{snapshot_id}/citation-source-captures/latest",
+            headers={"tenant-id": tenant_id},
+        )
+        assert latest_response.status_code == 200
+        assert len(latest_response.json()["data"]) == 2
+        assert all(row["segments_loaded"] is False for row in latest_response.json()["data"])
+
+        queued = capture_repository.get(tenant_id, queued_rows[0]["capture_id"])
         assert queued.status == "queued"
         storage = FilesystemObjectStorage(tmp_path / "evidence")
-        captured = run_next_citation_capture_job(
-            lease_store,
-            execution_repository,
-            FakeCaptureService(result),  # type: ignore[arg-type]
-            storage,
-            worker_id="integration-worker",
-            now=datetime.now(timezone.utc),
-        )
-        assert captured is not None
+        for worker_index in range(2):
+            captured = run_next_citation_capture_job(
+                lease_store,
+                execution_repository,
+                FakeCaptureService(result),  # type: ignore[arg-type]
+                storage,
+                worker_id=f"integration-worker-{worker_index}",
+                now=datetime.now(timezone.utc),
+            )
+            assert captured is not None
 
         completed = capture_repository.get(tenant_id, queued.capture_id)
         assert completed.status == "completed"
@@ -268,5 +322,14 @@ def test_real_mysql_citation_capture_persists_objects_segments_and_job(tmp_path)
                 {"id": queued.job_id},
             ).scalar_one()
             assert job_status == "succeeded"
+
+        latest_completed = client.get(
+            f"/api/v1/answer-snapshots/{snapshot_id}/citation-source-captures/latest",
+            headers={"tenant-id": tenant_id},
+        )
+        assert [row["status"] for row in latest_completed.json()["data"]] == [
+            "completed",
+            "completed",
+        ]
     finally:
         cleanup_tenant(engine, tenant_id)

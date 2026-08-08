@@ -110,11 +110,12 @@
 100. 深度吸收 `haidian` 的离线评审包和正式空白评分表方法，升级 `airank.report-evidence-packet.v7`：客户对象从单 JSON 改为固定成员、固定顺序、固定时间戳、无压缩差异的确定性 ZIP，内含 canonical manifest、可打印 HTML、五维权重但评分/审核人/意见/决定全部留空的 CSV、使用边界 README 与逐文件 SHA256SUMS。manifest 新增完整 source_record，使离线工具可调用生产构建器重算质量、指标、来源、事实复核、packet basis、所有成员和整包；校验必须使用 API/下载回执 `content_sha256` 外部锚点，缺锚点、整包篡改、成员 hash 漂移、重复 JSON key、非标准数值、Zip Bomb 超限或重建不一致均失败，不把包内自洽冒充数字签名。隔离真实 MySQL 项目通过浏览器生成 6 样本/6 引用 ZIP：v2 巡检 15/15、0 blocker，生成 201、对象下载 200、回执 201；实际对象 CLI 返回 `verified`。报表中心与包内 HTML 在 1440 和 390×844 均无页面级横向溢出，console `0 error / 0 warning`。PDF/Word、Ed25519/企业签章和独立托管验证页仍为 `partial`。
 101. 上线门禁的 GitHub/Gitee 主分支同步检查增加有界传输重试：每个远端最多 3 次、线性退避，瞬时 SSH banner/网络错误恢复后记录成功发生在哪次；持续失败仍完整保存每次错误并保持 `BLOCKED`，不会把远端不可达误判成已同步。两条测试分别锁定“首轮失败后恢复”和“重试耗尽失败关闭”。
 102. 深度吸收 `geo-citation-lab` 的来源选择/支持分层和 `yao-geo-skills` 的证据契约，将 Provider 引用入口升级为 `airank.provider-native-citation.v2`：只认千问 `search_info`、Responses `web_search_call.action.sources`、Provider annotation 和显式顶层 citations，逐条保留 native type、精确 JSON path 和 source id；回答正文、debug、reference 或任意嵌套 URL 不再误计。`airank.provider-search-evidence.v1` 把搜索“请求了”和“实际运行了”分开。7 个版本化 contract/holdout/adversarial case 全部通过；真实千问 `responses_web_search` 以同一 blind Prompt 完成 3 个全新会话，3/3 有效、3/3 正常未提及并计入分母，原生引用分别为 135/90/135 条，质量 v4 `publishable=true`、引用召回率 100%。证据中心默认只渲染前 20 条，可展开完整引用，并显示请求类型、联网判据、解析器和原生路径；1543px/390×844 无页面级溢出，console `0 error / 0 warning`。引用支持、事实准确率、其他三平台原生引用和 Consumer Web/App 仍保持 `partial/blocked`。
+103. 将高引用量样本的来源准备闭合为安全、可恢复的批量链路：新增快照级 batch API 和 latest-summary API，批次显式限制 1–50 个唯一 Citation ID；服务端在创建任何任务前先校验快照租户归属和全部 URL，坏 URL 整批零入队。批次上下文进入请求 hash，子幂等键由批次键 hash 与顺序确定；相同键/相同内容回放原任务，相同键/不同内容返回冲突。证据中心不再对 90–135 条引用逐条执行 list/detail 请求，而是一次读取最新摘要、每次安全入队前 20 条并显示已完成/队列中/待处理计数；只有展开已完成条目时才按 capture ID 读取正文片段。真实 MySQL 隔离样本包含 21 条 Provider Citation，浏览器初次下钻只有 1 个 latest 请求，入队为 1 POST + 1 latest，受租户限制 Worker 实际完成 20/20 条 DNS-pinned 抓取并保留内容 hash，剩余 1 条继续待处理；最终单条展开只增加 1 个 detail GET。1543px 与 390×844 无页面级横向溢出，console `0 error / 0 warning`；QA 租户 13 张表共 130 行和 2 个临时对象已精确清理为 0。该链路只证明来源页面可存证，不证明来源支持回答。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `444 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `446 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.13.1` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。

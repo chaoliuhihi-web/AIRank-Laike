@@ -621,10 +621,19 @@ export type CitationSourceCapture = {
     segment_text: string;
     segment_sha256: string;
   }>;
+  segments_loaded: boolean;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
   idempotent_replay: boolean;
+};
+
+export type CitationCaptureBatch = {
+  snapshot_id: string;
+  requested_count: number;
+  queued_count: number;
+  idempotent_replay_count: number;
+  captures: CitationSourceCapture[];
 };
 
 export type SourceClassificationRevision = {
@@ -1770,6 +1779,41 @@ export async function createCitationSourceCapture(citationId: string): Promise<C
     throw new Error(await readErrorMessage(response, `Citation capture request failed with ${response.status}`));
   }
   return ((await response.json()) as { data: CitationSourceCapture }).data;
+}
+
+export async function createCitationSourceCaptureBatch(
+  snapshotId: string,
+  citationIds: string[],
+): Promise<CitationCaptureBatch> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/answer-snapshots/${encodeURIComponent(snapshotId)}/citation-source-captures:batch`,
+    {
+      method: "POST",
+      headers: { ...buildApiHeaders("trc_web_citation_capture_batch"), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        idempotency_key: `citation-batch-${randomPart}`,
+        requested_by: session?.user.userId ?? "console-operator",
+        citation_ids: citationIds,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Citation batch request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: CitationCaptureBatch }).data;
+}
+
+export function fetchLatestCitationSourceCaptures(
+  snapshotId: string,
+  signal?: AbortSignal,
+): Promise<CitationSourceCapture[]> {
+  return fetchData(
+    `/api/v1/answer-snapshots/${encodeURIComponent(snapshotId)}/citation-source-captures/latest`,
+    "trc_web_citation_capture_latest",
+    signal,
+  );
 }
 
 export function fetchCitationSourceCaptures(

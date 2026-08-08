@@ -107,3 +107,9 @@ def test_frontend_never_equates_selected_citations_with_support() -> None:
     assert "原文边界" in app
     assert "createCitationEvidenceReviewCase" in api
     assert "createCitationSupportReview" not in api
+    assert "createCitationSourceCaptureBatch" in api
+    assert "fetchLatestCitationSourceCaptures" in api
+    assert "批量准备来源正文" in app
+    assert "抓取成功只代表页面已存证，不代表来源支持回答" in app
+    assert "const detail = await fetchCitationSourceCapture(captureId);" in app
+    assert "selected.snapshot_id, controller.signal" in app

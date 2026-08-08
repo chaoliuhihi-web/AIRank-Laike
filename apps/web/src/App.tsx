@@ -75,6 +75,7 @@ import {
   createGovernedContent,
   createCitationClaim,
   createCitationSourceCapture,
+  createCitationSourceCaptureBatch,
   createCitationEvidenceReviewCase,
   createFactEvidenceReviewCase,
   createPageAudit,
@@ -89,6 +90,7 @@ import {
   fetchCitationSupport,
   fetchCitationSourceCapture,
   fetchCitationSourceCaptures,
+  fetchLatestCitationSourceCaptures,
   fetchEvidenceObject,
   fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
@@ -144,6 +146,7 @@ import {
   type ConsoleOverview,
   type CitationSupportBundle,
   type CitationSourceCapture,
+  type CitationCaptureBatch,
   type FactConflict,
   type FactAccuracyBundle,
   type EvidenceReviewCase,
@@ -2116,6 +2119,7 @@ function EvidencePage() {
   const [citationSupport, setCitationSupport] = useState<CitationSupportBundle | null>(null);
   const [citationSupportError, setCitationSupportError] = useState<string | null>(null);
   const [citationCaptures, setCitationCaptures] = useState<Record<string, CitationSourceCapture[]>>({});
+  const [citationBatch, setCitationBatch] = useState<CitationCaptureBatch | null>(null);
   const [citationAction, setCitationAction] = useState<string | null>(null);
   const [citationActionError, setCitationActionError] = useState<string | null>(null);
   const [factAccuracy, setFactAccuracy] = useState<FactAccuracyBundle | null>(null);
@@ -2262,6 +2266,7 @@ function EvidencePage() {
 
   useEffect(() => {
     setShowAllCitations(false);
+    setCitationBatch(null);
   }, [selected?.snapshot_id]);
 
   useEffect(() => {
@@ -2363,25 +2368,17 @@ function EvidencePage() {
   }, [project.id, selected?.snapshot_id]);
 
   useEffect(() => {
-    const citations = selected?.citations ?? [];
-    if (citations.length === 0) {
+    if (!selected?.snapshot_id || selected.citations.length === 0) {
       setCitationCaptures({});
       setCitationActionError(null);
       return;
     }
     const controller = new AbortController();
-    Promise.all(
-      citations.map(async (citation) => {
-        const rows = await fetchCitationSourceCaptures(citation.citation_id, controller.signal);
-        if (rows[0]) {
-          const detail = await fetchCitationSourceCapture(rows[0].capture_id, controller.signal);
-          return [citation.citation_id, [detail, ...rows.slice(1)]] as const;
-        }
-        return [citation.citation_id, []] as const;
-      }),
-    )
-      .then((entries) => {
-        setCitationCaptures(Object.fromEntries(entries));
+    fetchLatestCitationSourceCaptures(selected.snapshot_id, controller.signal)
+      .then((rows) => {
+        setCitationCaptures(Object.fromEntries(
+          rows.map((capture) => [capture.citation_id, [capture]]),
+        ));
         setCitationActionError(null);
       })
       .catch((error) => {
@@ -2390,7 +2387,7 @@ function EvidencePage() {
         setCitationActionError(error instanceof Error ? error.message : "引用来源抓取接口不可用");
       });
     return () => controller.abort();
-  }, [selected?.citations]);
+  }, [selected?.snapshot_id]);
 
   const openSample = async (snapshotId: string) => {
     setLoadingDetail(snapshotId);
@@ -2518,6 +2515,64 @@ function EvidencePage() {
       await reloadCitationCapture(citationId, created.capture_id);
     } catch (error) {
       setCitationActionError(error instanceof Error ? error.message : "引用来源抓取创建失败");
+    } finally {
+      setCitationAction(null);
+    }
+  };
+  const startCitationCaptureBatch = async () => {
+    if (!selected) return;
+    const citationIds = selected.citations
+      .filter((citation) => {
+        const status = citationCaptures[citation.citation_id]?.[0]?.status;
+        return !status || status === "blocked" || status === "failed";
+      })
+      .slice(0, EVIDENCE_CITATION_INITIAL_LIMIT)
+      .map((citation) => citation.citation_id);
+    if (citationIds.length === 0) return;
+    setCitationAction("capture:batch");
+    setCitationActionError(null);
+    try {
+      const result = await createCitationSourceCaptureBatch(selected.snapshot_id, citationIds);
+      setCitationBatch(result);
+      const latest = await fetchLatestCitationSourceCaptures(selected.snapshot_id);
+      setCitationCaptures(Object.fromEntries(
+        latest.map((capture) => [capture.citation_id, [capture]]),
+      ));
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "批量引用来源抓取创建失败");
+    } finally {
+      setCitationAction(null);
+    }
+  };
+  const loadCitationCaptureDetail = async (citationId: string, captureId: string) => {
+    setCitationActionError(null);
+    try {
+      const detail = await fetchCitationSourceCapture(captureId);
+      setCitationCaptures((current) => {
+        const rows = current[citationId] ?? [];
+        const matchingIndex = rows.findIndex((row) => row.capture_id === captureId);
+        return {
+          ...current,
+          [citationId]: matchingIndex >= 0
+            ? rows.map((row, index) => index === matchingIndex ? detail : row)
+            : [detail, ...rows],
+        };
+      });
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "引用来源正文读取失败");
+    }
+  };
+  const refreshLatestCitationCaptureStatus = async () => {
+    if (!selected) return;
+    setCitationAction("capture:refresh");
+    setCitationActionError(null);
+    try {
+      const latest = await fetchLatestCitationSourceCaptures(selected.snapshot_id);
+      setCitationCaptures(Object.fromEntries(
+        latest.map((capture) => [capture.citation_id, [capture]]),
+      ));
+    } catch (error) {
+      setCitationActionError(error instanceof Error ? error.message : "引用来源状态刷新失败");
     } finally {
       setCitationAction(null);
     }
@@ -2678,6 +2733,17 @@ function EvidencePage() {
     && typeof selectedRequestContract.request_kind === "string"
       ? selectedRequestContract.request_kind
       : null;
+  const pendingCitationCaptureCount = selected?.citations.filter((citation) => {
+    const status = citationCaptures[citation.citation_id]?.[0]?.status;
+    return !status || status === "blocked" || status === "failed";
+  }).length ?? 0;
+  const activeCitationCaptureCount = selected?.citations.filter((citation) => {
+    const status = citationCaptures[citation.citation_id]?.[0]?.status;
+    return status === "queued" || status === "running";
+  }).length ?? 0;
+  const completedCitationCaptureCount = selected?.citations.filter(
+    (citation) => citationCaptures[citation.citation_id]?.[0]?.status === "completed",
+  ).length ?? 0;
 
   return (
     <>
@@ -2991,6 +3057,35 @@ function EvidencePage() {
             )}
           </Panel>
           <Panel title={`${selected.sample_status === "valid" ? "真实引用" : "失败任务引用"}（${selected.citations.length}）`}>
+            {selected.citations.length > 0 && (
+              <div className="citation-batch-toolbar">
+                <div>
+                  <strong>批量准备来源正文</strong>
+                  <small>每次最多安全入队 {EVIDENCE_CITATION_INITIAL_LIMIT} 条；抓取成功只代表页面已存证，不代表来源支持回答。</small>
+                  <small>已完成 {completedCitationCaptureCount} · 队列中 {activeCitationCaptureCount} · 待处理/可重试 {pendingCitationCaptureCount}</small>
+                </div>
+                <div className="citation-batch-actions">
+                  <button
+                    className="outline-button"
+                    type="button"
+                    disabled={pendingCitationCaptureCount === 0 || citationAction !== null}
+                    onClick={() => void startCitationCaptureBatch()}
+                  >
+                    {citationAction === "capture:batch"
+                      ? "批量入队中…"
+                      : pendingCitationCaptureCount === 0
+                        ? "当前来源均已处理"
+                        : `批量入队前 ${Math.min(EVIDENCE_CITATION_INITIAL_LIMIT, pendingCitationCaptureCount)} 条`}
+                  </button>
+                  <button className="table-action" type="button" disabled={citationAction !== null} onClick={() => void refreshLatestCitationCaptureStatus()}>
+                    <RotateCw size={13} />{citationAction === "capture:refresh" ? "刷新中" : "刷新状态"}
+                  </button>
+                </div>
+                {citationBatch && (
+                  <small>本次请求 {citationBatch.requested_count} 条，新增入队 {citationBatch.queued_count} 条，幂等复用 {citationBatch.idempotent_replay_count} 条。</small>
+                )}
+              </div>
+            )}
             {selected.citations.length === 0 ? <DataStateCard title="该样本没有原生引用" desc={selected.sample_status === "valid" ? "无引用是有效证据状态，不补造来源。" : "任务未产生有效回答，不把空引用误写成有效证据结论。"} tone="warning" /> : (
               <ol className="evidence-citations">
                 {(showAllCitations
@@ -3025,7 +3120,14 @@ function EvidencePage() {
                         )}
                       </div>
                       {capture?.status === "completed" && (
-                        <details className="citation-source-capture">
+                        <details
+                          className="citation-source-capture"
+                          onToggle={(event) => {
+                            if (event.currentTarget.open && !capture.segments_loaded) {
+                              void loadCitationCaptureDetail(citation.citation_id, capture.capture_id);
+                            }
+                          }}
+                        >
                           <summary>查看不可变来源正文与审核入口</summary>
                           <dl className="evidence-metadata citation-capture-metadata">
                             <div><dt>内容 SHA-256</dt><dd>{capture.content_sha256}</dd></div>

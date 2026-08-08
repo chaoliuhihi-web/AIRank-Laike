@@ -967,3 +967,25 @@ Limitations and blockers:
 Decision:
 
 - AIRank can now prove where a Qianwen API Citation came from without scanning arbitrary URLs or claiming that source supports the answer. The capability remains `partial`, and AIRank remains commercial `NO-GO`.
+
+## 2026-08-08 Bounded Citation Source Batch Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- A snapshot-scoped batch endpoint accepts 1–50 explicit unique Citation IDs. Before creating any job, it verifies the tenant/snapshot and validates every source URL; one invalid or foreign Citation fails the batch before any capture is queued.
+- Batch context is bound into each request hash. Deterministic child idempotency keys make a partial infrastructure interruption replay-safe; same key/same payload returns the original captures, while same key/different Citation IDs fails with `IDEMPOTENCY_CONFLICT`.
+- A latest-by-snapshot endpoint returns only the newest capture summary per Citation with source segments explicitly unloaded. The Evidence Center replaces per-Citation list loading with one summary call, queues at most 20 pending/failed/blocked sources per click, shows completed/active/retryable counts and loads a full capture only when its details panel opens.
+- Real MySQL and Worker acceptance used an isolated 21-Citation snapshot. Initial drill-down issued one latest-summary GET; batch submission issued one POST plus one refresh; 20/20 jobs completed with content hashes and `source_page_dns_pinned`, leaving the 21st Citation pending by design. Opening one completed item then issued exactly one capture-detail GET.
+- Desktop 1543px and mobile 390x844 had no page-level horizontal overflow; browser console output was 0 errors and 0 warnings. The isolated QA tenant was removed from 13 tables (130 rows total), its project count returned to zero, and two temporary object files were deleted.
+- Full local regression passed `446 passed, 30 skipped`; real MySQL integration passed `28 passed, 2 skipped`; the Node 24 TypeScript/Vite build and the 13-source / 67-row / 21-Skill absorption matrix passed.
+
+Limitations and blockers:
+
+- A completed source capture proves that AIRank stored a content-addressed page and exact text boundaries. It does not prove that the page supports any answer Claim; independent production review and the real 20-case reviewer-quality benchmark remain required.
+- The current multi-source real proof is Qianwen API evidence. Doubao, Kimi and DeepSeek native-source contracts, Consumer Web/App L3, production Yudao, HTTPS S3/MinIO, Kimi key rotation, DeepSeek model migration, customer publishing credentials and elapsed T+7/T+14/T+30 evidence remain open.
+
+Decision:
+
+- AIRank can safely prepare large Provider source sets for governed review without N+1 loading or false support claims. The overall product remains commercial `NO-GO` until the external production, Consumer, human-quality and longitudinal-observation gates pass.
