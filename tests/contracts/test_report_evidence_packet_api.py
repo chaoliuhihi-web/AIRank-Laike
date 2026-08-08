@@ -59,6 +59,7 @@ def packet_data(tenant_id: str, report_id: str, created_by: str) -> ReportEviden
         schema_version="airank.report-evidence-packet.v3",
         status="ready",
         object_ref_id="object_" + "2" * 24,
+        integrity_audit_id=None,
         content_url="/api/v1/evidence-objects/object_" + "2" * 24 + "/content",
         content_type="application/json",
         byte_size=2048,
@@ -160,6 +161,11 @@ def test_report_evidence_packet_uses_trusted_authenticated_actor(
 def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> None:
     statements = [
         """
+        CREATE TABLE airank_projects (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), deleted_at DATETIME
+        )
+        """,
+        """
         CREATE TABLE airank_reports (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           report_type VARCHAR(64), title VARCHAR(255), status VARCHAR(32),
@@ -181,7 +187,7 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         CREATE TABLE airank_answer_snapshots (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           run_id VARCHAR(64), task_id VARCHAR(64), question_id VARCHAR(64),
-          sample_status VARCHAR(32), answer_sha256 CHAR(64), raw_response_sha256 CHAR(64),
+          sample_status VARCHAR(32), answer_text TEXT, answer_sha256 CHAR(64), raw_response_sha256 CHAR(64),
           mention_class VARCHAR(32), brand_rank INT, model_name VARCHAR(128),
           model_version VARCHAR(128), search_enabled INT, locale VARCHAR(32),
           region VARCHAR(64), external_trace_id VARCHAR(128)
@@ -190,7 +196,8 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         """
         CREATE TABLE airank_evidence_snapshots (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
-          answer_snapshot_id VARCHAR(64), screenshot_ref_id VARCHAR(64),
+          answer_snapshot_id VARCHAR(64), raw_response_json TEXT, raw_response_sha256 CHAR(64),
+          screenshot_ref_id VARCHAR(64),
           source_panel_ref_id VARCHAR(64)
         )
         """,
@@ -235,8 +242,35 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         CREATE TABLE airank_citation_source_captures (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           citation_id VARCHAR(64), status VARCHAR(32), evidence_grade VARCHAR(64),
+          response_bytes BIGINT,
           content_sha256 CHAR(64), visible_text_sha256 CHAR(64),
           raw_object_ref_id VARCHAR(64), text_object_ref_id VARCHAR(64), completed_at DATETIME
+        )
+        """,
+        """
+        CREATE TABLE airank_citation_source_segments (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          capture_id VARCHAR(64), source_start INT, source_end INT,
+          segment_text TEXT, segment_sha256 CHAR(64)
+        )
+        """,
+        """
+        CREATE TABLE airank_knowledge_source_contents (
+          knowledge_source_id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64),
+          project_id VARCHAR(64), content_text TEXT, content_sha256 CHAR(64), byte_size BIGINT
+        )
+        """,
+        """
+        CREATE TABLE airank_knowledge_segments (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          knowledge_source_id VARCHAR(64), segment_text TEXT, source_start INT,
+          source_end INT, content_sha256 CHAR(64)
+        )
+        """,
+        """
+        CREATE TABLE airank_fact_revisions (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          fact_text TEXT, content_sha256 CHAR(64)
         )
         """,
         """
@@ -250,10 +284,32 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         CREATE TABLE airank_report_evidence_packets (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
           report_id VARCHAR(64), schema_version VARCHAR(64), report_sha256 CHAR(64),
-          source_record_sha256 CHAR(64), object_ref_id VARCHAR(64), content_sha256 CHAR(64),
+          source_record_sha256 CHAR(64), object_ref_id VARCHAR(64), integrity_audit_id VARCHAR(64), content_sha256 CHAR(64),
           byte_size BIGINT, summary_json TEXT, idempotency_key VARCHAR(160),
           created_by VARCHAR(128), created_at DATETIME,
           UNIQUE (tenant_id, idempotency_key), UNIQUE (tenant_id, content_sha256)
+        )
+        """,
+        """
+        CREATE TABLE airank_evidence_integrity_audits (
+          id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), project_id VARCHAR(64),
+          policy_version VARCHAR(64), scope VARCHAR(32), status VARCHAR(32),
+          entity_count INT, verified_count INT, blocking_finding_count INT,
+          unavailable_count INT, hash_mismatch_count INT, size_mismatch_count INT,
+          metadata_invalid_count INT, manifest_sha256 CHAR(64), idempotency_key VARCHAR(160),
+          request_sha256 CHAR(64), requested_by VARCHAR(64), trace_id VARCHAR(128),
+          started_at DATETIME, completed_at DATETIME, created_at DATETIME,
+          UNIQUE (tenant_id, project_id, idempotency_key)
+        )
+        """,
+        """
+        CREATE TABLE airank_evidence_integrity_findings (
+          id VARCHAR(64) PRIMARY KEY, audit_id VARCHAR(64), tenant_id VARCHAR(64),
+          project_id VARCHAR(64), entity_type VARCHAR(64), entity_id VARCHAR(64),
+          object_type VARCHAR(64), status VARCHAR(32), blocking INT,
+          expected_sha256 CHAR(64), actual_sha256 CHAR(64), expected_byte_size BIGINT,
+          actual_byte_size BIGINT, details_json TEXT, created_at DATETIME,
+          UNIQUE (audit_id, entity_type, entity_id)
         )
         """,
         """
@@ -314,6 +370,9 @@ def seed_publishable_report(repository: MySQLReportEvidencePacketRepository) -> 
     }
     with repository._engine.begin() as conn:
         conn.execute(
+            text("INSERT INTO airank_projects VALUES ('project_report', 'tenant_report', NULL)")
+        )
+        conn.execute(
             text(
                 """
                 INSERT INTO airank_reports (
@@ -337,6 +396,8 @@ def seed_publishable_report(repository: MySQLReportEvidencePacketRepository) -> 
         for index, run_id in enumerate(("scan_baseline", "scan_compare"), start=1):
             task_id = f"task_{index}"
             snapshot_id = f"snap_{index}"
+            answer_text = f"answer {index}"
+            raw_json = json.dumps({"sample": index}, sort_keys=True)
             conn.execute(
                 text(
                     """
@@ -354,7 +415,7 @@ def seed_publishable_report(repository: MySQLReportEvidencePacketRepository) -> 
                     """
                     INSERT INTO airank_answer_snapshots VALUES (
                       :snapshot_id, 'tenant_report', 'project_report', :run_id, :task_id,
-                      'question_1', 'valid', :answer_sha, :raw_sha, :mention_class,
+                      'question_1', 'valid', :answer_text, :answer_sha, :raw_sha, :mention_class,
                       NULL, 'qwen3.6-plus', 'qwen3.6-plus', 1, 'zh-CN', 'CN', :trace_id
                     )
                     """
@@ -363,17 +424,23 @@ def seed_publishable_report(repository: MySQLReportEvidencePacketRepository) -> 
                     "snapshot_id": snapshot_id,
                     "run_id": run_id,
                     "task_id": task_id,
-                    "answer_sha": str(index) * 64,
-                    "raw_sha": str(index + 2) * 64,
+                    "answer_text": answer_text,
+                    "answer_sha": hashlib.sha256(answer_text.encode()).hexdigest(),
+                    "raw_sha": hashlib.sha256(raw_json.encode()).hexdigest(),
                     "mention_class": "not_mentioned" if index == 1 else "recommended",
                     "trace_id": f"provider_request_{index}",
                 },
             )
             conn.execute(
                 text(
-                    "INSERT INTO airank_evidence_snapshots VALUES (:id, 'tenant_report', 'project_report', :snapshot_id, NULL, NULL)"
+                    "INSERT INTO airank_evidence_snapshots VALUES (:id, 'tenant_report', 'project_report', :snapshot_id, :raw_json, :raw_sha, NULL, NULL)"
                 ),
-                {"id": f"evidence_{index}", "snapshot_id": snapshot_id},
+                {
+                    "id": f"evidence_{index}",
+                    "snapshot_id": snapshot_id,
+                    "raw_json": raw_json,
+                    "raw_sha": hashlib.sha256(raw_json.encode()).hexdigest(),
+                },
             )
             conn.execute(
                 text(
@@ -433,19 +500,29 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
             text("SELECT * FROM airank_object_refs WHERE id=:id"),
             {"id": created.object_ref_id},
         ).mappings().one()
-        audit = conn.execute(text("SELECT * FROM airank_audit_events")).mappings().one()
+        audits = conn.execute(
+            text("SELECT * FROM airank_audit_events ORDER BY created_at, event_type")
+        ).mappings().all()
     metadata = json.loads(object_row["metadata_json"])
     payload = storage.get_bytes(metadata["object_key"])
     assert hashlib.sha256(payload).hexdigest() == created.content_sha256
     manifest = json.loads(payload)
     assert manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert manifest["counts"]["samples"] == 2
-    assert manifest["schema_version"] == "airank.report-evidence-packet.v4"
+    assert manifest["schema_version"] == "airank.report-evidence-packet.v5"
+    assert manifest["evidence_integrity"]["status"] == "passed"
+    assert created.integrity_audit_id
     assert manifest["source_governance"]["summary"]["unclassified_host_count"] == 1
     assert "answer_text" not in payload.decode("utf-8")
-    assert audit["event_type"] == "report.evidence_packet_created"
-    assert audit["trace_id"] == "trc_packet_real"
-    assert "idempotency_key" not in audit["payload_json"]
+    assert {audit["event_type"] for audit in audits} == {
+        "evidence.integrity_audited",
+        "report.evidence_packet_created",
+    }
+    packet_audit = next(
+        audit for audit in audits if audit["event_type"] == "report.evidence_packet_created"
+    )
+    assert packet_audit["trace_id"] == "trc_packet_real"
+    assert "idempotency_key" not in packet_audit["payload_json"]
 
 
 def test_mysql_report_packet_restores_missing_content_addressed_object(tmp_path: Path) -> None:
@@ -487,12 +564,21 @@ def test_mysql_report_packet_restores_missing_content_addressed_object(tmp_path:
         events = conn.execute(
             text("SELECT event_type, trace_id, payload_json FROM airank_audit_events ORDER BY created_at")
         ).mappings().all()
-    assert [event["event_type"] for event in events] == [
+    assert [
+        event["event_type"]
+        for event in events
+        if event["event_type"].startswith("report.")
+    ] == [
         "report.evidence_packet_created",
         "report.evidence_packet_object_restored",
     ]
-    assert events[-1]["trace_id"] == "trc_packet_restore"
-    assert json.loads(events[-1]["payload_json"])["restored_by"] == "restoring_user"
+    restore_event = next(
+        event
+        for event in events
+        if event["event_type"] == "report.evidence_packet_object_restored"
+    )
+    assert restore_event["trace_id"] == "trc_packet_restore"
+    assert json.loads(restore_event["payload_json"])["restored_by"] == "restoring_user"
 
 
 def test_mysql_report_packet_rejects_corrupted_existing_object(tmp_path: Path) -> None:
@@ -530,6 +616,51 @@ def test_mysql_report_packet_rejects_corrupted_existing_object(tmp_path: Path) -
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "EVIDENCE_INTEGRITY_FAILED"
+
+
+def test_mysql_report_packet_is_blocked_by_project_integrity_failure(tmp_path: Path) -> None:
+    repository = MySQLReportEvidencePacketRepository(
+        "sqlite+pysqlite:///:memory:",
+        object_storage=FilesystemObjectStorage(tmp_path / "objects"),
+    )
+    create_packet_tables(repository)
+    seed_publishable_report(repository)
+    with repository._engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE airank_evidence_snapshots "
+                "SET raw_response_json='tampered-provider-response' "
+                "WHERE id='evidence_1'"
+            )
+        )
+
+    with pytest.raises(StarletteHTTPException) as exc_info:
+        repository.create_packet(
+            "tenant_report",
+            "report_real",
+            "report-packet-integrity-blocked-v5",
+            "user_report",
+            "trc_packet_integrity_blocked",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "REPORT_EVIDENCE_INTEGRITY_BLOCKED"
+    assert exc_info.value.detail["details"]["blocking_finding_count"] >= 1
+    audit_id = exc_info.value.detail["details"]["integrity_audit_id"]
+    with repository._engine.connect() as conn:
+        finding = conn.execute(
+            text(
+                "SELECT entity_type, entity_id, status "
+                "FROM airank_evidence_integrity_findings "
+                "WHERE audit_id=:audit_id AND blocking=1"
+            ),
+            {"audit_id": audit_id},
+        ).mappings().one()
+    assert dict(finding) == {
+        "entity_type": "evidence_snapshot",
+        "entity_id": "evidence_1",
+        "status": "hash_mismatch",
+    }
 
 
 def test_mysql_report_packet_creates_new_immutable_version_when_source_governance_changes(
@@ -610,7 +741,7 @@ def test_mysql_report_packet_creates_new_immutable_version_when_source_governanc
                 """
                 SELECT COUNT(*) FROM airank_report_evidence_packets
                 WHERE tenant_id='tenant_report' AND report_id='report_real'
-                  AND schema_version='airank.report-evidence-packet.v4'
+                      AND schema_version='airank.report-evidence-packet.v5'
                 """
             )
         ).scalar_one()
@@ -662,7 +793,7 @@ def test_latest_packet_keeps_historical_v1_downloadable(tmp_path: Path) -> None:
                 INSERT INTO airank_report_evidence_packets VALUES (
                   'report_packet_11111111111111111111', 'tenant_report', 'project_report',
                   'report_real', 'airank.report-evidence-packet.v1', :report_sha256,
-                  :source_sha256, 'object_111111111111111111111111', :content_sha256,
+                      :source_sha256, 'object_111111111111111111111111', NULL, :content_sha256,
                   128, :summary_json, 'historical-v1-key', 'historical-reporter',
                   '2026-08-08 11:00:00'
                 )

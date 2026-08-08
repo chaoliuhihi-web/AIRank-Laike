@@ -18,6 +18,17 @@ from airank_evidence.report import canonical_json_sha256
 NOW = datetime(2026, 5, 17, 13, 0, tzinfo=timezone.utc)
 
 
+def passed_integrity() -> dict[str, object]:
+    return {
+        "policy_version": "airank.evidence-integrity.v1",
+        "status": "passed",
+        "entity_count": 9,
+        "verified_count": 9,
+        "blocking_finding_count": 0,
+        "manifest_sha256": "f" * 64,
+    }
+
+
 def source_governance_for(
     citation_index: list[dict],
     *,
@@ -228,6 +239,7 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         fact_accuracy_index=[],
         evidence_object_index=object_index,
         source_governance=source_governance_for(citation_index),
+        integrity_audit=passed_integrity(),
     )
     replay = build_report_evidence_packet(
         report_record=publishable_report_record(),
@@ -236,12 +248,14 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         fact_accuracy_index=[],
         evidence_object_index=object_index,
         source_governance=source_governance_for(citation_index),
+        integrity_audit=passed_integrity(),
     )
 
     assert first.packet_id == replay.packet_id
     assert first.sha256 == replay.sha256
     assert first.canonical_bytes == replay.canonical_bytes
     assert first.manifest["quality_gates"]["eligible"] is True
+    assert first.manifest["evidence_integrity"] == passed_integrity()
     assert first.manifest["measurement"]["formulas"]["mention_rate"].endswith("valid_sample_count")
     assert first.manifest["measurement"]["known_limitations"] == [
         "citation_support_not_evaluated",
@@ -310,6 +324,7 @@ def test_report_evidence_packet_rejects_ineligible_report(mutator, message: str)
             fact_accuracy_index=[],
             evidence_object_index=[],
             source_governance=source_governance_for([]),
+            integrity_audit=passed_integrity(),
         )
 
 
@@ -389,6 +404,7 @@ def test_report_evidence_packet_binds_fact_review_hash_and_metrics() -> None:
         ],
         evidence_object_index=[],
         source_governance=source_governance_for([]),
+        integrity_audit=passed_integrity(),
     )
 
     assert packet.manifest["counts"]["fact_claims"] == 1
@@ -467,6 +483,7 @@ def test_report_evidence_packet_recomputes_independently_reviewed_citation_suppo
         fact_accuracy_index=[],
         evidence_object_index=[],
         source_governance=source_governance_for(citations),
+        integrity_audit=passed_integrity(),
     )
     assert packet.manifest["measurement"]["baseline_metrics"]["citation_support"] == 1.0
     assert packet.manifest["citation_index"][0]["support_reviews"][0]["review_case_status"] == "agreed"
@@ -485,6 +502,7 @@ def test_report_evidence_packet_recomputes_independently_reviewed_citation_suppo
             fact_accuracy_index=[],
             evidence_object_index=[],
             source_governance=source_governance_for(citations),
+            integrity_audit=passed_integrity(),
         )
 
 
@@ -527,10 +545,11 @@ def test_report_evidence_packet_binds_effective_source_governance_hashes() -> No
         fact_accuracy_index=[],
         evidence_object_index=[],
         source_governance=source_governance_for(citations, reviewed=True),
+        integrity_audit=passed_integrity(),
     )
 
     summary = packet.manifest["source_governance"]["summary"]
-    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v4"
+    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v5"
     assert summary["source_host_count"] == 1
     assert summary["authority_coverage_rate"] == 1.0
     assert summary["authority_summary_eligible"] is True
@@ -546,4 +565,5 @@ def test_report_evidence_packet_binds_effective_source_governance_hashes() -> No
             fact_accuracy_index=[],
             evidence_object_index=[],
             source_governance=tampered,
+            integrity_audit=passed_integrity(),
         )

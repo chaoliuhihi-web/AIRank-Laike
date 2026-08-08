@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/evidence_integrity_audit_request.schema.json",
+  "title": "AIRank Evidence Integrity Audit Request",
+  "type": "object",
+  "required": ["scope"],
+  "additionalProperties": false,
+  "properties": {
+    "scope": { "const": "project" }
+  }
+}

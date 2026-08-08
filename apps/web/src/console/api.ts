@@ -113,9 +113,10 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4" | "airank.report-evidence-packet.v5";
   status: "ready";
   object_ref_id: string;
+  integrity_audit_id: string | null;
   content_url: string;
   content_type: "application/json";
   byte_size: number;
@@ -338,6 +339,45 @@ export type EvidenceObject = {
   byte_size: number | null;
   sha256: string | null;
   content_url: string | null;
+};
+
+export type EvidenceIntegrityFinding = {
+  finding_id: string;
+  entity_type: string;
+  entity_id: string;
+  object_type: string | null;
+  status: "verified" | "metadata_invalid" | "unavailable" | "driver_mismatch" | "hash_mismatch" | "size_mismatch" | "scope_too_large";
+  blocking: boolean;
+  expected_sha256: string | null;
+  actual_sha256: string | null;
+  expected_byte_size: number | null;
+  actual_byte_size: number | null;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
+export type EvidenceIntegrityAudit = {
+  audit_id: string;
+  tenant_id: string;
+  project_id: string;
+  policy_version: "airank.evidence-integrity.v1";
+  scope: "project";
+  status: "passed" | "blocked" | "failed";
+  entity_count: number;
+  verified_count: number;
+  blocking_finding_count: number;
+  unavailable_count: number;
+  hash_mismatch_count: number;
+  size_mismatch_count: number;
+  metadata_invalid_count: number;
+  manifest_sha256: string;
+  request_sha256: string;
+  requested_by: string;
+  trace_id: string;
+  started_at: string;
+  completed_at: string;
+  findings: EvidenceIntegrityFinding[];
+  idempotent_replay: boolean;
 };
 
 export type AnswerSampleDetail = AnswerSample & {
@@ -1904,6 +1944,39 @@ export function fetchMeasurementQuality(
     "trc_web_measurement_quality",
     signal,
   );
+}
+
+export function fetchLatestEvidenceIntegrityAudit(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<EvidenceIntegrityAudit | null> {
+  return fetchData(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-integrity-audits/latest`,
+    "trc_web_evidence_integrity_latest",
+    signal,
+  );
+}
+
+export async function runEvidenceIntegrityAudit(projectId: string): Promise<EvidenceIntegrityAudit> {
+  const randomPart = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await fetch(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/evidence-integrity-audits`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `evidence-integrity-${randomPart}`,
+        ...buildApiHeaders("trc_web_evidence_integrity_run"),
+      },
+      body: JSON.stringify({ scope: "project" }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Evidence integrity audit failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: EvidenceIntegrityAudit }).data;
 }
 
 export async function fetchEvidenceObject(objectRefId: string, signal?: AbortSignal): Promise<Blob> {

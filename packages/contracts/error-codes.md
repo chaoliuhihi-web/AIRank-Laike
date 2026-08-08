@@ -146,6 +146,8 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |
 | `EVIDENCE_OBJECT_UNAVAILABLE` | 503 | 对象存储不可用、配置不匹配或对象无法读取 |
 | `EVIDENCE_INTEGRITY_FAILED` | 409 | 对象内容与数据库记录的 SHA-256 或字节数不一致 |
+| `EVIDENCE_INTEGRITY_AUDIT_NOT_FOUND` | 404 | 项目证据完整性巡检不存在 |
+| `REPORT_EVIDENCE_INTEGRITY_BLOCKED` | 409 | 项目证据完整性巡检未通过，禁止生成客户证据包 |
 
 ## 内部 Skill
 

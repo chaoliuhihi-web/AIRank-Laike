@@ -112,7 +112,7 @@ from airank_xinghe_adapter import CapabilityProbe, CapabilityStatus, ProbeConfig
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260808_0025"
+EXPECTED_ALEMBIC_HEAD = "20260808_0026"
 
 
 def require_real_flag(flag: str) -> None:
@@ -178,7 +178,17 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 65
+        assert table_count == 67
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_report_evidence_packets'
+                  AND column_name='integrity_audit_id'
+                """
+            )
+        ).scalar_one() == 1
         assert conn.execute(
             text(
                 """
@@ -2121,7 +2131,8 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         manifest_bytes = storage.get_bytes(object_metadata["object_key"])
         assert hashlib.sha256(manifest_bytes).hexdigest() == packet.content_sha256
         manifest = json.loads(manifest_bytes)
-        assert manifest["schema_version"] == "airank.report-evidence-packet.v4"
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v5"
+        assert manifest["evidence_integrity"]["status"] == "passed"
         assert manifest["counts"]["samples"] == 6
         assert manifest["counts"]["citations"] == 6
         assert sum(

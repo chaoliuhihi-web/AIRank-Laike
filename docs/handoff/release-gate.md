@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v4` | v4 质量门禁、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3 只读兼容，HTML/PDF/签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v5` | v4 测量质量门禁 + `airank.evidence-integrity.v1` 项目全库巡检、公式/限制/风险、sample/citation/fact-accuracy/source-governance/object index、最终 production 双人审核、巡检 manifest、内容寻址 SHA-256、packet 级 download receipt；历史 v1/v2/v3/v4 只读兼容，HTML/PDF/签名仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter
@@ -875,3 +875,26 @@ Limitations and blockers:
 Decision:
 
 - The missing double-review workflow is closed at contract, storage, API, metric, report and browser levels. Reviewer-quality evidence remains blocked, and AIRank remains commercial `NO-GO`.
+
+## 2026-08-08 Project Evidence Integrity and Packet v5 Gate
+
+Release Gate: PARTIAL / COMMERCIAL NO-GO
+
+Passed:
+
+- Alembic `20260808_0026` adds immutable project evidence-integrity audits, per-entity findings and an optional audit link on report evidence packets. Historical packet rows remain readable with a null link.
+- `airank.evidence-integrity.v1` verifies Answer/EvidenceSnapshot hashes and links, CitationCapture raw/text objects, exact citation-source boundaries, KnowledgeSource content objects, exact knowledge-segment boundaries, FactRevision hashes and every non-report evidence object reference. Empty projects and scopes above 10,000 entities fail closed.
+- All verified and blocking findings are persisted. The deterministic evidence-state manifest excludes actor, request and wall-clock metadata, so identical evidence deduplicates while changed evidence creates a new audit basis.
+- New customer artifacts use `airank.report-evidence-packet.v5`. Packet generation first runs the project audit, embeds its summary and manifest hash, and returns `409 REPORT_EVIDENCE_INTEGRITY_BLOCKED` before delivery if any entity is missing, corrupt or out of bounds. Historical v1/v2/v3/v4 packets remain read-only compatible and do not claim a v5 audit.
+- Contract tests cover an empty project, tenant isolation, a valid nine-entity evidence graph, tampered answer content, deleted objects, response-schema validation and report generation blocked by a corrupted Provider raw response.
+- A real MySQL project completed a browser-triggered audit with 36/36 entities verified and zero blockers. The Evidence Center displays policy, full manifest SHA-256 and entity-level blocking rows without fabricated scores. Desktop application logs were zero warning/error; a same-origin 390×844 container measured html/body width at 390px with no page-level horizontal overflow.
+
+Limitations and blockers:
+
+- The audit proves source-evidence integrity at one point in time. Deterministic rebuilding and comparison of all derived metric/report tables is not yet implemented, and large projects need partitioned audit execution rather than raising the 10,000-entity safety cap.
+- The mobile container emitted one browser-tool MutationObserver instrumentation error that does not occur in the application source; layout assertions passed, but this run is not claimed as a zero-console mobile E2E.
+- Production Yudao authentication, production HTTPS S3/MinIO, Consumer Web/App L3, real customer reviewer benchmark, publishing credentials, elapsed T+7/T+14/T+30 evidence, Kimi credential rotation and DeepSeek model migration remain open.
+
+Decision:
+
+- Project evidence integrity is now a hard customer-delivery gate rather than an informal assumption. AIRank remains commercial `NO-GO` until the external production, Consumer, human-quality and longitudinal-observation gates pass.

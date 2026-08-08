@@ -10,9 +10,10 @@ from typing import Any
 from .source_registry import normalize_source_host
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v4"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v5"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
+EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 METRIC_FORMULAS: dict[str, str] = {
@@ -307,6 +308,7 @@ def build_report_evidence_packet(
     fact_accuracy_index: list[dict[str, Any]],
     evidence_object_index: list[dict[str, Any]],
     source_governance: dict[str, Any],
+    integrity_audit: dict[str, Any],
 ) -> ReportEvidencePacket:
     """Build a deterministic, immutable manifest without copying raw answer bodies."""
 
@@ -328,6 +330,21 @@ def build_report_evidence_packet(
         raise ReportEvidencePacketError("baseline and compare run must be distinct")
     if not sample_index:
         raise ReportEvidencePacketError("sample_index is empty")
+    if integrity_audit.get("policy_version") != EVIDENCE_INTEGRITY_POLICY_VERSION:
+        raise ReportEvidencePacketError("integrity_audit uses an unsupported policy")
+    if integrity_audit.get("status") != "passed":
+        raise ReportEvidencePacketError("integrity_audit is not passed")
+    integrity_entity_count = integrity_audit.get("entity_count")
+    integrity_verified_count = integrity_audit.get("verified_count")
+    if (
+        not isinstance(integrity_entity_count, int)
+        or integrity_entity_count < 1
+        or integrity_verified_count != integrity_entity_count
+        or integrity_audit.get("blocking_finding_count") != 0
+    ):
+        raise ReportEvidencePacketError("integrity_audit counts are inconsistent")
+    if not SHA256_RE.fullmatch(str(integrity_audit.get("manifest_sha256") or "")):
+        raise ReportEvidencePacketError("integrity_audit manifest hash is invalid")
     expected_run_ids = {
         str(evidence_index["baseline_run_id"]),
         str(evidence_index["compare_run_id"]),
@@ -644,6 +661,14 @@ def build_report_evidence_packet(
             "baseline": baseline_quality,
             "compare": compare_quality,
             "eligible": True,
+        },
+        "evidence_integrity": {
+            "policy_version": EVIDENCE_INTEGRITY_POLICY_VERSION,
+            "status": "passed",
+            "entity_count": integrity_entity_count,
+            "verified_count": integrity_verified_count,
+            "blocking_finding_count": 0,
+            "manifest_sha256": integrity_audit["manifest_sha256"],
         },
         "measurement": {
             "baseline_metrics": metrics.get("baseline_metrics", {}),

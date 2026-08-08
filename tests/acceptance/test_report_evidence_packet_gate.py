@@ -46,7 +46,8 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "raise RuntimeError" in version_history_migration
 
     for required in (
-        "airank.report-evidence-packet.v4",
+        "airank.report-evidence-packet.v5",
+        "evidence_integrity",
         "sample_index",
         "citation_index",
         "fact_accuracy_index",
@@ -69,6 +70,7 @@ def test_customer_report_evidence_packet_has_immutable_delivery_contract() -> No
     assert "REPORT_EVIDENCE_MISSING" in repository
     assert "INTEGRATION_CAPABILITY_BLOCKED" in repository
     assert "report.evidence_packet_created" in repository
+    assert "REPORT_EVIDENCE_INTEGRITY_BLOCKED" in repository
     assert "review_record_sha256" in repository
     assert "revision_record_sha256" in repository
     assert "_find_latest_for_report" in repository

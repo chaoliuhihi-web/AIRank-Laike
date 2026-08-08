@@ -90,6 +90,7 @@ import {
   fetchCitationSourceCapture,
   fetchCitationSourceCaptures,
   fetchEvidenceObject,
+  fetchLatestEvidenceIntegrityAudit,
   fetchEvidenceReviewCases,
   fetchFactConflicts,
   fetchFactAccuracy,
@@ -128,6 +129,7 @@ import {
   submitEvidenceReviewDecision,
   reviewSourceRegistryEntry,
   runBrandCheck,
+  runEvidenceIntegrityAudit,
   storeAuthSession,
   updateProviderRoute,
   updateKnowledgeSyncPolicy,
@@ -146,6 +148,7 @@ import {
   type FactAccuracyBundle,
   type EvidenceReviewCase,
   type EvidenceReviewQueue,
+  type EvidenceIntegrityAudit,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
   type FactRevision,
@@ -2129,6 +2132,9 @@ function EvidencePage() {
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { label: string; rationale: string }>>({});
   const [sourceRegistry, setSourceRegistry] = useState<SourceRegistryEntry[]>([]);
   const [sourceRegistryError, setSourceRegistryError] = useState<string | null>(null);
+  const [integrityAudit, setIntegrityAudit] = useState<EvidenceIntegrityAudit | null>(null);
+  const [integrityAuditError, setIntegrityAuditError] = useState<string | null>(null);
+  const [integrityAuditRunning, setIntegrityAuditRunning] = useState(false);
   const [sourceReviewHost, setSourceReviewHost] = useState("");
   const [sourceReviewBusy, setSourceReviewBusy] = useState(false);
   const [sourceReviewForm, setSourceReviewForm] = useState({
@@ -2161,6 +2167,26 @@ function EvidencePage() {
         if (controller.signal.aborted) return;
         setSourceRegistry([]);
         setSourceRegistryError(error instanceof Error ? error.message : "来源注册表接口不可用");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id) {
+      setIntegrityAudit(null);
+      setIntegrityAuditError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchLatestEvidenceIntegrityAudit(project.id, controller.signal)
+      .then((audit) => {
+        setIntegrityAudit(audit);
+        setIntegrityAuditError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setIntegrityAudit(null);
+        setIntegrityAuditError(error instanceof Error ? error.message : "证据完整性巡检接口不可用");
       });
     return () => controller.abort();
   }, [project.id]);
@@ -2595,6 +2621,19 @@ function EvidencePage() {
       setSourceReviewBusy(false);
     }
   };
+  const executeIntegrityAudit = async () => {
+    if (!project.id || integrityAuditRunning) return;
+    setIntegrityAuditRunning(true);
+    setIntegrityAuditError(null);
+    try {
+      const audit = await runEvidenceIntegrityAudit(project.id);
+      setIntegrityAudit(audit);
+    } catch (error) {
+      setIntegrityAuditError(error instanceof Error ? error.message : "证据完整性巡检执行失败");
+    } finally {
+      setIntegrityAuditRunning(false);
+    }
+  };
   const selectedProviderRequest = selected?.request_metadata.provider_request;
   const selectedSourcePanelStatus = selectedProviderRequest
     && typeof selectedProviderRequest === "object"
@@ -2616,6 +2655,54 @@ function EvidencePage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => { setSelectedRunId(event.target.value); setSelected(null); }}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.run_id} · {run.status}</option>)}</select></label>
         <span>顶部统计由服务端按完整批次聚合，不跨 run 混算；表格显示最近 {samples.length}/{sampleSummary.total} 条。</span>
       </div>
+      <Panel title="证据全库完整性">
+        <div className="integrity-audit-head">
+          <p className="rail-caption">
+            按项目逐条复验原始回答、Provider 原始响应、引用抓取与精确边界、知识正文、事实修订和对象存储。任何缺失或篡改都会阻断新客户证据包。
+          </p>
+          <button
+            className="airank-console-primary-button"
+            type="button"
+            disabled={!project.id || integrityAuditRunning}
+            onClick={() => void executeIntegrityAudit()}
+          >
+            {integrityAuditRunning ? "正在逐条校验…" : "执行全库巡检"}
+          </button>
+        </div>
+        {integrityAuditError && <DataStateCard title="证据完整性巡检失败" desc={integrityAuditError} tone="danger" />}
+        {!integrityAudit && !integrityAuditError ? (
+          <DataStateCard title="尚未执行项目级完整性巡检" desc="生成客户证据包前必须执行；系统不会用对象存在或单条读取成功冒充全库完整。" tone="warning" />
+        ) : integrityAudit ? (
+          <>
+            <dl className="evidence-metadata integrity-audit-metrics">
+              <div><dt>巡检结论</dt><dd><Badge tone={integrityAudit.status === "passed" ? "success" : "danger"}>{integrityAudit.status === "passed" ? "通过" : "阻断"}</Badge></dd></div>
+              <div><dt>逐条通过</dt><dd>{integrityAudit.verified_count} / {integrityAudit.entity_count}</dd></div>
+              <div><dt>阻断项</dt><dd>{integrityAudit.blocking_finding_count}</dd></div>
+              <div><dt>完成时间</dt><dd>{formatDateTime(integrityAudit.completed_at)}</dd></div>
+            </dl>
+            <p className="integrity-audit-hash">
+              策略 {integrityAudit.policy_version} · Manifest SHA-256 <code>{integrityAudit.manifest_sha256}</code>
+            </p>
+            {integrityAudit.blocking_finding_count > 0 && (
+              <div className="airank-console-card table-card evidence-table-wrap">
+                <table className="question-table integrity-finding-table">
+                  <thead><tr><th>证据类型</th><th>对象</th><th>异常</th><th>预期 / 实际</th></tr></thead>
+                  <tbody>
+                    {integrityAudit.findings.filter((finding) => finding.blocking).map((finding) => (
+                      <tr key={finding.finding_id}>
+                        <td><strong>{finding.entity_type}</strong><small>{finding.object_type ?? "数据库证据"}</small></td>
+                        <td><strong>{finding.entity_id}</strong><small>finding {finding.finding_id}</small></td>
+                        <td><Badge tone="danger">{finding.status}</Badge><small>{typeof finding.details.reason === "string" ? finding.details.reason : "完整性校验未通过"}</small></td>
+                        <td><code>{finding.expected_sha256?.slice(0, 16) ?? "—"}</code><small><code>{finding.actual_sha256?.slice(0, 16) ?? "—"}</code></small></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : null}
+      </Panel>
       <Panel title={`引用来源注册表 · ${sourceRegistry.length} 个已观测域名`}>
         <p className="rail-caption">
           这里只汇总当前项目 Citation 记录中实际出现的精确域名。未知来源保留为 unclassified；分类、权威度与用途必须由人工给出依据并形成追加版本，不能由域名或模型自动推断。

@@ -164,6 +164,8 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
     "EVIDENCE_INTEGRITY_FAILED": (409, "Evidence object integrity verification failed"),
+    "EVIDENCE_INTEGRITY_AUDIT_NOT_FOUND": (404, "Evidence integrity audit not found"),
+    "REPORT_EVIDENCE_INTEGRITY_BLOCKED": (409, "Report evidence integrity audit is blocked"),
     "INTEGRATION_CAPABILITY_BLOCKED": (503, "Integration capability is blocked"),
     "INTEGRATION_CAPABILITY_DISABLED": (503, "Integration capability is disabled"),
     "PROVIDER_ROUTE_NOT_FOUND": (404, "Provider route not found"),
@@ -5903,6 +5905,13 @@ except ImportError:  # pragma: no cover
     from evidence_routes import router as evidence_router  # type: ignore[no-redef]
 
 app.include_router(evidence_router)
+
+try:
+    from .evidence_integrity_routes import router as evidence_integrity_router
+except ImportError:  # pragma: no cover
+    from evidence_integrity_routes import router as evidence_integrity_router  # type: ignore[no-redef]
+
+app.include_router(evidence_integrity_router)
 
 try:
     from .question_routes import router as question_router

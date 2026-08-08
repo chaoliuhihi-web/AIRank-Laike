@@ -105,11 +105,12 @@
 95. 发布提交中心从只读状态页升级为真实交付工作台：可从当前已批准内容创建 export、WordPress 或 HTTP 不可变发布包，外部端点只接受 HTTPS，站点凭证明确只由 Worker 安全注入；可登记真实发布 URL、`completed + baseline` 的 T0 以及成对截图对象引用/SHA-256。服务端会复核截图对象的租户、项目和 hash 后才建立 T0/T+7/T+14/T+30，错误码已同步 API registry 和公开契约。隔离真实 MySQL 浏览器完成 `approved asset → packaged → published → 4 windows`，客户端伪造操作者被登录身份覆盖，桌面与移动无页面级横向溢出且 console `0 error / 0 warning`；验收租户清理后保持 0 行。真实客户 WordPress/HTTP 回执、内容更新和撤回仍为 `partial`。
 96. 再次深度复核 `yaojingang` 账号当前 13 个公开仓库，锁定的 13 个 HEAD 全部未漂移；不因仓库数量扩大 AIRank 范围。结合 `yao-geo-knowledge-base-builder` 和 GEOFlow 的 Source/Revision、增量切片、持久队列与恢复模式，新增 `20260808_0024`、知识来源同步 API、Scheduler、Worker 和事实库工作台：只接受客户明确登记的公开 HTTP(S) URL，抓取统一经过 DNS 固定安全出站；每次运行不可变保存原始页、可见正文、双 hash、最终 URL、连接 IP、重定向和对象引用。真实浏览器首次抓取 `example.com` 得到 `changed` 并追加 v2，v1 保留为 stale；第二次同内容得到 `unchanged` 且没有制造 v3。瞬时网络/存储失败按 5/10 秒退避，最多 3 次，重试期间同一 run 保持 queued 并阻止重复触发。运行与 UI 均明确不自动发现未授权站点；向量重嵌入和混合检索仍为 `partial`。
 97. 深度吸收 `geo-citation-lab` 标注评测与 `haidian` 确定性审核边界，新增 `20260808_0025` 独立证据复核域：引用支持和事实准确性通过统一 case 创建第一审核，第二审核人与第三裁决人必须使用不同账号；任务终结前只向当前审核人显示自己的决定，避免锚定偏差。双人一致直接终结，分歧必须第三人裁决；`production` 与 `benchmark` 严格隔离，旧单人审核、待复核、分歧未裁决和 benchmark 均不进入客户指标。审核质量同时计算原始一致率与多分类 Cohen's kappa；至少 20 个完成双人样本且 kappa ≥ 0.80 才通过，样本够但一致性差仍保持阻断。报告包升级为 `airank.report-evidence-packet.v4`，引用支持度和事实准确率从最终 production case 重新计算并校验来源边界/hash。当前真实项目 benchmark 为 0/20，产品界面明确显示阻断，不伪造质量就绪。
+98. 深度吸收 `yao-geo-skills` 的证据契约和 `haidian` 的确定性包校验方法，新增 `20260808_0026` 项目级 `airank.evidence-integrity.v1`：逐条复核 Answer/EvidenceSnapshot、引用抓取与来源边界、知识正文与切片边界、事实修订，以及非报告对象存储的 hash、字节数、驱动和可用性；空项目、超过 10,000 个实体、任一缺失/篡改/越界均失败关闭，所有 verified/blocking finding 与证据状态 manifest 均不可变持久化。报告包升级为 `airank.report-evidence-packet.v5`，生成前强制执行巡检并绑定 manifest，失败返回 `REPORT_EVIDENCE_INTEGRITY_BLOCKED`；历史 v1–v4 继续只读且 `integrity_audit_id=null`。真实 MySQL 项目浏览器巡检为 36/36、0 blocker，桌面控制台无 warning/error；390×844 同源移动容器 html/body 宽度均为 390px、无页面级横向溢出。当前只证明该项目当时的证据完整性，不替代全库派生表重建、人工 benchmark、Consumer Web/App 或生产基础设施门禁。
 
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `427 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
+- `python3 -m pytest -q`：当前全仓为 `433 passed, 30 skipped`；真实 MySQL、Yudao 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。
 - `python3 scripts/evaluate_core_skills.py`：10 Skill / 30 cases / 30 passed / 0 promotion eligible / 10 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
@@ -124,8 +125,8 @@
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260808_0025`；65 张 AIRank 表校验通过；新增独立证据复核 case、审核角色与用途隔离，同时继续覆盖来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
-- 本地真实 MySQL integration：`28 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增盲态双人一致、分歧裁决、benchmark 排除与 v4 packet 重算，并继续覆盖来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0025`。
+- MySQL：Alembic `20260808_0026`；67 张 AIRank 表校验通过；新增项目证据完整性巡检、finding 和报告包关联，同时继续覆盖独立复核、来源同步、FactAtom 主体约束、Provider 请求契约、内容寻址证据包历史、Source Registry、事实准确率、来源页 capture、容量租约、页面审计、观察 provenance、PII 和扫描 attempt。
+- 本地真实 MySQL integration：`28 passed, 2 skipped`（Yudao 与独立 S3 开关按环境跳过）。新增全库证据巡检、v5 报告包绑定及篡改失败关闭，并继续覆盖盲态双人复核、来源同步、对象恢复/防篡改、Provider 请求契约、凭证轮换、空回答失败用量、路由控制、来源页抓取、容量竞争/TTL、问题治理、Publisher、attempt 与复测链。真实 `airank_laike` 已升级至 `0026`。
 - 页面干预真实 MySQL 验收：通用 FAQ 蓝图继续通过来源→事实→批准→审核→`airank.publish-snapshot.v2`；专用比较使用 2 主体×10 维度生成 20 条 Claim/Support，专用解释使用七类角色/12 条事实/1400+ 证据字符生成 12 条 Claim/Support，两者均通过内容审校和不可变导出。所有测试租户都在 finally 清理，避免把验收事实冒充客户数据。
 - 专用内容真实 HTTP/MySQL 验收：独立 3.11 API 进程和隔离租户通过登录、项目、32 个来源/主体事实、逐事实审核、Comparison/Explainer 创建、内容审校与 export 发布包；客户端伪造的创建人/审核人均被认证会话 `http-qa` 覆盖。结果为 Comparison 10 段/20 Claim/20 Support、Explainer 7 段/12 Claim/12 Support，两个发布包均为 `packaged`；验收后 62 张租户表合计 0 行残留。
 - 发布中心真实浏览器/MySQL 验收：隔离租户从已批准内容点击创建 export 不可变包，绑定真实 URL、不可变截图对象及 SHA-256、已完成 baseline 后变为 `published`，并持久化 4 个 scheduled 观察窗口；快照创建人与证据登记人均由可信会话 `browser-publish-qa` 覆盖。API 对单边截图字段返回 422，对 hash 不匹配返回 `409 PUBLICATION_SCREENSHOT_EVIDENCE_INVALID`；1024px 桌面及移动窄视口均无页面级横向溢出，console `0 error / 0 warning`，隔离租户数据随后精确清理为 0。

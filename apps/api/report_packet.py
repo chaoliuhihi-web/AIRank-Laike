@@ -22,6 +22,17 @@ from airank_evidence import (
     normalize_source_host,
 )
 
+try:
+    from .evidence_integrity_routes import (
+        EvidenceIntegrityRepository,
+        MySQLEvidenceIntegrityRepository,
+    )
+except ImportError:  # pragma: no cover - supports direct uvicorn execution.
+    from evidence_integrity_routes import (  # type: ignore[no-redef]
+        EvidenceIntegrityRepository,
+        MySQLEvidenceIntegrityRepository,
+    )
+
 
 class ReportEvidencePacketSummary(BaseModel):
     sample_count: int
@@ -47,9 +58,11 @@ class ReportEvidencePacketData(BaseModel):
         "airank.report-evidence-packet.v2",
         "airank.report-evidence-packet.v3",
         "airank.report-evidence-packet.v4",
+        "airank.report-evidence-packet.v5",
     ]
     status: Literal["ready"]
     object_ref_id: str
+    integrity_audit_id: Optional[str]
     content_url: str
     content_type: Literal["application/json"]
     byte_size: int
@@ -115,15 +128,25 @@ class MySQLReportEvidencePacketRepository:
         *,
         object_storage: ObjectStorage | None = None,
         object_storage_factory: Callable[[], ObjectStorage] = build_object_storage_from_env,
+        integrity_repository: EvidenceIntegrityRepository | None = None,
     ) -> None:
         self._engine = create_engine(database_url, pool_pre_ping=True)
         self._object_storage = object_storage
         self._object_storage_factory = object_storage_factory
+        self._integrity_repository = integrity_repository
 
     def _storage(self) -> ObjectStorage:
         if self._object_storage is None:
             self._object_storage = self._object_storage_factory()
         return self._object_storage
+
+    def _integrity(self) -> EvidenceIntegrityRepository:
+        if self._integrity_repository is None:
+            self._integrity_repository = MySQLEvidenceIntegrityRepository(
+                engine=self._engine,
+                object_storage=self._storage(),
+            )
+        return self._integrity_repository
 
     def create_packet(
         self,
@@ -169,6 +192,38 @@ class MySQLReportEvidencePacketRepository:
                 evaluation_clock=created_at,
             )
 
+        integrity_key = "report-integrity:" + hashlib.sha256(
+            f"{tenant_id}:{report_id}:{idempotency_key}".encode("utf-8")
+        ).hexdigest()
+        integrity_audit = self._integrity().run(
+            tenant_id,
+            str(report_row["project_id"]),
+            idempotency_key=integrity_key,
+            requested_by=created_by,
+            trace_id=trace_id,
+        )
+        if integrity_audit.status != "passed":
+            raise StarletteHTTPException(
+                status_code=409,
+                detail={
+                    "code": "REPORT_EVIDENCE_INTEGRITY_BLOCKED",
+                    "details": {
+                        "report_id": report_id,
+                        "integrity_audit_id": integrity_audit.audit_id,
+                        "blocking_finding_count": integrity_audit.blocking_finding_count,
+                        "manifest_sha256": integrity_audit.manifest_sha256,
+                    },
+                },
+            )
+        integrity_manifest = {
+            "policy_version": integrity_audit.policy_version,
+            "status": integrity_audit.status,
+            "entity_count": integrity_audit.entity_count,
+            "verified_count": integrity_audit.verified_count,
+            "blocking_finding_count": integrity_audit.blocking_finding_count,
+            "manifest_sha256": integrity_audit.manifest_sha256,
+        }
+
         try:
             packet = build_report_evidence_packet(
                 report_record=report_record,
@@ -177,6 +232,7 @@ class MySQLReportEvidencePacketRepository:
                 fact_accuracy_index=fact_accuracy_index,
                 evidence_object_index=object_index,
                 source_governance=source_governance,
+                integrity_audit=integrity_manifest,
             )
         except ReportEvidencePacketError as exc:
             message = str(exc)
@@ -286,12 +342,12 @@ class MySQLReportEvidencePacketRepository:
                     {insert_prefix} INTO airank_report_evidence_packets (
                       id, tenant_id, project_id, report_id, schema_version,
                       report_sha256, source_record_sha256, object_ref_id,
-                      content_sha256, byte_size, summary_json, idempotency_key,
+                      integrity_audit_id, content_sha256, byte_size, summary_json, idempotency_key,
                       created_by, created_at
                     ) VALUES (
                       :id, :tenant_id, :project_id, :report_id, :schema_version,
                       :report_sha256, :source_record_sha256, :object_ref_id,
-                      :content_sha256, :byte_size, :summary_json, :idempotency_key,
+                      :integrity_audit_id, :content_sha256, :byte_size, :summary_json, :idempotency_key,
                       :created_by, :created_at
                     )
                     """
@@ -305,6 +361,7 @@ class MySQLReportEvidencePacketRepository:
                     "report_sha256": report_record["report_sha256"],
                     "source_record_sha256": packet.manifest["report"]["source_record_sha256"],
                     "object_ref_id": object_ref_id,
+                    "integrity_audit_id": integrity_audit.audit_id,
                     "content_sha256": packet.sha256,
                     "byte_size": stored.byte_size,
                     "summary_json": json.dumps(packet.manifest["counts"], sort_keys=True),
@@ -363,6 +420,7 @@ class MySQLReportEvidencePacketRepository:
                             "packet_id": packet.packet_id,
                             "content_sha256": packet.sha256,
                             "object_ref_id": object_ref_id,
+                            "integrity_audit_id": integrity_audit.audit_id,
                             "created_by": created_by,
                         },
                         sort_keys=True,
@@ -1229,6 +1287,11 @@ class MySQLReportEvidencePacketRepository:
             schema_version=str(row["schema_version"]),
             status="ready",
             object_ref_id=str(row["object_ref_id"]),
+            integrity_audit_id=(
+                str(row["integrity_audit_id"])
+                if row.get("integrity_audit_id")
+                else None
+            ),
             content_url=f"/api/v1/evidence-objects/{row['object_ref_id']}/content",
             content_type=str(row["content_type"]),
             byte_size=int(row["byte_size"]),

@@ -1585,6 +1585,50 @@ button:disabled {
   margin-bottom: 20px;
 }
 
+.integrity-audit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.integrity-audit-head .rail-caption {
+  max-width: 820px;
+  margin: 0;
+}
+
+.integrity-audit-head .airank-console-primary-button {
+  flex: 0 0 auto;
+}
+
+.integrity-audit-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.integrity-audit-hash {
+  margin: 14px 0 18px;
+  color: var(--console-text-muted);
+  font: var(--console-font-meta);
+  overflow-wrap: anywhere;
+}
+
+.integrity-audit-hash code,
+.integrity-finding-table code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.integrity-finding-table {
+  min-width: 880px;
+}
+
+.integrity-finding-table td small {
+  display: block;
+  margin-top: 4px;
+  color: var(--console-text-muted);
+  overflow-wrap: anywhere;
+}
+
 .evidence-table {
   min-width: 980px;
 }
@@ -4099,6 +4143,18 @@ button:disabled {
   .evidence-toolbar {
     display: grid;
     align-items: stretch;
+  }
+
+  .integrity-audit-head {
+    display: grid;
+  }
+
+  .integrity-audit-head .airank-console-primary-button {
+    width: 100%;
+  }
+
+  .integrity-audit-metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .page-audit-launcher,

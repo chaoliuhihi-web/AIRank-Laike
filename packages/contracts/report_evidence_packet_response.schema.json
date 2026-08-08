@@ -10,7 +10,7 @@
       "type": "object",
       "required": [
         "packet_id", "report_id", "tenant_id", "project_id", "schema_version",
-        "status", "object_ref_id", "content_url", "content_type", "byte_size",
+        "status", "object_ref_id", "integrity_audit_id", "content_url", "content_type", "byte_size",
         "content_sha256", "report_sha256", "created_by", "created_at", "summary",
         "idempotent_replay"
       ],
@@ -25,11 +25,16 @@
             "airank.report-evidence-packet.v1",
             "airank.report-evidence-packet.v2",
             "airank.report-evidence-packet.v3",
-            "airank.report-evidence-packet.v4"
+            "airank.report-evidence-packet.v4",
+            "airank.report-evidence-packet.v5"
           ]
         },
         "status": { "const": "ready" },
         "object_ref_id": { "type": "string", "pattern": "^object_[0-9a-f]{24}$" },
+        "integrity_audit_id": {
+          "type": ["string", "null"],
+          "pattern": "^integrity_audit_[0-9a-f]{20}$"
+        },
         "content_url": { "type": "string", "pattern": "^/api/v1/evidence-objects/[A-Za-z0-9_-]+/content$" },
         "content_type": { "const": "application/json" },
         "byte_size": { "type": "integer", "minimum": 1 },
