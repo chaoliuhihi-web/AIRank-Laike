@@ -1,6 +1,6 @@
 # AIRank Release Readiness Report
 
-Generated: 2026-08-08T10:35:34+08:00
+Generated: 2026-08-08T11:34:45+08:00
 Result: BLOCKED
 
 | Check | Status | Command |
@@ -43,7 +43,7 @@ Status: PASS
 Status: BLOCKED
 
 ```text
-local HEAD 298aaa309f82a17b6df3fb83db93cf35399a221d does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD fca4a5536b89c38293c02f9d0a0dc5e4633954e9 does not match origin main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## gitee main ref
@@ -51,7 +51,7 @@ local HEAD 298aaa309f82a17b6df3fb83db93cf35399a221d does not match origin main 4
 Status: BLOCKED
 
 ```text
-local HEAD 298aaa309f82a17b6df3fb83db93cf35399a221d does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
+local HEAD fca4a5536b89c38293c02f9d0a0dc5e4633954e9 does not match gitee main 495655c47ee44dcab4f95df4fef9d6b79b6026cf
 ```
 
 ## diff check
@@ -127,9 +127,9 @@ Status: PASS
 Status: PASS
 
 ```text
-........................................................................ [ 49%]
-........................................................................ [ 99%]
-.                                                                        [100%]
+........................................................................ [ 48%]
+........................................................................ [ 96%]
+.....                                                                    [100%]
 =============================== warnings summary ===============================
 tests/contracts/test_console_action_api_contract.py: 1 warning
 tests/contracts/test_report_api_contract.py: 1 warning
@@ -138,7 +138,7 @@ tests/contracts/test_scan_run_api_contract.py: 25 warnings
     cursor.execute(statement, parameters)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-145 passed, 27 warnings in 1.14s
+149 passed, 27 warnings in 1.07s
 ```
 
 ## crawler lite tests
@@ -156,7 +156,7 @@ Status: PASS
 
 ```text
 .....................................................                    [100%]
-53 passed in 0.51s
+53 passed in 0.49s
 ```
 
 ## worker tests
@@ -171,7 +171,7 @@ tests/test_async_job_lease.py: 73 warnings
     cursor.execute(statement, parameters)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-25 passed, 73 warnings in 0.14s
+25 passed, 73 warnings in 0.12s
 ```
 
 ## score tests
@@ -206,8 +206,8 @@ Status: PASS
 Status: PASS
 
 ```text
-...................                                                      [100%]
-19 passed in 0.03s
+.....................                                                    [100%]
+21 passed in 0.03s
 ```
 
 ## core skill evaluation
@@ -241,9 +241,9 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                   0.48 kB │ gzip:   0.33 kB
-dist/assets/index-C5thYdsS.css   59.90 kB │ gzip:  10.22 kB
-dist/assets/index-r9Lfqui9.js   329.40 kB │ gzip: 100.74 kB
-✓ built in 704ms
+dist/assets/index-BUK3C0Yi.css   61.24 kB │ gzip:  10.40 kB
+dist/assets/index-DCwI5OZU.js   334.90 kB │ gzip: 102.24 kB
+✓ built in 716ms
 ```
 
 ## real integration tests
@@ -251,8 +251,8 @@ dist/assets/index-r9Lfqui9.js   329.40 kB │ gzip: 100.74 kB
 Status: PASS
 
 ```text
-....s................s                                                   [100%]
-20 passed, 2 skipped in 2.45s
+....s.................s                                                  [100%]
+21 passed, 2 skipped in 2.41s
 ```
 
 ## alembic offline sql
@@ -279,6 +279,7 @@ INFO  [alembic.runtime.migration] Running upgrade 20260808_0012 -> 20260808_0013
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0013 -> 20260808_0014, add immutable citation source captures and exact source boundaries
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0014 -> 20260808_0015, add distributed provider QPS tokens and concurrency leases
 INFO  [alembic.runtime.migration] Running upgrade 20260808_0015 -> 20260808_0016, add immutable provider route manifests and route request audit
+INFO  [alembic.runtime.migration] Running upgrade 20260808_0016 -> 20260808_0017, add audited provider route control overrides
 ```
 
 ## alembic real mysql
@@ -300,7 +301,7 @@ Status: BLOCKED
     "capability": "yudao_auth",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured",
@@ -311,7 +312,7 @@ Status: BLOCKED
     "capability": "yudao_tenant_user",
     "status": "blocked",
     "source": "yudao",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": true,
     "endpoint": null,
     "blocked_reason": "tenant/user probe requires yudao permission info endpoint",
@@ -322,7 +323,7 @@ Status: BLOCKED
     "capability": "object_storage",
     "status": "dev_only",
     "source": "airank",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": true,
     "endpoint": ".runtime/objects",
     "blocked_reason": "",
@@ -337,7 +338,7 @@ Status: BLOCKED
     "capability": "xinghe_crawler_gateway",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -348,7 +349,7 @@ Status: BLOCKED
     "capability": "xinghe_kb_service",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -359,7 +360,7 @@ Status: BLOCKED
     "capability": "xinghe_creator_marketing",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -370,7 +371,7 @@ Status: BLOCKED
     "capability": "xinghe_workflow_runner",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -381,7 +382,7 @@ Status: BLOCKED
     "capability": "xinghe_hermes",
     "status": "dev_only",
     "source": "xingheai2026v2",
-    "checked_at": "2026-08-08T02:34:37.887712+00:00",
+    "checked_at": "2026-08-08T03:33:49.962881+00:00",
     "required_for_mvp": false,
     "endpoint": null,
     "blocked_reason": "external endpoint is not configured",
@@ -390,15 +391,17 @@ Status: BLOCKED
   }
 ]
 
-Blockers:
-- yudao_auth=blocked (YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured)
-- yudao_tenant_user=blocked (tenant/user probe requires yudao permission info endpoint)
-- object_storage=dev_only
+Warnings:
 - xinghe_crawler_gateway=dev_only (external endpoint is not configured)
 - xinghe_kb_service=dev_only (external endpoint is not configured)
 - xinghe_creator_marketing=dev_only (external endpoint is not configured)
 - xinghe_workflow_runner=dev_only (external endpoint is not configured)
 - xinghe_hermes=dev_only (external endpoint is not configured)
+
+Blockers:
+- yudao_auth=blocked (YUDAO_PERMISSION_INFO_URL or YUDAO_BASE_URL is not configured)
+- yudao_tenant_user=blocked (tenant/user probe requires yudao permission info endpoint)
+- object_storage=dev_only
 ```
 
 ## browser provider readiness
@@ -417,9 +420,11 @@ Status: BLOCKED
       "url": "https://www.doubao.com/chat/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/doubao",
       "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/ee/ee6d6f54c60b74702e95c79621b327699146e56cee9747bfa82fc69180f4fbf9.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/doubao/c4/c48fbb5e8a6022819122e4e4fa8f707e9673c25c44c962ac121c7e10afe4ff33.png"
     },
     {
       "provider": "qianwen",
@@ -428,9 +433,11 @@ Status: BLOCKED
       "url": "https://www.qianwen.com/?ch=tongyi_redirect",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/qianwen",
       "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page returned login or human verification text instead of an answer",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/80/803d5cd9eb5d40b7c3d9a04acbf2ff632cdb1ecdace31aa0e2041d8f3d2f2856.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/qianwen/a8/a80fcf7778dfc2d81e1a69f7b1208ca126007315780d4b1f950b4ef1287959bd.png"
     },
     {
       "provider": "kimi",
@@ -439,9 +446,11 @@ Status: BLOCKED
       "url": "https://www.kimi.com/",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/kimi",
       "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
       "blocker_code": "login_required",
       "reason": "web page requires login",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/fe/fe146de7c143f428c0c4104dee50cc8f88a5a4da180d5810374d9e433f8f79c0.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/kimi/24/24636f75ddb53bcd077ffa3ee72b44829f894544a4afd27c5a7d59fbbd3903c6.png"
     },
     {
       "provider": "deepseek",
@@ -450,9 +459,11 @@ Status: BLOCKED
       "url": "https://chat.deepseek.com/sign_in",
       "profile_dir": "/Users/bruce/Developer/work/AIRank-productization/.runtime/browser-profiles/deepseek",
       "headless": true,
+      "probe_level": "l3_generation",
+      "generation_verified": false,
       "blocker_code": "captcha_required",
       "reason": "web page requires captcha verification",
-      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/d3/d3af0e75029b77acda8cd7a761c831880da9db6ae9c0dfe8ed3948f6f1aac2eb.png"
+      "screenshot_path": "/var/folders/xk/53c7rb5d5g3g0fgftczb8yr40000gn/T/airank-browser-captures/deepseek/1e/1e54156ebc9c1b00f9739ffe70afde274ab0559daadb520f4e00271122876e97.png"
     }
   ]
 }
