@@ -12,7 +12,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import release_readiness  # noqa: E402
 from release_readiness import capability_blockers  # noqa: E402
 from apps.api.provider_model_lifecycle import derive_model_lifecycle  # noqa: E402
-from apps.api.provider_model_lifecycle import MySQLProviderModelLifecycle  # noqa: E402
 from airank_provider_gateway import ModelLifecycle  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 
@@ -82,29 +81,12 @@ def test_release_gate_reports_persisted_provider_model_migration_blocker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        MySQLProviderModelLifecycle,
-        "list_release_gates",
-        lambda self, tenant_id: [
-            {
-                "provider": "deepseek",
-                "route_id": "deepseek:default",
-                "model": "deepseek-v3.2",
-                "configuration_fingerprint": "a" * 64,
-                "lifecycle_status": "migration_planning",
-                "sunset_at": "2026-10-10T00:00:00+00:00",
-                "replacement_model": "deepseek-v4-pro",
-                "lifecycle_source": "provider_announcement",
-                "days_to_sunset": 62,
-                "execution_min_days_to_sunset": 30,
-                "release_min_days_to_sunset": 90,
-                "execution_gate_status": "pass",
-                "release_gate_status": "blocked",
-                "lifecycle_reason": "release requires a validated and approved migration",
-                "migration_id": None,
-                "migration_status": None,
-                "migration_release_eligible": False,
-            }
-        ],
+        release_readiness,
+        "run_command",
+        lambda command, **kwargs: (
+            1,
+            '{"blockers":["deepseek/deepseek:default model=deepseek-v3.2 migration=missing"]}',
+        ),
     )
 
     check = release_readiness.provider_model_lifecycle_check("mysql+pymysql://unused")
