@@ -272,8 +272,10 @@ POST /api/v1/projects/{project_id}/opportunity-execution-schedules
 - 从最新机会快照创建、领取和复测终结行动
 - 创建机会行动前置依赖
 - 运行机会行动团队目录同步
+- 新增、轮换或撤销租户 Provider 凭证
 
 幂等记录必须按 `tenant_id + idempotency_key + route` 隔离。
+Provider 凭证写入额外使用持久 `Operation Guard`：服务端只保存幂等键 SHA-256，副作用开始前写入状态；成功请求可返回原结果，载荷冲突拒绝，执行中请求不并发重放。若副作用已经开始但没有可信终态，返回 `OPERATION_OUTCOME_UNKNOWN`，必须刷新凭证状态并人工核对，不能用自动重试冒险重复 L3 计费调用。
 
 ## 状态码
 

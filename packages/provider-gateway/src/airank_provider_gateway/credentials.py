@@ -181,6 +181,27 @@ class CredentialKeyring:
         )
         return hmac.compare_digest(candidate, str(expected_fingerprint or ""))
 
+    def fingerprint_secret(
+        self,
+        *,
+        tenant_id: str,
+        provider: str,
+        route_id: str,
+        plaintext: str,
+        fingerprint_key_id: str | None = None,
+    ) -> tuple[str, str]:
+        key_id = fingerprint_key_id or self.active_fingerprint_key_id
+        return (
+            self._fingerprint(
+                tenant_id=tenant_id,
+                provider=provider,
+                route_id=route_id,
+                plaintext=plaintext,
+                fingerprint_key_id=key_id,
+            ),
+            key_id,
+        )
+
     def _fingerprint(
         self,
         *,

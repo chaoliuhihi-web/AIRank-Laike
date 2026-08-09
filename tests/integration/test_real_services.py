@@ -166,7 +166,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0040"
+EXPECTED_ALEMBIC_HEAD = "20260809_0041"
 
 
 def require_real_flag(flag: str) -> None:
@@ -232,9 +232,11 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 103
+        assert table_count == 105
         for table_name in (
             "airank_provider_credentials",
+            "airank_operation_guards",
+            "airank_operation_guard_events",
             "airank_provider_credential_events",
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
@@ -390,7 +392,11 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
 
 
 class _VerifiedCredentialProbe:
+    def __init__(self) -> None:
+        self.call_count = 0
+
     def verify(self, *, tenant_id: str, provider: str, route_id: str, secret: str) -> dict[str, object]:
+        self.call_count += 1
         assert tenant_id.startswith("tenant_credential_it_")
         assert provider == "qianwen"
         assert route_id == "qianwen:default"
@@ -424,28 +430,40 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
         active_fingerprint_key_id="fp-it-v1",
         fingerprint_keys={"fp-it-v1": b"f" * 32},
     )
+    probe = _VerifiedCredentialProbe()
     repository = MySQLProviderCredentialVault(
         database_url(),
         keyring,
-        verifier=_VerifiedCredentialProbe(),
+        verifier=probe,
         env=environment,
     )
     first_secret = "sk-real-mysql-first-secret"
     second_secret = "sk-real-mysql-second-secret"
 
     try:
+        first_request = CredentialUpsertRequest(
+            secret=first_secret,
+            expected_version=0,
+            reason="initial integration credential",
+            confirm_billable=True,
+        )
         first = repository.upsert(
             tenant_id,
             "qianwen",
             "qianwen:default",
-            CredentialUpsertRequest(
-                secret=first_secret,
-                expected_version=0,
-                reason="initial integration credential",
-                confirm_billable=True,
-            ),
+            first_request,
             "integration-admin",
             "trc_credential_1",
+            "integration-credential-upsert-1",
+        )
+        first_replay = repository.upsert(
+            tenant_id,
+            "qianwen",
+            "qianwen:default",
+            first_request,
+            "integration-admin",
+            "trc_credential_1_replay",
+            "integration-credential-upsert-1",
         )
         second = repository.upsert(
             tenant_id,
@@ -459,9 +477,13 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
             ),
             "integration-admin",
             "trc_credential_2",
+            "integration-credential-upsert-2",
         )
         assert first.credential_version == 1
+        assert first_replay.idempotent_replay is True
+        assert first_replay.operation_id == first.operation_id
         assert second.credential_version == 2
+        assert probe.call_count == 2
 
         resolved = repository.resolve_settings(
             "qianwen",
@@ -491,6 +513,7 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
             CredentialRevokeRequest(expected_version=2, reason="integration revoke verification"),
             "integration-admin",
             "trc_credential_3",
+            "integration-credential-revoke-2",
         )
 
         with engine.connect() as conn:
@@ -508,6 +531,20 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
                 ),
                 {"tenant_id": tenant_id},
             ).mappings().all()
+            operations = conn.execute(
+                text(
+                    "SELECT * FROM airank_operation_guards "
+                    "WHERE tenant_id=:tenant_id ORDER BY created_at"
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().all()
+            operation_events = conn.execute(
+                text(
+                    "SELECT * FROM airank_operation_guard_events "
+                    "WHERE tenant_id=:tenant_id ORDER BY operation_id,event_sequence"
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().all()
 
         assert [(row["status"], row["is_current"]) for row in credentials] == [
             ("rotated", 0),
@@ -516,16 +553,29 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
         assert all(row["secret_ciphertext"] == "" for row in credentials)
         assert all(row["secret_nonce"] == "" for row in credentials)
         serialized_rows = json.dumps(
-            [dict(row) for row in [*credentials, *events]],
+            [dict(row) for row in [*credentials, *events, *operations, *operation_events]],
             ensure_ascii=False,
             default=str,
         )
         assert first_secret not in serialized_rows
         assert second_secret not in serialized_rows
+        assert "integration-credential-upsert-1" not in serialized_rows
+        assert "integration-credential-upsert-2" not in serialized_rows
+        assert "integration-credential-revoke-2" not in serialized_rows
         assert [row["event_sequence"] for row in events] == [1, 2, 3, 4]
         assert events[0]["previous_event_sha256"] is None
         for previous, current in zip(events, events[1:]):
             assert current["previous_event_sha256"] == previous["event_sha256"]
+        assert len(operations) == 3
+        assert all(row["state"] == "succeeded" for row in operations)
+        for operation in operations:
+            chain = [
+                row for row in operation_events if row["operation_id"] == operation["id"]
+            ]
+            assert [row["event_sequence"] for row in chain] == [1, 2, 3]
+            assert chain[0]["previous_event_sha256"] is None
+            for previous, current in zip(chain, chain[1:]):
+                assert current["previous_event_sha256"] == previous["event_sha256"]
 
         with pytest.raises(ProviderGatewayError) as revoked_error:
             repository.resolve_settings(
@@ -537,6 +587,15 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
         assert revoked_error.value.code == "PROVIDER_CREDENTIAL_REVOKED"
     finally:
         cleanup_tenant(engine, tenant_id)
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT COUNT(*) FROM airank_operation_guards WHERE tenant_id=:tenant_id"),
+            {"tenant_id": tenant_id},
+        ).scalar_one() == 0
+        assert conn.execute(
+            text("SELECT COUNT(*) FROM airank_operation_guard_events WHERE tenant_id=:tenant_id"),
+            {"tenant_id": tenant_id},
+        ).scalar_one() == 0
 
 
 def test_real_s3_compatible_object_storage_probe() -> None:

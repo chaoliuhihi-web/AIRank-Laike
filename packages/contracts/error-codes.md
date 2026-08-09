@@ -256,6 +256,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CREDENTIAL_NOT_FOUND` | 404 | 当前租户路由不存在 Vault 凭证或吊销目标不存在 |
 | `CREDENTIAL_UNCHANGED` | 409 | 新凭证与当前 HMAC 指纹一致，拒绝伪造轮换 |
 | `CREDENTIAL_ALREADY_REVOKED` | 409 | 凭证已吊销且密文已 scrub，不能重复吊销 |
+| `OPERATION_IDEMPOTENCY_KEY_INVALID` | 422 | 高风险写操作的幂等键长度或格式无效 |
+| `OPERATION_IDEMPOTENCY_CONFLICT` | 409 | 同一幂等键被用于不同请求载荷，拒绝执行 |
+| `OPERATION_IN_PROGRESS` | 409 | 同一幂等操作仍在执行，客户端不得并发重放 |
+| `OPERATION_OUTCOME_UNKNOWN` | 409 | 外部副作用可能已开始，必须人工核对实际状态后再决定新操作 |
+| `OPERATION_STATE_CONFLICT` | 409 | 持久化操作状态迁移不合法 |
+| `OPERATION_PREVIOUSLY_FAILED` | 409 | 原幂等操作已失败，不允许自动重复外部副作用 |
 | `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
 | `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
 | `PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN` | 409 | 禁止停用 Provider 最后一条已配置路由 |

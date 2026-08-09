@@ -22,7 +22,7 @@ AIRANK_PROVIDER_ADMIN_PERMISSION=airank:provider:admin
 
 启动门禁：
 
-1. 执行 `alembic upgrade head`，确认数据库头为 `20260809_0040`。
+1. 执行 `alembic upgrade head`，确认数据库头为 `20260809_0041`，并存在 `airank_operation_guards` 与 `airank_operation_guard_events`。
 2. 以管理员身份读取 `/api/v1/admin/provider-credentials`，确认 `keyring_status=ready`。
 3. 确认每条生产路由显示明确的 `vault_active`、`environment_legacy`、`unconfigured` 或阻断状态；不得用环境变量存在代替租户 L3 验证。
 4. 只有 `airank:provider:admin` 权限可新增、轮换或撤销；客户端伪造权限和操作者必须被认证中间件覆盖。
@@ -39,9 +39,13 @@ AIRANK_PROVIDER_ADMIN_PERMISSION=airank:provider:admin
 
 版本冲突返回 `STATE_VERSION_CONFLICT`，刷新后重新确认；新旧凭证相同返回 `CREDENTIAL_UNCHANGED`。后一规则在 HMAC 指纹 key-id 换代期间仍使用旧 key-id 做恒定时间比对。
 
+每次新增或轮换必须携带 8–160 字符且不含空白的 `Idempotency-Key`。服务端只落其 SHA-256，不保存原值。相同 key 和相同请求在成功后返回原凭证结果并标记 `idempotent_replay=true`，不会再次执行 L3；相同 key 的不同请求返回 `OPERATION_IDEMPOTENCY_CONFLICT`。
+
+`airank_operation_guards` 在 L3 调用前先从 `claimed` 进入 `external_started`。如果调用开始后进程中断、响应丢失或状态无法可信收口，后续重放返回 `OPERATION_OUTCOME_UNKNOWN`。此时先刷新凭证列表、检查 Provider 请求审计和操作事件链，再由管理员使用全新幂等键发起明确的新操作；禁止客户端自动重试未知结果。
+
 ## 撤销与恢复
 
-撤销需要当前版本、理由和显式确认。成功后当前记录保留审计墓碑，但 `ciphertext`、`nonce` 和掩码被擦除；运行时返回 `PROVIDER_CREDENTIAL_REVOKED`，不会使用同一路由的环境凭证。
+撤销需要当前版本、理由、显式确认和独立的 `Idempotency-Key`。成功后当前记录保留审计墓碑，但 `ciphertext`、`nonce` 和掩码被擦除；运行时返回 `PROVIDER_CREDENTIAL_REVOKED`，不会使用同一路由的环境凭证。
 
 恢复不解封旧密文。必须提交一条不同且通过 L3 验证的新凭证，新版本激活后旧墓碑保持 `revoked`。
 
@@ -60,6 +64,7 @@ AIRANK_PROVIDER_ADMIN_PERMISSION=airank:provider:admin
 ## 审计与告警
 
 - `airank_provider_credential_events` 是追加式事件链，按租户/Provider/route 的 `event_sequence` 验证 `previous_event_sha256`。
+- `airank_operation_guard_events` 是每次高风险写操作的追加式状态链，正常成功顺序为 `operation_claimed → external_effect_started → operation_succeeded`；失败终态为 `operation_failed`。
 - `airank_provider_request_audits` 只保存 `credential_source`、`credential_id` 和 `credential_version`，不保存凭证值。
 - 监控 `PROVIDER_CREDENTIAL_REVOKED`、`PROVIDER_CREDENTIAL_KEY_UNAVAILABLE`、`CREDENTIAL_DECRYPTION_FAILED` 和 `CREDENTIAL_PROVIDER_VERIFICATION_FAILED`。
 - 生产前必须轮换任何曾出现在聊天、工单或终端输出中的 Provider 密钥；历史真实调用成功不能替代当前凭证安全状态。
@@ -68,4 +73,4 @@ AIRANK_PROVIDER_ADMIN_PERMISSION=airank:provider:admin
 
 - 主密钥仍由部署 secret store 注入，尚未接云 KMS/HSM envelope encryption。
 - 没有自动重加密作业和全租户轮换编排。
-- 当前前端和真实 MySQL 门禁已通过，但未用真实生产四平台账号执行一次完整租户 vault 轮换，因此能力为 `partial`，不得声明生产凭证治理已完成。
+- 当前前端构建、幂等/冲突/并发故障测试和真实 MySQL 门禁已通过，但未用真实生产四平台账号执行一次完整租户 vault 轮换，也未完成 KMS/HSM，因此能力为 `partial`，不得声明生产凭证治理已完成。

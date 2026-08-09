@@ -42,3 +42,24 @@ def test_provider_credential_contracts_never_expose_envelope_fields() -> None:
     assert 'autoComplete="new-password"' in console
     assert "L3 真实生成" in console
     assert "撤销并擦除" in console
+
+
+def test_provider_credential_operation_guard_is_persistent_and_never_stores_raw_idempotency_key() -> None:
+    migration = read("apps/api/alembic/versions/20260809_0041_operation_guard.py")
+    guard = read("apps/api/operation_guard.py")
+    implementation = read("apps/api/provider_credentials.py")
+    response_schema = read("packages/contracts/provider_credential_response.schema.json")
+    api_client = read("apps/web/src/console/api.ts")
+
+    assert "airank_operation_guards" in migration
+    assert "airank_operation_guard_events" in migration
+    assert "idempotency_key_sha256 CHAR(64)" in migration
+    assert "idempotency_key VARCHAR" not in migration
+    assert "external_effect_started" in migration
+    assert "previous_event_sha256" in migration
+    assert "OPERATION_OUTCOME_UNKNOWN" in guard
+    assert "OPERATION_IDEMPOTENCY_CONFLICT" in guard
+    assert "mark_external_started" in implementation
+    assert "idempotent_replay" in response_schema
+    assert '"Idempotency-Key"' in api_client
+    assert "providerCredentialIdempotencyKey" in api_client

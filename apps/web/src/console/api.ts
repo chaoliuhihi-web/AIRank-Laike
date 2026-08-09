@@ -1785,6 +1785,8 @@ export type ProviderCredentialStatus = {
   activated_at: string | null;
   revoked_at: string | null;
   latest_event_sha256: string | null;
+  operation_id: string | null;
+  idempotent_replay: boolean;
   known_limitations: string[];
 };
 
@@ -3885,6 +3887,10 @@ export function fetchProviderCredentials(signal?: AbortSignal): Promise<Provider
   );
 }
 
+function providerCredentialIdempotencyKey(operation: "upsert" | "revoke"): string {
+  return `provider-credential-${operation}:${crypto.randomUUID()}`;
+}
+
 export async function upsertProviderCredential(
   credential: Pick<ProviderCredentialStatus, "provider" | "route_id" | "credential_version">,
   input: { secret: string; reason: string; confirmBillable: true },
@@ -3895,6 +3901,7 @@ export async function upsertProviderCredential(
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
+        "Idempotency-Key": providerCredentialIdempotencyKey("upsert"),
         ...buildApiHeaders("trc_web_provider_credential_upsert"),
       },
       body: JSON.stringify({
@@ -3923,6 +3930,7 @@ export async function revokeProviderCredential(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Idempotency-Key": providerCredentialIdempotencyKey("revoke"),
         ...buildApiHeaders("trc_web_provider_credential_revoke"),
       },
       body: JSON.stringify({

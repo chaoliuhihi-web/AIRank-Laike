@@ -6454,7 +6454,7 @@ function SettingsPage() {
       await loadProviderCredentials();
       notify({
         title: "凭证已验证并激活",
-        desc: `${updated.label} · ${updated.route_id} 已通过 L3 验证并以 v${updated.credential_version} 加密保存。`,
+        desc: `${updated.label} · ${updated.route_id} 已通过 L3 验证并以 v${updated.credential_version} 加密保存。操作回执：${updated.operation_id ?? "未返回"}。`,
         tone: "success",
       });
     } catch (error) {
@@ -6478,10 +6478,10 @@ function SettingsPage() {
     }
     setUpdatingCredential(key);
     try {
-      await revokeProviderCredential(credential, reason);
+      const updated = await revokeProviderCredential(credential, reason);
       setCredentialDrafts((current) => ({ ...current, [key]: emptyProviderCredentialDraft() }));
       await loadProviderCredentials();
-      notify({ title: "凭证已撤销", desc: `${credential.label} · ${credential.route_id} 的密文已擦除并停止使用。`, tone: "success" });
+      notify({ title: "凭证已撤销", desc: `${credential.label} · ${credential.route_id} 的密文已擦除并停止使用。操作回执：${updated.operation_id ?? "未返回"}。`, tone: "success" });
     } catch (error) {
       notify({ title: "凭证撤销失败", desc: error instanceof Error ? error.message : "请刷新版本后重试。", tone: "danger" });
     } finally {

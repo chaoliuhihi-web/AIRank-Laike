@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,7 +55,7 @@ class VerifiedCredential:
         }
 
 
-def vault():
+def vault(verifier=None):
     environment = {
         "QIANWEN_API_KEY": "environment-fallback-secret",
         "QIANWEN_API_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -67,7 +68,7 @@ def vault():
         fingerprint_keys={"fp-v1": b"f" * 32},
     )
     return provider_credentials.InMemoryProviderCredentialVault(
-        keyring, verifier=VerifiedCredential(), env=environment
+        keyring, verifier=verifier or VerifiedCredential(), env=environment
     )
 
 
@@ -98,7 +99,7 @@ def settings() -> ProviderSettings:
 def test_vault_rotation_scrubs_old_ciphertext_and_revoke_blocks_env_fallback() -> None:
     repository = vault()
     first = repository.upsert(
-        "tenant_vault", "qianwen", "qianwen:default", request("sk-first-private-value", 0), "admin_1", "trc_1"
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-first-private-value", 0), "admin_1", "trc_1", "credential-upsert-1"
     )
     assert first.source == "vault_active"
     assert first.secret_mask != "sk-first-private-value"
@@ -113,7 +114,7 @@ def test_vault_rotation_scrubs_old_ciphertext_and_revoke_blocks_env_fallback() -
     assert resolved.credential_version == 1
 
     second = repository.upsert(
-        "tenant_vault", "qianwen", "qianwen:default", request("sk-second-private-value", 1), "admin_1", "trc_2"
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-second-private-value", 1), "admin_1", "trc_2", "credential-upsert-2"
     )
     history = repository._records[("tenant_vault", "qianwen", "qianwen:default")]
     assert second.credential_version == 2
@@ -128,6 +129,7 @@ def test_vault_rotation_scrubs_old_ciphertext_and_revoke_blocks_env_fallback() -
         provider_credentials.CredentialRevokeRequest(expected_version=2, reason="credential compromised"),
         "admin_2",
         "trc_3",
+        "credential-revoke-2",
     )
     assert revoked.source == "vault_revoked"
     assert history[1].envelope.ciphertext == ""
@@ -152,6 +154,7 @@ def test_vault_rotation_scrubs_old_ciphertext_and_revoke_blocks_env_fallback() -
         request("sk-third-private-value", 2),
         "admin_3",
         "trc_4",
+        "credential-upsert-3",
     )
     assert replacement.credential_version == 3
     assert history[1].status == "revoked"
@@ -166,7 +169,7 @@ def test_vault_api_never_returns_plaintext_and_uses_trusted_actor(monkeypatch) -
     secret = "sk-api-private-value"
     response = client.put(
         "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
-        headers={"tenant-id": "tenant_vault", "X-AIRank-User-Id": "spoofed-actor"},
+        headers={"tenant-id": "tenant_vault", "X-AIRank-User-Id": "spoofed-actor", "Idempotency-Key": "api-credential-upsert-1"},
         json={"secret": secret, "expected_version": 0, "reason": "initial tenant BYOK", "confirm_billable": True},
     )
     assert response.status_code == 200
@@ -238,6 +241,7 @@ def test_vault_request_contracts_and_required_auth_are_strict(monkeypatch) -> No
             "tenant-id": "tenant_vault",
             "Authorization": f"Bearer {admin_token}",
             "X-AIRank-User-Id": "spoofed-actor",
+            "Idempotency-Key": "api-admin-credential-upsert-1",
         },
         json={
             "secret": secret,
@@ -254,11 +258,11 @@ def test_vault_request_contracts_and_required_auth_are_strict(monkeypatch) -> No
 def test_vault_rejects_unchanged_secret_after_real_verification() -> None:
     repository = vault()
     repository.upsert(
-        "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 0), "admin", "trc_1"
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 0), "admin", "trc_1", "same-credential-upsert-1"
     )
     with pytest.raises(provider_credentials.CredentialVaultError) as captured:
         repository.upsert(
-            "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 1), "admin", "trc_2"
+            "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 1), "admin", "trc_2", "same-credential-upsert-2"
         )
     assert captured.value.code == "CREDENTIAL_UNCHANGED"
 
@@ -276,6 +280,7 @@ def test_vault_rejects_unchanged_secret_after_real_verification() -> None:
             request("sk-same-private-value", 1),
             "admin",
             "trc_3",
+            "same-credential-upsert-3",
         )
     assert rotated_key_error.value.code == "CREDENTIAL_UNCHANGED"
 
@@ -285,7 +290,7 @@ def test_invalid_secret_validation_never_echoes_plaintext(monkeypatch) -> None:
     marker = "LEAKME"
     response = TestClient(api_main.app).put(
         "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
-        headers={"tenant-id": "tenant_vault"},
+        headers={"tenant-id": "tenant_vault", "Idempotency-Key": "invalid-secret-upsert-1"},
         json={
             "secret": marker,
             "expected_version": 0,
@@ -295,3 +300,127 @@ def test_invalid_secret_validation_never_echoes_plaintext(monkeypatch) -> None:
     )
     assert response.status_code == 422
     assert marker not in response.text
+
+
+class CountingCredential(VerifiedCredential):
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def verify(self, **kwargs):
+        self.call_count += 1
+        return super().verify(**kwargs)
+
+
+def test_upsert_idempotent_replay_never_repeats_l3_and_survives_fingerprint_key_rotation() -> None:
+    verifier = CountingCredential()
+    repository = vault(verifier)
+    payload = request("sk-idempotent-private-value", 0)
+
+    first = repository.upsert(
+        "tenant_vault", "qianwen", "qianwen:default", payload, "admin", "trc_first", "stable-upsert-key"
+    )
+    repository.keyring = CredentialKeyring(
+        active_encryption_key_id="enc-v2",
+        encryption_keys={"enc-v1": b"e" * 32, "enc-v2": b"n" * 32},
+        active_fingerprint_key_id="fp-v2",
+        fingerprint_keys={"fp-v1": b"f" * 32, "fp-v2": b"g" * 32},
+    )
+    replay = repository.upsert(
+        "tenant_vault", "qianwen", "qianwen:default", payload, "admin", "trc_replay", "stable-upsert-key"
+    )
+
+    assert verifier.call_count == 1
+    assert replay.idempotent_replay is True
+    assert replay.operation_id == first.operation_id
+    assert replay.credential_id == first.credential_id
+
+    with pytest.raises(provider_credentials.CredentialVaultError) as conflict:
+        repository.upsert(
+            "tenant_vault",
+            "qianwen",
+            "qianwen:default",
+            request("sk-different-private-value", 0),
+            "admin",
+            "trc_conflict",
+            "stable-upsert-key",
+        )
+    assert conflict.value.code == "OPERATION_IDEMPOTENCY_CONFLICT"
+    assert verifier.call_count == 1
+
+
+def test_failed_l3_operation_is_not_automatically_repeated() -> None:
+    class FailingCredential:
+        call_count = 0
+
+        def verify(self, **_kwargs):
+            self.call_count += 1
+            raise provider_credentials.CredentialVaultError(
+                "CREDENTIAL_PROVIDER_VERIFICATION_FAILED", "L3 rejected credential"
+            )
+
+    verifier = FailingCredential()
+    repository = vault(verifier)
+    payload = request("sk-provider-rejected-value", 0)
+    for _attempt in range(2):
+        with pytest.raises(provider_credentials.CredentialVaultError) as failure:
+            repository.upsert(
+                "tenant_vault", "qianwen", "qianwen:default", payload, "admin", "trc_failure", "failed-upsert-key"
+            )
+        assert failure.value.code == "CREDENTIAL_PROVIDER_VERIFICATION_FAILED"
+    assert verifier.call_count == 1
+
+
+def test_concurrent_duplicate_after_external_start_reports_unknown_without_second_l3() -> None:
+    started = Event()
+    release = Event()
+
+    class BlockingCredential(CountingCredential):
+        def verify(self, **kwargs):
+            self.call_count += 1
+            started.set()
+            assert release.wait(timeout=5)
+            return VerifiedCredential.verify(self, **kwargs)
+
+    verifier = BlockingCredential()
+    repository = vault(verifier)
+    payload = request("sk-concurrent-private-value", 0)
+    completed: list[provider_credentials.ProviderCredentialData] = []
+
+    thread = Thread(
+        target=lambda: completed.append(
+            repository.upsert(
+                "tenant_vault", "qianwen", "qianwen:default", payload, "admin", "trc_owner", "concurrent-upsert-key"
+            )
+        )
+    )
+    thread.start()
+    assert started.wait(timeout=5)
+    try:
+        with pytest.raises(provider_credentials.CredentialVaultError) as duplicate:
+            repository.upsert(
+                "tenant_vault", "qianwen", "qianwen:default", payload, "admin", "trc_duplicate", "concurrent-upsert-key"
+            )
+        assert duplicate.value.code == "OPERATION_OUTCOME_UNKNOWN"
+        assert verifier.call_count == 1
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(completed) == 1
+
+
+def test_provider_credential_writes_require_idempotency_header(monkeypatch) -> None:
+    monkeypatch.setattr(provider_credentials, "get_provider_credential_vault", vault)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
+    response = TestClient(api_main.app).put(
+        "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
+        headers={"tenant-id": "tenant_vault"},
+        json={
+            "secret": "sk-missing-idempotency-header",
+            "expected_version": 0,
+            "reason": "must reject missing operation key",
+            "confirm_billable": True,
+        },
+    )
+    assert response.status_code == 422
