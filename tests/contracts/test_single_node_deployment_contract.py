@@ -107,6 +107,8 @@ def test_single_node_compose_keeps_state_on_the_data_disk() -> None:
     assert "${AIRANK_DATA_ROOT:?set AIRANK_DATA_ROOT}/mysql:/var/lib/mysql" in text
     assert "${AIRANK_DATA_ROOT:?set AIRANK_DATA_ROOT}/minio:/data" in text
     assert 'memory: 1536m' in text
+    assert 'replicas: ${AIRANK_WORKER_REPLICAS:-3}' in text
+    assert 'AIRANK_WORKER_ID="$${AIRANK_WORKER_ID:-airank-worker}-$${HOSTNAME}"' in text
     assert '127.0.0.1:${AIRANK_WEB_PORT:-18080}:8080' in text
     assert "--workers 1" in text
     assert "AIRANK_BACKEND_IMAGE" in text
