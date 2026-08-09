@@ -70,6 +70,7 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "来源内出现次数必须是" in app_source
     assert 'metricNumber("not_mentioned_count")' in app_source
     assert 'showLauncher ? "收起重新扫描" : "重新扫描"' in app_source
+    assert 'runningCount > 0 ? "扫描进行中"' in app_source
     assert "质量阻断" in app_source
     assert 'item.status === "quality_blocked"' in app_source
     assert "技术可提取性分不等于品牌推荐率" in app_source
