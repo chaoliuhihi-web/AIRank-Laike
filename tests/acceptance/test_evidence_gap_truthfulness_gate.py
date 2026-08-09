@@ -38,8 +38,13 @@ def test_web_exposes_real_derivation_and_never_promises_recommendation() -> None
 
     assert 'data-testid="evidence-gap-derive-form"' in web_source
     assert "从真实样本推导" in web_source
+    assert "生成证据缺口" in web_source
+    assert "从本轮真实样本生成缺口" in web_source
     assert "未提及仍计入有效分母" in web_source
+    web_api_source = (ROOT / "apps" / "web" / "src" / "console" / "api.ts").read_text(
+        encoding="utf-8"
+    )
+    assert '"Idempotency-Key": `gap-${runId}`' in web_api_source
     assert "不代表发布内容后必然获得推荐" in (
         ROOT / "apps" / "api" / "evidence_gap_routes.py"
     ).read_text(encoding="utf-8")
-

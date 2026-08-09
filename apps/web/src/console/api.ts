@@ -2729,7 +2729,7 @@ export async function deriveEvidenceGaps(projectId: string, runId: string): Prom
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": `gap-${globalThis.crypto.randomUUID()}`,
+        "Idempotency-Key": `gap-${runId}`,
         ...buildApiHeaders("trc_web_evidence_gap_derive"),
       },
       body: JSON.stringify({ run_id: runId, requested_by: actor }),

@@ -5016,19 +5016,31 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
 
 function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project, dataStatus } = useConsoleOverview();
+  const { notify } = useActionFeedback();
   const [gapList, setGapList] = useState<EvidenceGapList | null>(null);
+  const [latestCompletedRun, setLatestCompletedRun] = useState<ScanRun | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [deriveError, setDeriveError] = useState<string | null>(null);
+  const [deriving, setDeriving] = useState(false);
 
   useEffect(() => {
     if (!project.id || dataStatus !== "provider_evidence") {
       setGapList(null);
+      setLatestCompletedRun(null);
       setLoadError(null);
       return;
     }
     const controller = new AbortController();
-    fetchEvidenceGaps(project.id, controller.signal)
-      .then((data) => {
-        setGapList(data);
+    Promise.all([
+      fetchEvidenceGaps(project.id, controller.signal),
+      fetchScanRuns(project.id, controller.signal),
+      fetchProjectProfile(project.id, controller.signal),
+    ])
+      .then(([gaps, runs, profile]) => {
+        setGapList(gaps);
+        setLatestCompletedRun(
+          scanRunsForProfile(runs, profile).find((run) => run.status === "completed") ?? null,
+        );
         setLoadError(null);
       })
       .catch((error) => {
@@ -5039,13 +5051,36 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     return () => controller.abort();
   }, [dataStatus, project.id]);
 
+  const deriveCurrentGaps = async () => {
+    if (!project.id || !latestCompletedRun) return;
+    setDeriving(true);
+    setDeriveError(null);
+    try {
+      const result = await deriveEvidenceGaps(project.id, latestCompletedRun.run_id);
+      const nextGaps = await fetchEvidenceGaps(project.id);
+      setGapList(nextGaps);
+      notify({
+        title: result.gap_count > 0 ? "证据缺口已生成" : "本轮没有可安全行动的缺口",
+        desc: result.gap_count > 0
+          ? `已从真实样本生成 ${result.gap_count} 个治理缺口。`
+          : "质量门禁已执行，没有用低证据结论填充页面。",
+        tone: result.gap_count > 0 ? "success" : "primary",
+      });
+    } catch (error) {
+      setDeriveError(error instanceof Error ? error.message : "证据缺口生成失败。请稍后重试。");
+    } finally {
+      setDeriving(false);
+    }
+  };
+
   return (
     <>
       <PageHeader title="证据缺口" subtitle="只从达到质量门槛的真实样本解释为什么没有推荐或回答不准确，并给出可执行的补证动作。" action={<span className="step-counter">03 / 06</span>} />
       {dataStatus !== "provider_evidence" && <DataStateCard title="还不能判定证据缺口" desc="当前没有达到最低门槛的有效扫描。尚未扫描的问题不会被包装成真实缺口。" tone="warning" />}
       {loadError && <DataStateCard title="缺口数据暂时不可用" desc={`${loadError} 当前不输出确定性原因或资产建议。`} tone="danger" />}
+      {deriveError && <DataStateCard title="本轮证据暂不支持生成缺口" desc={`${deriveError} 系统没有用推测原因替代真实证据。`} tone="warning" />}
       {dataStatus === "provider_evidence" && !gapList && !loadError && <DataStateCard title="正在分析证据缺口" desc="系统只读取真实样本、引用和事实，不使用官网技术分替代品牌推荐率。" tone="primary" />}
-      {gapList && gapList.gaps.length === 0 && <DataStateCard title="本轮尚无已治理缺口" desc="这不代表品牌没有问题，只表示当前没有满足证据门槛、可安全采取行动的缺口。" tone="success" />}
+      {gapList && gapList.gaps.length === 0 && <DataStateCard title="本轮尚无已治理缺口" desc={latestCompletedRun ? "点击下方按钮，系统将先执行样本质量门禁，再生成可追溯的缺口；不会把未扫描问题包装成结论。" : "这不代表品牌没有问题，只表示当前没有满足证据门槛、可安全采取行动的缺口。"} tone={latestCompletedRun ? "warning" : "success"} />}
       {gapList && gapList.gaps.length > 0 && (
         <section className="gap-card-grid">
           {[...gapList.gaps].sort((left, right) => ({ high: 3, medium: 2, low: 1 }[right.severity] - { high: 3, medium: 2, low: 1 }[left.severity])).map((gap) => (
@@ -5066,8 +5101,14 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         </section>
       )}
       <section className="airank-console-card dashboard-primary-action">
-        <div><span>下一步</span><h2>{gapList?.gaps.length ? "先补高影响缺口需要的事实" : "先获得足够的真实样本"}</h2><p>缺少样本和引用时不输出因果结论；缺少已审核事实时不允许生成答案资产。</p></div>
-        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(gapList?.gaps.length ? "/console/facts" : "/console/scans")}>{gapList?.gaps.length ? "补齐可信事实" : "返回多平台扫描"}<ArrowRight size={18} /></button>
+        <div><span>下一步</span><h2>{gapList?.gaps.length ? "先补高影响缺口需要的事实" : latestCompletedRun ? "从本轮真实样本生成缺口" : "先获得足够的真实样本"}</h2><p>缺少样本和引用时不输出因果结论；缺少已审核事实时不允许生成答案资产。</p></div>
+        {gapList?.gaps.length ? (
+          <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/facts")}>补齐可信事实<ArrowRight size={18} /></button>
+        ) : latestCompletedRun ? (
+          <button className="airank-console-primary-button" type="button" disabled={deriving} onClick={() => void deriveCurrentGaps()}>{deriving ? "正在执行质量门禁…" : "生成证据缺口"}<ArrowRight size={18} /></button>
+        ) : (
+          <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/scans")}>返回多平台扫描<ArrowRight size={18} /></button>
+        )}
       </section>
     </>
   );
