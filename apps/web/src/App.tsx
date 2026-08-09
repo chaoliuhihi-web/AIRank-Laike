@@ -1459,6 +1459,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   }, [project.id]);
 
   const latest = runs[0] ?? null;
+  const hasCurrentProfileEvidence = latest !== null && dataStatus === "provider_evidence";
   const completedCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed" || task.status === "skipped").length;
   const runningCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
@@ -1517,10 +1518,10 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         <SummaryMetric label="失败样本" value={latest ? String(failedCount) : "—"} tone={failedCount > 0 ? "warning" : "success"} />
         <SummaryMetric label="未提及样本" value={unmentionedCount == null ? "—" : String(unmentionedCount)} tone="muted" />
       </section>
-      {dataStatus === "provider_evidence" && <section className="metric-grid">{metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
+      {hasCurrentProfileEvidence && <section className="metric-grid">{metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
       <section className="airank-console-card scan-primary-action">
-        <div><span>{latest ? `当前批次 · ${latest.name || latest.run_id.slice(-8)}` : "尚无扫描批次"}</span><h2>{dataStatus === "provider_evidence" ? "本轮已有可用结果" : runningCount > 0 ? "扫描尚未封版" : "还不能生成证据缺口"}</h2><p>{message || (latest ? `有效 ${completedCount}，失败 ${failedCount}，运行中 ${runningCount}。未提及品牌的有效回答仍计入分母。` : "先确认问题集，再为通过门禁的平台创建真实采样任务。")}</p></div>
-        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(dataStatus === "provider_evidence" ? "/console/gaps" : "/console/questions")}>{dataStatus === "provider_evidence" ? "查看证据缺口" : "确认买家问题"}<ArrowRight size={18} /></button>
+        <div><span>{latest ? `当前批次 · ${latest.name || latest.run_id.slice(-8)}` : "尚无扫描批次"}</span><h2>{hasCurrentProfileEvidence ? "本轮已有可用结果" : runningCount > 0 ? "扫描尚未封版" : "还不能生成证据缺口"}</h2><p>{hasCurrentProfileEvidence && message ? message : latest ? `有效 ${completedCount}，失败 ${failedCount}，运行中 ${runningCount}。未提及品牌的有效回答仍计入分母。` : "先确认问题集，再为通过门禁的平台创建真实采样任务。"}</p></div>
+        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(hasCurrentProfileEvidence ? "/console/gaps" : "/console/questions")}>{hasCurrentProfileEvidence ? "查看证据缺口" : "确认买家问题"}<ArrowRight size={18} /></button>
       </section>
       <details className="airank-console-card technical-details"><summary>技术详情</summary><p>Provider 可用性来自最近一次已存证 L3 探测；页面读取不会在页面加载时重复发起计费探测。批次 ID、任务 ID、会话、请求追踪和租约仅用于排错。客户指标按 API、Web、App 采集方式分开计算，不在未说明的情况下合并。</p></details>
     </>
@@ -4729,7 +4730,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
   const visibleRows = showTabs && selectedTab > 0
     ? questions.filter((row) => row.question_type === tabTypes[selectedTab])
     : questions;
-  const gapRows = questions.filter((row) => row.coverage_status === "gap" || row.coverage_status === "needs_scan");
+  const gapRows = questions.filter((row) => row.status !== "archived" && (row.coverage_status === "gap" || row.coverage_status === "needs_scan"));
   const confirmedCount = questions.filter((row) => row.status === "confirmed").length;
   const suggestedCount = questions.filter((row) => row.status === "suggested").length;
   const observedCount = questions.filter((row) => row.observed_query).length;
