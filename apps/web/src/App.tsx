@@ -915,6 +915,7 @@ function ConsolePage({
   onBrandCheckComplete: (result: BrandCheckResult) => void;
 }) {
   if (path === "/console/scans") return <CheckupPage onNavigate={onNavigate} />;
+  if (path === "/console/samples") return <CustomerSamplesPage onNavigate={onNavigate} />;
   if (path === "/console/facts") return <FactsPage />;
   if (path === "/console/assets/site-audit") return <PageAuditPage />;
   if (path === "/console/questions") return <QuestionsPage onNavigate={onNavigate} />;
@@ -1353,6 +1354,10 @@ function contentStatusLabel(value: GovernedContentAsset["status"]): string {
   return { draft: "草稿", approved: "已通过", rejected: "已驳回", changes_requested: "需修改" }[value];
 }
 
+function mentionClassLabel(value: string): string {
+  return { recommended: "明确推荐", candidate: "候选品牌", mentioned: "仅提及", negative: "负面提及", not_mentioned: "正常未提及", unknown: "未分类" }[value] ?? value;
+}
+
 function publicationStatusLabel(value: PublishPackage["status"]): string {
   return {
     packaged: "已生成发布包",
@@ -1627,10 +1632,139 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       {hasCurrentProfileEvidence && <section className="metric-grid">{metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
       <section className="airank-console-card scan-primary-action">
         <div><span>{latest ? `当前批次 · ${latest.name || latest.run_id.slice(-8)}` : "尚无扫描批次"}</span><h2>{hasCurrentProfileEvidence ? "本轮已有可用结果" : runningCount > 0 ? "扫描尚未封版" : "还不能生成证据缺口"}</h2><p>{hasCurrentProfileEvidence && message ? message : latest ? `有效 ${completedCount}，失败 ${failedCount}，运行中 ${runningCount}。未提及品牌的有效回答仍计入分母。` : "先确认问题集，再为通过门禁的平台创建真实采样任务。"}</p></div>
+        {latest && latest.status === "completed" && <button className="ghost-button" type="button" onClick={() => onNavigate("/console/samples")}>查看样本明细</button>}
         {latest && latest.status === "completed" && <button className="ghost-button" type="button" onClick={() => setShowLauncher((current) => !current)}>{showLauncher ? "收起重新扫描" : "重新扫描"}</button>}
         <button className="airank-console-primary-button" type="button" disabled={runningCount > 0} onClick={() => onNavigate(hasCurrentProfileEvidence ? "/console/gaps" : "/console/questions")}>{runningCount > 0 ? "扫描进行中" : hasCurrentProfileEvidence ? "查看证据缺口" : "确认买家问题"}<ArrowRight size={18} /></button>
       </section>
       <details className="airank-console-card technical-details"><summary>技术详情</summary><p>Provider 可用性来自最近一次已存证 L3 探测；页面读取不会在页面加载时重复发起计费探测。批次 ID、任务 ID、会话、请求追踪和租约仅用于排错。客户指标按 API、Web、App 采集方式分开计算，不在未说明的情况下合并。</p></details>
+    </>
+  );
+}
+
+function CustomerSamplesPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { project } = useConsoleOverview();
+  const [runs, setRuns] = useState<ScanRun[]>([]);
+  const [questions, setQuestions] = useState<BuyerQuestion[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [samples, setSamples] = useState<AnswerSample[]>([]);
+  const [selected, setSelected] = useState<AnswerSampleDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!project.id) return;
+    const controller = new AbortController();
+    Promise.all([fetchScanRuns(project.id, controller.signal), fetchBuyerQuestions(project.id, controller.signal)])
+      .then(([nextRuns, nextQuestions]) => {
+        const completedRuns = nextRuns.filter((run) => run.status === "completed");
+        setRuns(completedRuns);
+        setQuestions(nextQuestions);
+        setSelectedRunId((current) => completedRuns.some((run) => run.run_id === current) ? current : completedRuns[0]?.run_id ?? "");
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : "样本批次读取失败。");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  useEffect(() => {
+    setSelected(null);
+    if (!project.id || !selectedRunId) {
+      setSamples([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetchAnswerSamples(project.id, selectedRunId, controller.signal)
+      .then((collection) => {
+        setSamples(collection.samples);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setSamples([]);
+        setLoadError(error instanceof Error ? error.message : "回答样本读取失败。");
+      });
+    return () => controller.abort();
+  }, [project.id, selectedRunId]);
+
+  const openSample = async (snapshotId: string) => {
+    setLoadingDetail(snapshotId);
+    setDetailError(null);
+    try {
+      setSelected(await fetchAnswerSample(snapshotId));
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : "样本详情读取失败。");
+    } finally {
+      setLoadingDetail(null);
+    }
+  };
+
+  const questionText = (questionId: string) => questions.find((question) => question.question_id === questionId)?.question_text ?? questionId;
+  const validSamples = samples.filter((sample) => sample.sample_status === "valid");
+  const unmentionedSamples = validSamples.filter((sample) => !sample.brand_mentioned);
+  const citationSamples = validSamples.filter((sample) => sample.citation_count > 0);
+  const providerRequestId = selected?.attempts.find((attempt) => attempt.provider_request_id)?.provider_request_id ?? selected?.external_trace_id ?? "未记录";
+
+  return (
+    <>
+      <PageHeader title="样本详情" subtitle="从指标下钻到每一条不可变回答；正常未提及不会被删除，失败和阻塞也会保留但不进入有效回答分母。" action={<button className="outline-button" type="button" onClick={() => onNavigate("/console/scans")}>返回多平台扫描</button>} />
+      <section className="airank-console-card sample-run-toolbar">
+        <label><span>扫描批次</span><select value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)}><option value="">请选择已完成批次</option>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.name || run.run_id} · {run.cohort_type} · {run.repetitions} 次</option>)}</select></label>
+        <small>API、Web、App 分开标记；本页不合并不同采集面。</small>
+      </section>
+      <section className="summary-band evidence-summary">
+        <SummaryMetric label="样本总数" value={String(samples.length)} tone="primary" />
+        <SummaryMetric label="有效样本" value={String(validSamples.length)} tone="success" />
+        <SummaryMetric label="有效未提及" value={String(unmentionedSamples.length)} tone="warning" />
+        <SummaryMetric label="含原生引用" value={String(citationSamples.length)} tone="primary" />
+      </section>
+      {loadError && <DataStateCard title="样本读取失败" desc={`${loadError} 当前不会使用演示回答补位。`} tone="danger" />}
+      {!loadError && selectedRunId && samples.length === 0 && <DataStateCard title="当前批次没有回答样本" desc="系统不会用固定回答补齐空态。" tone="warning" />}
+      {samples.length > 0 && (
+        <div className="airank-console-card table-card evidence-table-wrap">
+          <table className="question-table evidence-table">
+            <thead><tr><th>问题</th><th>平台 / 模型</th><th>测试口径</th><th>样本状态</th><th>品牌结果</th><th>引用</th><th>证据</th></tr></thead>
+            <tbody>{samples.map((sample) => <tr key={sample.snapshot_id}>
+              <td><strong>{questionText(sample.question_id)}</strong><small>第 {sample.sample_index} 次独立采样</small></td>
+              <td><strong>{sample.provider}</strong><small>{sample.model_name || "模型未记录"} · {sample.collector_surface}</small></td>
+              <td><Badge tone="primary">{sample.cohort_type}</Badge><small>{sample.prompt_version_id}</small></td>
+              <td><Badge tone={sample.sample_status === "valid" ? "success" : sample.sample_status === "failed" ? "danger" : "warning"}>{sample.sample_status === "valid" ? "有效" : sample.sample_status === "failed" ? "失败" : "阻塞"}</Badge></td>
+              <td>{sample.sample_status === "valid" ? <><strong>{mentionClassLabel(sample.mention_class)}</strong><small>{sample.brand_rank ? `条件排名 ${sample.brand_rank}` : "无明确排名"}</small></> : <><strong>不进入品牌分类</strong><small>失败证据仍保留</small></>}</td>
+              <td>{sample.citation_count}</td>
+              <td><button className="table-action" type="button" disabled={loadingDetail === sample.snapshot_id} onClick={() => void openSample(sample.snapshot_id)}>{loadingDetail === sample.snapshot_id ? "读取中" : "查看"}</button></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      )}
+      {detailError && <DataStateCard title="样本详情读取失败" desc={detailError} tone="danger" />}
+      {selected && (
+        <section className="evidence-detail-grid" id="customer-sample-detail">
+          <Panel title="不可变原始回答">
+            <h3 className="sample-question-title">{questionText(selected.question_id)}</h3>
+            {selected.sample_status === "valid" ? <div className="evidence-answer">{selected.answer_text}</div> : <DataStateCard title="该任务没有有效回答" desc="失败或阻塞证据已保留，但不会被误算成品牌未提及。" tone={selected.sample_status === "blocked" ? "warning" : "danger"} />}
+          </Panel>
+          <Panel title="请求与证据元数据">
+            <dl className="evidence-metadata">
+              <div><dt>Provider / 模型</dt><dd>{selected.provider} / {selected.model_name || "未记录"}</dd></div>
+              <div><dt>采集面 / 联网配置</dt><dd>{selected.collector_surface} / {selected.search_enabled == null ? "未记录" : selected.search_enabled ? "已配置" : "未配置"}</dd></div>
+              <div><dt>Provider Request ID</dt><dd>{providerRequestId}</dd></div>
+              <div><dt>证据等级</dt><dd>{selected.evidence_level}</dd></div>
+              <div><dt>Answer Snapshot</dt><dd>{selected.snapshot_id}</dd></div>
+              <div><dt>Evidence Snapshot</dt><dd>{selected.evidence_snapshot_id}</dd></div>
+              <div><dt>回答 SHA-256</dt><dd>{selected.answer_sha256 || "不适用"}</dd></div>
+              <div><dt>原始响应 SHA-256</dt><dd>{selected.raw_response_sha256}</dd></div>
+              <div><dt>截图 / 来源面板</dt><dd>{selected.screenshot.object_ref_id ? "已存证" : "无截图"} / {selected.source_panel.object_ref_id ? "已存证" : "未呈现或未捕获"}</dd></div>
+              <div><dt>采集时间</dt><dd>{formatDateTime(selected.evidence_captured_at)}</dd></div>
+            </dl>
+          </Panel>
+          <Panel title={`Provider 原生引用 · ${selected.citations.length}`}>
+            {selected.citations.length === 0 ? <DataStateCard title="本样本没有 Provider 原生引用" desc="系统不会把企业事实来源或搜索配置冒充成该回答的原生引用。" tone="warning" /> : <div className="citation-list">{selected.citations.map((citation) => <article key={citation.citation_id}><strong>{citation.title || citation.host || "未命名来源"}</strong><span>{citation.url}</span><small>{citation.cited_text || "Provider 未返回引用片段"}</small></article>)}</div>}
+          </Panel>
+        </section>
+      )}
     </>
   );
 }
@@ -5213,7 +5347,7 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
                 <div><dt>引用</dt><dd>{gap.citation_ids.length}</dd></div>
               </dl>
               <div className="gap-recommendation"><span>建议建设</span><strong>{assetTypeLabel(gap.suggested_asset_type)}</strong></div>
-              <div className="gap-card-actions"><button className="ghost-button" type="button" onClick={() => onNavigate("/console/scans")}>查看支持样本</button><button className="outline-button" type="button" onClick={() => onNavigate("/console/facts")}>补齐可信事实<ArrowRight size={15} /></button></div>
+              <div className="gap-card-actions"><button className="ghost-button" type="button" onClick={() => onNavigate("/console/samples")}>查看支持样本</button><button className="outline-button" type="button" onClick={() => onNavigate("/console/facts")}>补齐可信事实<ArrowRight size={15} /></button></div>
             </article>
           ))}
         </section>
