@@ -9,9 +9,11 @@ from typing import Callable, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DOMAIN_SOURCE = ROOT / "packages" / "domain" / "src"
 EVIDENCE_SOURCE = ROOT / "packages" / "evidence" / "src"
-if str(EVIDENCE_SOURCE) not in sys.path:
-    sys.path.insert(0, str(EVIDENCE_SOURCE))
+for source_path in (DOMAIN_SOURCE, EVIDENCE_SOURCE):
+    if str(source_path) not in sys.path:
+        sys.path.insert(0, str(source_path))
 
 from airank_evidence import (  # noqa: E402
     ObjectStorage,

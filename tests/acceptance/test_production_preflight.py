@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -289,6 +290,21 @@ def test_object_storage_probe_requires_explicit_release_authorization() -> None:
 
     assert code == 1
     assert record["reason_code"] == "STORAGE_PROBE_NOT_AUTHORIZED"
+
+
+def test_object_storage_probe_bootstraps_repo_packages_without_pythonpath() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/probe_object_storage.py"],
+        cwd=ROOT,
+        env={"PATH": str(Path(sys.executable).parent)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["reason_code"] == "STORAGE_PROBE_NOT_AUTHORIZED"
+    assert result.stderr == ""
 
 
 def test_object_storage_probe_performs_real_idempotent_write_and_read(tmp_path) -> None:
