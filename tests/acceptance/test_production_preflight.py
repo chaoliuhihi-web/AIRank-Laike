@@ -473,6 +473,9 @@ def test_production_deployment_bundle_is_immutable_and_has_distinct_processes() 
     assert backend.startswith("FROM python:3.11.15-slim-bookworm@sha256:")
     assert "FROM node:22.12.0-alpine@sha256:" in web
     assert "FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:" in web
+    assert "resolver 127.0.0.11 valid=10s ipv6=off;" in nginx
+    assert "proxy_pass http://$airank_api_upstream;" in nginx
+    assert "proxy_pass http://api:8000;" not in nginx
     assert "vite preview" not in compose
     assert "Content-Security-Policy" in nginx
     assert "add_header_inherit merge" in nginx
