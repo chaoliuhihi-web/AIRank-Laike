@@ -52,6 +52,7 @@ try:
         call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
         classify_provider_call_failure,
+        is_provider_preflight_capacity_error,
         probe_provider_readiness,
         provider_execution_mode,
     )
@@ -63,6 +64,7 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
         call_api_provider_for_brand_rank,
         call_provider_for_brand_rank,
         classify_provider_call_failure,
+        is_provider_preflight_capacity_error,
         probe_provider_readiness,
         provider_execution_mode,
     )
@@ -4577,6 +4579,11 @@ def complete_mysql_real_brand_scan(
             )
             continue
         except ProviderCallError as exc:
+            if only_task_id is not None and is_provider_preflight_capacity_error(exc):
+                # The distributed gateway rejected this slot before an upstream
+                # request was sent. Let the worker defer it instead of creating
+                # a false permanent failure sample.
+                raise
             code, blocked = classify_provider_call_failure(exc)
             provider_metadata = dict(exc.public_metadata)
             captured_provider_response = provider_metadata.pop("provider_raw_response", None)

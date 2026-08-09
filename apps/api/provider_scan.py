@@ -203,6 +203,21 @@ def classify_provider_call_failure(error: ProviderCallError) -> tuple[str, bool]
     return "SCAN_PROVIDER_FAILED", False
 
 
+def is_provider_preflight_capacity_error(error: ProviderCallError) -> bool:
+    """Return true only when the gateway rejected work before an upstream call.
+
+    These distributed admission-control failures have a known, replay-safe
+    outcome: no billable Provider request was sent. They may therefore be
+    deferred by the worker without creating a failed measurement sample.
+    """
+
+    return error.retryable and str(error.error_code or "").upper() in {
+        "PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED",
+        "PROVIDER_DISTRIBUTED_RATE_LIMITED",
+        "PROVIDER_CIRCUIT_OPEN",
+    }
+
+
 def provider_execution_mode() -> str:
     mode = os.getenv("AIRANK_PROVIDER_MODE", "browser").strip().lower()
     if mode in {"mock", "generated", "fixture", "dev"}:

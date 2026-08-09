@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -273,6 +273,53 @@ def run_next_real_scan_job(
             worker_job_id=job.id,
             worker_attempt_number=job.attempt_count,
         )
+    except api_main.ProviderCallError as exc:
+        finished_at = utc_now()
+        if not api_main.is_provider_preflight_capacity_error(exc):
+            raise
+        if job.attempt_count < job.max_attempts:
+            delay_seconds = min(60, 5 * (2 ** max(0, job.attempt_count - 1)))
+            retry_at = finished_at + timedelta(seconds=delay_seconds)
+            store.fail(job.id, worker_id, finished_at, str(exc.error_code), exc.reason)
+            store.requeue_for_retry(job.id, retry_at)
+            _defer_preflight_scan_task(
+                engine,
+                tenant_id=job.tenant_id,
+                project_id=project_id,
+                run_id=run_id,
+                task_id=task_id,
+                job_id=job.id,
+                attempt_number=job.attempt_count,
+                finished_at=finished_at,
+                retry_at=retry_at,
+                error_code=str(exc.error_code),
+                error_message=exc.reason,
+            )
+            return _scan_result(engine, job.id, run_id, "queued")
+        error = ScanWorkerError(
+            "SCAN_PROVIDER_CAPACITY_EXHAUSTED",
+            "Provider admission control remained unavailable after all safe retries",
+        )
+        store.fail(job.id, worker_id, finished_at, error.code, error.message)
+        _fail_unpersisted_scan_task(
+            engine,
+            tenant_id=job.tenant_id,
+            project_id=project_id,
+            run_id=run_id,
+            task_id=task_id,
+            job_id=job.id,
+            attempt_number=job.attempt_count,
+            attempt_status="failed",
+            finished_at=finished_at,
+            error_code=error.code,
+            error_message=(
+                f"{error.message}. No upstream Provider request was sent for the final attempt; "
+                "the slot remains a truthful failed sample."
+            ),
+            capture_mode="provider_preflight_capacity_exhausted",
+        )
+        _finalize_run_from_durable_state(database_url, job.tenant_id, project_id, run_id)
+        return _scan_result(engine, job.id, run_id, "failed")
     except StarletteHTTPException:
         # The scan orchestrator persists task failures, immutable failure evidence,
         # and the terminal run before returning its fail-closed 503.
@@ -311,6 +358,89 @@ def run_next_real_scan_job(
     persisted_job = store.get(job.id)
     result_status = "completed" if persisted_job.status.value == "succeeded" else persisted_job.status.value
     return _scan_result(engine, job.id, run_id, result_status)
+
+
+def _defer_preflight_scan_task(
+    engine: Any,
+    *,
+    tenant_id: str,
+    project_id: str,
+    run_id: str,
+    task_id: str,
+    job_id: str,
+    attempt_number: int,
+    finished_at: datetime,
+    retry_at: datetime,
+    error_code: str,
+    error_message: str,
+) -> None:
+    """Return a preflight-rejected slot to the queue without fabricating evidence."""
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE airank_scan_task_attempts
+                SET status = 'deferred',
+                    error_code = :error_code,
+                    error_message = :error_message,
+                    metadata_json = :metadata_json,
+                    completed_at = :finished_at
+                WHERE tenant_id = :tenant_id
+                  AND task_id = :task_id
+                  AND job_id = :job_id
+                  AND attempt_number = :attempt_number
+                  AND status = 'running'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "task_id": task_id,
+                "job_id": job_id,
+                "attempt_number": attempt_number,
+                "error_code": error_code,
+                "error_message": error_message[:1000],
+                "metadata_json": json.dumps(
+                    {
+                        "capture_mode": "provider_preflight_capacity_deferred",
+                        "provider_request_sent": False,
+                        "retry_at": retry_at.isoformat(),
+                    },
+                    ensure_ascii=False,
+                ),
+                "finished_at": finished_at,
+            },
+        )
+        updated = conn.execute(
+            text(
+                """
+                UPDATE airank_scan_tasks
+                SET status = 'queued',
+                    scheduled_at = :retry_at,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = :finished_at,
+                    error_code = NULL,
+                    error_message = NULL,
+                    response_meta_json = NULL
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND run_id = :run_id
+                  AND id = :task_id
+                  AND status = 'running'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "run_id": run_id,
+                "task_id": task_id,
+                "retry_at": retry_at,
+                "finished_at": finished_at,
+            },
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("preflight capacity deferral lost scan task ownership")
 
 
 def _recover_timed_out_scan_job(

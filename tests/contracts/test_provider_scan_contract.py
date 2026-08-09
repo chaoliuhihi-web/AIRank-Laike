@@ -17,6 +17,7 @@ from apps.api.provider_scan import (
     call_provider_for_brand_rank,
     classify_login_blocker,
     classify_provider_call_failure,
+    is_provider_preflight_capacity_error,
     is_login_input,
     looks_login_blocked,
     parse_provider_answer,
@@ -569,6 +570,31 @@ def test_provider_failure_classification_keeps_failed_and_blocked_separate(
     expected: tuple[str, bool],
 ) -> None:
     assert classify_provider_call_failure(error) == expected
+
+
+@pytest.mark.parametrize(
+    ("error_code", "retryable", "expected"),
+    [
+        ("PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED", True, True),
+        ("PROVIDER_DISTRIBUTED_RATE_LIMITED", True, True),
+        ("PROVIDER_CIRCUIT_OPEN", True, True),
+        ("PROVIDER_NETWORK_FAILED", True, False),
+        ("PROVIDER_DISTRIBUTED_CONCURRENCY_LIMITED", False, False),
+    ],
+)
+def test_only_preflight_capacity_rejections_are_safe_to_defer(
+    error_code: str,
+    retryable: bool,
+    expected: bool,
+) -> None:
+    error = ProviderCallError(
+        "doubao",
+        "provider admission decision",
+        error_code=error_code,
+        retryable=retryable,
+    )
+
+    assert is_provider_preflight_capacity_error(error) is expected
 
 
 def test_strip_prompt_echo_removes_user_prompt_before_parsing_answer() -> None:
