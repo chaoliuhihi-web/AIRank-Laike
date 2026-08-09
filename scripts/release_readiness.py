@@ -480,6 +480,7 @@ def release_checks(
             remove_database_urls=True,
         ),
         command_check("core skill evaluation", "python3 scripts/evaluate_core_skills.py", remove_database_urls=True),
+        command_check("skill trust gate", "python3 scripts/audit_skill_trust.py", remove_database_urls=True),
         command_check(
             "xinghe adapter tests",
             "cd packages/xinghe-adapter && python3 -m pytest -q",

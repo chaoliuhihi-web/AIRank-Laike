@@ -21,6 +21,12 @@ def test_api_requirements_include_browser_provider_runtime() -> None:
     assert "playwright>=1.58.0,<2.0.0" in requirements
 
 
+def test_release_readiness_runs_skill_trust_as_an_explicit_gate() -> None:
+    source = (ROOT / "scripts" / "release_readiness.py").read_text(encoding="utf-8")
+
+    assert 'command_check("skill trust gate", "python3 scripts/audit_skill_trust.py"' in source
+
+
 def test_release_readiness_blocks_required_dev_only_capabilities() -> None:
     blockers, warnings = capability_blockers(
         [
