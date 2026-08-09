@@ -14,6 +14,10 @@
   密钥已从运行环境移除且显式列入
   `AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED` 时，API、Worker 和
   Scheduler 可带风险告警启动；`release` 门禁仍会拒绝通过。
+- 经密钥所有者明确接受风险的体验环境，可将受影响 Provider 列入
+  `AIRANK_UNROTATED_PROVIDER_CREDENTIALS_TEMPORARILY_ENABLED` 并设置不超过
+  14 天的 `AIRANK_UNROTATED_PROVIDER_CREDENTIALS_EXCEPTION_EXPIRES_AT`。
+  到期后运行时自动拒绝启动，且此例外永远不能通过 `release` 门禁。
 - Kimi 和 DeepSeek 仅在新密钥与非下架窗口模型完成 L3 验证后启用。
 
 ## 2. 构建不可变版本

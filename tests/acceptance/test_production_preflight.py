@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 from pathlib import Path
@@ -190,6 +191,53 @@ def test_quarantined_provider_must_be_disabled_and_have_no_runtime_key() -> None
     assert "unsupported providers" in detail
     assert "KIMI_PROVIDER_DISABLED must be true" in detail
     assert "KIMI_API_KEY must be empty" in detail
+    assert "exposed credential was rotated" in detail
+
+
+def test_runtime_can_temporarily_use_an_unrotated_key_but_release_stays_blocked() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED": "false",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_TEMPORARILY_ENABLED": "kimi",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_EXCEPTION_EXPIRES_AT": (
+                datetime.now(timezone.utc) + timedelta(days=7)
+            ).isoformat(),
+        }
+    )
+
+    api = production_preflight.validate_production_environment(env, role="api")
+    release = production_preflight.validate_production_environment(
+        env, role="release"
+    )
+
+    assert api.ready is True
+    assert any("experience testing" in warning for warning in api.warnings)
+    assert release.ready is False
+    assert any("exposed credential was rotated" in item for item in release.blockers)
+
+
+def test_temporary_unrotated_key_exception_is_short_lived_and_configured() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED": "false",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_TEMPORARILY_ENABLED": "kimi",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_EXCEPTION_EXPIRES_AT": (
+                datetime.now(timezone.utc) + timedelta(days=15)
+            ).isoformat(),
+            "KIMI_PROVIDER_DISABLED": "true",
+            "KIMI_API_KEY": "",
+        }
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is False
+    detail = "\n".join(result.blockers)
+    assert "KIMI_PROVIDER_DISABLED must be false" in detail
+    assert "KIMI_API_KEY must be injected" in detail
+    assert "must expire within 14 days" in detail
     assert "exposed credential was rotated" in detail
 
 

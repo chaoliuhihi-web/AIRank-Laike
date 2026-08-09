@@ -16,6 +16,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Mapping, Sequence
 from urllib.parse import parse_qs, urlparse
 
@@ -296,14 +297,80 @@ def _validate_provider_runtime(
                 f"{prefix}_API_KEY must be empty while its exposed credential is quarantined"
             )
             quarantine_valid = False
+    temporarily_enabled = {
+        value.strip().lower()
+        for value in _clean(
+            source,
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_TEMPORARILY_ENABLED",
+        ).split(",")
+        if value.strip()
+    }
+    unknown_temporarily_enabled = temporarily_enabled - set(PROVIDER_NAMES)
+    if unknown_temporarily_enabled:
+        blockers.append(
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_TEMPORARILY_ENABLED contains unsupported providers"
+        )
+    if quarantined & temporarily_enabled:
+        blockers.append(
+            "an unrotated Provider cannot be both quarantined and temporarily enabled"
+        )
+    temporary_exception_valid = (
+        bool(temporarily_enabled)
+        and not unknown_temporarily_enabled
+        and not (quarantined & temporarily_enabled)
+    )
+    for provider in sorted(temporarily_enabled & set(PROVIDER_NAMES)):
+        prefix = provider.upper()
+        if _enabled(source, f"{prefix}_PROVIDER_DISABLED"):
+            blockers.append(
+                f"{prefix}_PROVIDER_DISABLED must be false while the temporary experience exception is active"
+            )
+            temporary_exception_valid = False
+        if not _clean(source, f"{prefix}_API_KEY"):
+            blockers.append(
+                f"{prefix}_API_KEY must be injected while the temporary experience exception is active"
+            )
+            temporary_exception_valid = False
+    if temporarily_enabled:
+        expires_at = _clean(
+            source,
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_EXCEPTION_EXPIRES_AT",
+        )
+        try:
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if parsed_expiry.tzinfo is None:
+                raise ValueError
+            expiry = parsed_expiry.astimezone(timezone.utc)
+        except ValueError:
+            expiry = None
+            blockers.append(
+                "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_EXCEPTION_EXPIRES_AT must be an ISO-8601 UTC timestamp"
+            )
+            temporary_exception_valid = False
+        if expiry is not None:
+            now = datetime.now(timezone.utc)
+            if expiry <= now:
+                blockers.append("temporary unrotated Provider credential exception has expired")
+                temporary_exception_valid = False
+            elif expiry > now + timedelta(days=14):
+                blockers.append(
+                    "temporary unrotated Provider credential exception must expire within 14 days"
+                )
+                temporary_exception_valid = False
     if not credentials_rotated:
-        if role == "release" or not quarantine_valid:
+        if role == "release" or not (
+            quarantine_valid or temporary_exception_valid
+        ):
             blockers.append(
                 "AIRANK_COMPROMISED_CREDENTIALS_ROTATED must attest that every exposed credential was rotated"
             )
-        else:
+        elif quarantine_valid:
             warnings.append(
                 "unrotated exposed Provider credentials are disabled and quarantined; release readiness remains blocked"
+            )
+        elif temporary_exception_valid:
+            warnings.append(
+                "unrotated exposed Provider credentials are temporarily enabled for experience testing; release readiness remains blocked"
             )
 
     configured = 0
