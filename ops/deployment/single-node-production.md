@@ -26,8 +26,9 @@ docker image inspect "airank-backend:$commit" "airank-web:$commit" \
   --format '{{.RepoTags}} {{.Id}}'
 ```
 
-网络受限的部署机可额外传入 `PIP_INDEX_URL` 与 `NPM_REGISTRY` build arg；
-默认值仍是官方源，锁文件中的精确版本不因镜像源改变。
+网络受限的部署机可额外传入 `APT_MIRROR`、`PIP_INDEX_URL` 与
+`NPM_REGISTRY` build arg；默认值仍是官方源，锁文件中的精确版本不因镜像源
+改变。
 
 生产环境应把镜像推入私有仓库并在 `.env.production` 中使用 digest；单机候选
 验收至少要保存 commit 标签与本机 image ID 的对应记录。

@@ -315,6 +315,8 @@ def test_production_deployment_bundle_is_immutable_and_has_distinct_processes() 
     assert "resources:" in compose and "memory:" in compose
     assert "USER 10001:10001" in backend
     assert "requirements-prod.lock" in backend
+    assert "ARG APT_MIRROR=" in backend
+    assert "/etc/apt/sources.list.d/debian.sources" in backend
     assert "ARG PIP_INDEX_URL=https://pypi.org/simple" in backend
     assert '--index-url "${PIP_INDEX_URL}"' in backend
     assert "pip==26.2.1" in backend
