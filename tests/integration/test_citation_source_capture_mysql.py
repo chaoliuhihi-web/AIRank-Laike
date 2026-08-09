@@ -83,7 +83,7 @@ def test_real_mysql_citation_capture_persists_objects_segments_and_job(
     scan_repository = MySQLScanRepository(database_url())
     capture_repository = MySQLCitationCaptureRepository(database_url())
     execution_repository = MySQLCitationCaptureExecutionRepository(database_url())
-    lease_store = MySQLJobLeaseStore(database_url())
+    lease_store = MySQLJobLeaseStore(database_url(), tenant_id=tenant_id)
     source_url = "https://example.com/citation-source"
     raw_body = (
         "<html><body><main><h1>可信来源</h1>"
