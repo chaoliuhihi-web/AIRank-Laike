@@ -37,3 +37,16 @@ def test_provider_health_page_uses_persisted_l3_copy() -> None:
     assert "最近一次已存证 L3 探测" in checkup_source
     assert "不会在页面加载时重复发起计费探测" in checkup_source
     assert 'item.status === "ready" ? "已就绪" : "已阻断"' in checkup_source
+
+
+def test_task_center_preserves_error_codes_but_localizes_customer_copy() -> None:
+    app_source = (ROOT / "apps" / "web" / "src" / "App.tsx").read_text()
+    task_source = app_source.split("function TaskCenterPage", 1)[1].split(
+        "const questionStatusMeta", 1
+    )[0]
+
+    assert 'SCAN_PROVIDER_BLOCKED: "Provider 已停用、未配置或被当前运行门禁阻断。"' in task_source
+    assert "Worker 租约过期；为避免重复调用 Provider" in task_source
+    assert 'completed: "已完成"' in task_source
+    assert "task.error.code" in task_source
+    assert "taskErrorMessage(task)" in task_source

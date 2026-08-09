@@ -4251,6 +4251,28 @@ function TaskCenterPage() {
   const completed = tasks.filter((task) => task.status === "completed").length;
   const failed = tasks.filter((task) => task.status === "failed").length;
   const active = tasks.filter((task) => task.status === "queued" || task.status === "running").length;
+  const taskStatusLabel: Record<ScanTask["status"], string> = {
+    queued: "排队中",
+    running: "执行中",
+    completed: "已完成",
+    failed: "失败",
+    skipped: "已跳过",
+  };
+  const taskErrorMessage = (task: ScanTask): string => {
+    if (!task.error) return "—";
+    const localized: Record<string, string> = {
+      SCAN_PROVIDER_BLOCKED: "Provider 已停用、未配置或被当前运行门禁阻断。",
+      SCAN_PROVIDER_TIMEOUT: "Provider 调用超时，失败证据已保留。",
+      SCAN_PROVIDER_FAILED: "Provider 调用失败，详情已进入不可变失败证据。",
+      SCAN_TASK_LEASE_EXPIRED: "Worker 租约过期；为避免重复调用 Provider，系统未自动重放，请在新批次中重试。",
+      SCAN_RUN_LEASE_EXPIRED: "测量批次租约过期，系统已停止自动执行。",
+      SCAN_WORKER_INTERNAL_ERROR: "Worker 内部执行失败，原始错误已留存供管理员审计。",
+    };
+    if (localized[task.error.code]) return localized[task.error.code];
+    return /[\u3400-\u9fff]/.test(task.error.message)
+      ? task.error.message
+      : "任务未完成；请依据错误代码下钻原始失败证据。";
+  };
 
   return (
     <>
@@ -4278,7 +4300,7 @@ function TaskCenterPage() {
       {tasks.length > 0 && (
         <div className="airank-console-card table-card">
           <table className="question-table task-table"><thead><tr><th>Provider</th><th>采集契约</th><th>样本</th><th>状态</th><th>错误/阻塞原因</th><th>完成时间</th></tr></thead><tbody>
-            {tasks.map((task) => <tr key={task.task_id}><td><strong>{task.provider}</strong><small>{task.task_id}</small></td><td><strong>{task.collector_surface}</strong><small>{task.evidence_level} · {task.cohort_type}</small></td><td>#{task.sample_index}<small>{task.session_id}</small></td><td><Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>{task.status}</Badge></td><td>{task.error ? <><strong>{task.error.code}</strong><small>{task.error.message}</small></> : "—"}</td><td>{task.finished_at ? formatDateTime(task.finished_at) : "未完成"}</td></tr>)}
+            {tasks.map((task) => <tr key={task.task_id}><td><strong>{task.provider}</strong><small>{task.task_id}</small></td><td><strong>{task.collector_surface}</strong><small>{task.evidence_level} · {task.cohort_type}</small></td><td>#{task.sample_index}<small>{task.session_id}</small></td><td><Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>{taskStatusLabel[task.status]}</Badge></td><td>{task.error ? <><strong>{task.error.code}</strong><small>{taskErrorMessage(task)}</small></> : "—"}</td><td>{task.finished_at ? formatDateTime(task.finished_at) : "未完成"}</td></tr>)}
           </tbody></table>
         </div>
       )}
