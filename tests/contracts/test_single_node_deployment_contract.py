@@ -122,6 +122,11 @@ def test_single_node_environment_template_fails_closed() -> None:
     assert "DEEPSEEK_PROVIDER_DISABLED=true" in text
     assert "sk-" not in text
 
+    runbook = (
+        ROOT / "ops" / "deployment" / "single-node-production.md"
+    ).read_text()
+    assert "from 172.30.40.0/24 to 172.30.40.1 port 48084" in runbook
+
 
 def test_single_node_pki_has_exact_service_dns_names_and_never_overwrites(
     tmp_path: Path,

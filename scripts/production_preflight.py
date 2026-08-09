@@ -149,13 +149,16 @@ def _validate_database(source: Mapping[str, str], blockers: list[str]) -> None:
             "AIRANK_SINGLE_NODE_MODE requires the dedicated TLS hostname airank-db"
         )
     query = {key: values[-1].lower() for key, values in parse_qs(parsed.query).items() if values}
-    tls_enabled = query.get("ssl", "") in TRUE_VALUES or bool(query.get("ssl_ca"))
-    verify_cert = query.get("ssl_verify_cert", "") in TRUE_VALUES
-    verify_identity = query.get("ssl_verify_identity", "") in TRUE_VALUES
-    if not tls_enabled or not verify_cert or not verify_identity:
+    verify_mode = _clean(source, "AIRANK_DATABASE_TLS_VERIFY_MODE").lower()
+    if not query.get("ssl_ca") or verify_mode != "identity":
         blockers.append(
-            "AIRANK_DATABASE_URL must enable TLS with ssl_ca (or ssl=true), "
-            "ssl_verify_cert=true and ssl_verify_identity=true"
+            "AIRANK_DATABASE_URL must provide ssl_ca and "
+            "AIRANK_DATABASE_TLS_VERIFY_MODE must be identity"
+        )
+    if "ssl_verify_cert" in query or "ssl_verify_identity" in query:
+        blockers.append(
+            "AIRANK_DATABASE_URL must not use ssl_verify_cert/ssl_verify_identity query "
+            "flags because SQLAlchemy would overwrite the PyMySQL CA context"
         )
 
 

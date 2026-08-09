@@ -59,6 +59,10 @@ docker run --rm --user 0 \
 生成独立随机值填入 `.env.production`：MySQL root/app/migrator、MinIO、
 Provider Vault 加密 keyring 与 fingerprint keyring。两个 keyring 必须使用不同的
 32 字节随机材料。数据库密码使用 URL-safe 字符，并分别同步到数据库 URL。
+数据库 URL 只保留 `ssl_ca`；锁定的 PyMySQL 会据此启用证书与主机名校验，
+`AIRANK_DATABASE_TLS_VERIFY_MODE=identity` 是 fail-closed 策略门禁。不要再把
+`ssl_verify_cert` 或 `ssl_verify_identity` 作为 URL 参数，否则 SQLAlchemy 会覆盖
+CA context。
 
 ## 4. 配置检查与启动
 
@@ -75,6 +79,8 @@ install -m 0644 ops/deployment/airank-yudao-loopback-relay.service \
   /etc/systemd/system/airank-yudao-loopback-relay.service
 systemctl daemon-reload
 systemctl enable --now airank-yudao-loopback-relay.service
+ufw allow proto tcp from 172.30.40.0/24 to 172.30.40.1 port 48084 \
+  comment 'AIRank Yudao relay'
 ```
 
 relay 只监听 `172.30.40.1:48084`，转发到 `127.0.0.1:48082`，不会把

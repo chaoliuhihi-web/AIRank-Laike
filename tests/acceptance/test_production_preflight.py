@@ -52,8 +52,8 @@ def production_env() -> dict[str, str]:
         "AIRANK_DATABASE_URL": (
             "mysql+pymysql://airank:strong-secret@mysql.airank-db.cn:3306/airank_laike"
             "?charset=utf8mb4&ssl_ca=/run/secrets/mysql-ca.pem"
-            "&ssl_verify_cert=true&ssl_verify_identity=true"
         ),
+        "AIRANK_DATABASE_TLS_VERIFY_MODE": "identity",
         "AIRANK_AUTH_MODE": "yudao",
         "AIRANK_API_AUTH_ENFORCEMENT": "required",
         "AIRANK_TENANT_RESOLUTION_MODE": "database",
@@ -165,7 +165,6 @@ def test_preflight_accepts_explicit_single_node_database_with_verified_tls() -> 
             "AIRANK_DATABASE_URL": (
                 "mysql+pymysql://airank:strong-secret@airank-db:3306/airank_laike"
                 "?charset=utf8mb4&ssl_ca=/run/secrets/airank-internal-ca.pem"
-                "&ssl_verify_cert=true&ssl_verify_identity=true"
             ),
             "AIRANK_OBJECT_STORAGE_DRIVER": "minio",
             "AIRANK_S3_ENDPOINT_URL": "https://airank-objects:9000",
@@ -201,7 +200,19 @@ def test_single_node_mode_does_not_waive_database_boundary_or_tls_checks() -> No
     assert result.ready is False
     detail = "\n".join(result.blockers)
     assert "dedicated TLS hostname airank-db" in detail
-    assert "ssl_verify_identity=true" in detail
+    assert "must provide ssl_ca" in detail
+
+
+def test_preflight_rejects_sqlalchemy_pymysql_tls_flags_that_drop_the_ca() -> None:
+    env = production_env()
+    env["AIRANK_DATABASE_URL"] += (
+        "&ssl_verify_cert=true&ssl_verify_identity=true"
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is False
+    assert any("overwrite the PyMySQL CA context" in item for item in result.blockers)
 
 
 def test_single_node_mode_requires_data_disk_and_immutable_images() -> None:
