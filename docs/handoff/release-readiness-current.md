@@ -1,8 +1,8 @@
 # AIRank Current Release Readiness
 
-Generated: 2026-08-09T11:04:07+08:00
+Generated: 2026-08-09T11:34:22+08:00
 
-Verified feature commit: `0c7bedc`
+Verified feature commit: `d256ab7`
 
 Result: `BLOCKED / COMMERCIAL NO-GO`
 
@@ -16,11 +16,11 @@ This is the concise current release record. The executable source of truth is `s
 | GitHub `main` and feature branch contain `0c7bedc` | PASS |
 | Gitee `main` and feature branch contain `0c7bedc` | PASS |
 | Python / Node runtime | PASS: Python 3.11.15 / Node 24.14.0 |
-| Contract tests | PASS: 250 |
+| Contract tests | PASS: 252 |
 | Crawler-lite tests | PASS: 6 |
-| Acceptance tests | PASS: 102 |
+| Acceptance tests | PASS: 104 |
 | Scheduler tests | PASS: 20 |
-| Standalone Worker tests | PASS: 45 |
+| Standalone Worker tests | PASS: 47 |
 | Score tests | PASS: 16 |
 | Evidence tests | PASS: 48 |
 | Outbound-security tests | PASS: 23 |
@@ -31,10 +31,10 @@ This is the concise current release record. The executable source of truth is `s
 | Xinghe adapter tests | PASS: 10 |
 | Web production build | PASS |
 | Real MySQL integration | PASS: 38 passed, 2 explicitly skipped |
-| Alembic offline SQL and real MySQL head | PASS: `20260809_0042`, 107 AIRank tables |
+| Alembic offline SQL and real MySQL head | PASS: `20260809_0043`, 107 AIRank tables |
 | Required/Yudao authentication configuration | BLOCKED: local dev auth; production requires enforcement and Yudao |
 
-The wider default regression separately passed `578 passed, 38 skipped`. Skips are explicit environment-dependent gates and are not counted as production evidence.
+The wider default regression separately passed `584 passed, 38 skipped`. Skips are explicit environment-dependent gates and are not counted as production evidence.
 
 The Provider Vault now uses the persistent `20260809_0041` Operation Guard for upsert/revoke. The gate covers encrypted storage, AAD/tamper, independent HMAC domain, cross-key-id replay, RBAC/spoofing, successful replay without a second L3 call, conflicting payload rejection, failed-call replay suppression, concurrent outcome-unknown handling, append-only operation/credential hash chains and real MySQL cleanup. A tenant-scoped read-only admin list/detail now shows reconciliation count, replay status and event hashes without exposing raw secrets, raw idempotency keys or secret payloads. API/Worker/Scheduler were restarted on the new code; health, dev login, Vault portfolio and operation list return HTTP 200, recent logs contain no error markers, and the four local Provider routes remain honestly labeled `environment_legacy` rather than silently converted to tenant Vault credentials.
 
@@ -42,13 +42,15 @@ The Provider Vault now uses the persistent `20260809_0041` Operation Guard for u
 
 `airank.provider-usage-ledger.v1` now keeps Provider Token events immutable and stores catalog cost calculations as separate append-only derivations. Alembic `0042` adds non-null raw usage hashes, tenant/provider/route/model/effective-time price versions and calculation hashes. Provider billed amount plus currency is the only exact cost path; catalog multiplication is always estimated; missing Token or price is unknown. Admin APIs/UI filter usage and cost precision and expose known-cost coverage instead of presenting partial sums as total cost. Authenticated HTTP on the restarted API reports 18 exact usage events, zero priced events, 0% cost coverage and aggregate precision unknown; no demo price was inserted.
 
+External WordPress/HTTP publishing now uses the same persistent Operation Guard under `publisher.publish`. Alembic `0043` uniquely links each attempt to its operation. A real POST is preceded by `external_started`; any lost/invalid receipt or post-side-effect crash produces `outcome_unknown` and the same package cannot issue another POST. WordPress can only recover by a read-only deterministic-slug GET that returns an existing page; generic HTTP remains manual reconciliation. Real MySQL verified the three-event success chain, HTTP response-loss with zero duplicate POST, stale-attempt fail-closed behavior and WordPress GET-only recovery. The publish operation API is tenant scoped, requires `airank:delivery:admin`, exposes the event hash chain and has no force-success endpoint. API, Worker and Scheduler were restarted on `0043`; health is HTTP 200 and the read-only operation route returns the expected tenant-scoped not-found contract for an unknown ID.
+
 ## Active blockers
 
 - `AIRANK_ENV=local` and local filesystem object storage were used. Production requires authenticated HTTPS S3/MinIO-class object storage and a fresh object lifecycle verification.
 - The current runtime uses disabled API enforcement and dev authentication. Production requires enforced Yudao authentication, tenant/user checks and permission probes.
 - `YUDAO_PERMISSION_INFO_URL` / `YUDAO_BASE_URL` is not configured, so real Yudao authentication and tenant/user probes are blocked.
 - The Provider vault master key is process-secret-store backed, not cloud KMS/HSM; automatic re-encryption and full-tenant rotation orchestration are not implemented. No real production four-platform credential has completed vault save→rotate→revoke/recover acceptance.
-- Operation Guard currently protects Provider credential writes only. Other high-risk admin writes still require staged migration; `OPERATION_OUTCOME_UNKNOWN` has read-only evidence down-drill but still requires a human decision and is intentionally not auto-retried or force-resolved.
+- Operation Guard now protects Provider credential writes and external publishing. Route control, price-version writes and other high-risk admin mutations still require staged migration; generic HTTP `OPERATION_OUTCOME_UNKNOWN` still requires a human decision and is intentionally not auto-retried or force-resolved.
 - Skill Trust Gate is a repository/source/import gate, not an OS sandbox. Production Worker native permission enforcement and an external installer/runtime probe are not implemented, so local `allow` cannot promote a Skill to `ready`.
 - Usage Ledger has no production official-price synchronization, Provider invoice reconciliation, exchange-rate governance or finance-system receipt. Current known-cost amounts remain operational estimates, not settlement totals.
 - Optional Xinghe Crawler, KB, content, workflow and Hermes endpoints are unconfigured and remain `dev_only` behind AIRank-owned contracts/adapters.
@@ -58,4 +60,4 @@ The Provider Vault now uses the persistent `20260809_0041` Operation Guard for u
 
 ## Decision
 
-The Usage Ledger slice is engineering-complete and dual-remote synchronized at its verified commit, while the Provider Operation Guard and Skill Trust Gate remain intact. AIRank is not authorized to claim production or commercial readiness. Re-run the executable gate in the real production environment after the blockers above are cleared.
+The Publisher Operation Guard slice is engineering-complete and dual-remote synchronized at its verified commit, while Provider Vault, Skill Trust and Usage Ledger remain intact. AIRank is not authorized to claim production or commercial readiness. Re-run the executable gate in the real production environment after the blockers above are cleared.

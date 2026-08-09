@@ -15,7 +15,7 @@ AIRank 使用 `airank.provider-usage-ledger.v1` 保存真实 Provider 用量，�
 
 ## 迁移与启动
 
-1. 执行 `alembic upgrade head`，确认数据库头为 `20260809_0042`。
+1. 执行 `alembic upgrade head`，确认当前数据库头至少包含 `20260809_0042`；本仓当前 head 为 `20260809_0043`。
 2. 确认存在 `airank_provider_price_versions`、`airank_provider_usage_costs`，并确认 `airank_provider_usage_events.raw_usage_sha256` 为非空列。
 3. 重启 API、Worker 和 Scheduler。Worker 写入失败样本时，只要 Provider 已返回 usage，同样必须调用统一持久化入口。
 4. 访问 `GET /api/v1/admin/provider-usage`，确认未配置价格时成本为 `unknown`，而不是零。
