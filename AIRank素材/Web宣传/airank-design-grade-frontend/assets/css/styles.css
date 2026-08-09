@@ -7418,3 +7418,28 @@ body[data-page="resources"] .research-track small{display:block;margin-top:18px;
   body[data-page="resources"] .research-node--4{grid-column:3;grid-row:2}
   body[data-page="resources"] .research-node--5{grid-column:2;grid-row:3;width:190px;justify-self:center}
 }
+
+/* Responsive viewport contract: every top-level band fills the browser width. */
+html,
+body{
+  width:100%!important;
+  min-width:0!important;
+  max-width:none!important;
+  margin-inline:0!important;
+  overflow-x:clip!important;
+}
+body>.site-header,
+body>main,
+body>.footer,
+main>section{
+  width:100%!important;
+  max-width:none!important;
+  margin-inline:0!important;
+}
+@media (min-width:1600px){
+  :root{--container:1280px}
+  .container{
+    width:min(calc(100% - 96px),1280px)!important;
+    max-width:1280px!important;
+  }
+}
