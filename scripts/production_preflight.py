@@ -255,7 +255,11 @@ def _validate_single_node(source: Mapping[str, str], blockers: list[str]) -> Non
 
 
 def _validate_provider_runtime(
-    source: Mapping[str, str], blockers: list[str], warnings: list[str]
+    source: Mapping[str, str],
+    blockers: list[str],
+    warnings: list[str],
+    *,
+    role: str,
 ) -> None:
     mode = _clean(source, "AIRANK_PROVIDER_MODE").lower()
     if mode not in {"api", "browser"}:
@@ -264,10 +268,43 @@ def _validate_provider_runtime(
         blockers.append("AIRANK_SCAN_DISPATCH_MODE must be worker")
     if _enabled(source, "AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS"):
         blockers.append("AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS must be false in production")
-    if not _enabled(source, "AIRANK_COMPROMISED_CREDENTIALS_ROTATED"):
+    credentials_rotated = _enabled(
+        source, "AIRANK_COMPROMISED_CREDENTIALS_ROTATED"
+    )
+    quarantined = {
+        value.strip().lower()
+        for value in _clean(
+            source, "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED"
+        ).split(",")
+        if value.strip()
+    }
+    unknown_quarantined = quarantined - set(PROVIDER_NAMES)
+    if unknown_quarantined:
         blockers.append(
-            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED must attest that every exposed credential was rotated"
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED contains unsupported providers"
         )
+    quarantine_valid = bool(quarantined) and not unknown_quarantined
+    for provider in sorted(quarantined & set(PROVIDER_NAMES)):
+        prefix = provider.upper()
+        if not _enabled(source, f"{prefix}_PROVIDER_DISABLED"):
+            blockers.append(
+                f"{prefix}_PROVIDER_DISABLED must be true while its exposed credential is quarantined"
+            )
+            quarantine_valid = False
+        if _clean(source, f"{prefix}_API_KEY"):
+            blockers.append(
+                f"{prefix}_API_KEY must be empty while its exposed credential is quarantined"
+            )
+            quarantine_valid = False
+    if not credentials_rotated:
+        if role == "release" or not quarantine_valid:
+            blockers.append(
+                "AIRANK_COMPROMISED_CREDENTIALS_ROTATED must attest that every exposed credential was rotated"
+            )
+        else:
+            warnings.append(
+                "unrotated exposed Provider credentials are disabled and quarantined; release readiness remains blocked"
+            )
 
     configured = 0
     for provider in PROVIDER_NAMES:
@@ -394,7 +431,7 @@ def validate_production_environment(
             )
         checks.append("provider_credential_keyrings")
 
-        _validate_provider_runtime(source, blockers, warnings)
+        _validate_provider_runtime(source, blockers, warnings, role=role)
         checks.append("provider_execution")
         _validate_optional_integrations(source, blockers)
         checks.append("external_integrations")

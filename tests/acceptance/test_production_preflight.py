@@ -150,6 +150,49 @@ def test_preflight_blocks_local_fallbacks_sunset_model_and_unrotated_secrets() -
     assert "DEFAULT_TENANT_ID must be unset" in detail
 
 
+def test_runtime_can_start_with_an_unrotated_provider_credential_quarantined() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED": "false",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED": "kimi",
+            "KIMI_PROVIDER_DISABLED": "true",
+            "KIMI_API_KEY": "",
+        }
+    )
+
+    api = production_preflight.validate_production_environment(env, role="api")
+    release = production_preflight.validate_production_environment(
+        env, role="release"
+    )
+
+    assert api.ready is True
+    assert any("quarantined" in warning for warning in api.warnings)
+    assert release.ready is False
+    assert any("exposed credential was rotated" in item for item in release.blockers)
+
+
+def test_quarantined_provider_must_be_disabled_and_have_no_runtime_key() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED": "false",
+            "AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED": "kimi,unknown",
+            "KIMI_PROVIDER_DISABLED": "false",
+            "KIMI_API_KEY": "still-present",
+        }
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is False
+    detail = "\n".join(result.blockers)
+    assert "unsupported providers" in detail
+    assert "KIMI_PROVIDER_DISABLED must be true" in detail
+    assert "KIMI_API_KEY must be empty" in detail
+    assert "exposed credential was rotated" in detail
+
+
 def test_preflight_accepts_explicit_single_node_database_with_verified_tls() -> None:
     env = production_env()
     env.update(

@@ -7,10 +7,13 @@
 ## 1. 前置门禁
 
 - 数据盘可用空间至少 40 GiB，根盘使用率低于 75%。
-- `console.airank.net.cn` 已解析到部署服务器，且可签发公网证书。
+- `console.airank.cn` 已解析到部署服务器，且可签发公网证书。
 - 已取得独立 Yudao 服务凭证及正式租户绑定。
 - 所有曾暴露的 Provider 密钥已经轮换；没有轮换时保持
-  `AIRANK_COMPROMISED_CREDENTIALS_ROTATED=false`，应用会拒绝启动。
+  `AIRANK_COMPROMISED_CREDENTIALS_ROTATED=false`。仅当受影响 Provider 已禁用、
+  密钥已从运行环境移除且显式列入
+  `AIRANK_UNROTATED_PROVIDER_CREDENTIALS_QUARANTINED` 时，API、Worker 和
+  Scheduler 可带风险告警启动；`release` 门禁仍会拒绝通过。
 - Kimi 和 DeepSeek 仅在新密钥与非下架窗口模型完成 L3 验证后启用。
 
 ## 2. 构建不可变版本
@@ -103,7 +106,7 @@ docker compose --env-file .env.production \
 
 ## 5. 公网入口
 
-DNS 生效并签发证书后，把 `console.airank.net.cn.conf.example` 安装为宿主机
+DNS 生效并签发证书后，把 `console.airank.cn.conf.example` 安装为宿主机
 Nginx vhost。宿主机只反代 `127.0.0.1:18080`；MySQL、MinIO、Yudao 代理均不
 开放公网端口。
 
