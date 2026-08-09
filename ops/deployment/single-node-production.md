@@ -62,20 +62,24 @@ Provider Vault 加密 keyring 与 fingerprint keyring。两个 keyring 必须使
 
 ## 4. 配置检查与启动
 
-Yudao 只绑定宿主机回环地址时，先确认默认 Docker bridge 是
-`172.17.0.1`，再安装只对该 bridge 开放的 relay：
+Yudao 只绑定宿主机回环地址时，先确认 `172.30.40.0/24` 未被已有 Docker
+网络占用。Compose 会把 AIRank egress 固定为该网段；先创建网络，再安装只对
+egress gateway 开放的 relay：
 
 ```bash
-ip -4 -o addr show docker0
+docker network inspect $(docker network ls -q) \
+  --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}'
+docker compose --env-file .env.production \
+  -f compose.single-node.production.yml create yudao-proxy
 install -m 0644 ops/deployment/airank-yudao-loopback-relay.service \
   /etc/systemd/system/airank-yudao-loopback-relay.service
 systemctl daemon-reload
 systemctl enable --now airank-yudao-loopback-relay.service
 ```
 
-relay 只监听 `172.17.0.1:48084`，转发到 `127.0.0.1:48082`，不会把
-Yudao 管理接口发布到公网。如果服务器 Docker bridge 地址不同，必须先修改 unit
-中的 bind 地址并记录变更。
+relay 只监听 `172.30.40.1:48084`，转发到 `127.0.0.1:48082`，不会把
+Yudao 管理接口发布到公网。如果网段冲突，必须同时修改 Compose、Nginx upstream
+与 systemd unit，并记录变更。
 
 ```bash
 cd ops/deployment

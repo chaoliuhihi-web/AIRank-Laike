@@ -80,7 +80,8 @@ def test_single_node_compose_keeps_state_on_the_data_disk() -> None:
     assert "--ssl-mode=REQUIRED" in text
     assert "service_started" in text
     assert "mc\n        - ready" not in text
-    assert "host.docker.internal:host-gateway" in text
+    assert "subnet: 172.30.40.0/24" in text
+    assert "gateway: 172.30.40.1" in text
     assert "egress:" in text
 
     bootstrap = (ROOT / "ops" / "deployment" / "mysql" / "airank-init.sh").read_text()
@@ -92,7 +93,7 @@ def test_single_node_yudao_proxy_is_internal_tls_only() -> None:
     text = (ROOT / "ops" / "deployment" / "yudao-proxy.conf").read_text()
 
     assert "listen 8443 ssl" in text
-    assert "proxy_pass http://host.docker.internal:48084" in text
+    assert "proxy_pass http://172.30.40.1:48084" in text
     assert "ssl_protocols TLSv1.2 TLSv1.3" in text
     assert "listen 80" not in text
 
@@ -102,7 +103,7 @@ def test_single_node_yudao_proxy_is_internal_tls_only() -> None:
         / "deployment"
         / "airank-yudao-loopback-relay.service"
     ).read_text()
-    assert "bind=172.17.0.1" in relay
+    assert "bind=172.30.40.1" in relay
     assert "TCP4:127.0.0.1:48082" in relay
     assert "DynamicUser=true" in relay
     assert "NoNewPrivileges=true" in relay

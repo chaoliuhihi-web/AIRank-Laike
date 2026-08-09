@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 DynamicUser=true
-ExecStart=/usr/bin/socat TCP4-LISTEN:48084,bind=172.17.0.1,reuseaddr,fork TCP4:127.0.0.1:48082
+ExecStart=/usr/bin/socat TCP4-LISTEN:48084,bind=172.30.40.1,reuseaddr,fork TCP4:127.0.0.1:48082
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
