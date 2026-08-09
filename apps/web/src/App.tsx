@@ -1434,6 +1434,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [repetitions, setRepetitions] = useState(3);
   const [creatingRun, setCreatingRun] = useState(false);
+  const [showLauncher, setShowLauncher] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const providersInitialized = useRef(false);
@@ -1536,6 +1537,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       });
       setRuns((current) => [created, ...current.filter((run) => run.run_id !== created.run_id)]);
       setTasks(await fetchScanTasks(created.run_id));
+      setShowLauncher(false);
       notify({
         title: "真实基线已进入队列",
         desc: `${eligibleBlindQuestions.length} 个盲测问题 × ${selectedReadyProviders.length} 个平台 × ${repetitions} 次独立采样。`,
@@ -1557,7 +1559,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       />
       {loadError && <DataStateCard title="扫描状态暂时不可用" desc={`${loadError} 当前不展示示例进度或推测结果。`} tone="danger" />}
       {!loadError && !readiness && <DataStateCard title="正在读取扫描状态" desc="读取已保存的 Provider 健康与真实任务，不会因打开页面重复发起计费探测。" tone="primary" />}
-      {readiness && !latest && (
+      {readiness && (!latest || showLauncher) && (
         <section className="airank-console-card scan-launch-card" aria-label="创建真实盲测基线">
           <div className="scan-launch-heading">
             <div><span className="section-kicker">T0 基线</span><h2>创建真实盲测扫描</h2><p>仅使用已确认的盲测问题和已通过 L3 门禁的平台；每次采样使用独立会话。</p></div>
@@ -1624,6 +1626,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       {hasCurrentProfileEvidence && <section className="metric-grid">{metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
       <section className="airank-console-card scan-primary-action">
         <div><span>{latest ? `当前批次 · ${latest.name || latest.run_id.slice(-8)}` : "尚无扫描批次"}</span><h2>{hasCurrentProfileEvidence ? "本轮已有可用结果" : runningCount > 0 ? "扫描尚未封版" : "还不能生成证据缺口"}</h2><p>{hasCurrentProfileEvidence && message ? message : latest ? `有效 ${completedCount}，失败 ${failedCount}，运行中 ${runningCount}。未提及品牌的有效回答仍计入分母。` : "先确认问题集，再为通过门禁的平台创建真实采样任务。"}</p></div>
+        {latest && latest.status === "completed" && <button className="ghost-button" type="button" onClick={() => setShowLauncher((current) => !current)}>{showLauncher ? "收起重新扫描" : "重新扫描"}</button>}
         <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(hasCurrentProfileEvidence ? "/console/gaps" : "/console/questions")}>{hasCurrentProfileEvidence ? "查看证据缺口" : "确认买家问题"}<ArrowRight size={18} /></button>
       </section>
       <details className="airank-console-card technical-details"><summary>技术详情</summary><p>Provider 可用性来自最近一次已存证 L3 探测；页面读取不会在页面加载时重复发起计费探测。批次 ID、任务 ID、会话、请求追踪和租约仅用于排错。客户指标按 API、Web、App 采集方式分开计算，不在未说明的情况下合并。</p></details>
