@@ -848,6 +848,70 @@ def test_review_snapshot_export_publication_and_retest_contract(client: TestClie
     assert invalid_screenshot_pair.status_code == 422
     assert published.json()["data"]["status"] == "published"
 
+    external_package = client.post(
+        f"/api/v1/content-assets/{asset['asset_id']}/publish-packages",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "channel": "http",
+            "idempotency_key": "publish-http-mutation-0001",
+            "requested_by": "operator_1",
+            "target_endpoint": "https://publisher.example/api/content",
+        },
+    ).json()["data"]
+    premature_evidence = client.post(
+        f"/api/v1/publish-packages/{external_package['package_id']}/publication-evidence",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "published_url": "https://publisher.example/content/deploy",
+            "baseline_run_id": "run_baseline_1",
+            "recorded_by": "operator_1",
+        },
+    )
+    assert premature_evidence.status_code == 409
+    assert premature_evidence.json()["error"]["code"] == "PUBLISH_DELIVERY_RECEIPT_REQUIRED"
+    in_memory_delivery = delivery_routes.DELIVERY_REPOSITORY
+    stored_external = in_memory_delivery.packages[("tenant_1", external_package["package_id"])]
+    in_memory_delivery.packages[("tenant_1", external_package["package_id"])] = stored_external.model_copy(update={"status": "delivered", "published_url": "https://publisher.example/content/deploy"})
+    client.post(
+        f"/api/v1/publish-packages/{external_package['package_id']}/publication-evidence",
+        headers={"tenant-id": "tenant_1"},
+        json={
+            "published_url": "https://publisher.example/content/deploy",
+            "baseline_run_id": "run_baseline_1",
+            "recorded_by": "operator_1",
+        },
+    )
+    mutation_payload = {
+        "action": "update",
+        "replacement_asset_id": asset["asset_id"],
+        "idempotency_key": "publish-update-mutation-0001",
+        "reason": "客户确认替换内容后执行版本化更新并保留原始发布证据。",
+        "requested_by": "operator_1",
+    }
+    mutation = client.post(
+        f"/api/v1/publish-packages/{external_package['package_id']}/mutations",
+        headers={"tenant-id": "tenant_1"},
+        json=mutation_payload,
+    )
+    mutation_replay = client.post(
+        f"/api/v1/publish-packages/{external_package['package_id']}/mutations",
+        headers={"tenant-id": "tenant_1"},
+        json=mutation_payload,
+    )
+    wrong_tenant = client.post(
+        f"/api/v1/publish-packages/{external_package['package_id']}/mutations",
+        headers={"tenant-id": "tenant_2"},
+        json={**mutation_payload, "idempotency_key": "publish-update-mutation-0002"},
+    )
+
+    assert mutation.status_code == 201
+    assert mutation.json()["data"]["publication_action"] == "update"
+    assert mutation.json()["data"]["target_package_id"] == external_package["package_id"]
+    assert mutation.json()["data"]["status"] == "queued"
+    assert mutation_replay.json()["data"]["package_id"] == mutation.json()["data"]["package_id"]
+    assert mutation_replay.json()["data"]["idempotent_replay"] is True
+    assert wrong_tenant.status_code == 404
+
 
 def test_high_risk_geo_guarantee_requires_audited_override() -> None:
     findings = delivery_routes.scan_content_risk("保证被豆包推荐，并确保收录。")

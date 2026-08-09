@@ -187,6 +187,12 @@ FACT_DISCLOSURE_FORBIDDEN
 | `PUBLISH_RECEIPT_PERSIST_FAILED` | 503 | 已验证发布回执未能写入本地账本，可从成功 Operation Guard 安全恢复 |
 | `PUBLISH_RECONCILIATION_PERSIST_FAILED` | 503 | 找回的真实发布回执未能完成持久化 |
 | `PUBLICATION_SCREENSHOT_EVIDENCE_INVALID` | 409 | 发布截图对象不属于当前租户/项目，或客户端提交的 SHA-256 与不可变对象不一致 |
+| `PUBLISH_MUTATION_TARGET_INVALID` | 409 | 更新或撤回所绑定的原发布包、端点或替换资产不符合要求 |
+| `PUBLISH_MUTATION_TARGET_STATE_CONFLICT` | 409 | 更新或撤回目标不是已发布状态，或已被其他动作改变 |
+| `PUBLISH_MUTATION_CHANNEL_UNSUPPORTED` | 409 | 当前渠道不支持受治理的外部更新或撤回 |
+| `PUBLISH_MUTATION_REMOTE_ID_MISSING` | 409 | WordPress 原发布回执没有远端内容 ID，禁止猜测目标 |
+| `PUBLISH_MUTATION_REMOTE_ID_INVALID` | 409 | WordPress 远端内容 ID 不是可安全定位的数字 ID |
+| `PUBLISH_DELIVERY_RECEIPT_REQUIRED` | 409 | 外部发布尚无成功 Worker 回执，禁止登记为 published 或进入变更链 |
 | `RETEST_WINDOW_NOT_FOUND` | 404 | 复测观察窗口不存在 |
 | `RETEST_BASELINE_REQUIRED` | 409 | 缺少同项目且已完成的 T0 基线扫描 |
 | `RETEST_COMPARE_RUN_REQUIRED` | 409 | 缺少同项目且已完成的复测扫描 |

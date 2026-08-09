@@ -58,6 +58,23 @@ def snapshot(*, channel: str = "http", endpoint: str = "https://publisher.exampl
     )
 
 
+def mutation_snapshot(action: str, *, remote_id: str | None = "42") -> PublishSnapshot:
+    base = snapshot(channel="wordpress", endpoint="https://publisher.example.test/wp-json/wp/v2/posts")
+    return PublishSnapshot(
+        **{
+            **base.__dict__,
+            "package_id": f"package_{action}",
+            "snapshot_id": f"snapshot_{action}",
+            "idempotency_key": f"publication-{action}-task-1",
+            "publication_action": action,
+            "target_package_id": "package_original",
+            "target_remote_id": remote_id,
+            "target_published_url": "https://publisher.example.test/airank-original",
+            "action_reason": "客户审核后要求执行受治理的发布变更。",
+        }
+    )
+
+
 def test_generic_http_publisher_sends_idempotency_and_returns_hash_only_receipt() -> None:
     transport = FakePublishTransport(
         [(201, {}, {"id": "remote_1", "published_url": "https://publisher.example.test/pages/airank"})]
@@ -83,6 +100,8 @@ def test_generic_http_publisher_sends_idempotency_and_returns_hash_only_receipt(
     assert len(receipt.response_sha256) == 64
     assert transport.calls[0]["headers"]["Idempotency-Key"] == "publish-task-1"
     assert transport.calls[0]["headers"]["Authorization"] == "Bearer secret-never-persist"
+    assert transport.calls[0]["payload"]["contract_version"] == "airank.publisher.v2"
+    assert transport.calls[0]["payload"]["publication_action"] == "publish"
     assert "secret-never-persist" not in repr(receipt)
     assert side_effect_markers == ["started"]
 
@@ -182,6 +201,81 @@ def test_wordpress_lookup_failure_never_starts_external_post() -> None:
     assert caught.value.code == "PUBLISH_RECONCILIATION_LOOKUP_FAILED"
     assert [call["method"] for call in transport.calls] == ["GET"]
     assert side_effect_markers == []
+
+
+def test_wordpress_update_targets_receipt_remote_id_without_slug_lookup() -> None:
+    transport = FakePublishTransport(
+        [(200, {}, {"id": 42, "link": "https://publisher.example.test/airank-updated"})]
+    )
+    gateway = PublisherGateway(
+        env={
+            "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+            "AIRANK_WORDPRESS_USERNAME": "publisher",
+            "AIRANK_WORDPRESS_APP_PASSWORD": "app-password",
+        },
+        transport=transport,
+        resolver=public_resolver,
+    )
+    markers: list[str] = []
+
+    receipt = gateway.publish(
+        mutation_snapshot("update"),
+        before_external_effect=lambda: markers.append("started"),
+    )
+
+    assert receipt.remote_id == "42"
+    assert markers == ["started"]
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["method"] == "POST"
+    assert transport.calls[0]["url"].endswith("/wp-json/wp/v2/posts/42")
+    assert transport.calls[0]["payload"]["content"] == "# AIRank\n\n已审核事实。"
+    assert "slug" not in transport.calls[0]["payload"]
+
+
+def test_wordpress_withdraw_is_reversible_draft_and_never_uses_delete() -> None:
+    transport = FakePublishTransport(
+        [(200, {}, {"id": 42, "link": "https://publisher.example.test/airank-withdrawn"})]
+    )
+    gateway = PublisherGateway(
+        env={
+            "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+            "AIRANK_WORDPRESS_USERNAME": "publisher",
+            "AIRANK_WORDPRESS_APP_PASSWORD": "app-password",
+        },
+        transport=transport,
+        resolver=public_resolver,
+    )
+
+    gateway.publish(mutation_snapshot("withdraw"))
+
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["method"] == "POST"
+    assert transport.calls[0]["payload"] == {
+        "status": "draft",
+        "meta": {
+            "airank_withdrawal_package_id": "package_withdraw",
+            "airank_target_package_id": "package_original",
+        },
+    }
+
+
+def test_wordpress_mutation_rejects_untrusted_remote_id_before_transport() -> None:
+    transport = FakePublishTransport([])
+    gateway = PublisherGateway(
+        env={
+            "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+            "AIRANK_WORDPRESS_USERNAME": "publisher",
+            "AIRANK_WORDPRESS_APP_PASSWORD": "app-password",
+        },
+        transport=transport,
+        resolver=public_resolver,
+    )
+
+    with pytest.raises(PublisherError) as caught:
+        gateway.publish(mutation_snapshot("update", remote_id="../../admin"))
+
+    assert caught.value.code == "PUBLISH_MUTATION_REMOTE_ID_INVALID"
+    assert transport.calls == []
 
 
 def test_publisher_blocks_mutated_snapshot_and_missing_credential() -> None:

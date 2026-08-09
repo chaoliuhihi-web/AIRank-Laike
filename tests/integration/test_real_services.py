@@ -40,6 +40,7 @@ from apps.api.delivery_routes import (
     MySQLDeliveryRepository,
     PublishEvidenceRequest,
     PublishPackageCreateRequest,
+    PublishMutationCreateRequest,
 )
 from apps.api.knowledge_routes import (
     ComparisonCellRequest,
@@ -174,7 +175,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0044"
+EXPECTED_ALEMBIC_HEAD = "20260809_0045"
 
 
 def require_real_flag(flag: str) -> None:
@@ -241,6 +242,16 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             )
         ).scalar_one()
         assert table_count == 109
+        publish_columns = set(conn.execute(
+            text(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'airank_publish_packages'
+                """
+            )
+        ).scalars().all())
+        assert {"publication_action", "target_package_id", "action_reason", "requested_by"} <= publish_columns
         for table_name in (
             "airank_provider_model_migrations",
             "airank_provider_model_migration_events",
@@ -4624,7 +4635,7 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 self.calls.append(method)
                 return 200, {}, [
                     {
-                        "id": "wordpress_remote_it",
+                        "id": 84,
                         "link": "https://publisher.example.test/pages/airank-proof",
                     }
                 ]
@@ -4719,6 +4730,72 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 },
             )
 
+        published_wordpress = delivery_repo.mark_published(
+            tenant_id,
+            wordpress_package.package_id,
+            PublishEvidenceRequest(
+                published_url=wordpress_recovered.published_url,
+                baseline_run_id=baseline_run_id,
+                recorded_by="integration-reviewer",
+            ),
+        )
+        assert published_wordpress.status == "published"
+        wordpress_update = delivery_repo.create_mutation(
+            tenant_id,
+            wordpress_package.package_id,
+            PublishMutationCreateRequest(
+                action="update",
+                replacement_asset_id=asset.asset_id,
+                idempotency_key="publish-wordpress-update-it",
+                reason="验证 WordPress 更新只使用原始回执的远端内容编号，不创建新 slug。",
+                requested_by="integration-reviewer",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": wordpress_update.package_id},
+            )
+
+        class WordPressUpdateTransport:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, Any]] = []
+
+            def request(self, method, url, *, headers, payload, timeout_seconds):
+                del headers, timeout_seconds
+                self.calls.append({"method": method, "url": url, "payload": payload})
+                return 200, {}, {
+                    "id": 84,
+                    "link": "https://publisher.example.test/pages/airank-proof",
+                }
+
+        wordpress_update_transport = WordPressUpdateTransport()
+        wordpress_update_gateway = PublisherGateway(
+            env={
+                "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+                "AIRANK_WORDPRESS_USERNAME": "integration-publisher",
+                "AIRANK_WORDPRESS_APP_PASSWORD": "integration-app-password",
+            },
+            transport=wordpress_update_transport,
+            resolver=lambda host, port, **_: [(2, 1, 6, "", ("93.184.216.34", port))],
+        )
+        run_next_publish_job(
+            job_store,
+            execution_repo,
+            wordpress_update_gateway,
+            worker_id="publisher-wordpress-update",
+        )
+        assert len(wordpress_update_transport.calls) == 1
+        assert wordpress_update_transport.calls[0]["method"] == "POST"
+        assert wordpress_update_transport.calls[0]["url"].endswith("/wp-json/wp/v2/posts/84")
+        assert "slug" not in wordpress_update_transport.calls[0]["payload"]
+
         with pytest.raises(StarletteHTTPException) as non_baseline:
             delivery_repo.mark_published(
                 tenant_id,
@@ -4784,6 +4861,240 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
         assert all(row["baseline_run_id"] == baseline_run_id for row in observation_windows)
         assert published_metadata["publication_evidence"]["screenshot_ref_id"] == screenshot_ref_id
         assert published_metadata["publication_evidence"]["screenshot_sha256"] == screenshot_sha256
+
+        update_request = PublishMutationCreateRequest(
+            action="update",
+            replacement_asset_id=asset.asset_id,
+            idempotency_key="publish-update-package-it",
+            reason="客户已审核替换正文，要求保留原发布证据并执行受控更新。",
+            requested_by="integration-reviewer",
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_updates = list(executor.map(
+                lambda _: delivery_repo.create_mutation(tenant_id, package.package_id, update_request),
+                range(2),
+            ))
+        update_package = next(item for item in concurrent_updates if not item.idempotent_replay)
+        update_replay = next(item for item in concurrent_updates if item.idempotent_replay)
+        assert update_package.publication_action == "update"
+        assert update_package.target_package_id == package.package_id
+        assert update_package.status == "queued"
+        assert update_replay.package_id == update_package.package_id
+        assert update_replay.idempotent_replay is True
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": update_package.package_id},
+            )
+        update_receipt = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-update-integration",
+        )
+        assert update_receipt is not None
+        assert transport.calls[-1]["payload"]["publication_action"] == "update"
+        assert transport.calls[-1]["payload"]["target_package_id"] == package.package_id
+        with engine.connect() as conn:
+            update_states = conn.execute(
+                text(
+                    """
+                    SELECT id, status, publication_action, target_package_id, metadata_json
+                    FROM airank_publish_packages
+                    WHERE tenant_id=:tenant_id AND id IN (:original_id, :update_id)
+                    ORDER BY id
+                    """
+                ),
+                {"tenant_id": tenant_id, "original_id": package.package_id, "update_id": update_package.package_id},
+            ).mappings().all()
+        update_state_by_id = {row["id"]: row for row in update_states}
+        assert update_state_by_id[package.package_id]["status"] == "superseded"
+        assert update_state_by_id[update_package.package_id]["status"] == "delivered"
+        original_metadata = update_state_by_id[package.package_id]["metadata_json"]
+        if isinstance(original_metadata, str):
+            original_metadata = json.loads(original_metadata)
+        assert original_metadata["superseded_by_package_id"] == update_package.package_id
+
+        published_update = delivery_repo.mark_published(
+            tenant_id,
+            update_package.package_id,
+            PublishEvidenceRequest(
+                published_url=update_receipt.published_url,
+                baseline_run_id=baseline_run_id,
+                recorded_by="integration-reviewer",
+            ),
+        )
+        assert published_update.status == "published"
+
+        with pytest.raises(StarletteHTTPException) as superseded_target:
+            delivery_repo.create_mutation(
+                tenant_id,
+                package.package_id,
+                PublishMutationCreateRequest(
+                    action="withdraw",
+                    idempotency_key="publish-withdraw-stale-target-it",
+                    reason="验证已经被新版本替代的原发布包不能再次执行撤回动作。",
+                    requested_by="integration-reviewer",
+                ),
+            )
+        assert superseded_target.value.detail["code"] == "PUBLISH_MUTATION_TARGET_STATE_CONFLICT"
+
+        withdraw_package = delivery_repo.create_mutation(
+            tenant_id,
+            update_package.package_id,
+            PublishMutationCreateRequest(
+                action="withdraw",
+                idempotency_key="publish-withdraw-package-it",
+                reason="客户要求将当前页面撤回为不可公开状态，同时保留全部审计证据。",
+                requested_by="integration-reviewer",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": withdraw_package.package_id},
+            )
+        withdraw_receipt = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-withdraw-integration",
+        )
+        assert withdraw_receipt is not None
+        assert transport.calls[-1]["payload"]["publication_action"] == "withdraw"
+        assert transport.calls[-1]["payload"]["target_package_id"] == update_package.package_id
+        with engine.connect() as conn:
+            withdrawal_states = dict(conn.execute(
+                text(
+                    """
+                    SELECT id, status FROM airank_publish_packages
+                    WHERE tenant_id=:tenant_id AND id IN (:update_id, :withdraw_id)
+                    """
+                ),
+                {"tenant_id": tenant_id, "update_id": update_package.package_id, "withdraw_id": withdraw_package.package_id},
+            ).all())
+        assert withdrawal_states == {
+            update_package.package_id: "withdrawn",
+            withdraw_package.package_id: "withdrawn",
+        }
+        with pytest.raises(StarletteHTTPException) as withdrawal_evidence:
+            delivery_repo.mark_published(
+                tenant_id,
+                withdraw_package.package_id,
+                PublishEvidenceRequest(
+                    published_url=withdraw_receipt.published_url,
+                    baseline_run_id=baseline_run_id,
+                    recorded_by="integration-reviewer",
+                ),
+            )
+        assert withdrawal_evidence.value.detail["code"] == "PUBLISH_MUTATION_TARGET_STATE_CONFLICT"
+
+        unknown_target = delivery_repo.create_package(
+            tenant_id,
+            asset.asset_id,
+            PublishPackageCreateRequest(
+                channel="http",
+                idempotency_key="publish-mutation-unknown-target-it",
+                requested_by="integration-reviewer",
+                target_endpoint="https://publisher.example.test/v1/publish",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": unknown_target.package_id},
+            )
+        unknown_target_receipt = run_next_publish_job(
+            job_store,
+            execution_repo,
+            gateway,
+            worker_id="publisher-unknown-target",
+        )
+        assert unknown_target_receipt is not None
+        delivery_repo.mark_published(
+            tenant_id,
+            unknown_target.package_id,
+            PublishEvidenceRequest(
+                published_url=unknown_target_receipt.published_url,
+                baseline_run_id=baseline_run_id,
+                recorded_by="integration-reviewer",
+            ),
+        )
+        unknown_mutation = delivery_repo.create_mutation(
+            tenant_id,
+            unknown_target.package_id,
+            PublishMutationCreateRequest(
+                action="update",
+                replacement_asset_id=asset.asset_id,
+                idempotency_key="publish-mutation-unknown-action-it",
+                reason="模拟外部已接收更新但响应丢失，验证目标状态和后续动作均失败关闭。",
+                requested_by="integration-reviewer",
+            ),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_async_jobs SET priority = -1000
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": unknown_mutation.package_id},
+            )
+        with pytest.raises(PublisherError) as unknown_mutation_result:
+            run_next_publish_job(
+                job_store,
+                execution_repo,
+                failing_gateway,
+                worker_id="publisher-mutation-response-loss",
+            )
+        assert unknown_mutation_result.value.code == "OPERATION_OUTCOME_UNKNOWN"
+        with engine.connect() as conn:
+            unknown_states = dict(conn.execute(
+                text(
+                    """
+                    SELECT id, status FROM airank_publish_packages
+                    WHERE tenant_id=:tenant_id AND id IN (:target_id, :mutation_id)
+                    """
+                ),
+                {"tenant_id": tenant_id, "target_id": unknown_target.package_id, "mutation_id": unknown_mutation.package_id},
+            ).all())
+        assert unknown_states == {
+            unknown_target.package_id: "published",
+            unknown_mutation.package_id: "outcome_unknown",
+        }
+        with pytest.raises(StarletteHTTPException) as blocked_after_unknown:
+            delivery_repo.create_mutation(
+                tenant_id,
+                unknown_target.package_id,
+                PublishMutationCreateRequest(
+                    action="withdraw",
+                    idempotency_key="publish-mutation-after-unknown-it",
+                    reason="未知更新尚未对账时，不允许继续执行可能冲突的撤回动作。",
+                    requested_by="integration-reviewer",
+                ),
+            )
+        assert blocked_after_unknown.value.detail["code"] == "PUBLISH_MUTATION_TARGET_STATE_CONFLICT"
+        assert blocked_after_unknown.value.detail["details"]["active_mutation_status"] == "outcome_unknown"
     finally:
         cleanup_tenant(engine, tenant_id)
 

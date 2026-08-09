@@ -129,6 +129,24 @@ class PublishPackageCreateRequest(BaseModel):
         return self
 
 
+class PublishMutationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["update", "withdraw"]
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    reason: str = Field(min_length=10, max_length=1000)
+    requested_by: str = Field(min_length=1, max_length=128)
+    replacement_asset_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def replacement_matches_action(self) -> "PublishMutationCreateRequest":
+        if self.action == "update" and not self.replacement_asset_id:
+            raise ValueError("replacement_asset_id is required for update")
+        if self.action == "withdraw" and self.replacement_asset_id:
+            raise ValueError("replacement_asset_id is not allowed for withdraw")
+        return self
+
+
 class PublishPackageData(BaseModel):
     package_id: str
     tenant_id: str
@@ -137,12 +155,16 @@ class PublishPackageData(BaseModel):
     snapshot_id: str
     content_review_id: str
     channel: Literal["export", "wordpress", "http"]
-    status: Literal["packaged", "queued", "publishing", "delivered", "failed", "outcome_unknown", "published"]
+    status: Literal["packaged", "queued", "publishing", "delivered", "failed", "outcome_unknown", "published", "superseded", "withdrawn"]
     implementation_status: Literal["ready", "partial"]
     idempotency_key: str
     content_sha256: str
     published_url: Optional[str] = None
     created_at: datetime
+    publication_action: Literal["publish", "update", "withdraw"] = "publish"
+    target_package_id: Optional[str] = None
+    action_reason: Optional[str] = None
+    requested_by: Optional[str] = None
     idempotent_replay: bool = False
 
 
@@ -261,6 +283,7 @@ class PublishExportResponse(BaseModel):
 class DeliveryRepository(Protocol):
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData: ...
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData: ...
+    def create_mutation(self, tenant_id: str, package_id: str, payload: PublishMutationCreateRequest) -> PublishPackageData: ...
     def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]: ...
     def list_attempts(self, tenant_id: str, package_id: str) -> list[PublishAttemptData]: ...
     def get_operation(self, tenant_id: str, operation_id: str) -> PublishOperationData: ...
@@ -274,6 +297,7 @@ class InMemoryDeliveryRepository:
         self.packages: dict[tuple[str, str], PublishPackageData] = {}
         self.snapshots: dict[tuple[str, str], PublishExportData] = {}
         self.idempotency: dict[tuple[str, str], str] = {}
+        self.package_endpoints: dict[tuple[str, str], Optional[str]] = {}
         self.retest_windows: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _asset(self, tenant_id: str, asset_id: str) -> Any:
@@ -320,8 +344,72 @@ class InMemoryDeliveryRepository:
         self.snapshots[(tenant_id, snapshot_id)] = PublishExportData(package_id=package_id, snapshot_id=snapshot_id, title=asset.title, body_md=asset.body_md, content_sha256=sha256_text(asset.body_md), manifest=manifest)
         data = PublishPackageData(package_id=package_id, tenant_id=tenant_id, project_id=asset.project_id, asset_id=asset_id, snapshot_id=snapshot_id, content_review_id=review.review_id, channel=payload.channel, status="packaged" if payload.channel == "export" else "queued", implementation_status="ready" if payload.channel == "export" else "partial", idempotency_key=payload.idempotency_key, content_sha256=sha256_text(asset.body_md), created_at=created_at)
         self.packages[(tenant_id, package_id)] = data
+        self.package_endpoints[(tenant_id, package_id)] = payload.target_endpoint
         self.idempotency[replay_key] = package_id
         return data
+
+    def create_mutation(self, tenant_id: str, package_id: str, payload: PublishMutationCreateRequest) -> PublishPackageData:
+        replay_key = (tenant_id, payload.idempotency_key)
+        if replay_key in self.idempotency:
+            package = self.packages[(tenant_id, self.idempotency[replay_key])]
+            if package.publication_action != payload.action or package.target_package_id != package_id:
+                raise StarletteHTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+            return package.model_copy(update={"idempotent_replay": True})
+        target = self.packages.get((tenant_id, package_id))
+        if target is None:
+            raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+        if target.status != "published":
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "status": target.status}})
+        if target.channel == "export":
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_CHANNEL_UNSUPPORTED", "details": {"channel": target.channel}})
+        active_mutation = next((item for (item_tenant, _), item in self.packages.items() if item_tenant == tenant_id and item.target_package_id == package_id and item.publication_action in {"update", "withdraw"} and item.status in {"queued", "publishing", "delivered", "outcome_unknown"}), None)
+        if active_mutation is not None:
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "active_mutation_package_id": active_mutation.package_id, "active_mutation_status": active_mutation.status}})
+        endpoint = self.package_endpoints.get((tenant_id, package_id))
+        if not endpoint:
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_INVALID", "details": {"reason": "target_endpoint_missing"}})
+        if payload.action == "update":
+            created = self.create_package(
+                tenant_id,
+                str(payload.replacement_asset_id),
+                PublishPackageCreateRequest(
+                    channel=target.channel,
+                    idempotency_key=payload.idempotency_key,
+                    requested_by=payload.requested_by,
+                    target_endpoint=endpoint,
+                ),
+            )
+            updated = created.model_copy(update={"publication_action": "update", "target_package_id": package_id, "action_reason": payload.reason, "requested_by": payload.requested_by})
+        else:
+            mutation_package_id = f"package_{uuid4().hex[:12]}"
+            source_export = self.snapshots[(tenant_id, target.snapshot_id)]
+            snapshot_id = f"publish_snapshot_{uuid4().hex[:12]}"
+            manifest = dict(source_export.manifest)
+            manifest.update({"contract_version": "airank.publish-snapshot.v3", "publication_action": "withdraw", "target_package_id": package_id, "action_reason": payload.reason, "requested_by": payload.requested_by})
+            self.snapshots[(tenant_id, snapshot_id)] = source_export.model_copy(update={"package_id": mutation_package_id, "snapshot_id": snapshot_id, "manifest": manifest})
+            updated = PublishPackageData(
+                package_id=mutation_package_id,
+                tenant_id=tenant_id,
+                project_id=target.project_id,
+                asset_id=target.asset_id,
+                snapshot_id=snapshot_id,
+                content_review_id=target.content_review_id,
+                channel=target.channel,
+                status="queued",
+                implementation_status="partial",
+                idempotency_key=payload.idempotency_key,
+                content_sha256=target.content_sha256,
+                published_url=target.published_url,
+                created_at=utc_now(),
+                publication_action="withdraw",
+                target_package_id=package_id,
+                action_reason=payload.reason,
+                requested_by=payload.requested_by,
+            )
+        self.packages[(tenant_id, updated.package_id)] = updated
+        self.package_endpoints[(tenant_id, updated.package_id)] = endpoint
+        self.idempotency[replay_key] = updated.package_id
+        return updated
 
     def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]:
         return [
@@ -349,6 +437,15 @@ class InMemoryDeliveryRepository:
         package = self.packages.get((tenant_id, package_id))
         if package is None:
             raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+        if package.publication_action == "withdraw" or package.status in {"withdrawn", "superseded"}:
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "status": package.status}})
+        if package.status == "published":
+            if package.published_url != payload.published_url:
+                raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"package_id": package_id, "published_url": package.published_url}})
+            return package.model_copy(update={"idempotent_replay": True})
+        required_status = "packaged" if package.channel == "export" else "delivered"
+        if package.status != required_status:
+            raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_DELIVERY_RECEIPT_REQUIRED", "details": {"package_id": package_id, "status": package.status, "required_status": required_status}})
         updated = package.model_copy(update={"status": "published", "published_url": payload.published_url})
         self.packages[(tenant_id, package_id)] = updated
         published_at = utc_now()
@@ -437,7 +534,26 @@ class MySQLDeliveryRepository:
         if row["channel"] == "export" and status == "draft":
             status = "packaged"
         implementation_status = "ready" if row["channel"] == "export" or metadata.get("implementation_status") == "ready" else "partial"
-        return PublishPackageData(package_id=row["id"], tenant_id=row["tenant_id"], project_id=row["project_id"], asset_id=row["asset_id"], snapshot_id=row["snapshot_id"], content_review_id=row["content_review_id"], channel=row["channel"], status=status, implementation_status=implementation_status, idempotency_key=row["idempotency_key"], content_sha256=metadata.get("content_sha256", ""), published_url=row["published_url"], created_at=row["created_at"], idempotent_replay=replay)
+        return PublishPackageData(
+            package_id=row["id"],
+            tenant_id=row["tenant_id"],
+            project_id=row["project_id"],
+            asset_id=row["asset_id"],
+            snapshot_id=row["snapshot_id"],
+            content_review_id=row["content_review_id"],
+            channel=row["channel"],
+            status=status,
+            implementation_status=implementation_status,
+            idempotency_key=row["idempotency_key"],
+            content_sha256=metadata.get("content_sha256", ""),
+            published_url=row["published_url"],
+            created_at=row["created_at"],
+            publication_action=str(row.get("publication_action") or metadata.get("publication_action") or "publish"),
+            target_package_id=row.get("target_package_id") or metadata.get("target_package_id"),
+            action_reason=row.get("action_reason") or metadata.get("action_reason"),
+            requested_by=row.get("requested_by") or metadata.get("requested_by"),
+            idempotent_replay=replay,
+        )
 
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData:
         created_at = utc_now()
@@ -476,12 +592,14 @@ class MySQLDeliveryRepository:
             conn.execute(text("""
                 INSERT INTO airank_publish_packages (
                   id, tenant_id, project_id, asset_id, snapshot_id, content_review_id,
-                  idempotency_key, package_type, channel, status, metadata_json, created_at, updated_at
+                  idempotency_key, package_type, channel, status, metadata_json,
+                  publication_action, requested_by, created_at, updated_at
                 ) VALUES (
                   :id, :tenant_id, :project_id, :asset_id, :snapshot_id, :content_review_id,
-                  :idempotency_key, 'content_asset', :channel, :status, :metadata_json, :created_at, :created_at
+                  :idempotency_key, 'content_asset', :channel, :status, :metadata_json,
+                  'publish', :requested_by, :created_at, :created_at
                 )
-            """), {"id": package_id, "tenant_id": tenant_id, "project_id": asset["project_id"], "asset_id": asset_id, "snapshot_id": snapshot_id, "content_review_id": review["id"], "idempotency_key": payload.idempotency_key, "channel": payload.channel, "status": package_status, "metadata_json": json.dumps({"content_sha256": content_sha256, "target_endpoint": payload.target_endpoint, "implementation_status": "ready" if payload.channel == "export" else "partial"}, ensure_ascii=False), "created_at": created_at})
+            """), {"id": package_id, "tenant_id": tenant_id, "project_id": asset["project_id"], "asset_id": asset_id, "snapshot_id": snapshot_id, "content_review_id": review["id"], "idempotency_key": payload.idempotency_key, "channel": payload.channel, "status": package_status, "metadata_json": json.dumps({"content_sha256": content_sha256, "target_endpoint": payload.target_endpoint, "implementation_status": "ready" if payload.channel == "export" else "partial", "publication_action": "publish", "requested_by": payload.requested_by}, ensure_ascii=False), "requested_by": payload.requested_by, "created_at": created_at})
             if payload.channel != "export":
                 conn.execute(text("""
                     INSERT INTO airank_async_jobs (
@@ -493,6 +611,174 @@ class MySQLDeliveryRepository:
                     )
                 """), {"id": f"job_{uuid4().hex[:12]}", "tenant_id": tenant_id, "project_id": asset["project_id"], "scheduled_at": created_at, "payload_json": json.dumps({"package_id": package_id, "snapshot_id": snapshot_id, "channel": payload.channel, "target_endpoint": payload.target_endpoint}, ensure_ascii=False), "created_at": created_at})
             row = conn.execute(text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND id=:package_id"), {"tenant_id": tenant_id, "package_id": package_id}).mappings().one()
+        return self._package_data(row)
+
+    def create_mutation(self, tenant_id: str, package_id: str, payload: PublishMutationCreateRequest) -> PublishPackageData:
+        created_at = utc_now()
+        request_sha256 = sha256_text(json.dumps({
+            "action": payload.action,
+            "target_package_id": package_id,
+            "replacement_asset_id": payload.replacement_asset_id,
+            "reason": payload.reason,
+            "requested_by": payload.requested_by,
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        with self.engine.begin() as conn:
+            replay = conn.execute(
+                text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND idempotency_key=:idempotency_key AND deleted_at IS NULL"),
+                {"tenant_id": tenant_id, "idempotency_key": payload.idempotency_key},
+            ).mappings().first()
+            if replay is not None:
+                replay_metadata = replay["metadata_json"] if isinstance(replay["metadata_json"], dict) else json.loads(replay["metadata_json"] or "{}")
+                if replay_metadata.get("mutation_request_sha256") != request_sha256:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+                return self._package_data(replay, replay=True)
+            target = conn.execute(text("""
+                SELECT p.*, s.title AS snapshot_title, s.body_md AS snapshot_body_md,
+                       s.content_sha256 AS snapshot_content_sha256,
+                       s.manifest_json AS snapshot_manifest_json
+                FROM airank_publish_packages p
+                JOIN airank_publish_snapshots s
+                  ON s.id=p.snapshot_id AND s.tenant_id=p.tenant_id
+                WHERE p.tenant_id=:tenant_id AND p.id=:package_id
+                  AND p.deleted_at IS NULL
+                FOR UPDATE
+            """), {"tenant_id": tenant_id, "package_id": package_id}).mappings().first()
+            if target is None:
+                raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+            replay_after_lock = conn.execute(
+                text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND idempotency_key=:idempotency_key AND deleted_at IS NULL FOR UPDATE"),
+                {"tenant_id": tenant_id, "idempotency_key": payload.idempotency_key},
+            ).mappings().first()
+            if replay_after_lock is not None:
+                replay_metadata = replay_after_lock["metadata_json"] if isinstance(replay_after_lock["metadata_json"], dict) else json.loads(replay_after_lock["metadata_json"] or "{}")
+                if replay_metadata.get("mutation_request_sha256") != request_sha256:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+                return self._package_data(replay_after_lock, replay=True)
+            if target["status"] != "published":
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "status": target["status"], "required_status": "published"}})
+            if target["channel"] not in {"wordpress", "http"}:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_CHANNEL_UNSUPPORTED", "details": {"channel": target["channel"]}})
+            active_mutation = conn.execute(text("""
+                SELECT id, status FROM airank_publish_packages
+                WHERE tenant_id=:tenant_id AND target_package_id=:target_package_id
+                  AND publication_action IN ('update','withdraw')
+                  AND status IN ('draft','queued','publishing','delivered','outcome_unknown')
+                  AND deleted_at IS NULL
+                ORDER BY created_at DESC LIMIT 1
+                FOR UPDATE
+            """), {"tenant_id": tenant_id, "target_package_id": package_id}).mappings().first()
+            if active_mutation is not None:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "active_mutation_package_id": active_mutation["id"], "active_mutation_status": active_mutation["status"]}})
+            target_metadata = target["metadata_json"] if isinstance(target["metadata_json"], dict) else json.loads(target["metadata_json"] or "{}")
+            target_endpoint = str(target_metadata.get("target_endpoint") or "")
+            if not target_endpoint:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_INVALID", "details": {"reason": "target_endpoint_missing"}})
+            receipt = target_metadata.get("delivery_receipt") if isinstance(target_metadata.get("delivery_receipt"), Mapping) else {}
+            target_remote_id = str(receipt.get("remote_id") or "").strip()
+            if target["channel"] == "wordpress" and not target_remote_id:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_REMOTE_ID_MISSING", "details": {"package_id": package_id}})
+
+            if payload.action == "update":
+                asset = conn.execute(text("""
+                    SELECT id, project_id, asset_type, title, body_md, content_sha256, metadata_json
+                    FROM airank_content_assets
+                    WHERE tenant_id=:tenant_id AND id=:asset_id AND deleted_at IS NULL
+                    FOR UPDATE
+                """), {"tenant_id": tenant_id, "asset_id": payload.replacement_asset_id}).mappings().first()
+                if asset is None:
+                    raise _not_found("ASSET_NOT_FOUND", {"asset_id": payload.replacement_asset_id})
+                if asset["project_id"] != target["project_id"]:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_INVALID", "details": {"reason": "replacement_asset_project_mismatch"}})
+                content_sha256 = sha256_text(asset["body_md"] or "")
+                review = conn.execute(text("""
+                    SELECT * FROM airank_content_reviews
+                    WHERE tenant_id=:tenant_id AND asset_id=:asset_id AND action='approved'
+                      AND fact_check_status='passed' AND content_sha256=:content_sha256
+                    ORDER BY reviewed_at DESC LIMIT 1
+                """), {"tenant_id": tenant_id, "asset_id": payload.replacement_asset_id, "content_sha256": content_sha256}).mappings().first()
+                if review is None:
+                    raise StarletteHTTPException(status_code=409, detail={"code": "CONTENT_REVIEW_REQUIRED", "details": {"asset_id": payload.replacement_asset_id, "content_sha256": content_sha256}})
+                asset_id = str(asset["id"])
+                content_review_id = str(review["id"])
+                title = str(asset["title"])
+                body_md = str(asset["body_md"] or "")
+                manifest = _snapshot_manifest(
+                    asset,
+                    review,
+                    PublishPackageCreateRequest(
+                        channel=target["channel"],
+                        idempotency_key=payload.idempotency_key,
+                        requested_by=payload.requested_by,
+                        target_endpoint=target_endpoint,
+                    ),
+                )
+            else:
+                asset_id = str(target["asset_id"])
+                content_review_id = str(target["content_review_id"])
+                title = str(target["snapshot_title"])
+                body_md = str(target["snapshot_body_md"] or "")
+                content_sha256 = str(target["snapshot_content_sha256"])
+                manifest = target["snapshot_manifest_json"] if isinstance(target["snapshot_manifest_json"], dict) else json.loads(target["snapshot_manifest_json"] or "{}")
+
+            manifest = dict(manifest)
+            manifest.update({
+                "contract_version": "airank.publish-snapshot.v3",
+                "publication_action": payload.action,
+                "target_package_id": package_id,
+                "target_content_sha256": str(target["snapshot_content_sha256"]),
+                "action_reason": payload.reason,
+                "requested_by": payload.requested_by,
+                "immutable": True,
+            })
+            mutation_package_id = f"package_{uuid4().hex[:12]}"
+            snapshot_id = f"publish_snapshot_{uuid4().hex[:12]}"
+            snapshot_version = int(conn.execute(text("SELECT COALESCE(MAX(snapshot_version),0) FROM airank_publish_snapshots WHERE tenant_id=:tenant_id AND asset_id=:asset_id"), {"tenant_id": tenant_id, "asset_id": asset_id}).scalar_one()) + 1
+            conn.execute(text("""
+                INSERT INTO airank_publish_snapshots (
+                  id, tenant_id, project_id, asset_id, content_review_id,
+                  snapshot_version, title, body_md, content_sha256, manifest_json,
+                  created_by, created_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, :asset_id, :content_review_id,
+                  :snapshot_version, :title, :body_md, :content_sha256, :manifest_json,
+                  :created_by, :created_at
+                )
+            """), {"id": snapshot_id, "tenant_id": tenant_id, "project_id": target["project_id"], "asset_id": asset_id, "content_review_id": content_review_id, "snapshot_version": snapshot_version, "title": title, "body_md": body_md, "content_sha256": content_sha256, "manifest_json": json.dumps(manifest, ensure_ascii=False), "created_by": payload.requested_by, "created_at": created_at})
+            mutation_metadata = {
+                "content_sha256": content_sha256,
+                "target_endpoint": target_endpoint,
+                "implementation_status": "partial",
+                "publication_action": payload.action,
+                "target_package_id": package_id,
+                "target_remote_id": target_remote_id or None,
+                "target_published_url": target["published_url"],
+                "action_reason": payload.reason,
+                "requested_by": payload.requested_by,
+                "mutation_request_sha256": request_sha256,
+            }
+            conn.execute(text("""
+                INSERT INTO airank_publish_packages (
+                  id, tenant_id, project_id, asset_id, snapshot_id, content_review_id,
+                  idempotency_key, package_type, channel, status, metadata_json,
+                  publication_action, target_package_id, action_reason, requested_by,
+                  published_url, created_at, updated_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, :asset_id, :snapshot_id, :content_review_id,
+                  :idempotency_key, 'content_asset', :channel, 'draft', :metadata_json,
+                  :publication_action, :target_package_id, :action_reason, :requested_by,
+                  :published_url, :created_at, :created_at
+                )
+            """), {"id": mutation_package_id, "tenant_id": tenant_id, "project_id": target["project_id"], "asset_id": asset_id, "snapshot_id": snapshot_id, "content_review_id": content_review_id, "idempotency_key": payload.idempotency_key, "channel": target["channel"], "metadata_json": json.dumps(mutation_metadata, ensure_ascii=False), "publication_action": payload.action, "target_package_id": package_id, "action_reason": payload.reason, "requested_by": payload.requested_by, "published_url": target["published_url"], "created_at": created_at})
+            conn.execute(text("""
+                INSERT INTO airank_async_jobs (
+                  id, tenant_id, project_id, job_type, status, priority,
+                  scheduled_at, payload_json, created_at, updated_at
+                ) VALUES (
+                  :id, :tenant_id, :project_id, 'publish.package', 'queued', 100,
+                  :scheduled_at, :payload_json, :created_at, :created_at
+                )
+            """), {"id": f"job_{uuid4().hex[:12]}", "tenant_id": tenant_id, "project_id": target["project_id"], "scheduled_at": created_at, "payload_json": json.dumps({"package_id": mutation_package_id, "snapshot_id": snapshot_id, "channel": target["channel"], "publication_action": payload.action, "target_package_id": package_id}, ensure_ascii=False), "created_at": created_at})
+            row = conn.execute(text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND id=:package_id"), {"tenant_id": tenant_id, "package_id": mutation_package_id}).mappings().one()
         return self._package_data(row)
 
     def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]:
@@ -583,10 +869,15 @@ class MySQLDeliveryRepository:
             row = conn.execute(text("SELECT * FROM airank_publish_packages WHERE tenant_id=:tenant_id AND id=:package_id AND deleted_at IS NULL FOR UPDATE"), {"tenant_id": tenant_id, "package_id": package_id}).mappings().first()
             if row is None:
                 raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
+            if row.get("publication_action") == "withdraw" or row["status"] in {"withdrawn", "superseded"}:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_MUTATION_TARGET_STATE_CONFLICT", "details": {"package_id": package_id, "status": row["status"]}})
             if row["status"] == "published":
                 if row["published_url"] != payload.published_url:
                     raise StarletteHTTPException(status_code=409, detail={"code": "STATE_CONFLICT", "details": {"package_id": package_id, "published_url": row["published_url"]}})
                 return self._package_data(row, replay=True)
+            required_status = "packaged" if row["channel"] == "export" else "delivered"
+            if row["status"] != required_status:
+                raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_DELIVERY_RECEIPT_REQUIRED", "details": {"package_id": package_id, "status": row["status"], "required_status": required_status}})
             baseline = conn.execute(text("""
                 SELECT id FROM airank_scan_runs
                 WHERE tenant_id=:tenant_id AND project_id=:project_id
@@ -774,6 +1065,20 @@ def review_content(asset_id: str, payload: ContentReviewRequest, tenant_id: str 
 def create_publish_package(asset_id: str, payload: PublishPackageCreateRequest, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER), authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id")) -> PublishPackageResponse:
     trusted_payload = payload.model_copy(update={"requested_by": trusted_actor(payload.requested_by, authenticated_actor)})
     return PublishPackageResponse(data=DELIVERY_REPOSITORY.create_package(tenant_id, asset_id, trusted_payload), meta=response_meta(trace_id))
+
+
+@router.post("/publish-packages/{package_id}/mutations", response_model=PublishPackageResponse, status_code=201)
+def create_publish_mutation(
+    package_id: str,
+    payload: PublishMutationCreateRequest,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    authenticated_actor: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+    permission_header: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> PublishPackageResponse:
+    require_delivery_admin(permission_header)
+    trusted_payload = payload.model_copy(update={"requested_by": trusted_actor(payload.requested_by, authenticated_actor)})
+    return PublishPackageResponse(data=DELIVERY_REPOSITORY.create_mutation(tenant_id, package_id, trusted_payload), meta=response_meta(trace_id))
 
 
 @router.get("/projects/{project_id}/publish-packages", response_model=PublishPackageListResponse)

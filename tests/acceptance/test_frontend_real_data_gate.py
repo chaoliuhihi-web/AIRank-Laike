@@ -34,6 +34,7 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
         "fetchPublishPackages",
         "fetchPublishAttempts",
         "createPublishPackage",
+        "createPublishMutation",
         "recordPublicationEvidence",
         "fetchKnowledgeSyncPolicies",
         "fetchKnowledgeSyncRuns",
@@ -71,6 +72,8 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "不可变来源页面 + 不同审核人一致/裁决" in app_source
     assert "创建不可变发布包" in app_source
     assert "登记真实发布证据" in app_source
+    assert "更新 / 撤回已发布内容" in app_source
+    assert "不执行 DELETE" in app_source
     assert "客户站点凭证只允许由 Worker 安全注入" in app_source
     assert "published_url" in api_source
     assert "baseline_run_id" in api_source
@@ -89,4 +92,5 @@ def test_backend_exposes_console_list_contracts() -> None:
 
     assert 'f"{API_PREFIX}/projects/{{project_id}}/buyer-questions"' in api_source
     assert '"/projects/{project_id}/publish-packages"' in delivery_source
+    assert '"/publish-packages/{package_id}/mutations"' in delivery_source
     assert '"/projects/{project_id}/retest-windows"' in retest_source

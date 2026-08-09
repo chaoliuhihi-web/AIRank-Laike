@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 import pytest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api import delivery_routes
+from apps.api import main as api_main
 from apps.api.main import app
 from apps.api.operation_guard import InMemoryOperationGuard
 
@@ -112,3 +113,111 @@ def test_publish_operation_detail_requires_delivery_admin_permission(monkeypatch
         delivery_routes.require_delivery_admin("airank:provider:admin")
     assert forbidden.value.status_code == 403
     assert forbidden.value.detail["details"]["required_permission"] == "airank:delivery:admin"
+
+
+def test_publication_mutation_requires_admin_and_uses_authenticated_actor(monkeypatch) -> None:
+    class MutationRepository(delivery_routes.InMemoryDeliveryRepository):
+        captured: delivery_routes.PublishMutationCreateRequest | None = None
+
+        def create_mutation(self, tenant_id, package_id, payload):
+            self.captured = payload
+            return delivery_routes.PublishPackageData(
+                package_id="package_mutation_contract",
+                tenant_id=tenant_id,
+                project_id="project_contract",
+                asset_id="asset_contract",
+                snapshot_id="snapshot_contract",
+                content_review_id="review_contract",
+                channel="http",
+                status="queued",
+                implementation_status="partial",
+                idempotency_key=payload.idempotency_key,
+                content_sha256="b" * 64,
+                created_at=datetime.now(timezone.utc),
+                publication_action=payload.action,
+                target_package_id=package_id,
+                action_reason=payload.reason,
+                requested_by=payload.requested_by,
+            )
+
+    repository = MutationRepository()
+    monkeypatch.setattr(delivery_routes, "DELIVERY_REPOSITORY", repository)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_publish")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "console:read")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(app)
+    payload = {
+        "action": "withdraw",
+        "idempotency_key": "publish-withdraw-contract-1",
+        "reason": "客户授权撤回当前页面并要求保留完整审计记录。",
+        "requested_by": "spoofed-browser-actor",
+    }
+
+    ordinary_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "ordinary-publisher", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+    forbidden = client.post(
+        "/api/v1/publish-packages/package_original/mutations",
+        headers={
+            "tenant-id": "tenant_publish",
+            "Authorization": f"Bearer {ordinary_token}",
+            "X-AIRank-Permissions": "airank:delivery:admin",
+        },
+        json=payload,
+    )
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:delivery:admin")
+    admin_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "publisher-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+    allowed = client.post(
+        "/api/v1/publish-packages/package_original/mutations",
+        headers={
+            "tenant-id": "tenant_publish",
+            "Authorization": f"Bearer {admin_token}",
+            "X-AIRank-User-Id": "spoofed-browser-actor",
+        },
+        json=payload,
+    )
+
+    assert forbidden.status_code == 403
+    assert allowed.status_code == 201
+    assert allowed.json()["data"]["requested_by"] == "publisher-admin"
+    assert repository.captured is not None
+    assert repository.captured.requested_by == "publisher-admin"
+
+
+def test_publication_mutation_request_schema_separates_update_and_withdraw() -> None:
+    validate_schema(
+        "publish_mutation_create_request.schema.json",
+        {
+            "action": "update",
+            "replacement_asset_id": "asset_revision_2",
+            "idempotency_key": "publish-update-contract-2",
+            "reason": "使用审核后的第二版事实内容更新客户页面。",
+            "requested_by": "publisher-admin",
+        },
+    )
+    validate_schema(
+        "publish_mutation_create_request.schema.json",
+        {
+            "action": "withdraw",
+            "replacement_asset_id": None,
+            "idempotency_key": "publish-withdraw-contract-2",
+            "reason": "客户撤回授权，页面必须转为不可公开状态。",
+            "requested_by": "publisher-admin",
+        },
+    )
+    with pytest.raises(ValidationError):
+        validate_schema(
+            "publish_mutation_create_request.schema.json",
+            {
+                "action": "update",
+                "idempotency_key": "publish-update-contract-3",
+                "reason": "更新请求缺少替换资产，应当被契约拒绝。",
+                "requested_by": "publisher-admin",
+            },
+        )

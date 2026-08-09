@@ -7,7 +7,7 @@ import json
 import os
 import socket
 from typing import Any, Callable, Mapping, Protocol
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 from uuid import uuid4
 
 from sqlalchemy import create_engine, text
@@ -48,6 +48,11 @@ class PublishSnapshot:
     package_status: str
     published_url: str | None
     package_metadata: Mapping[str, Any]
+    publication_action: str = "publish"
+    target_package_id: str | None = None
+    target_remote_id: str | None = None
+    target_published_url: str | None = None
+    action_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -192,9 +197,13 @@ class PublisherGateway:
                 "PUBLISH_SNAPSHOT_HASH_MISMATCH",
                 "immutable publish snapshot content hash does not match",
             )
+        if snapshot.publication_action not in {"publish", "update", "withdraw"}:
+            raise PublisherError("PUBLISH_MUTATION_TARGET_INVALID", "publication action is not supported")
         if snapshot.channel == "http":
             return self._publish_http(snapshot, before_external_effect=before_external_effect)
         if snapshot.channel == "wordpress":
+            if snapshot.publication_action in {"update", "withdraw"}:
+                return self._mutate_wordpress(snapshot, before_external_effect=before_external_effect)
             return self._publish_wordpress(snapshot, before_external_effect=before_external_effect)
         raise PublisherError("PUBLISH_CHANNEL_UNSUPPORTED", "publisher channel is not supported")
 
@@ -262,7 +271,7 @@ class PublisherGateway:
                 "PUBLISH_SNAPSHOT_HASH_MISMATCH",
                 "immutable publish snapshot content hash does not match",
             )
-        if snapshot.channel != "wordpress":
+        if snapshot.channel != "wordpress" or snapshot.publication_action != "publish":
             return None
         headers, _, lookup_url, _ = self._wordpress_request_context(snapshot)
         lookup_status, _, existing = self.transport.request(
@@ -314,6 +323,58 @@ class PublisherGateway:
         )
         return self._receipt(snapshot, status, response)
 
+    def _mutate_wordpress(
+        self,
+        snapshot: PublishSnapshot,
+        *,
+        before_external_effect: Callable[[], None] | None,
+    ) -> PublisherReceipt:
+        headers, _, _, post_status = self._wordpress_request_context(snapshot)
+        remote_id = str(snapshot.target_remote_id or "").strip()
+        if not remote_id or not remote_id.isdigit():
+            raise PublisherError(
+                "PUBLISH_MUTATION_REMOTE_ID_INVALID",
+                "WordPress mutation requires the numeric remote ID from the target delivery receipt",
+            )
+        parsed_endpoint = urlparse(snapshot.target_endpoint)
+        endpoint = urlunparse(
+            parsed_endpoint._replace(
+                path=f"{parsed_endpoint.path.rstrip('/')}/{quote(remote_id, safe='')}",
+                query="",
+                fragment="",
+            )
+        )
+        self._validate_endpoint(endpoint)
+        if snapshot.publication_action == "update":
+            payload = {
+                "title": snapshot.title,
+                "content": snapshot.body_md,
+                "status": post_status,
+                "meta": {
+                    "airank_package_id": snapshot.package_id,
+                    "airank_content_sha256": snapshot.content_sha256,
+                    "airank_target_package_id": snapshot.target_package_id,
+                },
+            }
+        else:
+            payload = {
+                "status": "draft",
+                "meta": {
+                    "airank_withdrawal_package_id": snapshot.package_id,
+                    "airank_target_package_id": snapshot.target_package_id,
+                },
+            }
+        if before_external_effect is not None:
+            before_external_effect()
+        status, _, response = self.transport.request(
+            "POST",
+            endpoint,
+            headers=headers,
+            payload=payload,
+            timeout_seconds=self.timeout_seconds,
+        )
+        return self._receipt(snapshot, status, response)
+
     def _receipt(
         self,
         snapshot: PublishSnapshot,
@@ -357,10 +418,15 @@ class PublisherGateway:
     @staticmethod
     def _public_payload(snapshot: PublishSnapshot) -> dict[str, Any]:
         return {
-            "contract_version": "airank.publisher.v1",
+            "contract_version": "airank.publisher.v2",
             "package_id": snapshot.package_id,
             "snapshot_id": snapshot.snapshot_id,
             "idempotency_key": snapshot.idempotency_key,
+            "publication_action": snapshot.publication_action,
+            "target_package_id": snapshot.target_package_id,
+            "target_remote_id": snapshot.target_remote_id,
+            "target_published_url": snapshot.target_published_url,
+            "action_reason": snapshot.action_reason,
             "title": snapshot.title,
             "body_md": snapshot.body_md,
             "content_sha256": snapshot.content_sha256,
@@ -393,6 +459,7 @@ class MySQLPublishExecutionRepository:
                     SELECT p.tenant_id, p.project_id, p.id AS package_id,
                            p.snapshot_id, p.channel, p.idempotency_key,
                            p.status AS package_status, p.published_url,
+                           p.publication_action, p.target_package_id, p.action_reason,
                            p.metadata_json AS package_metadata_json,
                            s.title, s.body_md, s.content_sha256, s.manifest_json
                     FROM airank_publish_packages p
@@ -427,6 +494,11 @@ class MySQLPublishExecutionRepository:
             package_status=str(row["package_status"]),
             published_url=str(row["published_url"]) if row["published_url"] else None,
             package_metadata=metadata,
+            publication_action=str(row["publication_action"] or metadata.get("publication_action") or "publish"),
+            target_package_id=str(row["target_package_id"]) if row["target_package_id"] else None,
+            target_remote_id=str(metadata.get("target_remote_id")) if metadata.get("target_remote_id") else None,
+            target_published_url=str(metadata.get("target_published_url")) if metadata.get("target_published_url") else None,
+            action_reason=str(row["action_reason"] or metadata.get("action_reason")) if row["action_reason"] or metadata.get("action_reason") else None,
         )
 
     def latest_pending_attempt(self, snapshot: PublishSnapshot) -> PendingPublishAttempt | None:
@@ -490,7 +562,7 @@ class MySQLPublishExecutionRepository:
                 ),
                 {"tenant_id": snapshot.tenant_id, "package_id": snapshot.package_id},
             ).mappings().one()
-            if package["status"] in {"delivered", "published"}:
+            if package["status"] in {"delivered", "published", "superseded", "withdrawn"}:
                 raise PublisherError("PUBLISH_ALREADY_DELIVERED", "publish package already has a delivery receipt")
             if package["status"] == "outcome_unknown":
                 raise PublisherError(
@@ -576,8 +648,44 @@ class MySQLPublishExecutionRepository:
             "remote_id": receipt.remote_id,
             "idempotent_replay": receipt.idempotent_replay,
             "delivered_at": finished_at.isoformat(),
+            "publication_action": snapshot.publication_action,
         }
         with self.engine.begin() as conn:
+            target_metadata: dict[str, Any] | None = None
+            target_status: str | None = None
+            if snapshot.publication_action in {"update", "withdraw"}:
+                if not snapshot.target_package_id:
+                    raise PublisherError("PUBLISH_MUTATION_TARGET_INVALID", "publication mutation has no target package")
+                target = conn.execute(
+                    text(
+                        """
+                        SELECT status, metadata_json FROM airank_publish_packages
+                        WHERE tenant_id = :tenant_id AND id = :target_package_id
+                          AND deleted_at IS NULL
+                        FOR UPDATE
+                        """
+                    ),
+                    {"tenant_id": snapshot.tenant_id, "target_package_id": snapshot.target_package_id},
+                ).mappings().first()
+                if target is None:
+                    raise PublisherError("PUBLISH_MUTATION_TARGET_INVALID", "publication mutation target was not found")
+                target_metadata = self._json_object(target["metadata_json"])
+                target_status = str(target["status"])
+                expected_status = "superseded" if snapshot.publication_action == "update" else "withdrawn"
+                lineage_key = "superseded_by_package_id" if snapshot.publication_action == "update" else "withdrawn_by_package_id"
+                if target_status == expected_status and target_metadata.get(lineage_key) == snapshot.package_id:
+                    pass
+                elif target_status != "published":
+                    raise PublisherError(
+                        "PUBLISH_MUTATION_TARGET_STATE_CONFLICT",
+                        f"publication mutation target is {target_status}, expected published",
+                    )
+                else:
+                    target_metadata[lineage_key] = snapshot.package_id
+                    target_metadata[
+                        "superseded_at" if snapshot.publication_action == "update" else "withdrawn_at"
+                    ] = finished_at.isoformat()
+                    target_metadata["mutation_reason"] = snapshot.action_reason
             conn.execute(
                 text(
                     """
@@ -600,12 +708,13 @@ class MySQLPublishExecutionRepository:
                 text(
                     """
                     UPDATE airank_publish_packages
-                    SET status = 'delivered', published_url = :published_url,
+                    SET status = :package_status, published_url = :published_url,
                         metadata_json = :metadata_json, updated_at = :finished_at
                     WHERE tenant_id = :tenant_id AND id = :package_id
                     """
                 ),
                 {
+                    "package_status": "withdrawn" if snapshot.publication_action == "withdraw" else "delivered",
                     "published_url": receipt.published_url,
                     "metadata_json": json.dumps(metadata, ensure_ascii=False),
                     "finished_at": finished_at,
@@ -613,6 +722,25 @@ class MySQLPublishExecutionRepository:
                     "package_id": snapshot.package_id,
                 },
             )
+            if target_metadata is not None and target_status == "published":
+                conn.execute(
+                    text(
+                        """
+                        UPDATE airank_publish_packages
+                        SET status = :target_status, metadata_json = :metadata_json,
+                            updated_at = :finished_at
+                        WHERE tenant_id = :tenant_id AND id = :target_package_id
+                          AND status = 'published'
+                        """
+                    ),
+                    {
+                        "target_status": "superseded" if snapshot.publication_action == "update" else "withdrawn",
+                        "metadata_json": json.dumps(target_metadata, ensure_ascii=False),
+                        "finished_at": finished_at,
+                        "tenant_id": snapshot.tenant_id,
+                        "target_package_id": snapshot.target_package_id,
+                    },
+                )
 
     def mark_outcome_unknown(
         self,
@@ -759,7 +887,7 @@ def run_claimed_publish_job(
         raise error
     operation_guard = repository.operation_guard
     request_sha256 = gateway.request_sha256(snapshot)
-    if snapshot.package_status in {"delivered", "published"} and snapshot.published_url:
+    if snapshot.package_status in {"delivered", "published", "withdrawn"} and snapshot.published_url:
         receipt_data = snapshot.package_metadata.get("delivery_receipt")
         receipt_map = receipt_data if isinstance(receipt_data, Mapping) else {}
         receipt = PublisherReceipt(
@@ -1013,7 +1141,7 @@ def _handle_publish_claim_conflict(
                 ),
                 utc_now(),
             )
-        if snapshot.channel == "wordpress":
+        if snapshot.channel == "wordpress" and snapshot.publication_action == "publish":
             try:
                 receipt = gateway.find_existing(snapshot)
             except PublisherError:

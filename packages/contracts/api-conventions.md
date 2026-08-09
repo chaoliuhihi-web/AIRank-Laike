@@ -265,6 +265,7 @@ POST /api/v1/projects/{project_id}/opportunity-execution-schedules
 
 - 创建 scan run
 - 创建 publish package
+- 创建发布后的版本化更新或撤回动作包
 - 生成报告
 - 发起 retest
 - 创建独立证据复核任务
@@ -283,6 +284,8 @@ Provider 凭证写入额外使用持久 `Operation Guard`：服务端只保存�
 管理员可只读查询 `/api/v1/admin/provider-credential-operations` 及单条详情，下钻状态、请求 hash 和追加事件链；该查询按租户隔离且不暴露幂等键原值或秘密载荷。未知结果只提供对账证据，不提供“强制成功”按钮。
 
 WordPress/HTTP 发布使用同一 `airank.operation-guard.v1`，但 `operation_type=publisher.publish`。Worker 在真实 POST 前把操作从 `claimed` 推进到 `external_started`；只有可信回执才能进入 `succeeded`。连接中断、超时、2xx 无有效回执或进程在外部副作用后停止时，attempt 和 package 必须标记 `outcome_unknown`，同一发布包禁止自动 POST。通用 HTTP 只能人工核对；WordPress 只能通过确定性 slug 的只读 GET 找到已存在页面后收口，GET 未找到也不得据此自动重发。`GET /api/v1/publish-operations/{operation_id}` 要求 `airank:delivery:admin`，返回事件 hash 链但不返回凭证或原始幂等键。该契约是“至少阻止 AIRank 自动重复副作用”，不是跨系统 exactly-once 承诺。
+
+发布后的变更使用 `POST /api/v1/publish-packages/{package_id}/mutations` 和 `airank.publisher.v2`。每次 `update` / `withdraw` 都创建新的不可变动作包和 `airank.publish-snapshot.v3`，保存目标包、原因、可信操作者、原内容 hash 和替换内容 hash；不改写历史快照。只有 `published` 的 WordPress/HTTP 包可作为目标，活动或 `outcome_unknown` 子动作阻断后续变更。WordPress 更新必须使用原成功回执中的数字 `remote_id`，不得重新按 slug 创建；撤回只 POST `status=draft`，不执行 DELETE。可信更新回执使原包进入 `superseded`、新包进入 `delivered`，新包重新登记 publication evidence 后才是 `published`；可信撤回回执使目标包和动作包进入 `withdrawn`。响应丢失时目标包保持原状态，动作包进入 `outcome_unknown`，禁止自动重发和并发创建下一动作。
 
 Provider 模型迁移使用 `airank.provider-model-migration.v1`。计划创建绑定当前 route/model/configuration fingerprint 和 manifest replacement；目标验证必须引用计划创建后的真实成功 L3 request audit，并包含非空 Provider request ID。`approved` 只有在事件 hash 链和绑定审计仍有效时才具有 `release_eligible=true`；两者任一失效都不能仅凭状态字段通过发布门禁。默认 90 天发布规划窗口与 30 天执行停止窗口分开计算，批准计划不能覆盖已进入执行停止窗口的旧模型。
 

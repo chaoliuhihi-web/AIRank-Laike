@@ -38,3 +38,19 @@ def test_publisher_reconciliation_is_read_only_and_never_force_resolves() -> Non
     assert "禁止自动重发" in console
     assert "force_success" not in worker
     assert "force_success" not in api
+
+
+def test_publication_update_and_withdraw_preserve_lineage_and_fail_closed() -> None:
+    migration = read("apps/api/alembic/versions/20260809_0045_publication_mutations.py")
+    worker = read("apps/worker/airank_worker/publisher.py")
+    api = read("apps/api/delivery_routes.py")
+
+    for field in ("publication_action", "target_package_id", "action_reason", "requested_by"):
+        assert field in migration
+    assert "airank.publish-snapshot.v3" in api
+    assert "mutation_request_sha256" in api
+    assert "active_mutation_package_id" in api
+    assert '"superseded" if snapshot.publication_action == "update" else "withdrawn"' in worker
+    assert '"status": "draft"' in worker
+    assert 'snapshot.publication_action == "publish"' in worker
+    assert '"DELETE"' not in worker

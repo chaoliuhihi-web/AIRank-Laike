@@ -1657,18 +1657,29 @@ export type PublishPackage = {
   asset_id: string;
   snapshot_id: string;
   channel: "export" | "wordpress" | "http";
-  status: "packaged" | "queued" | "publishing" | "delivered" | "failed" | "outcome_unknown" | "published";
+  status: "packaged" | "queued" | "publishing" | "delivered" | "failed" | "outcome_unknown" | "published" | "superseded" | "withdrawn";
   implementation_status: "ready" | "partial";
   idempotency_key: string;
   content_sha256: string;
   published_url: string | null;
   created_at: string;
+  publication_action: "publish" | "update" | "withdraw";
+  target_package_id: string | null;
+  action_reason: string | null;
+  requested_by: string | null;
 };
 
 export type PublishPackageCreateInput = {
   assetId: string;
   channel: "export" | "wordpress" | "http";
   targetEndpoint?: string;
+};
+
+export type PublishMutationCreateInput = {
+  packageId: string;
+  action: "update" | "withdraw";
+  replacementAssetId?: string;
+  reason: string;
 };
 
 export type PublicationEvidenceInput = {
@@ -4099,6 +4110,29 @@ export async function createPublishPackage(input: PublishPackageCreateInput): Pr
   );
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Publish package request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: PublishPackage }).data;
+}
+
+export async function createPublishMutation(input: PublishMutationCreateInput): Promise<PublishPackage> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(
+    `/api/v1/publish-packages/${encodeURIComponent(input.packageId)}/mutations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_publish_mutation") },
+      body: JSON.stringify({
+        action: input.action,
+        replacement_asset_id: input.action === "update" ? input.replacementAssetId : null,
+        idempotency_key: `publish-${input.action}-${input.packageId}-${randomPart}`,
+        reason: input.reason,
+        requested_by: session?.user.userId ?? "console_operator",
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Publication mutation request failed with ${response.status}`));
   }
   return ((await response.json()) as { data: PublishPackage }).data;
 }

@@ -77,6 +77,7 @@ import {
   createEvidenceReviewerTeam,
   createKnowledgeSyncPolicy,
   createPublishPackage,
+  createPublishMutation,
   createComparisonContent,
   createExplainerContent,
   createGovernedContent,
@@ -249,6 +250,7 @@ import {
   type QuestionObservationBatch,
   type PublishPackage,
   type PublishPackageCreateInput,
+  type PublishMutationCreateInput,
   type ReportItem,
   type ReportList,
   type RetestWindow,
@@ -5922,6 +5924,11 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
   const [screenshotRefId, setScreenshotRefId] = useState("");
   const [screenshotSha256, setScreenshotSha256] = useState("");
   const [recordingEvidence, setRecordingEvidence] = useState(false);
+  const [mutationTargetId, setMutationTargetId] = useState("");
+  const [mutationAction, setMutationAction] = useState<PublishMutationCreateInput["action"]>("update");
+  const [replacementAssetId, setReplacementAssetId] = useState("");
+  const [mutationReason, setMutationReason] = useState("");
+  const [creatingMutation, setCreatingMutation] = useState(false);
 
   useEffect(() => {
     if (!project.id) return;
@@ -5938,10 +5945,13 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
         setContentAssets(nextAssets);
         setScanRuns(nextRuns);
         const firstApprovedAsset = nextAssets.find((item) => item.status === "approved");
-        const firstUnpublishedPackage = nextPackages.find((item) => item.status !== "published");
+        const firstUnpublishedPackage = nextPackages.find((item) => ["packaged", "delivered"].includes(item.status));
+        const firstPublishedExternal = nextPackages.find((item) => item.status === "published" && item.channel !== "export");
         const firstCompletedBaseline = nextRuns.find((item) => item.status === "completed" && item.run_type === "baseline");
         setSelectedAssetId((current) => current || firstApprovedAsset?.asset_id || "");
+        setReplacementAssetId((current) => current || firstApprovedAsset?.asset_id || "");
         setSelectedPackageId((current) => current || firstUnpublishedPackage?.package_id || "");
+        setMutationTargetId((current) => current || firstPublishedExternal?.package_id || "");
         setPublishedUrl((current) => current || firstUnpublishedPackage?.published_url || "");
         setBaselineRunId((current) => current || firstCompletedBaseline?.run_id || "");
         setLoadError(null);
@@ -5954,7 +5964,8 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
   }, [project.id]);
 
   const approvedAssets = contentAssets.filter((item) => item.status === "approved");
-  const evidenceCandidates = packages.filter((item) => item.status !== "published");
+  const evidenceCandidates = packages.filter((item) => ["packaged", "delivered"].includes(item.status) && item.publication_action !== "withdraw");
+  const mutationCandidates = packages.filter((item) => item.status === "published" && item.channel !== "export");
   const completedBaselines = scanRuns.filter((item) => item.status === "completed" && item.run_type === "baseline");
 
   const submitPublishPackage = async (event: FormEvent<HTMLFormElement>) => {
@@ -6030,6 +6041,35 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
     }
   };
 
+  const submitPublishMutation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const reason = mutationReason.trim();
+    if (!mutationTargetId || reason.length < 10 || (mutationAction === "update" && !replacementAssetId)) {
+      notify({ title: "变更申请不完整", desc: "必须选择已发布外部包、填写至少 10 个字符的原因；更新还必须选择已审核替换内容。", tone: "warning" });
+      return;
+    }
+    setCreatingMutation(true);
+    try {
+      const created = await createPublishMutation({
+        packageId: mutationTargetId,
+        action: mutationAction,
+        replacementAssetId: mutationAction === "update" ? replacementAssetId : undefined,
+        reason,
+      });
+      setPackages((current) => [created, ...current.filter((item) => item.package_id !== created.package_id)]);
+      setMutationReason("");
+      notify({
+        title: mutationAction === "update" ? "更新动作已入队" : "撤回动作已入队",
+        desc: "原发布状态只有在 Worker 收到可信远端回执后才会改变；未知结果会停止自动重发并进入人工对账。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "发布变更未创建", desc: error instanceof Error ? error.message : "发布变更接口不可用", tone: "danger" });
+    } finally {
+      setCreatingMutation(false);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -6076,6 +6116,45 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
           <div className="content-blueprint-actions">
             <span>{approvedAssets.length} 个已审核内容可发布；系统会冻结正文、审核记录、Skill 版本与证据绑定。</span>
             <button className="airank-console-primary-button" type="submit" disabled={creatingPackage || !selectedAssetId}>{creatingPackage ? "创建中…" : publishChannel === "export" ? "创建导出包" : "创建并入队"}</button>
+          </div>
+        </form>
+      </Panel>
+      <Panel title="更新 / 撤回已发布内容">
+        <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitPublishMutation(event)}>
+          <label>
+            已发布外部包
+            <select value={mutationTargetId} onChange={(event) => setMutationTargetId(event.target.value)}>
+              <option value="">请选择已登记真实发布证据的外部包</option>
+              {mutationCandidates.map((item) => <option value={item.package_id} key={item.package_id}>{item.package_id} · {item.channel} · {item.published_url}</option>)}
+            </select>
+            <small>只允许操作 `published` 的 WordPress / HTTP 包；导出包、未确认回执和历史版本均被服务端拒绝。</small>
+          </label>
+          <label>
+            变更动作
+            <select value={mutationAction} onChange={(event) => setMutationAction(event.target.value as PublishMutationCreateInput["action"])}>
+              <option value="update">版本化更新</option>
+              <option value="withdraw">撤回为不可公开</option>
+            </select>
+            <small>WordPress 撤回使用可恢复的 draft，不执行 DELETE；通用 HTTP 按 v2 契约交由客户端实现。</small>
+          </label>
+          {mutationAction === "update" ? (
+            <label className="content-blueprint-wide">
+              已审核替换内容
+              <select value={replacementAssetId} onChange={(event) => setReplacementAssetId(event.target.value)}>
+                <option value="">请选择当前 hash 已通过审核的内容</option>
+                {approvedAssets.map((asset) => <option value={asset.asset_id} key={asset.asset_id}>{asset.title} · {asset.asset_type}</option>)}
+              </select>
+              <small>系统创建新的不可变快照；真实更新回执后原包变为 superseded，新包仍需重新登记页面证据。</small>
+            </label>
+          ) : null}
+          <label className="content-blueprint-wide">
+            变更原因
+            <textarea required minLength={10} maxLength={1000} value={mutationReason} onChange={(event) => setMutationReason(event.target.value)} placeholder="记录客户授权、事实过期、合规整改或版本替换依据。" />
+            <small>原因、操作者、目标包和内容 hash 会随动作快照保留；浏览器不接触客户站点凭证。</small>
+          </label>
+          <div className="content-blueprint-actions">
+            <span>{mutationCandidates.length} 个已发布外部包可操作；远端响应丢失时禁止自动重发。</span>
+            <button className="airank-console-primary-button" type="submit" disabled={creatingMutation || !mutationTargetId}>{creatingMutation ? "提交中…" : mutationAction === "update" ? "提交更新" : "提交撤回"}</button>
           </div>
         </form>
       </Panel>
@@ -6128,14 +6207,15 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       <Panel title="不可变发布包">
         <table className="question-table publish-table">
           <thead>
-            <tr><th>发布包</th><th>渠道</th><th>状态</th><th>实现等级</th><th>内容哈希</th><th>创建时间</th><th>操作</th></tr>
+            <tr><th>发布包</th><th>动作 / 目标</th><th>渠道</th><th>状态</th><th>实现等级</th><th>内容哈希</th><th>创建时间</th><th>操作</th></tr>
           </thead>
           <tbody>
             {packages.map((item) => (
               <tr key={item.package_id}>
                 <td><strong>{item.package_id}</strong></td>
+                <td><strong>{item.publication_action}</strong><br /><span>{item.target_package_id || "首次发布"}</span></td>
                 <td>{item.channel}</td>
-                <td><Badge tone={["published", "delivered"].includes(item.status) ? "success" : item.status === "failed" ? "danger" : ["queued", "outcome_unknown"].includes(item.status) ? "warning" : "primary"}>{item.status}</Badge></td>
+                <td><Badge tone={["published", "delivered"].includes(item.status) ? "success" : ["failed", "withdrawn"].includes(item.status) ? "danger" : ["queued", "outcome_unknown", "superseded"].includes(item.status) ? "warning" : "primary"}>{item.status}</Badge></td>
                 <td><Badge tone={item.implementation_status === "ready" ? "success" : "warning"}>{item.implementation_status}</Badge></td>
                 <td>{item.content_sha256.slice(0, 12)}…</td>
                 <td>{formatDateTime(item.created_at)}</td>
@@ -6155,6 +6235,9 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
                           desc: "发布包与内容审核、不可变快照、Worker attempt 和复测窗口关联。",
                           items: [
                             `发布渠道：${item.channel}`,
+                            `发布动作：${item.publication_action}`,
+                            `目标发布包：${item.target_package_id || "首次发布"}`,
+                            `变更原因：${item.action_reason || "无"}`,
                             `状态：${item.status}`,
                             `快照：${item.snapshot_id}`,
                             `发布 URL：${item.published_url || "尚未登记"}`,
