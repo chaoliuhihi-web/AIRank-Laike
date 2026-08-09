@@ -3364,6 +3364,38 @@ export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<Fac
   return fetchData(`/api/v1/projects/${projectId}/facts`, "trc_web_facts", signal);
 }
 
+export async function proposeFact(
+  projectId: string,
+  input: {
+    title: string;
+    factText: string;
+    sourceIds: string[];
+    riskLevel: "low" | "medium" | "high" | "restricted";
+    disclosure: "public" | "redacted" | "internal" | "forbidden" | "pending_approval";
+  },
+): Promise<FactRevision> {
+  const actor = getStoredAuthSession()?.user.userId;
+  if (!actor) throw new Error("当前登录会话缺少可信操作者身份，请重新登录。");
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/facts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_fact_proposal") },
+    body: JSON.stringify({
+      title: input.title,
+      fact_type: "brand_claim",
+      subject_type: "general",
+      fact_text: input.factText,
+      source_ids: input.sourceIds,
+      risk_level: input.riskLevel,
+      disclosure: input.disclosure,
+      created_by: actor,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Fact proposal failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: FactRevision }).data;
+}
+
 export function fetchBrandGraph(projectId: string, signal?: AbortSignal): Promise<BrandGraphPortfolio> {
   return fetchData(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-graph`, "trc_web_brand_graph", signal);
 }

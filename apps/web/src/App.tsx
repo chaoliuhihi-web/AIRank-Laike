@@ -173,6 +173,7 @@ import {
   reviewBuyerQuestion,
   reviewContentAsset,
   reviewFactRevision,
+  proposeFact,
   resolveFactConflict,
   saveKnowledgeSource,
   searchKnowledge,
@@ -1898,6 +1899,14 @@ function FactsPage() {
     validUntil: string;
   } | null>(null);
   const [savingSource, setSavingSource] = useState(false);
+  const [factEditor, setFactEditor] = useState<{
+    title: string;
+    factText: string;
+    sourceId: string;
+    riskLevel: "low" | "medium" | "high" | "restricted";
+    disclosure: "public" | "redacted" | "internal" | "forbidden" | "pending_approval";
+  } | null>(null);
+  const [savingFact, setSavingFact] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [knowledgeSearch, setKnowledgeSearch] = useState<KnowledgeSearch | null>(null);
   const [searchingKnowledge, setSearchingKnowledge] = useState(false);
@@ -2084,6 +2093,47 @@ function FactsPage() {
     }
   };
 
+  const openFactEditor = () => {
+    const firstActiveSource = sources.find((source) => source.status === "active");
+    if (!firstActiveSource) {
+      notify({ title: "还不能新增事实", desc: "先导入一份当前有效的官方或已核验来源。", tone: "warning" });
+      return;
+    }
+    setFactEditor({
+      title: "",
+      factText: "",
+      sourceId: firstActiveSource.source_id,
+      riskLevel: "medium",
+      disclosure: "public",
+    });
+  };
+
+  const submitFactProposal = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project.id || !factEditor) return;
+    if (!factEditor.title.trim() || !factEditor.factText.trim() || !factEditor.sourceId) {
+      notify({ title: "候选事实不完整", desc: "事实标题、原文事实和来源都必须填写。", tone: "warning" });
+      return;
+    }
+    setSavingFact(true);
+    try {
+      const proposed = await proposeFact(project.id, {
+        title: factEditor.title.trim(),
+        factText: factEditor.factText.trim(),
+        sourceIds: [factEditor.sourceId],
+        riskLevel: factEditor.riskLevel,
+        disclosure: factEditor.disclosure,
+      });
+      setFactEditor(null);
+      await refreshKnowledge();
+      notify({ title: "候选事实已创建", desc: `${proposed.title} 已绑定来源，等待人工审核。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "候选事实未创建", desc: error instanceof Error ? error.message : "事实接口不可用", tone: "danger" });
+    } finally {
+      setSavingFact(false);
+    }
+  };
+
   const enableSourceSync = async (source: KnowledgeSource) => {
     if (!project.id || !source.source_uri) return;
     setSyncAction(`create:${source.source_id}`);
@@ -2267,6 +2317,7 @@ function FactsPage() {
         action={
           <div className="header-actions">
             <button className="outline-button" type="button" onClick={() => openSourceEditor(null)}>导入知识来源</button>
+            <button className="outline-button" type="button" disabled={sources.every((source) => source.status !== "active")} onClick={openFactEditor}>新增候选事实</button>
             <button
               className="airank-console-primary-button"
               type="button"
@@ -2437,6 +2488,42 @@ function FactsPage() {
             <div className="knowledge-source-form-actions">
               <button className="outline-button" type="button" disabled={savingSource} onClick={() => setSourceEditor(null)}>取消</button>
               <button className="airank-console-primary-button" type="submit" disabled={savingSource}>{savingSource ? "保存中…" : sourceEditor.parent ? "保存新版本" : "导入并切片"}</button>
+            </div>
+          </form>
+        </Panel>
+      )}
+      {factEditor && (
+        <Panel title="新增候选事实">
+          <form className="knowledge-source-form" onSubmit={submitFactProposal}>
+            <label>
+              <span>事实标题</span>
+              <input value={factEditor.title} onChange={(event) => setFactEditor({ ...factEditor, title: event.target.value })} placeholder="例如：AI 处理器架构" />
+            </label>
+            <label>
+              <span>绑定来源</span>
+              <select value={factEditor.sourceId} onChange={(event) => setFactEditor({ ...factEditor, sourceId: event.target.value })}>
+                {sources.filter((source) => source.status === "active").map((source) => <option value={source.source_id} key={source.source_id}>{source.title} · v{source.revision_number}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>风险等级</span>
+              <select value={factEditor.riskLevel} onChange={(event) => setFactEditor({ ...factEditor, riskLevel: event.target.value as typeof factEditor.riskLevel })}>
+                <option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="restricted">受限</option>
+              </select>
+            </label>
+            <label>
+              <span>公开范围</span>
+              <select value={factEditor.disclosure} onChange={(event) => setFactEditor({ ...factEditor, disclosure: event.target.value as typeof factEditor.disclosure })}>
+                <option value="public">公开</option><option value="redacted">脱敏公开</option><option value="internal">仅内部</option><option value="pending_approval">待确认</option><option value="forbidden">禁止使用</option>
+              </select>
+            </label>
+            <label className="knowledge-source-form-wide">
+              <span>原文事实</span>
+              <textarea value={factEditor.factText} onChange={(event) => setFactEditor({ ...factEditor, factText: event.target.value })} placeholder="粘贴来源中原样存在、可独立核验的一条事实；内容生成时会再次校验精确原文边界。" rows={4} />
+            </label>
+            <div className="knowledge-source-form-actions">
+              <button className="outline-button" type="button" disabled={savingFact} onClick={() => setFactEditor(null)}>取消</button>
+              <button className="airank-console-primary-button" type="submit" disabled={savingFact}>{savingFact ? "保存中…" : "创建候选事实"}</button>
             </div>
           </form>
         </Panel>
