@@ -83,8 +83,9 @@ def test_single_node_compose_keeps_state_on_the_data_disk() -> None:
     assert "subnet: 172.30.40.0/24" in text
     assert "gateway: 172.30.40.1" in text
     assert "egress:" in text
-    assert "AWS_CA_BUNDLE: /run/secrets/airank-internal-ca.pem" in text
-    assert "SSL_CERT_FILE: /run/secrets/airank-internal-ca.pem" in text
+    assert "pki/ca-bundle.pem:/run/secrets/airank-ca-bundle.pem:ro" in text
+    assert "AWS_CA_BUNDLE: /run/secrets/airank-ca-bundle.pem" in text
+    assert "SSL_CERT_FILE: /run/secrets/airank-ca-bundle.pem" in text
 
     bootstrap = (ROOT / "ops" / "deployment" / "mysql" / "airank-init.sh").read_text()
     assert "eval " not in bootstrap
@@ -153,6 +154,9 @@ def test_single_node_pki_has_exact_service_dns_names_and_never_overwrites(
         )
         assert set(extension.value.get_values_for_type(x509.DNSName)) == dns_names
     assert (output / "ca-key.pem").stat().st_mode & 0o777 == 0o600
+    trust_bundle = (output / "ca-bundle.pem").read_bytes()
+    assert trust_bundle.count(b"-----BEGIN CERTIFICATE-----") >= 2
+    assert (output / "ca.pem").read_bytes() in trust_bundle
     assert (output / "manifest.json").stat().st_mode & 0o777 == 0o644
 
     try:

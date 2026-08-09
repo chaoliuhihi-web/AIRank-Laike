@@ -30,9 +30,10 @@ x-backend: &backend
     - ${AIRANK_DATA_ROOT:?set AIRANK_DATA_ROOT}/browser-profiles:/var/lib/airank/browser-profiles
     - ${AIRANK_DATA_ROOT:?set AIRANK_DATA_ROOT}/browser-captures:/var/lib/airank/browser-captures
     - ${AIRANK_SECRET_ROOT:?set AIRANK_SECRET_ROOT}/pki/ca.pem:/run/secrets/airank-internal-ca.pem:ro
+    - ${AIRANK_SECRET_ROOT:?set AIRANK_SECRET_ROOT}/pki/ca-bundle.pem:/run/secrets/airank-ca-bundle.pem:ro
   environment:
-    AWS_CA_BUNDLE: /run/secrets/airank-internal-ca.pem
-    SSL_CERT_FILE: /run/secrets/airank-internal-ca.pem
+    AWS_CA_BUNDLE: /run/secrets/airank-ca-bundle.pem
+    SSL_CERT_FILE: /run/secrets/airank-ca-bundle.pem
 
 services:
   mysql:

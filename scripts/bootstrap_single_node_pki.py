@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import ssl
 from typing import Sequence
 
 from cryptography import x509
@@ -28,6 +29,7 @@ CERTIFICATE_SPECS = (
 )
 EXPECTED_FILES = {
     "ca.pem",
+    "ca-bundle.pem",
     "ca-key.pem",
     "mysql-server.pem",
     "mysql-server-key.pem",
@@ -78,6 +80,16 @@ def _public_record(name: str, certificate: x509.Certificate) -> dict[str, str]:
     }
 
 
+def _system_ca_bundle() -> bytes:
+    cafile = ssl.get_default_verify_paths().cafile
+    if not cafile:
+        raise FileNotFoundError("system CA bundle path is unavailable")
+    payload = Path(cafile).read_bytes()
+    if b"-----BEGIN CERTIFICATE-----" not in payload:
+        raise ValueError("system CA bundle does not contain PEM certificates")
+    return payload.rstrip() + b"\n"
+
+
 def provision_pki(output_dir: Path, *, now: datetime | None = None) -> dict[str, object]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -122,9 +134,11 @@ def provision_pki(output_dir: Path, *, now: datetime | None = None) -> dict[str,
     created: list[Path] = []
     records = [_public_record("ca", ca_certificate)]
     try:
+        ca_payload = _certificate_bytes(ca_certificate)
         for name, payload, mode in (
             ("ca-key.pem", _key_bytes(ca_key), 0o600),
-            ("ca.pem", _certificate_bytes(ca_certificate), 0o644),
+            ("ca.pem", ca_payload, 0o644),
+            ("ca-bundle.pem", _system_ca_bundle() + ca_payload, 0o644),
         ):
             path = output_dir / name
             _write(path, payload, mode)
@@ -176,6 +190,9 @@ def provision_pki(output_dir: Path, *, now: datetime | None = None) -> dict[str,
             "status": "pass",
             "generated_at": current.isoformat(),
             "certificates": records,
+            "trust_bundle_sha256": hashlib.sha256(
+                (output_dir / "ca-bundle.pem").read_bytes()
+            ).hexdigest(),
         }
         manifest_path = output_dir / "manifest.json"
         _write(
