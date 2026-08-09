@@ -62,7 +62,7 @@ python3 scripts/release_readiness.py \
   --require-browser-providers
 ```
 
-`--require-browser-providers` 会打开 ChatGPT、DeepSeek、Kimi、通义、豆包、百度 AI 搜索和腾讯元宝的持久浏览器 profile。任何平台未登录、需要真人验证或找不到可输入问题的控件，都会让 release gate 返回非零。
+`--require-browser-providers` 会把 Consumer Browser L3 设为发布必需项，但默认不会自行打开浏览器。只有同时显式设置 `AIRANK_RELEASE_RUN_BROWSER_PROBES=true` 才会打开各 Provider 的持久浏览器 profile 并执行可能较慢、可能触发登录/真人验证的真实生成探测。未设置该开关时门禁固定 `BLOCKED`，明确说明本轮没有产生 Browser L3 证据，而不是用导入错误或旧结果代替。
 
 首次部署或 cookie 过期时，用非 headless 方式初始化对应 profile：
 

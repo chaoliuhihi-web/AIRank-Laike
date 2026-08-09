@@ -383,6 +383,26 @@ def browser_provider_blockers(
 
 def browser_provider_readiness_check() -> Check:
     command = "probe_provider_generation_readiness(DEFAULT_PROVIDER_SCOPE)"
+    browser_probe_enabled = str(
+        os.getenv("AIRANK_RELEASE_RUN_BROWSER_PROBES") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not browser_probe_enabled:
+        return Check(
+            "browser provider readiness",
+            "BLOCKED",
+            command,
+            json.dumps(
+                {
+                    "probe_execution_enabled": False,
+                    "generation_verified": False,
+                    "blockers": [
+                        "AIRANK_RELEASE_RUN_BROWSER_PROBES is not explicitly enabled; no current-run Consumer Browser L3 evidence was produced"
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
     try:
         from apps.api.main import DEFAULT_PROVIDER_SCOPE, minimum_provider_success_count  # noqa: PLC0415
         from apps.api.provider_scan import probe_provider_generation_readiness, provider_execution_mode  # noqa: PLC0415
@@ -576,7 +596,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--require-browser-providers",
         action="store_true",
-        help="Require consumer web AI provider browser profiles to be ready for production ranking.",
+        help="Require consumer web AI provider browser profiles; actual probes also require AIRANK_RELEASE_RUN_BROWSER_PROBES=true.",
     )
     parser.add_argument(
         "--database-url",

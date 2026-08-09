@@ -179,6 +179,18 @@ def test_browser_provider_gate_blocks_below_minimum_ready_count() -> None:
     assert warnings == ["deepseek=blocked (login required)"]
 
 
+def test_browser_provider_probe_requires_explicit_execution_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AIRANK_RELEASE_RUN_BROWSER_PROBES", raising=False)
+
+    check = release_readiness.browser_provider_readiness_check()
+
+    assert check.status == "BLOCKED"
+    assert '"probe_execution_enabled": false' in check.detail
+    assert "no current-run Consumer Browser L3 evidence" in check.detail
+
+
 def test_working_tree_check_fails_when_untracked_files_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
