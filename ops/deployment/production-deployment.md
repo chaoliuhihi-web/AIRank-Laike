@@ -295,9 +295,10 @@ docker build \
   --tag registry.example.cn/airank/web:"$release_commit" .
 ```
 
-后端镜像使用 `requirements-prod.lock` 的精确依赖版本；升级依赖必须先重新跑
-全量门禁并更新锁文件。两个镜像必须完成漏洞扫描（Python 包由 `pip-audit`，
-最终 OS 层由 Trivy）、生成 SBOM、签名并推送。部署时只接受 registry
+后端镜像使用 `requirements-prod.lock` 的精确依赖版本，运行层移除
+`pip`、`setuptools` 和 `wheel` 等构建工具；升级依赖必须先重新跑全量门禁并
+更新锁文件。两个镜像必须完成漏洞扫描（Python 精确锁文件由 `pip-audit`，
+最终镜像由 Trivy 扫描 OS 与语言包）、生成 SBOM、签名并推送。部署时只接受 registry
 返回的 `image@sha256:...`，不接受 `latest` 或可变 tag：
 
 ```bash

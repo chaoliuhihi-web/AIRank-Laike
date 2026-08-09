@@ -181,6 +181,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Build production backend image
         run: >-
           docker build
@@ -202,25 +206,29 @@ jobs:
             'import apps.api.main, apps.runtime_health, airank_worker.main, airank_scheduler.main'
           docker run --rm --entrypoint python3 airank-backend:ci -c \
             'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()'
+          docker run --rm --entrypoint /bin/sh airank-backend:ci -ec \
+            'test ! -e /usr/local/bin/pip && test ! -d /usr/local/lib/python3.11/site-packages/pip && test ! -d /usr/local/lib/python3.11/site-packages/setuptools && test ! -d /usr/local/lib/python3.11/site-packages/wheel'
           docker run --rm --add-host api:127.0.0.1 --entrypoint nginx airank-web:ci -t
 
-      - name: Audit Python packages inside the production image
-        run: >-
-          docker run --rm --user root --entrypoint /bin/sh airank-backend:ci -ec
-          'python3 -m pip install --quiet pip-audit==2.9.0 &&
-          python3 -m pip_audit --progress-spinner off'
+      - name: Audit exact production Python lock
+        run: |
+          python -m venv /tmp/airank-audit
+          /tmp/airank-audit/bin/python -m pip install --quiet pip-audit==2.9.0
+          /tmp/airank-audit/bin/python -m pip_audit \
+            --progress-spinner off \
+            --requirement apps/api/requirements-prod.lock
 
-      - name: Scan final image operating systems
+      - name: Scan final images
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
-            image --scanners vuln --pkg-types os --severity HIGH,CRITICAL \
+            image --scanners vuln --severity HIGH,CRITICAL \
             --ignore-unfixed --exit-code 1 airank-backend:ci
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
-            image --scanners vuln --pkg-types os --severity HIGH,CRITICAL \
+            image --scanners vuln --severity HIGH,CRITICAL \
             --ignore-unfixed --exit-code 1 airank-web:ci
 
   marketing-site:

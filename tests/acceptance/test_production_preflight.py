@@ -243,6 +243,9 @@ def test_production_deployment_bundle_is_immutable_and_has_distinct_processes() 
     assert "requirements-prod.lock" in backend
     assert "pip==26.2.1" in backend
     assert "setuptools==84.0.0" in backend
+    assert "pip uninstall --yes pip setuptools wheel" in backend
+    assert "COPY --chown=airank:airank apps /app/apps" not in backend
+    assert "COPY --chown=airank:airank apps/web" not in backend
     assert "--no-access-log" in backend
     assert "--no-access-log" in compose
     assert "npm run build" in web
