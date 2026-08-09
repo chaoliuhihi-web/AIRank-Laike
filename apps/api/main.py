@@ -4857,7 +4857,10 @@ def complete_mysql_real_brand_scan(
                     "mention_class": result.mention_class,
                     "target_entity_mentions_json": json.dumps(result.target_entity_mentions, ensure_ascii=False),
                     "model_name": result.raw_metadata.get("model_name"),
-                    "search_enabled": result.raw_metadata.get("search_used"),
+                    # ``search_enabled`` is the immutable request configuration.
+                    # Whether the provider actually invoked search is an outcome
+                    # and remains separately preserved in the request audit.
+                    "search_enabled": result.raw_metadata.get("search_requested"),
                     "competitor_mentions_json": json.dumps(result.competitor_mentions, ensure_ascii=False),
                     "sentiment": result.sentiment,
                     "confidence": result.confidence,
@@ -7470,6 +7473,16 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
     converted into a misleading zero.
     """
 
+    # Import lazily to avoid coupling router initialization to main.py while
+    # keeping every workflow state backed by its owning repository.
+    try:
+        from . import delivery_routes, evidence_gap_routes, knowledge_routes, retest_routes
+    except ImportError:  # pragma: no cover - supports direct uvicorn execution.
+        import delivery_routes  # type: ignore[no-redef]
+        import evidence_gap_routes  # type: ignore[no-redef]
+        import knowledge_routes  # type: ignore[no-redef]
+        import retest_routes  # type: ignore[no-redef]
+
     questions = PROJECT_REPOSITORY.list_buyer_questions(tenant_id, project_id)
     confirmed_question_count = sum(item.status == "confirmed" for item in questions)
     runs = SCAN_REPOSITORY.list_runs(tenant_id, project_id)
@@ -7493,13 +7506,30 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
             else 0
         )
     )
-    measurement_ready = bool(
+    raw_measurement_ready = bool(
         latest_run
         and latest_run.status == "completed"
         and metrics.get("data_status") == "provider_evidence"
         and valid_sample_count > 0
         and valid_sample_count >= required_sample_count
     )
+    quality_publishable = False
+    quality_blocking_checks: list[str] = []
+    quality_read_failed = False
+    if raw_measurement_ready and latest_run:
+        try:
+            quality_report = retest_routes.RETEST_REPOSITORY.get_quality_report(
+                tenant_id, project_id, latest_run.run_id
+            )
+            quality_publishable = quality_report.get("publishable") is True
+            quality_blocking_checks = [
+                str(item.get("code"))
+                for item in quality_report.get("checks", [])
+                if isinstance(item, dict) and item.get("status") == "blocked"
+            ]
+        except Exception:  # noqa: BLE001 - surfaced as a blocked workflow state.
+            quality_read_failed = True
+    measurement_ready = raw_measurement_ready and quality_publishable
     measurement_collecting = bool(latest_run and latest_run.status in {"queued", "running"})
     reason_codes: list[str] = []
     if confirmed_question_count == 0:
@@ -7514,6 +7544,10 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
         reason_codes.append("PROVIDER_EVIDENCE_UNAVAILABLE")
     elif valid_sample_count < required_sample_count:
         reason_codes.append("VALID_SAMPLE_THRESHOLD_NOT_MET")
+    elif raw_measurement_ready and quality_read_failed:
+        reason_codes.append("MEASUREMENT_QUALITY_UNAVAILABLE")
+    elif raw_measurement_ready and not quality_publishable:
+        reason_codes.extend(quality_blocking_checks or ["MEASUREMENT_QUALITY_BLOCKED"])
 
     if measurement_ready:
         readiness = ConclusionReadiness(
@@ -7533,6 +7567,7 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
             message="真实扫描尚未封版；当前样本可以查看，但不能提前生成最终结论。",
         )
     else:
+        quality_blocked = raw_measurement_ready and not quality_publishable
         readiness = ConclusionReadiness(
             state="blocked",
             data_status="unverified",
@@ -7542,28 +7577,27 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
             message=(
                 "品牌资料已更新，历史扫描保留为旧口径证据；请按当前品牌资料重新建立基线。"
                 if profile_changed_without_scan
-                else "当前缺少达到门槛的真实 Provider 证据，不展示品牌指标或效果结论。"
+                else (
+                    "真实样本已封版，但测量质量门禁尚未通过；请先修复阻断项，不能跳过证据缺口直接生成答案资产。"
+                    if quality_blocked
+                    else "当前缺少达到门槛的真实 Provider 证据，不展示品牌指标或效果结论。"
+                )
             ),
         )
 
-    # Import the repositories lazily to avoid coupling their router modules to
-    # main.py initialization while keeping the workflow endpoint read-only.
-    try:
-        from . import delivery_routes, evidence_gap_routes, knowledge_routes, retest_routes
-    except ImportError:  # pragma: no cover - supports direct uvicorn execution.
-        import delivery_routes  # type: ignore[no-redef]
-        import evidence_gap_routes  # type: ignore[no-redef]
-        import knowledge_routes  # type: ignore[no-redef]
-        import retest_routes  # type: ignore[no-redef]
-
     optional_read_errors: list[str] = []
     gap_count: Optional[int] = None
+    gap_derivation_complete = False
     approved_fact_count: Optional[int] = None
     approved_asset_count: Optional[int] = None
     package_count: Optional[int] = None
     completed_retest_count: Optional[int] = None
     try:
         gap_count = evidence_gap_routes.EVIDENCE_GAP_REPOSITORY.list(tenant_id, project_id).governed_gap_count
+        if latest_run:
+            gap_derivation_complete = evidence_gap_routes.EVIDENCE_GAP_REPOSITORY.has_successful_derivation(
+                tenant_id, project_id, latest_run.run_id
+            )
     except Exception:  # noqa: BLE001 - partial read state is returned explicitly.
         optional_read_errors.append("EVIDENCE_GAP_STATE_UNAVAILABLE")
     try:
@@ -7625,8 +7659,7 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
     else:
         step_statuses["questions"] = "completed"
         step_statuses["scans"] = "completed"
-        downstream_evidence = any((approved_fact_count or 0, approved_asset_count or 0, package_count or 0))
-        if not (gap_count or downstream_evidence):
+        if not ((gap_count or 0) > 0 or gap_derivation_complete):
             current_step = "gaps"
             step_statuses["gaps"] = "current"
             primary_action = GrowthLoopPrimaryAction(label="核对证据缺口", href="/console/gaps", reason="基线已经形成，下一步只处理有真实样本支持的缺口。")

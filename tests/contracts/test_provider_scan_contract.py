@@ -287,6 +287,8 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     assert result.native_citations[0]["source_path"] == "/output/0/action/sources/0"
     assert result.native_citations[0]["source_id"] == "source_a"
     assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
+    assert result.raw_metadata["search_requested"] is True
+    assert result.raw_metadata["search_used"] is True
     assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}
     assert result.raw_metadata["route_id"] == "qianwen-primary"
     assert result.raw_metadata["search_evidence"].endswith(":explicit_tool_call")

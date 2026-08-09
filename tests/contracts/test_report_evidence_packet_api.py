@@ -231,7 +231,8 @@ def create_packet_tables(repository: MySQLReportEvidencePacketRepository) -> Non
         """
         CREATE TABLE airank_provider_request_audits (
           id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64), task_id VARCHAR(64),
-          answer_snapshot_id VARCHAR(64), requested_at DATETIME, created_at DATETIME
+          answer_snapshot_id VARCHAR(64), metadata_json TEXT,
+          requested_at DATETIME, created_at DATETIME
         )
         """,
         """

@@ -356,6 +356,8 @@ class EvidenceGapRepository(Protocol):
 
     def list(self, tenant_id: str, project_id: str) -> EvidenceGapListData: ...
 
+    def has_successful_derivation(self, tenant_id: str, project_id: str, run_id: str) -> bool: ...
+
 
 class InMemoryEvidenceGapRepository:
     def derive(
@@ -383,11 +385,25 @@ class InMemoryEvidenceGapRepository:
             unverified_legacy_count=0,
         )
 
+    def has_successful_derivation(self, tenant_id: str, project_id: str, run_id: str) -> bool:
+        return False
+
 
 class MySQLEvidenceGapRepository:
     def __init__(self, database_url: str) -> None:
         self.engine = create_engine(database_url, pool_pre_ping=True)
         self.quality_repository = MySQLRetestRepository(database_url)
+
+    def has_successful_derivation(self, tenant_id: str, project_id: str, run_id: str) -> bool:
+        with self.engine.connect() as conn:
+            return conn.execute(
+                text(
+                    "SELECT 1 FROM airank_content_gap_derivation_runs "
+                    "WHERE tenant_id=:tenant_id AND project_id=:project_id "
+                    "AND scan_run_id=:run_id AND status='succeeded' LIMIT 1"
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id, "run_id": run_id},
+            ).first() is not None
 
     def derive(
         self,

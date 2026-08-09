@@ -387,6 +387,9 @@ class MySQLRetestRepository:
                    (SELECT a.id FROM airank_provider_request_audits a
                     WHERE a.tenant_id=t.tenant_id AND a.answer_snapshot_id=s.id
                     ORDER BY a.created_at ASC, a.id ASC LIMIT 1) AS provider_request_audit_id,
+                   (SELECT a.metadata_json FROM airank_provider_request_audits a
+                    WHERE a.tenant_id=t.tenant_id AND a.answer_snapshot_id=s.id
+                    ORDER BY a.created_at ASC, a.id ASC LIMIT 1) AS provider_request_metadata_json,
                    (SELECT COUNT(*) FROM airank_source_citations c
                     WHERE c.tenant_id=t.tenant_id AND c.snapshot_id=s.id) AS citation_count
             FROM airank_scan_tasks t
@@ -430,6 +433,12 @@ class MySQLRetestRepository:
         )
         for row in row_records:
             snapshot_id = str(row.get("sample_id") or "")
+            provider_request_metadata = _json_value(
+                row.get("provider_request_metadata_json"), {}
+            )
+            if isinstance(provider_request_metadata, dict):
+                row["search_requested"] = provider_request_metadata.get("search_requested")
+                row["search_used"] = provider_request_metadata.get("search_used")
             citation_bundle = citation_bundles.get(snapshot_id)
             row["citation_support_score"] = (
                 citation_bundle.metrics.citation_support_rate
@@ -451,6 +460,16 @@ class MySQLRetestRepository:
             evidence_manifests=evidence_manifests,
             run_status=str(run.status),
         )
+
+
+def _configured_search_enabled(row: dict[str, Any]) -> bool | None:
+    requested = row.get("search_requested")
+    if isinstance(requested, bool):
+        return requested
+    if requested in {0, 1}:
+        return bool(requested)
+    stored = row.get("search_enabled")
+    return None if stored is None else bool(stored)
 
 
 def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
@@ -480,7 +499,7 @@ def _measurement_sample(row: dict[str, Any]) -> MeasurementSample:
         captured_at=utc_now(),
         model_name=row.get("model_name"),
         model_version=row.get("model_version"),
-        search_enabled=None if row.get("search_enabled") is None else bool(row["search_enabled"]),
+        search_enabled=_configured_search_enabled(row),
         locale=row.get("locale") or "zh-CN",
         region=row.get("region"),
     )
@@ -515,7 +534,7 @@ def _sample_signature(row: dict[str, Any]) -> str:
     values = (
         row["question_id"], row["provider"], row["cohort_type"],
         row["collector_surface"], row["sample_index"], row["prompt_version_id"],
-        row.get("model_name"), row.get("model_version"), row.get("search_enabled"),
+        row.get("model_name"), row.get("model_version"), _configured_search_enabled(row),
         row.get("locale"), row.get("region"),
     )
     return "|".join("" if value is None else str(value) for value in values)

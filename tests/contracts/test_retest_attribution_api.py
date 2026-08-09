@@ -26,6 +26,18 @@ NOW = datetime(2026, 8, 8, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_quality_groups_on_search_request_configuration_not_provider_tool_outcome() -> None:
+    assert retest_routes._configured_search_enabled(
+        {"search_requested": True, "search_used": None, "search_enabled": None}
+    ) is True
+    assert retest_routes._configured_search_enabled(
+        {"search_requested": True, "search_used": False, "search_enabled": False}
+    ) is True
+    assert retest_routes._configured_search_enabled(
+        {"search_requested": None, "search_enabled": False}
+    ) is False
+
+
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, retest_routes.InMemoryRetestRepository]:
     delivery = delivery_routes.InMemoryDeliveryRepository()

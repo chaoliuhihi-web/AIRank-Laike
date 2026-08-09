@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -80,3 +81,89 @@ def test_growth_loop_uses_one_conservative_conclusion_gate(monkeypatch) -> None:
         "blocked",
         "blocked",
     ]
+
+
+def test_growth_loop_requires_quality_and_a_real_gap_derivation_before_assets(monkeypatch) -> None:
+    from apps.api import delivery_routes, evidence_gap_routes, knowledge_routes, retest_routes
+
+    now = api_main.utc_now()
+    run = SimpleNamespace(
+        run_id="scan_run_quality",
+        created_at=now,
+        finished_at=now,
+        updated_at=now,
+        status="completed",
+        provider_scope=["doubao"],
+        question_scope=SimpleNamespace(question_ids=["question_1"]),
+        metrics={"data_status": "provider_evidence", "provider_success_count": 3, "minimum_success_count": 3},
+    )
+
+    class Projects:
+        def list_buyer_questions(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return [SimpleNamespace(status="confirmed")]
+
+        def get_profile(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return SimpleNamespace(updated_at=now)
+
+    class Scans:
+        def list_runs(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return [run]
+
+        def list_tasks(self, tenant_id, run_id):  # noqa: ANN001, ANN202
+            return [SimpleNamespace(status="completed") for _ in range(3)]
+
+    class Gaps:
+        derivation_complete = False
+
+        def list(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return SimpleNamespace(governed_gap_count=0)
+
+        def has_successful_derivation(self, tenant_id, project_id, run_id):  # noqa: ANN001, ANN202
+            return self.derivation_complete
+
+    class Knowledge:
+        def list_facts(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return [SimpleNamespace(status="approved", eligible_for_generation=True)]
+
+        def list_governed_content(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return []
+
+    class Delivery:
+        def list_packages(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return []
+
+    class Retest:
+        publishable = False
+
+        def get_quality_report(self, tenant_id, project_id, run_id):  # noqa: ANN001, ANN202
+            return {
+                "publishable": self.publishable,
+                "checks": [{"code": "independent_repetitions_complete", "status": "blocked"}],
+            }
+
+        def list_windows(self, tenant_id, project_id):  # noqa: ANN001, ANN202
+            return []
+
+    gaps = Gaps()
+    retest = Retest()
+    monkeypatch.setattr(api_main, "PROJECT_REPOSITORY", Projects())
+    monkeypatch.setattr(api_main, "SCAN_REPOSITORY", Scans())
+    monkeypatch.setattr(evidence_gap_routes, "EVIDENCE_GAP_REPOSITORY", gaps)
+    monkeypatch.setattr(knowledge_routes, "KNOWLEDGE_REPOSITORY", Knowledge())
+    monkeypatch.setattr(delivery_routes, "DELIVERY_REPOSITORY", Delivery())
+    monkeypatch.setattr(retest_routes, "RETEST_REPOSITORY", retest)
+
+    blocked = api_main.build_growth_loop_data("tenant_1", "project_1")
+    assert blocked.current_step == "scans"
+    assert blocked.conclusion_readiness.state == "blocked"
+    assert "independent_repetitions_complete" in blocked.conclusion_readiness.reason_codes
+
+    retest.publishable = True
+    awaiting_derivation = api_main.build_growth_loop_data("tenant_1", "project_1")
+    assert awaiting_derivation.current_step == "gaps"
+    assert next(item for item in awaiting_derivation.steps if item.step_id == "gaps").status == "current"
+
+    gaps.derivation_complete = True
+    derived_with_zero_gaps = api_main.build_growth_loop_data("tenant_1", "project_1")
+    assert derived_with_zero_gaps.current_step == "assets"
+    assert next(item for item in derived_with_zero_gaps.steps if item.step_id == "gaps").status == "completed"
