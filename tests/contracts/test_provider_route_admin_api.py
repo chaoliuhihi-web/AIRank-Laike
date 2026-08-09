@@ -46,14 +46,23 @@ def route_record() -> dict[str, object]:
         "success_rate_24h": 1.0,
         "average_duration_ms_24h": 125.5,
         "total_tokens_24h": 300,
-        "cost_amount_24h": None,
-        "cost_currency": None,
+        "usage_event_count_24h": 3,
+        "exact_usage_count_24h": 3,
+        "estimated_usage_count_24h": 0,
+        "unknown_usage_count_24h": 0,
+        "known_cost_event_count_24h": 0,
+        "unknown_cost_event_count_24h": 3,
+        "cost_coverage_rate_24h": 0.0,
+        "known_cost_amount_24h": None,
+        "known_cost_currency": None,
+        "aggregate_cost_precision_24h": "unknown",
     }
 
 
 def test_provider_route_admin_lists_only_public_operational_state(monkeypatch) -> None:
     class FakeOperations:
-        def list_route_status(self, _manifests):
+        def list_route_status(self, _manifests, *, tenant_id):
+            assert tenant_id == "tenant_demo"
             return [route_record()]
 
     monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")

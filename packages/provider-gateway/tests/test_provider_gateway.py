@@ -345,7 +345,13 @@ def test_qianwen_generation_preserves_request_id_search_evidence_citation_and_us
                             }
                         ]
                     },
-                    "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 8,
+                        "total_tokens": 20,
+                        "total_cost": "0.0042",
+                        "cost_currency": "cny",
+                    },
                 },
             )
         ]
@@ -366,6 +372,10 @@ def test_qianwen_generation_preserves_request_id_search_evidence_citation_and_us
     assert result.search_evidence.endswith(":explicit_search_info")
     assert result.usage.total_tokens == 20
     assert result.usage.precision == UsagePrecision.EXACT
+    assert str(result.usage.cost_amount) == "0.0042"
+    assert result.usage.cost_currency == "CNY"
+    assert result.usage.cost_precision == UsagePrecision.EXACT
+    assert result.usage.cost_source == "provider_response_billed"
     assert transport.calls[0]["payload"]["enable_search"] is True
     assert "Authorization" not in audits[0]
     assert audits[0]["request_id_present"] is True

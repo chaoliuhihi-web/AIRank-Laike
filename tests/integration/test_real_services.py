@@ -58,6 +58,7 @@ from apps.api.knowledge_routes import (
     derive_knowledge_governance,
 )
 from apps.api.provider_operations import MySQLProviderOperations
+from apps.api.provider_usage import MySQLProviderUsageLedger, persist_provider_usage_event
 from apps.api.provider_credentials import (
     CredentialRevokeRequest,
     CredentialUpsertRequest,
@@ -166,7 +167,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0041"
+EXPECTED_ALEMBIC_HEAD = "20260809_0042"
 
 
 def require_real_flag(flag: str) -> None:
@@ -232,8 +233,10 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 105
+        assert table_count == 107
         for table_name in (
+            "airank_provider_price_versions",
+            "airank_provider_usage_costs",
             "airank_provider_credentials",
             "airank_operation_guards",
             "airank_operation_guard_events",
@@ -273,6 +276,18 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 ),
                 {"table_name": table_name},
             ).scalar_one() == 1
+        usage_hash_column = conn.execute(
+            text(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_usage_events'
+                  AND column_name='raw_usage_sha256'
+                """
+            )
+        ).scalar_one()
+        assert usage_hash_column == "NO"
         assert conn.execute(
             text(
                 """
@@ -3434,6 +3449,204 @@ def test_real_mysql_provider_route_controls_apply_without_restart_and_are_audite
                 ),
                 {"primary_route": primary_route, "secondary_route": secondary_route},
             )
+
+
+def test_real_mysql_provider_usage_ledger_keeps_raw_usage_and_cost_provenance_separate() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    suffix = uuid4().hex[:10]
+    tenant_id = f"tenant_usage_{suffix}"
+    project_id = f"project_usage_{suffix}"
+    route_id = f"route-usage-{suffix}"
+    model_name = f"qwen-usage-{suffix}"
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    ledger = MySQLProviderUsageLedger(database_url())
+
+    try:
+        with engine.begin() as conn:
+            for index, outcome in enumerate(("failed", "success", "success"), start=1):
+                audit_id = f"audit_usage_{suffix}_{index}"
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO airank_provider_request_audits (
+                          id, tenant_id, project_id, provider_key, route_id, model_name,
+                          endpoint_host, configuration_fingerprint, provider_request_id,
+                          prompt_sha256, outcome, attempt_count, duration_ms,
+                          requested_at, completed_at
+                        )
+                        VALUES (
+                          :id, :tenant_id, :project_id, 'qianwen', :route_id, :model_name,
+                          'dashscope.aliyuncs.com', :configuration_fingerprint, :provider_request_id,
+                          :prompt_sha256, :outcome, 1, 100,
+                          :requested_at, :completed_at
+                        )
+                        """
+                    ),
+                    {
+                        "id": audit_id,
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "route_id": route_id,
+                        "model_name": model_name,
+                        "configuration_fingerprint": hashlib.sha256(audit_id.encode()).hexdigest(),
+                        "provider_request_id": f"provider-request-{index}",
+                        "prompt_sha256": hashlib.sha256(f"prompt-{index}".encode()).hexdigest(),
+                        "outcome": outcome,
+                        "requested_at": now,
+                        "completed_at": now,
+                    },
+                )
+                if index == 1:
+                    usage = {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "total_tokens": 150,
+                        "precision": "exact",
+                        "source": "provider_response",
+                    }
+                elif index == 2:
+                    usage = {
+                        "input_tokens": 20,
+                        "output_tokens": 10,
+                        "total_tokens": 30,
+                        "precision": "exact",
+                        "source": "provider_response",
+                        "cost_amount": "0.01",
+                        "cost_currency": "CNY",
+                        "cost_precision": "exact",
+                        "cost_source": "provider_response_billed",
+                    }
+                else:
+                    usage = {
+                        "precision": "unknown",
+                        "source": "missing",
+                    }
+                persist_provider_usage_event(
+                    conn,
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    request_audit_id=audit_id,
+                    provider_key="qianwen",
+                    model_name=model_name,
+                    usage=usage,
+                    occurred_at=now,
+                )
+
+        before_price = ledger.list_usage(tenant_id=tenant_id)
+        assert before_price["summary"]["event_count"] == 3
+        assert before_price["summary"]["exact_cost_count"] == 1
+        assert before_price["summary"]["unknown_cost_count"] == 2
+        assert next(event for event in before_price["events"] if event["outcome"] == "failed")[
+            "usage_precision"
+        ] == "exact"
+
+        price = ledger.create_price_version(
+            tenant_id=tenant_id,
+            provider_key="qianwen",
+            route_id=route_id,
+            model_name=model_name,
+            currency="CNY",
+            input_price_per_million="2",
+            output_price_per_million="8",
+            effective_from=now - timedelta(minutes=1),
+            effective_until=None,
+            source_kind="official_price_page",
+            source_reference="https://example.test/verified-price",
+            expected_previous_version=0,
+            reason="real mysql usage ledger verification",
+            created_by="integration-provider-admin",
+        )
+        assert price["catalog_version"] == 1
+        assert price["backfilled_usage_count"] == 1
+
+        after_price = ledger.list_usage(tenant_id=tenant_id)
+        assert after_price["summary"] == {
+            "event_count": 3,
+            "exact_usage_count": 2,
+            "estimated_usage_count": 0,
+            "unknown_usage_count": 1,
+            "exact_cost_count": 1,
+            "estimated_cost_count": 1,
+            "unknown_cost_count": 1,
+            "known_cost_event_count": 2,
+            "cost_coverage_rate": 0.666667,
+            "known_cost_amount": "0.010600000000",
+            "known_cost_currency": "CNY",
+            "aggregate_cost_precision": "unknown",
+        }
+        route_operations = MySQLProviderOperations(
+            database_url(),
+            env={
+                "QIANWEN_API_KEY": "runtime-only-usage-ledger-key",
+                "QIANWEN_ROUTES_JSON": json.dumps(
+                    [
+                        {
+                            "route_id": route_id,
+                            "model": model_name,
+                            "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                            "key_env": "QIANWEN_API_KEY",
+                        }
+                    ]
+                ),
+            },
+        )
+        route_status = route_operations.list_route_status(
+            [PROVIDER_MANIFESTS["qianwen"]], tenant_id=tenant_id
+        )[0]
+        assert route_status["usage_event_count_24h"] == 3
+        assert route_status["known_cost_event_count_24h"] == 2
+        assert route_status["unknown_cost_event_count_24h"] == 1
+        assert route_status["cost_coverage_rate_24h"] == 0.666667
+        assert route_status["aggregate_cost_precision_24h"] == "unknown"
+        assert "runtime-only-usage-ledger-key" not in json.dumps(route_status, default=str)
+        estimated = ledger.list_usage(tenant_id=tenant_id, cost_precision="estimated")
+        assert estimated["summary"]["event_count"] == 1
+        assert estimated["events"][0]["cost_source"] == "catalog_calculated"
+        assert estimated["events"][0]["price_version_id"] == price["price_version_id"]
+        assert len(estimated["events"][0]["raw_usage_sha256"]) == 64
+        assert len(estimated["events"][0]["calculation_sha256"]) == 64
+        assert ledger.list_usage(tenant_id=f"other_{tenant_id}")["summary"]["event_count"] == 0
+
+        replay = ledger.create_price_version(
+            tenant_id=tenant_id,
+            provider_key="qianwen",
+            route_id=route_id,
+            model_name=model_name,
+            currency="CNY",
+            input_price_per_million="2",
+            output_price_per_million="8",
+            effective_from=now - timedelta(minutes=1),
+            effective_until=None,
+            source_kind="official_price_page",
+            source_reference="https://example.test/verified-price",
+            expected_previous_version=0,
+            reason="real mysql usage ledger verification",
+            created_by="integration-provider-admin",
+        )
+        assert replay["replay_status"] == "idempotent_replay"
+        assert replay["backfilled_usage_count"] == 0
+
+        with pytest.raises(ProviderGatewayError) as stale:
+            ledger.create_price_version(
+                tenant_id=tenant_id,
+                provider_key="qianwen",
+                route_id=route_id,
+                model_name=model_name,
+                currency="CNY",
+                input_price_per_million="3",
+                output_price_per_million="9",
+                effective_from=now,
+                effective_until=None,
+                source_kind="manual_verified",
+                source_reference="manual-price-recheck",
+                expected_previous_version=0,
+                reason="stale version must be rejected",
+                created_by="integration-provider-admin",
+            )
+        assert stale.value.code == "PROVIDER_PRICE_VERSION_CONFLICT"
+    finally:
+        cleanup_tenant(engine, tenant_id)
 
 
 def test_real_mysql_knowledge_governance_derives_expiry_and_conflict_queue() -> None:

@@ -242,7 +242,8 @@ def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monk
 
 def test_provider_route_admin_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:
     class FakeOperations:
-        def list_route_status(self, _manifests):
+        def list_route_status(self, _manifests, *, tenant_id):
+            assert tenant_id == "tenant_provider_admin"
             return []
 
     monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")

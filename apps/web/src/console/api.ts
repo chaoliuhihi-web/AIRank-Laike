@@ -1741,8 +1741,105 @@ export type ProviderRouteStatus = {
   success_rate_24h?: number | null;
   average_duration_ms_24h?: number | null;
   total_tokens_24h?: number | null;
-  cost_amount_24h?: string | null;
-  cost_currency?: string | null;
+  usage_event_count_24h: number;
+  exact_usage_count_24h: number;
+  estimated_usage_count_24h: number;
+  unknown_usage_count_24h: number;
+  known_cost_event_count_24h: number;
+  unknown_cost_event_count_24h: number;
+  cost_coverage_rate_24h: number;
+  known_cost_amount_24h?: string | null;
+  known_cost_currency?: string | null;
+  aggregate_cost_precision_24h: "exact" | "estimated" | "unknown";
+};
+
+export type ProviderUsagePrecision = "exact" | "estimated" | "unknown";
+
+export type ProviderUsageLedger = {
+  contract: "airank.provider-usage-ledger.v1";
+  events: Array<{
+    usage_event_id: string;
+    project_id: string;
+    request_audit_id: string;
+    provider: string;
+    route_id: string;
+    model: string;
+    outcome: string;
+    provider_request_id_present: boolean;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    usage_precision: ProviderUsagePrecision;
+    usage_source: string;
+    raw_usage_sha256: string;
+    cost_amount?: string | null;
+    cost_currency?: string | null;
+    cost_precision: ProviderUsagePrecision;
+    cost_source: string;
+    price_version_id?: string | null;
+    calculation_sha256?: string | null;
+    occurred_at: string;
+    created_at: string;
+  }>;
+  summary: {
+    event_count: number;
+    exact_usage_count: number;
+    estimated_usage_count: number;
+    unknown_usage_count: number;
+    exact_cost_count: number;
+    estimated_cost_count: number;
+    unknown_cost_count: number;
+    known_cost_event_count: number;
+    cost_coverage_rate: number;
+    known_cost_amount?: string | null;
+    known_cost_currency?: string | null;
+    aggregate_cost_precision: ProviderUsagePrecision;
+  };
+  filters: {
+    provider?: string | null;
+    project_id?: string | null;
+    usage_precision?: ProviderUsagePrecision | null;
+    cost_precision?: ProviderUsagePrecision | null;
+    occurred_from?: string | null;
+    occurred_until?: string | null;
+    limit: number;
+  };
+};
+
+export type ProviderPriceVersion = {
+  price_version_id: string;
+  provider: string;
+  route_id: string;
+  model: string;
+  catalog_version: number;
+  currency: string;
+  pricing_unit: "per_1m_tokens";
+  input_price_per_million: string;
+  output_price_per_million: string;
+  effective_from: string;
+  effective_until?: string | null;
+  source_kind: "official_price_page" | "provider_invoice" | "customer_contract" | "manual_verified";
+  source_reference: string;
+  source_sha256: string;
+  reason: string;
+  created_by: string;
+  created_at: string;
+  backfilled_usage_count?: number;
+  replay_status?: "created" | "idempotent_replay";
+};
+
+export type ProviderPriceVersionCreateInput = {
+  provider: "doubao" | "qianwen" | "kimi" | "deepseek";
+  routeId: string;
+  model: string;
+  currency: string;
+  inputPricePerMillion: string;
+  outputPricePerMillion: string;
+  effectiveFrom: string;
+  sourceKind: ProviderPriceVersion["source_kind"];
+  sourceReference: string;
+  expectedPreviousVersion: number;
+  reason: string;
 };
 
 export type ProviderRouteControlInput = {
@@ -3945,6 +4042,49 @@ export async function fetchProviderRoutes(signal?: AbortSignal): Promise<Provide
     signal,
   );
   return data.routes;
+}
+
+export function fetchProviderUsageLedger(
+  costPrecision?: ProviderUsagePrecision,
+  signal?: AbortSignal,
+): Promise<ProviderUsageLedger> {
+  const query = costPrecision ? `?cost_precision=${encodeURIComponent(costPrecision)}` : "";
+  return fetchData(`/api/v1/admin/provider-usage${query}`, "trc_web_provider_usage", signal);
+}
+
+export async function fetchProviderPrices(signal?: AbortSignal): Promise<ProviderPriceVersion[]> {
+  const data = await fetchData<{ contract: "airank.provider-price-version.v1"; prices: ProviderPriceVersion[] }>(
+    "/api/v1/admin/provider-prices",
+    "trc_web_provider_prices",
+    signal,
+  );
+  return data.prices;
+}
+
+export async function createProviderPriceVersion(
+  input: ProviderPriceVersionCreateInput,
+): Promise<ProviderPriceVersion> {
+  const response = await fetch("/api/v1/admin/provider-prices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_provider_price_create") },
+    body: JSON.stringify({
+      provider: input.provider,
+      route_id: input.routeId,
+      model: input.model,
+      currency: input.currency,
+      input_price_per_million: input.inputPricePerMillion,
+      output_price_per_million: input.outputPricePerMillion,
+      effective_from: input.effectiveFrom,
+      source_kind: input.sourceKind,
+      source_reference: input.sourceReference,
+      expected_previous_version: input.expectedPreviousVersion,
+      reason: input.reason,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Provider price create failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: ProviderPriceVersion }).data;
 }
 
 export async function updateProviderRoute(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Mapping
 
@@ -92,6 +93,10 @@ class ProviderUsage:
     total_tokens: int | None = None
     precision: UsagePrecision = UsagePrecision.UNKNOWN
     source: str = "provider_response"
+    cost_amount: Decimal | None = None
+    cost_currency: str | None = None
+    cost_precision: UsagePrecision = UsagePrecision.UNKNOWN
+    cost_source: str = "missing"
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
@@ -327,11 +328,27 @@ def extract_usage(data: Mapping[str, Any]) -> ProviderUsage:
     precision = UsagePrecision.EXACT if any(
         value is not None for value in (input_tokens, output_tokens, total_tokens)
     ) else UsagePrecision.UNKNOWN
+    cost_amount: Decimal | None = None
+    cost_currency: str | None = None
+    raw_cost = usage.get("total_cost", usage.get("cost"))
+    raw_currency = usage.get("cost_currency", usage.get("currency"))
+    if isinstance(raw_currency, str) and len(raw_currency.strip()) == 3:
+        try:
+            parsed_cost = Decimal(str(raw_cost))
+        except (InvalidOperation, ValueError, TypeError):
+            parsed_cost = None
+        if parsed_cost is not None and parsed_cost.is_finite() and parsed_cost >= 0:
+            cost_amount = parsed_cost
+            cost_currency = raw_currency.strip().upper()
     return ProviderUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         precision=precision,
+        cost_amount=cost_amount,
+        cost_currency=cost_currency,
+        cost_precision=(UsagePrecision.EXACT if cost_amount is not None else UsagePrecision.UNKNOWN),
+        cost_source=("provider_response_billed" if cost_amount is not None else "missing"),
     )
 
 

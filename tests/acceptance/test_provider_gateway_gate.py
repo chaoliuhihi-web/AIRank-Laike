@@ -98,6 +98,27 @@ def test_provider_operations_migration_has_no_plaintext_credential_column() -> N
     assert "secret" not in request_contract_migration
 
 
+def test_provider_usage_ledger_has_versioned_prices_and_separate_cost_derivations() -> None:
+    migration = (
+        ROOT
+        / "apps"
+        / "api"
+        / "alembic"
+        / "versions"
+        / "20260809_0042_provider_usage_ledger.py"
+    ).read_text(encoding="utf-8")
+    implementation = (ROOT / "apps" / "api" / "provider_usage.py").read_text(encoding="utf-8")
+
+    assert "airank_provider_price_versions" in migration
+    assert "airank_provider_usage_costs" in migration
+    assert "raw_usage_sha256" in migration
+    assert "cost_precision_status" in migration
+    assert "airank.provider-price-version.v1" in implementation
+    assert "airank.provider-cost-calculation.v1" in implementation
+    assert '"cost_precision": "estimated"' in implementation
+    assert "provider_response_billed" in implementation
+
+
 def test_provider_runtime_uses_persisted_state_and_task_idempotency_context() -> None:
     provider_scan = (ROOT / "apps" / "api" / "provider_scan.py").read_text(encoding="utf-8")
     operations = (ROOT / "apps" / "api" / "provider_operations.py").read_text(encoding="utf-8")

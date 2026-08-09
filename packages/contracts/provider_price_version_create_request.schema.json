@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_price_version_create_request.schema.json",
+  "title": "AIRank Provider Price Version Create Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "route_id", "model", "currency", "input_price_per_million", "output_price_per_million", "effective_from", "source_kind", "source_reference", "expected_previous_version", "reason"],
+  "properties": {
+    "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+    "route_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "model": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "currency": { "type": "string", "pattern": "^[A-Za-z]{3}$" },
+    "input_price_per_million": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$" },
+    "output_price_per_million": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$" },
+    "effective_from": { "type": "string", "format": "date-time" },
+    "effective_until": { "type": "string", "format": "date-time" },
+    "source_kind": { "type": "string", "enum": ["official_price_page", "provider_invoice", "customer_contract", "manual_verified"] },
+    "source_reference": { "type": "string", "minLength": 3, "maxLength": 2048 },
+    "expected_previous_version": { "type": "integer", "minimum": 0 },
+    "reason": { "type": "string", "minLength": 3, "maxLength": 500 }
+  }
+}

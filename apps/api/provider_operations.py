@@ -272,6 +272,8 @@ class MySQLProviderOperations:
     def list_route_status(
         self,
         manifests: Iterable[ProviderManifest],
+        *,
+        tenant_id: str = "tenant_demo",
     ) -> list[dict[str, object]]:
         configured_routes = [
             (manifest, route)
@@ -302,20 +304,63 @@ class MySQLProviderOperations:
                                SUM(a.outcome<>'success') AS failure_count,
                                AVG(a.duration_ms) AS average_duration_ms,
                                SUM(u.total_tokens) AS total_tokens,
-                               SUM(u.cost_amount) AS cost_amount,
+                               COUNT(u.id) AS usage_event_count,
+                               SUM(u.precision_status='exact') AS exact_usage_count,
+                               SUM(u.precision_status='estimated') AS estimated_usage_count,
+                               SUM(u.precision_status='unknown') AS unknown_usage_count,
+                               SUM(
+                                 CASE
+                                   WHEN u.cost_amount IS NOT NULL AND u.cost_precision_status='exact' THEN 1
+                                   WHEN dc.id IS NOT NULL THEN 1
+                                   ELSE 0
+                                 END
+                               ) AS known_cost_event_count,
+                               SUM(
+                                 CASE
+                                   WHEN u.id IS NOT NULL
+                                    AND NOT (u.cost_amount IS NOT NULL AND u.cost_precision_status='exact')
+                                    AND dc.id IS NULL THEN 1
+                                   ELSE 0
+                                 END
+                               ) AS unknown_cost_event_count,
+                               SUM(
+                                 CASE
+                                   WHEN u.cost_amount IS NOT NULL AND u.cost_precision_status='exact'
+                                     THEN u.cost_amount
+                                   ELSE dc.total_cost_amount
+                                 END
+                               ) AS known_cost_amount,
                                CASE
-                                 WHEN COUNT(DISTINCT u.cost_currency)=1 THEN MAX(u.cost_currency)
-                                 WHEN COUNT(DISTINCT u.cost_currency)>1 THEN 'MIXED'
+                                 WHEN COUNT(DISTINCT CASE
+                                   WHEN u.cost_amount IS NOT NULL AND u.cost_precision_status='exact'
+                                     THEN u.cost_currency ELSE dc.cost_currency END)=1
+                                   THEN MAX(CASE
+                                     WHEN u.cost_amount IS NOT NULL AND u.cost_precision_status='exact'
+                                       THEN u.cost_currency ELSE dc.cost_currency END)
+                                 WHEN COUNT(DISTINCT CASE
+                                   WHEN u.cost_amount IS NOT NULL AND u.cost_precision_status='exact'
+                                     THEN u.cost_currency ELSE dc.cost_currency END)>1 THEN 'MIXED'
                                  ELSE NULL
-                               END AS cost_currency
+                               END AS known_cost_currency,
+                               SUM(CASE WHEN u.cost_precision_status='exact' THEN 1 ELSE 0 END)
+                                 AS exact_cost_count,
+                               SUM(CASE WHEN dc.id IS NOT NULL THEN 1 ELSE 0 END)
+                                 AS estimated_cost_count
                         FROM airank_provider_request_audits a
                         LEFT JOIN airank_provider_usage_events u
                           ON u.request_audit_id=a.id
+                        LEFT JOIN airank_provider_usage_costs dc ON dc.id=(
+                          SELECT dc2.id FROM airank_provider_usage_costs dc2
+                          WHERE dc2.usage_event_id=u.id
+                          ORDER BY dc2.created_at DESC, dc2.id DESC LIMIT 1
+                        )
                         WHERE a.requested_at >= UTC_TIMESTAMP(3) - INTERVAL 24 HOUR
                           AND a.route_id IS NOT NULL
+                          AND a.tenant_id=:tenant_id
                         GROUP BY a.provider_key, a.route_id
                         """
-                    )
+                    ),
+                    {"tenant_id": tenant_id},
                 ).mappings().all()
             }
         records: list[dict[str, object]] = []
@@ -325,6 +370,20 @@ class MySQLProviderOperations:
             metric = stats.get(key)
             request_count = int(metric["request_count"]) if metric else 0
             success_count = int(metric["success_count"] or 0) if metric else 0
+            usage_event_count = int(metric["usage_event_count"] or 0) if metric else 0
+            known_cost_count = int(metric["known_cost_event_count"] or 0) if metric else 0
+            unknown_cost_count = int(metric["unknown_cost_event_count"] or 0) if metric else 0
+            exact_cost_count = int(metric["exact_cost_count"] or 0) if metric else 0
+            estimated_cost_count = int(metric["estimated_cost_count"] or 0) if metric else 0
+            known_currency = str(metric["known_cost_currency"]) if metric and metric["known_cost_currency"] else None
+            if usage_event_count == 0 or unknown_cost_count > 0 or known_currency in {None, "MIXED"}:
+                aggregate_cost_precision = "unknown"
+            elif estimated_cost_count > 0:
+                aggregate_cost_precision = "estimated"
+            elif exact_cost_count == usage_event_count:
+                aggregate_cost_precision = "exact"
+            else:
+                aggregate_cost_precision = "unknown"
             records.append(
                 {
                     "provider": manifest.provider,
@@ -369,16 +428,32 @@ class MySQLProviderOperations:
                         if metric and metric["total_tokens"] is not None
                         else None
                     ),
-                    "cost_amount_24h": (
-                        str(metric["cost_amount"])
-                        if metric and metric["cost_amount"] is not None
+                    "usage_event_count_24h": usage_event_count,
+                    "exact_usage_count_24h": (
+                        int(metric["exact_usage_count"] or 0) if metric else 0
+                    ),
+                    "estimated_usage_count_24h": (
+                        int(metric["estimated_usage_count"] or 0) if metric else 0
+                    ),
+                    "unknown_usage_count_24h": (
+                        int(metric["unknown_usage_count"] or 0) if metric else 0
+                    ),
+                    "known_cost_event_count_24h": known_cost_count,
+                    "unknown_cost_event_count_24h": unknown_cost_count,
+                    "cost_coverage_rate_24h": (
+                        round(known_cost_count / usage_event_count, 6)
+                        if usage_event_count
+                        else 0.0
+                    ),
+                    "known_cost_amount_24h": (
+                        str(metric["known_cost_amount"])
+                        if metric and metric["known_cost_amount"] is not None
                         else None
                     ),
-                    "cost_currency": (
-                        str(metric["cost_currency"])
-                        if metric and metric["cost_currency"]
-                        else None
+                    "known_cost_currency": (
+                        known_currency if known_currency != "MIXED" else None
                     ),
+                    "aggregate_cost_precision_24h": aggregate_cost_precision,
                 }
             )
         return sorted(records, key=lambda item: (

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_usage_ledger_response.schema.json",
+  "title": "AIRank Provider Usage Ledger Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "events", "summary", "filters"],
+      "properties": {
+        "contract": { "const": "airank.provider-usage-ledger.v1" },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["usage_event_id", "project_id", "request_audit_id", "provider", "route_id", "model", "outcome", "provider_request_id_present", "usage_precision", "usage_source", "raw_usage_sha256", "cost_precision", "cost_source", "occurred_at", "created_at"],
+            "properties": {
+              "usage_event_id": { "type": "string", "minLength": 1 },
+              "project_id": { "type": "string", "minLength": 1 },
+              "request_audit_id": { "type": "string", "minLength": 1 },
+              "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+              "route_id": { "type": "string" },
+              "model": { "type": "string", "minLength": 1 },
+              "outcome": { "type": "string", "minLength": 1 },
+              "provider_request_id_present": { "type": "boolean" },
+              "input_tokens": { "type": "integer", "minimum": 0 },
+              "output_tokens": { "type": "integer", "minimum": 0 },
+              "total_tokens": { "type": "integer", "minimum": 0 },
+              "usage_precision": { "type": "string", "enum": ["exact", "estimated", "unknown"] },
+              "usage_source": { "type": "string", "minLength": 1 },
+              "raw_usage_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "cost_amount": { "type": "string" },
+              "cost_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+              "cost_precision": { "type": "string", "enum": ["exact", "estimated", "unknown"] },
+              "cost_source": { "type": "string", "minLength": 1 },
+              "price_version_id": { "type": "string", "minLength": 1 },
+              "calculation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "occurred_at": { "type": "string", "format": "date-time" },
+              "created_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_count", "exact_usage_count", "estimated_usage_count", "unknown_usage_count", "exact_cost_count", "estimated_cost_count", "unknown_cost_count", "known_cost_event_count", "cost_coverage_rate", "aggregate_cost_precision"],
+          "properties": {
+            "event_count": { "type": "integer", "minimum": 0 },
+            "exact_usage_count": { "type": "integer", "minimum": 0 },
+            "estimated_usage_count": { "type": "integer", "minimum": 0 },
+            "unknown_usage_count": { "type": "integer", "minimum": 0 },
+            "exact_cost_count": { "type": "integer", "minimum": 0 },
+            "estimated_cost_count": { "type": "integer", "minimum": 0 },
+            "unknown_cost_count": { "type": "integer", "minimum": 0 },
+            "known_cost_event_count": { "type": "integer", "minimum": 0 },
+            "cost_coverage_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+            "known_cost_amount": { "type": "string" },
+            "known_cost_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+            "aggregate_cost_precision": { "type": "string", "enum": ["exact", "estimated", "unknown"] }
+          }
+        },
+        "filters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["limit"],
+          "properties": {
+            "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+            "project_id": { "type": "string", "minLength": 1 },
+            "usage_precision": { "type": "string", "enum": ["exact", "estimated", "unknown"] },
+            "cost_precision": { "type": "string", "enum": ["exact", "estimated", "unknown"] },
+            "occurred_from": { "type": "string", "format": "date-time" },
+            "occurred_until": { "type": "string", "format": "date-time" },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

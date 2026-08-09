@@ -266,6 +266,9 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPERATION_NOT_FOUND` | 404 | 当前租户不存在该操作回执，或操作不属于 Provider 凭证域 |
 | `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
 | `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
+| `PROVIDER_PRICE_INVALID` | 422 | Provider 价格版本缺少有效费率、来源、币种或生效区间，或证据字段疑似包含凭证 |
+| `PROVIDER_PRICE_VERSION_CONFLICT` | 409 | Provider 价格目录版本已变化，需要刷新后追加新版本 |
+| `PROVIDER_USAGE_FILTER_INVALID` | 422 | Provider 用量账本筛选时间范围无效 |
 | `PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN` | 409 | 禁止停用 Provider 最后一条已配置路由 |
 | `PROVIDER_ROUTES_DISABLED_BY_CONTROL` | 503 | Provider 所有运行时路由均被控制面停用，网关拒绝生成请求 |
 | `YUDAO_MODEL_RESOLVE_FAILED` | 502 | yudao 模型解析失败 |

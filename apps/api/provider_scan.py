@@ -340,6 +340,10 @@ def call_api_provider_for_brand_rank(
                         "total_tokens": exc.usage.total_tokens,
                         "precision": exc.usage.precision.value,
                         "source": exc.usage.source,
+                        "cost_amount": str(exc.usage.cost_amount) if exc.usage.cost_amount is not None else None,
+                        "cost_currency": exc.usage.cost_currency,
+                        "cost_precision": exc.usage.cost_precision.value,
+                        "cost_source": exc.usage.cost_source,
                     }
                     if exc.usage is not None
                     else None
@@ -409,6 +413,10 @@ def call_api_provider_for_brand_rank(
                 "total_tokens": api_result.usage.total_tokens,
                 "precision": api_result.usage.precision.value,
                 "source": api_result.usage.source,
+                "cost_amount": str(api_result.usage.cost_amount) if api_result.usage.cost_amount is not None else None,
+                "cost_currency": api_result.usage.cost_currency,
+                "cost_precision": api_result.usage.cost_precision.value,
+                "cost_source": api_result.usage.cost_source,
             },
             "endpoint_host": api_result.endpoint_host,
             "configuration_fingerprint": api_result.configuration_fingerprint,

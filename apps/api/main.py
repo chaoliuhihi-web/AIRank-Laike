@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, Path, Request
+from fastapi import FastAPI, Header, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -61,6 +61,14 @@ try:
     from .provider_operations import MySQLProviderOperations
 except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
     from provider_operations import MySQLProviderOperations  # type: ignore[no-redef]
+
+try:
+    from .provider_usage import MySQLProviderUsageLedger, persist_provider_usage_event
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from provider_usage import (  # type: ignore[no-redef]
+        MySQLProviderUsageLedger,
+        persist_provider_usage_event,
+    )
 
 try:
     from .report_packet import (
@@ -250,6 +258,9 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "PROVIDER_NOT_SUPPORTED": (404, "Provider is not supported"),
     "PROVIDER_ROUTE_CONTROL_INVALID": (422, "Provider route control is invalid"),
     "PROVIDER_ROUTE_CONTROL_CONFLICT": (409, "Provider route control version conflict"),
+    "PROVIDER_PRICE_INVALID": (422, "Provider price version is invalid"),
+    "PROVIDER_PRICE_VERSION_CONFLICT": (409, "Provider price version is stale"),
+    "PROVIDER_USAGE_FILTER_INVALID": (422, "Provider usage filter is invalid"),
     "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN": (409, "The last configured provider route cannot be disabled"),
     "PROVIDER_ROUTES_DISABLED_BY_CONTROL": (503, "All provider routes are disabled by control policy"),
     "PROVIDER_CREDENTIAL_REVOKED": (503, "Tenant Provider credential is revoked"),
@@ -1023,8 +1034,16 @@ class ProviderRouteStatus(BaseModel):
     success_rate_24h: Optional[float] = None
     average_duration_ms_24h: Optional[float] = None
     total_tokens_24h: Optional[int] = None
-    cost_amount_24h: Optional[str] = None
-    cost_currency: Optional[str] = None
+    usage_event_count_24h: int = 0
+    exact_usage_count_24h: int = 0
+    estimated_usage_count_24h: int = 0
+    unknown_usage_count_24h: int = 0
+    known_cost_event_count_24h: int = 0
+    unknown_cost_event_count_24h: int = 0
+    cost_coverage_rate_24h: float = 0.0
+    known_cost_amount_24h: Optional[str] = None
+    known_cost_currency: Optional[str] = None
+    aggregate_cost_precision_24h: Literal["exact", "estimated", "unknown"] = "unknown"
 
 
 class ProviderRouteStatusData(BaseModel):
@@ -1034,6 +1053,126 @@ class ProviderRouteStatusData(BaseModel):
 
 class ProviderRouteStatusResponse(BaseModel):
     data: ProviderRouteStatusData
+    meta: ResponseMeta
+
+
+class ProviderPriceVersionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["doubao", "qianwen", "kimi", "deepseek"]
+    route_id: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=160)
+    currency: str = Field(min_length=3, max_length=3, pattern="^[A-Za-z]{3}$")
+    input_price_per_million: str = Field(pattern=r"^(0|[1-9]\d*)(\.\d+)?$")
+    output_price_per_million: str = Field(pattern=r"^(0|[1-9]\d*)(\.\d+)?$")
+    effective_from: datetime
+    effective_until: Optional[datetime] = None
+    source_kind: Literal[
+        "official_price_page", "provider_invoice", "customer_contract", "manual_verified"
+    ]
+    source_reference: str = Field(min_length=3, max_length=2048)
+    expected_previous_version: int = Field(ge=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ProviderPriceVersionData(BaseModel):
+    price_version_id: str
+    provider: str
+    route_id: str
+    model: str
+    catalog_version: int
+    currency: str
+    pricing_unit: Literal["per_1m_tokens"]
+    input_price_per_million: str
+    output_price_per_million: str
+    effective_from: datetime
+    effective_until: Optional[datetime] = None
+    source_kind: Literal[
+        "official_price_page", "provider_invoice", "customer_contract", "manual_verified"
+    ]
+    source_reference: str
+    source_sha256: str
+    reason: str
+    created_by: str
+    created_at: datetime
+    backfilled_usage_count: Optional[int] = None
+    replay_status: Optional[Literal["created", "idempotent_replay"]] = None
+
+
+class ProviderPriceVersionResponse(BaseModel):
+    data: ProviderPriceVersionData
+    meta: ResponseMeta
+
+
+class ProviderPricePortfolioData(BaseModel):
+    contract: Literal["airank.provider-price-version.v1"] = "airank.provider-price-version.v1"
+    prices: list[ProviderPriceVersionData]
+
+
+class ProviderPricePortfolioResponse(BaseModel):
+    data: ProviderPricePortfolioData
+    meta: ResponseMeta
+
+
+class ProviderUsageEventData(BaseModel):
+    usage_event_id: str
+    project_id: str
+    request_audit_id: str
+    provider: str
+    route_id: str
+    model: str
+    outcome: str
+    provider_request_id_present: bool
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    usage_precision: Literal["exact", "estimated", "unknown"]
+    usage_source: str
+    raw_usage_sha256: str
+    cost_amount: Optional[str] = None
+    cost_currency: Optional[str] = None
+    cost_precision: Literal["exact", "estimated", "unknown"]
+    cost_source: str
+    price_version_id: Optional[str] = None
+    calculation_sha256: Optional[str] = None
+    occurred_at: datetime
+    created_at: datetime
+
+
+class ProviderUsageSummaryData(BaseModel):
+    event_count: int
+    exact_usage_count: int
+    estimated_usage_count: int
+    unknown_usage_count: int
+    exact_cost_count: int
+    estimated_cost_count: int
+    unknown_cost_count: int
+    known_cost_event_count: int
+    cost_coverage_rate: float
+    known_cost_amount: Optional[str] = None
+    known_cost_currency: Optional[str] = None
+    aggregate_cost_precision: Literal["exact", "estimated", "unknown"]
+
+
+class ProviderUsageFiltersData(BaseModel):
+    provider: Optional[str] = None
+    project_id: Optional[str] = None
+    usage_precision: Optional[Literal["exact", "estimated", "unknown"]] = None
+    cost_precision: Optional[Literal["exact", "estimated", "unknown"]] = None
+    occurred_from: Optional[datetime] = None
+    occurred_until: Optional[datetime] = None
+    limit: int
+
+
+class ProviderUsageLedgerData(BaseModel):
+    contract: Literal["airank.provider-usage-ledger.v1"]
+    events: list[ProviderUsageEventData]
+    summary: ProviderUsageSummaryData
+    filters: ProviderUsageFiltersData
+
+
+class ProviderUsageLedgerResponse(BaseModel):
+    data: ProviderUsageLedgerData
     meta: ResponseMeta
 
 
@@ -2868,12 +3007,30 @@ def build_provider_route_operations() -> MySQLProviderOperations:
     return operations
 
 
+def build_provider_usage_ledger() -> MySQLProviderUsageLedger:
+    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
+    if not database_url:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "INTEGRATION_CAPABILITY_BLOCKED", "details": {"capability": "provider_usage_ledger"}},
+        )
+    return MySQLProviderUsageLedger(database_url)
+
+
 def raise_provider_route_control_error(exc: ProviderGatewayError) -> None:
     status = 409
     if exc.code == "PROVIDER_ROUTE_NOT_FOUND":
         status = 404
     elif exc.code == "PROVIDER_ROUTE_CONTROL_INVALID":
         status = 422
+    raise StarletteHTTPException(
+        status_code=status,
+        detail={"code": exc.code, "details": {"provider": exc.provider, "reason": exc.message}},
+    ) from exc
+
+
+def raise_provider_usage_error(exc: ProviderGatewayError) -> None:
+    status = 409 if exc.code == "PROVIDER_PRICE_VERSION_CONFLICT" else 422
     raise StarletteHTTPException(
         status_code=status,
         detail={"code": exc.code, "details": {"provider": exc.provider, "reason": exc.message}},
@@ -4119,35 +4276,15 @@ def complete_mysql_real_brand_scan(
                 )
                 usage = result.raw_metadata.get("usage")
                 if isinstance(usage, dict):
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO airank_provider_usage_events (
-                              id, tenant_id, project_id, request_audit_id,
-                              provider_key, model_name, input_tokens, output_tokens,
-                              total_tokens, precision_status, usage_source, occurred_at
-                            )
-                            VALUES (
-                              :id, :tenant_id, :project_id, :request_audit_id,
-                              :provider_key, :model_name, :input_tokens, :output_tokens,
-                              :total_tokens, :precision_status, :usage_source, :occurred_at
-                            )
-                            """
-                        ),
-                        {
-                            "id": f"provider_usage_{uuid4().hex[:12]}",
-                            "tenant_id": tenant_id,
-                            "project_id": project.project_id,
-                            "request_audit_id": provider_audit_id,
-                            "provider_key": result.provider,
-                            "model_name": result.raw_metadata["model_name"],
-                            "input_tokens": usage.get("input_tokens"),
-                            "output_tokens": usage.get("output_tokens"),
-                            "total_tokens": usage.get("total_tokens"),
-                            "precision_status": usage.get("precision") or "unknown",
-                            "usage_source": usage.get("source") or "provider_response",
-                            "occurred_at": result.raw_metadata.get("completed_at") or finished_at,
-                        },
+                    persist_provider_usage_event(
+                        conn,
+                        tenant_id=tenant_id,
+                        project_id=project.project_id,
+                        request_audit_id=provider_audit_id,
+                        provider_key=result.provider,
+                        model_name=result.raw_metadata["model_name"],
+                        usage=usage,
+                        occurred_at=result.raw_metadata.get("completed_at") or finished_at,
                     )
             for citation_order, citation in enumerate(result.native_citations, start=1):
                 conn.execute(
@@ -4534,35 +4671,15 @@ def complete_mysql_real_brand_scan(
                     )
                     failure_usage = provider_metadata.get("usage")
                     if isinstance(failure_usage, dict):
-                        conn.execute(
-                            text(
-                                """
-                                INSERT INTO airank_provider_usage_events (
-                                  id, tenant_id, project_id, request_audit_id,
-                                  provider_key, model_name, input_tokens, output_tokens,
-                                  total_tokens, precision_status, usage_source, occurred_at
-                                )
-                                VALUES (
-                                  :id, :tenant_id, :project_id, :request_audit_id,
-                                  :provider_key, :model_name, :input_tokens, :output_tokens,
-                                  :total_tokens, :precision_status, :usage_source, :occurred_at
-                                )
-                                """
-                            ),
-                            {
-                                "id": f"provider_usage_{uuid4().hex[:12]}",
-                                "tenant_id": tenant_id,
-                                "project_id": project.project_id,
-                                "request_audit_id": failure_provider_audit_id,
-                                "provider_key": failure["provider"],
-                                "model_name": provider_metadata["model_name"],
-                                "input_tokens": failure_usage.get("input_tokens"),
-                                "output_tokens": failure_usage.get("output_tokens"),
-                                "total_tokens": failure_usage.get("total_tokens"),
-                                "precision_status": failure_usage.get("precision") or "unknown",
-                                "usage_source": failure_usage.get("source") or "provider_response",
-                                "occurred_at": failure["finished_at"],
-                            },
+                        persist_provider_usage_event(
+                            conn,
+                            tenant_id=tenant_id,
+                            project_id=project.project_id,
+                            request_audit_id=failure_provider_audit_id,
+                            provider_key=failure["provider"],
+                            model_name=provider_metadata["model_name"],
+                            usage=failure_usage,
+                            occurred_at=failure["finished_at"],
                         )
             conn.execute(
                 text(
@@ -5693,6 +5810,7 @@ def get_provider_readiness(trace_id: Optional[str] = Header(default=None, alias=
 def get_provider_routes(
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
     permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
 ) -> ProviderRouteStatusResponse:
     require_provider_admin(permissions)
     operations = build_provider_route_operations()
@@ -5700,9 +5818,117 @@ def get_provider_routes(
         data=ProviderRouteStatusData(
             routes=[
                 ProviderRouteStatus.model_validate(record)
-                for record in operations.list_route_status(PROVIDER_MANIFESTS.values())
+                for record in operations.list_route_status(
+                    PROVIDER_MANIFESTS.values(), tenant_id=tenant_id
+                )
             ]
         ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/admin/provider-prices",
+    response_model=ProviderPricePortfolioResponse,
+    response_model_exclude_none=True,
+)
+def get_provider_prices(
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+) -> ProviderPricePortfolioResponse:
+    require_provider_admin(permissions)
+    prices = build_provider_usage_ledger().list_price_versions(tenant_id=tenant_id)
+    return ProviderPricePortfolioResponse(
+        data=ProviderPricePortfolioData(
+            prices=[ProviderPriceVersionData.model_validate(item) for item in prices]
+        ),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.post(
+    f"{API_PREFIX}/admin/provider-prices",
+    response_model=ProviderPriceVersionResponse,
+    response_model_exclude_none=True,
+    status_code=201,
+)
+def create_provider_price(
+    payload: ProviderPriceVersionCreateRequest,
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+    actor_user_id: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+) -> ProviderPriceVersionResponse:
+    require_provider_admin(permissions)
+    actor = (actor_user_id or "").strip()
+    if not actor:
+        if auth_enforcement_required():
+            raise StarletteHTTPException(
+                status_code=403,
+                detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"reason": "trusted actor missing"}},
+            )
+        actor = "dev_only_provider_admin"
+    try:
+        record = build_provider_usage_ledger().create_price_version(
+            tenant_id=tenant_id,
+            provider_key=payload.provider,
+            route_id=payload.route_id,
+            model_name=payload.model,
+            currency=payload.currency,
+            input_price_per_million=payload.input_price_per_million,
+            output_price_per_million=payload.output_price_per_million,
+            effective_from=payload.effective_from,
+            effective_until=payload.effective_until,
+            source_kind=payload.source_kind,
+            source_reference=payload.source_reference,
+            expected_previous_version=payload.expected_previous_version,
+            reason=payload.reason,
+            created_by=actor,
+        )
+    except ProviderGatewayError as exc:
+        raise_provider_usage_error(exc)
+    return ProviderPriceVersionResponse(
+        data=ProviderPriceVersionData.model_validate(record),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/admin/provider-usage",
+    response_model=ProviderUsageLedgerResponse,
+    response_model_exclude_none=True,
+)
+def get_provider_usage(
+    provider: Optional[Literal["doubao", "qianwen", "kimi", "deepseek"]] = Query(default=None),
+    project_id: Optional[str] = Query(default=None, min_length=1, max_length=64),
+    usage_precision: Optional[Literal["exact", "estimated", "unknown"]] = Query(default=None),
+    cost_precision: Optional[Literal["exact", "estimated", "unknown"]] = Query(default=None),
+    occurred_from: Optional[datetime] = Query(default=None),
+    occurred_until: Optional[datetime] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+) -> ProviderUsageLedgerResponse:
+    require_provider_admin(permissions)
+    if occurred_from and occurred_until and occurred_until <= occurred_from:
+        raise StarletteHTTPException(
+            status_code=422,
+            detail={"code": "PROVIDER_USAGE_FILTER_INVALID", "details": {"reason": "occurred_until must be later than occurred_from"}},
+        )
+    record = build_provider_usage_ledger().list_usage(
+        tenant_id=tenant_id,
+        provider_key=provider,
+        project_id=project_id,
+        usage_precision=usage_precision,
+        cost_precision=cost_precision,
+        occurred_from=occurred_from,
+        occurred_until=occurred_until,
+        limit=limit,
+    )
+    return ProviderUsageLedgerResponse(
+        data=ProviderUsageLedgerData.model_validate(record),
         meta=build_meta(trace_id),
     )
 

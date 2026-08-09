@@ -245,7 +245,7 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 
 - Bootstrap SQL 和 Alembic 初始迁移的核心 tenant/project 查询索引可支撑 M1 CRUD、M2 worker claim、M3/M4 证据回溯的最小闭环。
 - M1 不新增 DDL；后续如出现慢查询，优先基于真实 query plan 新增 Alembic migration，不在业务代码里绕过租户过滤。
-- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0041`，共 105 张 `airank_*` 表。除 `0039` 的治理图谱和 `0040` 的租户 Provider 凭证密文/轮换事件外，`0041` 新增高风险写操作的持久幂等状态与追加式事件链；Provider 请求审计继续只保留 credential source/id/version，不保存明文。真实库已验证轮换/撤销 scrub、成功重放不重复 L3、未知结果失败关闭、两类 hash 链和测试数据清理；这只证明本地迁移和数据库链路，不替代生产备份、KMS/HSM、密钥轮换演练或外部服务验收。
+- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0042`，共 107 张 `airank_*` 表。`0042` 在原始 Provider usage 上增加非空 hash、成本精度和来源，并新增租户价格版本与追加式成本派生两张表；目录计算不能覆盖原始 Token，且固定标记为 estimated。真实库已验证 exact/estimated/unknown、失败调用用量、回算、版本冲突、幂等、租户隔离与测试数据清理；这只证明本地迁移和账本链路，不替代生产备份、官方价格同步、Provider 发票对账、汇率治理或财务系统验收。
 
 ## 与 yudao 的字段映射
 

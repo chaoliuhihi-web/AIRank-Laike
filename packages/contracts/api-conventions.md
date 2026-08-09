@@ -138,6 +138,8 @@ scan run 状态只允许 `queued`、`running`、`completed`、`failed`、`cancel
 
 Provider 请求参数属于测量口径的一部分。每次 API 调用必须把实际 `request_kind`、`max_tokens`、上游字段名、temperature 和 reasoning effort 写入请求审计 metadata，并通过 `configuration_fingerprint` 关联版本化 Provider manifest/route；`20260808_0022` 把 manifest 默认值和 route 实际请求契约分别保存为 JSON，不保存密钥。配置指纹必须参与版本 ID，凭证轮换、请求类型或请求参数变化只能追加版本，不得覆盖历史审计关联。当前允许的请求类型为 `chat_completions`、`chat_completions_search` 和 `responses_web_search`；历史 manifest 的 `openai_chat` 只允许规范化为 `chat_completions`，显式未知环境值或 route 值失败关闭。HTTP 成功但最终回答为空时，原始上游响应、request ID、usage、终止元数据、时长和请求契约仍须进入失败 EvidenceSnapshot，样本状态保持 `failed` 且不得进入有效分母；如果上游已经返回 usage，则失败调用也必须进入用量账本。模型专属固定参数不得用一个全局默认覆盖；例如 Kimi K3 使用 `max_completion_tokens`、省略固定 temperature 并显式记录 reasoning effort，千问联网来源使用 `responses_web_search` 并要求从显式 `web_search_call`/usage 结构判定实际搜索。
 
+Provider 用量使用 `airank.provider-usage-ledger.v1`。原始 Token、Provider billed cost 和目录计算成本必须分开保存；目录计算写入追加式派生表并绑定版本化价格、计算契约与 hash，不得覆盖原始事件。Token 和成本分别使用 `exact/estimated/unknown`：只有 Provider 原生 usage 可使 Token 为 exact，只有 Provider 同时明示 billed amount 与币种可使成本为 exact，价格目录乘算固定为 estimated。缺用量或价格时保持 unknown，失败请求已发生的 usage 仍入账。汇总只能返回已知成本、覆盖率和聚合精度；存在未定价事件或混合币种时不得称为精确总成本。
+
 Provider 引用只允许从版本化原生结构白名单提取。`airank.provider-native-citation.v2` 保存原生类型、精确原始响应 JSON path 和 native source ID；回答正文、调试字段或任意嵌套 URL 不得自动升级为 Citation。`airank.provider-search-evidence.v1` 必须把未请求、显式工具调用、显式 usage、显式无搜索和“已请求但不可验证”分开。Citation 被 Provider 选择不等于它支持回答；支持度仍需抓取不可变来源正文并完成独立人工复核。
 
 客户交付使用不可变证据包，而不是仅记录“下载成功”：

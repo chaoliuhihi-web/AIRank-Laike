@@ -136,7 +136,9 @@ import {
   fetchProviderCredentials,
   fetchProviderCredentialOperation,
   fetchProviderCredentialOperations,
+  fetchProviderPrices,
   fetchProviderRoutes,
+  fetchProviderUsageLedger,
   fetchPublishAttempts,
   fetchPublishPackages,
   fetchRetestWindows,
@@ -172,6 +174,7 @@ import {
   runEvidenceReviewerDirectorySync,
   storeAuthSession,
   updateProviderRoute,
+  createProviderPriceVersion,
   upsertProviderCredential,
   updateKnowledgeSyncPolicy,
   upsertOpportunityActionMember,
@@ -233,6 +236,9 @@ import {
   type ProviderCredentialOperationList,
   type ProviderCredentialStatus,
   type ProviderRouteStatus,
+  type ProviderPriceVersion,
+  type ProviderUsageLedger,
+  type ProviderUsagePrecision,
   type QuestionMapResult,
   type QuestionObservationBatch,
   type PublishPackage,
@@ -6329,6 +6335,17 @@ type ProviderCredentialDraft = {
   confirmRevoke: boolean;
 };
 
+type ProviderPriceDraft = {
+  routeKey: string;
+  currency: string;
+  inputPrice: string;
+  outputPrice: string;
+  effectiveFrom: string;
+  sourceKind: ProviderPriceVersion["source_kind"];
+  sourceReference: string;
+  reason: string;
+};
+
 const emptyProviderCredentialDraft = (): ProviderCredentialDraft => ({
   secret: "",
   reason: "",
@@ -6351,6 +6368,22 @@ function SettingsPage() {
   const [routeLoadError, setRouteLoadError] = useState<string | null>(null);
   const [updatingRoute, setUpdatingRoute] = useState<string | null>(null);
   const [routeDrafts, setRouteDrafts] = useState<Record<string, { enabled: boolean; priority: string; reason: string }>>({});
+  const [usageLedger, setUsageLedger] = useState<ProviderUsageLedger | null>(null);
+  const [usageCostFilter, setUsageCostFilter] = useState<ProviderUsagePrecision | "all">("all");
+  const [usageLedgerError, setUsageLedgerError] = useState<string | null>(null);
+  const [providerPrices, setProviderPrices] = useState<ProviderPriceVersion[]>([]);
+  const [providerPriceError, setProviderPriceError] = useState<string | null>(null);
+  const [creatingPrice, setCreatingPrice] = useState(false);
+  const [priceDraft, setPriceDraft] = useState<ProviderPriceDraft>({
+    routeKey: "",
+    currency: "CNY",
+    inputPrice: "",
+    outputPrice: "",
+    effectiveFrom: new Date().toISOString().slice(0, 16),
+    sourceKind: "official_price_page",
+    sourceReference: "",
+    reason: "",
+  });
 
   const loadProviderRoutes = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -6408,14 +6441,94 @@ function SettingsPage() {
     }
   }, []);
 
+  const loadProviderUsage = useCallback(async (costPrecision?: ProviderUsagePrecision, signal?: AbortSignal) => {
+    try {
+      setUsageLedger(await fetchProviderUsageLedger(costPrecision, signal));
+      setUsageLedgerError(null);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setUsageLedger(null);
+      setUsageLedgerError(error instanceof Error ? error.message : "Provider 用量账本不可用");
+    }
+  }, []);
+
+  const loadProviderPrices = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setProviderPrices(await fetchProviderPrices(signal));
+      setProviderPriceError(null);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setProviderPrices([]);
+      setProviderPriceError(error instanceof Error ? error.message : "Provider 价格目录不可用");
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
     void loadProviderRoutes(controller.signal);
     void loadProviderCredentials(controller.signal);
     void loadProviderCredentialOperations(controller.signal);
+    void loadProviderUsage(undefined, controller.signal);
+    void loadProviderPrices(controller.signal);
     return () => controller.abort();
-  }, [loadProviderCredentialOperations, loadProviderCredentials, loadProviderRoutes]);
+  }, [loadProviderCredentialOperations, loadProviderCredentials, loadProviderPrices, loadProviderRoutes, loadProviderUsage]);
+
+  useEffect(() => {
+    if (priceDraft.routeKey || providerRoutes.length === 0) return;
+    const route = providerRoutes[0];
+    setPriceDraft((current) => ({
+      ...current,
+      routeKey: `${route.provider}/${route.route_id}`,
+    }));
+  }, [priceDraft.routeKey, providerRoutes]);
+
+  const applyUsageCostFilter = async (value: ProviderUsagePrecision | "all") => {
+    setUsageCostFilter(value);
+    await loadProviderUsage(value === "all" ? undefined : value);
+  };
+
+  const createProviderPrice = async () => {
+    const route = providerRoutes.find((item) => `${item.provider}/${item.route_id}` === priceDraft.routeKey);
+    if (!route) {
+      notify({ title: "请选择 Provider 路由", desc: "价格版本必须绑定当前运行时路由和模型。", tone: "warning" });
+      return;
+    }
+    if (!/^\d+(\.\d+)?$/.test(priceDraft.inputPrice) || !/^\d+(\.\d+)?$/.test(priceDraft.outputPrice)) {
+      notify({ title: "价格格式无效", desc: "输入、输出价格必须是每百万 Token 的非负十进制金额。", tone: "warning" });
+      return;
+    }
+    if (priceDraft.sourceReference.trim().length < 3 || priceDraft.reason.trim().length < 3) {
+      notify({ title: "缺少价格证据", desc: "请填写来源引用和变更理由；系统不会内置演示价格。", tone: "warning" });
+      return;
+    }
+    const previousVersion = providerPrices
+      .filter((price) => price.provider === route.provider && price.route_id === route.route_id && price.model === route.model)
+      .reduce((max, price) => Math.max(max, price.catalog_version), 0);
+    setCreatingPrice(true);
+    try {
+      const result = await createProviderPriceVersion({
+        provider: route.provider as "doubao" | "qianwen" | "kimi" | "deepseek",
+        routeId: route.route_id,
+        model: route.model,
+        currency: priceDraft.currency.toUpperCase(),
+        inputPricePerMillion: priceDraft.inputPrice,
+        outputPricePerMillion: priceDraft.outputPrice,
+        effectiveFrom: new Date(priceDraft.effectiveFrom).toISOString(),
+        sourceKind: priceDraft.sourceKind,
+        sourceReference: priceDraft.sourceReference.trim(),
+        expectedPreviousVersion: previousVersion,
+        reason: priceDraft.reason.trim(),
+      });
+      await Promise.all([loadProviderPrices(), loadProviderUsage(usageCostFilter === "all" ? undefined : usageCostFilter), loadProviderRoutes()]);
+      setPriceDraft((current) => ({ ...current, inputPrice: "", outputPrice: "", sourceReference: "", reason: "" }));
+      notify({ title: "价格版本已追加", desc: `v${result.catalog_version} 已记录，并回算 ${result.backfilled_usage_count ?? 0} 条历史用量；目录计算固定标记 estimated。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "价格版本创建失败", desc: error instanceof Error ? error.message : "请刷新版本后重试。", tone: "danger" });
+    } finally {
+      setCreatingPrice(false);
+    }
+  };
 
   const applyProviderRoute = async (route: ProviderRouteStatus) => {
     const key = `${route.provider}/${route.route_id}`;
@@ -6750,6 +6863,105 @@ function SettingsPage() {
           )}
         </div>
       </section>
+      <section className="airank-console-card provider-route-control" data-testid="provider-usage-ledger">
+        <div className="provider-route-control-head">
+          <div>
+            <h2>Provider 用量与成本账本</h2>
+            <p>Token 是不可变原始事件；价格回算是独立派生证据。已知成本不等于总成本，覆盖不足时汇总精度保持 unknown。</p>
+          </div>
+          <label>
+            成本精度
+            <select
+              value={usageCostFilter}
+              onChange={(event) => void applyUsageCostFilter(event.target.value as ProviderUsagePrecision | "all")}
+            >
+              <option value="all">全部</option>
+              <option value="exact">exact · Provider 账单</option>
+              <option value="estimated">estimated · 目录计算</option>
+              <option value="unknown">unknown · 未定价</option>
+            </select>
+          </label>
+        </div>
+        {usageLedgerError && <DataStateCard title="用量账本不可用" desc={usageLedgerError} tone="danger" />}
+        {usageLedger && (
+          <>
+            <div className="settings-grid">
+              <SettingsSection
+                title="Token 证据"
+                icon={Activity}
+                onAction={() => openPanel({ title: "Token 精度口径", desc: "exact 仅来自 Provider 原生 usage；estimated 必须有估算来源；unknown 不得参与精确成本结论。", items: ["原始事件不可变", "失败调用有 usage 仍入账", "request id 仅展示是否存在"] })}
+                rows={[
+                  ["事件总数", String(usageLedger.summary.event_count)],
+                  ["exact / estimated", `${usageLedger.summary.exact_usage_count} / ${usageLedger.summary.estimated_usage_count}`],
+                  ["unknown", String(usageLedger.summary.unknown_usage_count)],
+                ]}
+              />
+              <SettingsSection
+                title="成本覆盖"
+                icon={ShieldCheck}
+                onAction={() => openPanel({ title: "成本精度口径", desc: "Provider 明示账单金额才可标 exact；价格目录乘 Token 的结果固定为 estimated。", items: ["已知金额不等于总金额", "未知事件使聚合精度保持 unknown", "不同币种不强行合并"] })}
+                rows={[
+                  ["覆盖率", `${(usageLedger.summary.cost_coverage_rate * 100).toFixed(1)}%`],
+                  ["已知 / 未知事件", `${usageLedger.summary.known_cost_event_count} / ${usageLedger.summary.unknown_cost_count}`],
+                  ["已知金额", usageLedger.summary.known_cost_amount == null ? "无可合并金额" : `${usageLedger.summary.known_cost_currency} ${usageLedger.summary.known_cost_amount}`],
+                  ["聚合精度", usageLedger.summary.aggregate_cost_precision],
+                ]}
+              />
+            </div>
+            {usageLedger.events.length === 0 ? (
+              <DataStateCard title="当前筛选没有用量事件" desc="系统不会补造 Token 或成本；完成真实 Provider 调用后才会入账。" tone="warning" />
+            ) : (
+              <div className="table-shell">
+                <table>
+                  <thead><tr><th>Provider / 请求</th><th>Token</th><th>成本</th><th>来源与版本</th><th>时间 / hash</th></tr></thead>
+                  <tbody>
+                    {usageLedger.events.map((event) => (
+                      <tr key={event.usage_event_id}>
+                        <td><strong>{event.provider} · {event.route_id || "未记录路由"}</strong><small>{event.model} · {event.outcome} · request id {event.provider_request_id_present ? "present" : "missing"}</small></td>
+                        <td><Badge tone={event.usage_precision === "exact" ? "success" : event.usage_precision === "estimated" ? "warning" : "danger"}>{event.usage_precision}</Badge><small>in {event.input_tokens ?? "?"} / out {event.output_tokens ?? "?"} / total {event.total_tokens ?? "?"}</small></td>
+                        <td><Badge tone={event.cost_precision === "exact" ? "success" : event.cost_precision === "estimated" ? "warning" : "danger"}>{event.cost_precision}</Badge><small>{event.cost_amount == null ? "未定价" : `${event.cost_currency} ${event.cost_amount}`}</small></td>
+                        <td><span>{event.usage_source}</span><small>{event.cost_source} · {event.price_version_id ?? "无价格版本"}</small></td>
+                        <td><span>{formatDateTime(event.occurred_at)}</span><small>raw {event.raw_usage_sha256.slice(0, 12)}…{event.calculation_sha256 ? ` · calc ${event.calculation_sha256.slice(0, 12)}…` : ""}</small></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+      <section className="airank-console-card provider-route-control" data-testid="provider-price-catalog">
+        <div className="provider-route-control-head">
+          <div>
+            <h2>Provider 价格版本</h2>
+            <p>只接受带来源和生效时间的追加版本，不内置可能过期的演示价格。按目录计算的成本永远是 estimated。</p>
+          </div>
+          <Badge tone={providerPriceError ? "danger" : "primary"}>{providerPriceError ? "blocked" : `${providerPrices.length} versions`}</Badge>
+        </div>
+        {providerPriceError && <DataStateCard title="价格目录不可用" desc={providerPriceError} tone="danger" />}
+        <div className="provider-credential-form">
+          <label>路由 / 模型<select value={priceDraft.routeKey} onChange={(event) => setPriceDraft((current) => ({ ...current, routeKey: event.target.value }))}>{providerRoutes.map((route) => <option key={`${route.provider}/${route.route_id}`} value={`${route.provider}/${route.route_id}`}>{route.label} · {route.route_id} · {route.model}</option>)}</select></label>
+          <label>币种<input value={priceDraft.currency} maxLength={3} onChange={(event) => setPriceDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} /></label>
+          <label>输入 / 百万 Token<input inputMode="decimal" value={priceDraft.inputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, inputPrice: event.target.value }))} /></label>
+          <label>输出 / 百万 Token<input inputMode="decimal" value={priceDraft.outputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, outputPrice: event.target.value }))} /></label>
+          <label>生效时间<input type="datetime-local" value={priceDraft.effectiveFrom} onChange={(event) => setPriceDraft((current) => ({ ...current, effectiveFrom: event.target.value }))} /></label>
+          <label>来源类型<select value={priceDraft.sourceKind} onChange={(event) => setPriceDraft((current) => ({ ...current, sourceKind: event.target.value as ProviderPriceVersion["source_kind"] }))}><option value="official_price_page">官方价格页</option><option value="provider_invoice">Provider 账单</option><option value="customer_contract">客户合同</option><option value="manual_verified">人工核验</option></select></label>
+          <label>来源引用<input value={priceDraft.sourceReference} maxLength={2048} placeholder="URL / 合同或账单证据编号" onChange={(event) => setPriceDraft((current) => ({ ...current, sourceReference: event.target.value }))} /></label>
+          <label>变更理由<input value={priceDraft.reason} maxLength={500} placeholder="必填：为什么新增此版本" onChange={(event) => setPriceDraft((current) => ({ ...current, reason: event.target.value }))} /></label>
+          <button className="primary-button" type="button" disabled={creatingPrice || providerRoutes.length === 0} onClick={() => void createProviderPrice()}>{creatingPrice ? "追加中…" : "追加价格版本并回算"}</button>
+        </div>
+        {providerPrices.length === 0 ? (
+          <DataStateCard title="暂无价格版本" desc="真实 Token 仍会入账，但成本保持 unknown；补充有来源的价格后才能回算。" tone="warning" />
+        ) : (
+          <div className="table-shell">
+            <table>
+              <thead><tr><th>Provider / 版本</th><th>价格</th><th>生效时间</th><th>来源</th><th>审计</th></tr></thead>
+              <tbody>{providerPrices.map((price) => <tr key={price.price_version_id}><td><strong>{price.provider} · {price.route_id}</strong><small>{price.model} · v{price.catalog_version}</small></td><td><span>{price.currency} / 1M</span><small>in {price.input_price_per_million} · out {price.output_price_per_million}</small></td><td><span>{formatDateTime(price.effective_from)}</span><small>{price.effective_until ? `至 ${formatDateTime(price.effective_until)}` : "持续生效，后续版本优先"}</small></td><td><span>{price.source_kind}</span><small>{price.source_reference}</small></td><td><span>{price.created_by}</span><small>{price.source_sha256.slice(0, 12)}…</small></td></tr>)}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
       <section className="airank-console-card provider-route-control" data-testid="provider-route-control">
         <div className="provider-route-control-head">
           <div>
@@ -6787,7 +6999,7 @@ function SettingsPage() {
                           <Badge tone={!route.configured ? "warning" : draft.enabled ? "success" : "danger"}>{!route.configured ? "not configured" : draft.enabled ? "enabled" : "disabled"}</Badge>
                         </label>
                       </td>
-                      <td><strong>{route.request_count_24h} 次 · {successRate}</strong><small>{route.average_duration_ms_24h == null ? "无延迟样本" : `均值 ${route.average_duration_ms_24h} ms`} · {route.total_tokens_24h ?? "无 token"}</small></td>
+                      <td><strong>{route.request_count_24h} 次 · {successRate}</strong><small>{route.average_duration_ms_24h == null ? "无延迟样本" : `均值 ${route.average_duration_ms_24h} ms`} · {route.total_tokens_24h ?? "无 token"}</small><small>用量 exact/estimated/unknown：{route.exact_usage_count_24h}/{route.estimated_usage_count_24h}/{route.unknown_usage_count_24h}</small><small>成本覆盖 {(route.cost_coverage_rate_24h * 100).toFixed(1)}% · {route.known_cost_amount_24h == null ? "无已知金额" : `${route.known_cost_currency} ${route.known_cost_amount_24h}`} · {route.aggregate_cost_precision_24h}</small></td>
                       <td>
                         <input
                           className="provider-route-priority"

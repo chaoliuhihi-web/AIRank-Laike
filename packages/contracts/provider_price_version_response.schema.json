@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_price_version_response.schema.json",
+  "title": "AIRank Provider Price Version Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": { "$ref": "#/$defs/price" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_version_id", "provider", "route_id", "model", "catalog_version", "currency", "pricing_unit", "input_price_per_million", "output_price_per_million", "effective_from", "source_kind", "source_reference", "source_sha256", "reason", "created_by", "created_at"],
+      "properties": {
+        "price_version_id": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+        "route_id": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "catalog_version": { "type": "integer", "minimum": 1 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "pricing_unit": { "const": "per_1m_tokens" },
+        "input_price_per_million": { "type": "string" },
+        "output_price_per_million": { "type": "string" },
+        "effective_from": { "type": "string", "format": "date-time" },
+        "effective_until": { "type": "string", "format": "date-time" },
+        "source_kind": { "type": "string", "enum": ["official_price_page", "provider_invoice", "customer_contract", "manual_verified"] },
+        "source_reference": { "type": "string", "minLength": 3 },
+        "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reason": { "type": "string", "minLength": 3 },
+        "created_by": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "backfilled_usage_count": { "type": "integer", "minimum": 0 },
+        "replay_status": { "type": "string", "enum": ["created", "idempotent_replay"] }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}
