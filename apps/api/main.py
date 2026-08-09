@@ -83,6 +83,9 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "RESOURCE_NOT_FOUND": (404, "Resource not found"),
     "METHOD_NOT_ALLOWED": (405, "Method not allowed"),
     "STATE_CONFLICT": (409, "State conflict"),
+    "EXPECTED_VERSION_REQUIRED": (409, "Expected version is required for updates"),
+    "EXPECTED_VERSION_NOT_ALLOWED_ON_CREATE": (409, "Expected version is not allowed when creating an object"),
+    "STATE_VERSION_CONFLICT": (409, "Object version is stale"),
     "IDEMPOTENCY_CONFLICT": (409, "Idempotency key payload conflict"),
     "RATE_LIMITED": (429, "Rate limited"),
     "INTERNAL_ERROR": (500, "Internal server error"),
@@ -119,6 +122,16 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "FACT_SUBJECT_IMMUTABLE": (409, "Fact subject binding is immutable"),
     "FACT_SUBJECT_BINDING_MISMATCH": (409, "Fact subject binding does not match the comparison subject"),
     "FACT_SOURCE_STALE": (409, "Fact source is stale or expired"),
+    "BRAND_GRAPH_FACT_NOT_ELIGIBLE": (409, "Brand graph record requires eligible fact evidence"),
+    "BRAND_GRAPH_BLOCKED": (409, "Brand graph does not have one unambiguous target brand"),
+    "BRAND_GRAPH_SNAPSHOT_NOT_FOUND": (404, "Brand graph snapshot not found"),
+    "BRAND_ENTITY_NOT_FOUND": (404, "Brand graph entity not found"),
+    "BRAND_ENTITY_DUPLICATE": (409, "Brand graph entity already exists"),
+    "BRAND_ALIAS_NOT_FOUND": (404, "Brand graph alias not found"),
+    "BRAND_ALIAS_DUPLICATE": (409, "Brand graph alias already exists"),
+    "BRAND_ALIAS_REDUNDANT": (409, "Brand graph alias duplicates its canonical entity name"),
+    "BRAND_RELATION_NOT_FOUND": (404, "Brand graph relation not found"),
+    "BRAND_RELATION_DUPLICATE": (409, "Brand graph relation already exists"),
     "KNOWLEDGE_SOURCE_NOT_FOUND": (404, "KnowledgeSource not found"),
     "KNOWLEDGE_SYNC_POLICY_NOT_FOUND": (404, "Knowledge source sync policy not found"),
     "KNOWLEDGE_SYNC_SOURCE_NOT_ELIGIBLE": (409, "Knowledge source is not eligible for synchronization"),
@@ -519,6 +532,10 @@ class ScanRunData(BaseModel):
     status: Literal["queued", "running", "completed", "failed", "canceled"]
     provider_scope: list[Provider]
     question_scope: QuestionScope
+    entity_graph_snapshot_id: Optional[str] = None
+    entity_graph_sha256: Optional[str] = None
+    entity_graph_status: Literal["governed", "partial", "blocked", "legacy_unverified", "not_available_dev"] = "not_available_dev"
+    entity_graph_limitations: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     error: Optional[ScanError] = None
     started_at: Optional[datetime] = None
@@ -1557,6 +1574,8 @@ class InMemoryScanRepository:
             status="queued",
             provider_scope=payload.provider_scope,
             question_scope=question_scope,
+            entity_graph_status="not_available_dev",
+            entity_graph_limitations=["in_memory_scan_repository_has_no_governed_entity_graph"],
             metrics={"task_count": task_count},
             created_at=now,
             updated_at=now,
@@ -1765,6 +1784,13 @@ class MySQLScanRepository:
             status=api_scan_status(row["status"]),
             provider_scope=provider_scope,
             question_scope=QuestionScope(**question_scope_payload),
+            entity_graph_snapshot_id=row.get("entity_graph_snapshot_id"),
+            entity_graph_sha256=row.get("entity_graph_sha256"),
+            entity_graph_status=row.get("entity_graph_status") or "not_available_dev",
+            entity_graph_limitations=[
+                str(item)
+                for item in list(parse_json_value(row.get("entity_graph_limitations_json"), []))
+            ],
             metrics=metrics,
             error=error,
             started_at=coerce_datetime(row["started_at"]) if row["started_at"] else None,
@@ -1805,6 +1831,40 @@ class MySQLScanRepository:
         run_id = f"scan_run_{uuid4().hex[:12]}"
         with self._engine.begin() as conn:
             self._ensure_project(conn, tenant_id, payload.project_id)
+            try:
+                from .brand_graph_routes import compile_or_reuse_brand_graph_snapshot
+            except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+                from brand_graph_routes import compile_or_reuse_brand_graph_snapshot  # type: ignore[no-redef]
+
+            entity_graph = compile_or_reuse_brand_graph_snapshot(
+                conn,
+                tenant_id,
+                payload.project_id,
+                created_by="scan-run-compiler",
+                created_at=now,
+            )
+            if entity_graph.status == "blocked":
+                raise StarletteHTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "BRAND_GRAPH_BLOCKED",
+                        "details": {
+                            "snapshot_id": entity_graph.snapshot_id,
+                            "graph_sha256": entity_graph.graph_sha256,
+                            "known_limitations": entity_graph.known_limitations,
+                        },
+                    },
+                )
+            project_prompt_context = conn.execute(
+                text(
+                    """
+                    SELECT website_url, industry
+                    FROM airank_projects
+                    WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": payload.project_id},
+            ).mappings().one()
             questions = self._resolve_questions(
                 conn,
                 tenant_id,
@@ -1822,12 +1882,16 @@ class MySQLScanRepository:
                     INSERT INTO airank_scan_runs (
                       id, tenant_id, project_id, name, run_type, status,
                       cohort_type, repetitions, collector_surfaces_json,
+                      entity_graph_snapshot_id, entity_graph_sha256, entity_graph_status,
+                      entity_graph_limitations_json,
                       provider_scope_json, question_scope_json, metrics_json,
                       created_at, updated_at
                     )
                     VALUES (
                       :id, :tenant_id, :project_id, :name, :run_type, :status,
                       :cohort_type, :repetitions, :collector_surfaces_json,
+                      :entity_graph_snapshot_id, :entity_graph_sha256, :entity_graph_status,
+                      :entity_graph_limitations_json,
                       :provider_scope_json, :question_scope_json, :metrics_json,
                       :created_at, :updated_at
                     )
@@ -1843,6 +1907,10 @@ class MySQLScanRepository:
                     "cohort_type": payload.cohort_type,
                     "repetitions": payload.repetitions,
                     "collector_surfaces_json": json.dumps(payload.collector_surfaces, ensure_ascii=False),
+                    "entity_graph_snapshot_id": entity_graph.snapshot_id,
+                    "entity_graph_sha256": entity_graph.graph_sha256,
+                    "entity_graph_status": entity_graph.status,
+                    "entity_graph_limitations_json": json.dumps(entity_graph.known_limitations, ensure_ascii=False),
                     "provider_scope_json": json.dumps(payload.provider_scope, ensure_ascii=False),
                     "question_scope_json": json.dumps(question_scope.model_dump(mode="json"), ensure_ascii=False),
                     "metrics_json": json.dumps(metrics, ensure_ascii=False),
@@ -1903,6 +1971,13 @@ class MySQLScanRepository:
                                 "session_id": session_id,
                                 "collector_surface": collector_surface,
                                 "evidence_level": evidence_levels[collector_surface],
+                                "entity_graph_snapshot_id": entity_graph.snapshot_id,
+                                "entity_graph_sha256": entity_graph.graph_sha256,
+                                "entity_graph_status": entity_graph.status,
+                                "provider_prompt_context": {
+                                    "website_url": str(project_prompt_context["website_url"] or ""),
+                                    "industry": str(project_prompt_context["industry"] or "unknown"),
+                                },
                             }
                             conn.execute(
                                 text(
@@ -2984,7 +3059,7 @@ def finalize_mysql_scan_run_if_terminal(
             for row in conn.execute(
                 text(
                     """
-                    SELECT id, status, error_code, response_meta_json
+                    SELECT id, question_id, status, error_code, response_meta_json
                     FROM airank_scan_tasks
                     WHERE tenant_id = :tenant_id
                       AND project_id = :project_id
@@ -3083,9 +3158,10 @@ def finalize_mysql_scan_run_if_terminal(
             or "BLOCK" in str(row.get("error_code") or "")
         )
         provider_minimum_success_count = minimum_provider_success_count(run.provider_scope)
+        frozen_question_count = len({str(row["question_id"]) for row in task_rows})
         minimum_success_count = minimum_scan_success_count(
             run.provider_scope,
-            len(questions),
+            frozen_question_count,
             len(task_rows),
         )
         metrics = build_real_scan_metrics(
@@ -3403,12 +3479,50 @@ def complete_mysql_real_brand_scan(
         return
 
     started_at = utc_now()
-    competitor_names = [competitor.name for competitor in competitors]
+    del competitors  # Entity parsing must use the immutable graph snapshot bound to the run.
+    frozen_competitors: list[CompetitorData] = []
     question_by_id = {question.question_id: question.question_text for question in questions}
     successes: list[tuple[dict[str, Any], ProviderScanResult]] = []
     failures: list[dict[str, Any]] = []
 
     with engine.begin() as conn:
+        if not run.entity_graph_snapshot_id or not run.entity_graph_sha256:
+            raise RuntimeError("scan run is missing its immutable entity graph snapshot")
+        try:
+            from .brand_graph_routes import load_brand_graph_snapshot
+        except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+            from brand_graph_routes import load_brand_graph_snapshot  # type: ignore[no-redef]
+        entity_graph = load_brand_graph_snapshot(
+            conn,
+            tenant_id,
+            project.project_id,
+            run.entity_graph_snapshot_id,
+        )
+        if entity_graph.graph_sha256 != run.entity_graph_sha256:
+            raise RuntimeError("scan run entity graph hash does not match the immutable snapshot")
+        if entity_graph.status == "blocked":
+            raise RuntimeError("scan run entity graph is blocked")
+        measurement_lexicon = entity_graph.measurement_lexicon
+        target_lexicon = measurement_lexicon.get("target")
+        competitor_lexicon = measurement_lexicon.get("competitors")
+        if not isinstance(target_lexicon, Mapping) or not str(target_lexicon.get("canonical_name") or "").strip():
+            raise RuntimeError("scan run entity graph has no target canonical name")
+        if not isinstance(competitor_lexicon, list):
+            competitor_lexicon = []
+        frozen_brand_name = str(target_lexicon["canonical_name"])
+        frozen_brand_aliases = [str(item) for item in target_lexicon.get("brand_aliases", [])]
+        frozen_company_names = [str(item) for item in target_lexicon.get("company_names", [])]
+        frozen_product_names = [str(item) for item in target_lexicon.get("product_names", [])]
+        frozen_competitor_names = [
+            str(item.get("canonical_name"))
+            for item in competitor_lexicon
+            if isinstance(item, Mapping) and str(item.get("canonical_name") or "").strip()
+        ]
+        frozen_competitor_aliases = {
+            str(item["canonical_name"]): [str(alias) for alias in item.get("aliases", [])]
+            for item in competitor_lexicon
+            if isinstance(item, Mapping) and str(item.get("canonical_name") or "").strip()
+        }
         task_query = """
                     SELECT id, question_id, provider, cohort_type, prompt_version_id,
                            sample_index, session_id, collector_surface, evidence_level,
@@ -3458,6 +3572,14 @@ def complete_mysql_real_brand_scan(
         if progress_hook is not None:
             progress_hook(str(row["id"]), "provider_start")
         try:
+            task_request = parse_json_value(row.get("request_json"), {})
+            prompt_context = (
+                task_request.get("provider_prompt_context", {})
+                if isinstance(task_request, Mapping)
+                else {}
+            )
+            if not isinstance(prompt_context, Mapping):
+                prompt_context = {}
             surface = str(row["collector_surface"])
             if surface == "api":
                 provider_call = call_api_provider_for_brand_rank
@@ -3467,16 +3589,18 @@ def complete_mysql_real_brand_scan(
                 raise ProviderUnavailable(provider, f"collector surface {surface} is not implemented")
             result = provider_call(
                 provider=provider,
-                brand_name=project.brand_name,
-                website_url=project.website_url,
-                industry=project.industry,
-                competitor_names=competitor_names,
+                brand_name=frozen_brand_name,
+                website_url=str(prompt_context.get("website_url") or target_lexicon.get("website_url") or ""),
+                industry=str(prompt_context.get("industry") or "unknown"),
+                competitor_names=frozen_competitor_names,
                 question_text=question_text,
                 cohort_type=str(row["cohort_type"]),
                 session_id=str(row["session_id"]),
                 prompt_version_id=str(row["prompt_version_id"]),
-                company_names=[project.company_name] if project.company_name else [],
-                product_names=project.products,
+                brand_aliases=frozen_brand_aliases,
+                company_names=frozen_company_names,
+                product_names=frozen_product_names,
+                competitor_aliases=frozen_competitor_aliases,
                 tenant_id=tenant_id,
                 project_id=project.project_id,
                 task_id=str(row["id"]),
@@ -3485,6 +3609,9 @@ def complete_mysql_real_brand_scan(
                 {
                     "question_id": row["question_id"],
                     "sample_index": row["sample_index"],
+                    "entity_graph_snapshot_id": entity_graph.snapshot_id,
+                    "entity_graph_sha256": entity_graph.graph_sha256,
+                    "entity_graph_status": entity_graph.status,
                 }
             )
         except ValueError as exc:
@@ -4438,7 +4565,7 @@ def complete_mysql_real_brand_scan(
                 },
             )
 
-    aggregate = finalize_mysql_scan_run_if_terminal(tenant_id, project, competitors, questions, run)
+    aggregate = finalize_mysql_scan_run_if_terminal(tenant_id, project, frozen_competitors, questions, run)
     if aggregate.get("terminal") and aggregate.get("status") != "completed":
         raise StarletteHTTPException(
             status_code=503,
@@ -6116,3 +6243,10 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from opportunity_schedule_routes import router as opportunity_schedule_router  # type: ignore[no-redef]
 
 app.include_router(opportunity_schedule_router)
+
+try:
+    from .brand_graph_routes import router as brand_graph_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from brand_graph_routes import router as brand_graph_router  # type: ignore[no-redef]
+
+app.include_router(brand_graph_router)

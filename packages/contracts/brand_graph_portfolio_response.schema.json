@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/brand_graph_portfolio_response.schema.json",
+  "title": "AIRank Brand Graph Portfolio Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "object",
+      "required": ["contract_version", "project_id", "entities", "aliases", "relations", "latest_snapshot", "measurement_ready", "public_export_ready", "known_limitations"],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "const": "airank.brand-graph.v1" },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "entities": { "type": "array", "items": { "$ref": "#/$defs/entity" } },
+        "aliases": { "type": "array", "items": { "$ref": "#/$defs/alias" } },
+        "relations": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "latest_snapshot": { "type": ["object", "null"] },
+        "measurement_ready": { "type": "boolean" },
+        "public_export_ready": { "type": "boolean" },
+        "known_limitations": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "base_record": {
+      "type": "object",
+      "required": ["usage_scope", "fact_revision_id", "evidence_manifest_sha256", "status", "version", "created_by", "updated_by", "created_at", "updated_at"],
+      "properties": {
+        "usage_scope": { "type": "string", "enum": ["measurement_only", "public_and_measurement"] },
+        "fact_revision_id": { "type": "string", "minLength": 1 },
+        "evidence_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "status": { "type": "string", "enum": ["active", "disabled"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "created_by": { "type": "string", "minLength": 1 },
+        "updated_by": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "entity": {
+      "allOf": [
+        { "$ref": "#/$defs/base_record" },
+        {
+          "type": "object",
+          "required": ["entity_id", "entity_role", "entity_kind", "canonical_name", "normalized_name", "website_url", "external_ref_type", "external_ref_id"],
+          "properties": {
+            "entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" },
+            "entity_role": { "type": "string", "enum": ["target", "competitor", "related"] },
+            "entity_kind": { "type": "string", "enum": ["brand", "company", "product", "service"] },
+            "canonical_name": { "type": "string", "minLength": 2 },
+            "normalized_name": { "type": "string", "minLength": 2 },
+            "website_url": { "type": ["string", "null"] },
+            "external_ref_type": { "type": ["string", "null"] },
+            "external_ref_id": { "type": ["string", "null"] }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alias": {
+      "allOf": [
+        { "$ref": "#/$defs/base_record" },
+        {
+          "type": "object",
+          "required": ["alias_id", "entity_id", "alias_text", "normalized_alias", "alias_type", "language_code"],
+          "properties": {
+            "alias_id": { "type": "string", "pattern": "^brand_alias_[A-Za-z0-9_-]+$" },
+            "entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" },
+            "alias_text": { "type": "string", "minLength": 2 },
+            "normalized_alias": { "type": "string", "minLength": 2 },
+            "alias_type": { "type": "string", "enum": ["official", "english", "abbreviation", "former_name", "misspelling", "product_variant"] },
+            "language_code": { "type": ["string", "null"] }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "relation": {
+      "allOf": [
+        { "$ref": "#/$defs/base_record" },
+        {
+          "type": "object",
+          "required": ["relation_id", "subject_entity_id", "predicate", "object_entity_id"],
+          "properties": {
+            "relation_id": { "type": "string", "pattern": "^brand_relation_[A-Za-z0-9_-]+$" },
+            "subject_entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" },
+            "predicate": { "type": "string", "enum": ["legal_name_of", "owns_product", "offers", "competitor_of", "former_name_of", "part_of"] },
+            "object_entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

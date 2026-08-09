@@ -406,6 +406,19 @@ def test_provider_answer_parser_recognizes_company_and_product_entities() -> Non
     assert {item["entity_type"] for item in parsed["target_entity_mentions"]} == {"company", "product"}
 
 
+def test_provider_answer_parser_maps_competitor_alias_to_frozen_canonical_entity() -> None:
+    parsed = parse_provider_answer(
+        "推荐排序：\n1. AIRank\n2. 火山",
+        "AIRank",
+        ["火山引擎"],
+        competitor_aliases={"火山引擎": ["火山"]},
+    )
+
+    assert parsed["competitor_mentions"] == [
+        {"name": "火山引擎", "mentioned": True, "rank": 2, "matched_names": ["火山"]}
+    ]
+
+
 def test_blind_prompt_does_not_inject_brand_or_competitors() -> None:
     prompt = build_brand_rank_prompt(
         "AIRank",

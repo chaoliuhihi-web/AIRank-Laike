@@ -784,6 +784,80 @@ export type FactConflict = {
   resolution_note: string | null;
 };
 
+export type BrandGraphEntity = {
+  entity_id: string;
+  entity_role: "target" | "competitor" | "related";
+  entity_kind: "brand" | "company" | "product" | "service";
+  canonical_name: string;
+  normalized_name: string;
+  website_url: string | null;
+  external_ref_type: string | null;
+  external_ref_id: string | null;
+  usage_scope: "measurement_only" | "public_and_measurement";
+  fact_revision_id: string;
+  evidence_manifest_sha256: string;
+  status: "active" | "disabled";
+  version: number;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BrandGraphAlias = {
+  alias_id: string;
+  entity_id: string;
+  alias_text: string;
+  normalized_alias: string;
+  alias_type: "official" | "english" | "abbreviation" | "former_name" | "misspelling" | "product_variant";
+  language_code: string | null;
+  usage_scope: "measurement_only" | "public_and_measurement";
+  fact_revision_id: string;
+  evidence_manifest_sha256: string;
+  status: "active" | "disabled";
+  version: number;
+};
+
+export type BrandGraphRelation = {
+  relation_id: string;
+  subject_entity_id: string;
+  predicate: "legal_name_of" | "owns_product" | "offers" | "competitor_of" | "former_name_of" | "part_of";
+  object_entity_id: string;
+  usage_scope: "measurement_only" | "public_and_measurement";
+  fact_revision_id: string;
+  evidence_manifest_sha256: string;
+  status: "active" | "disabled";
+  version: number;
+};
+
+export type BrandGraphSnapshot = {
+  snapshot_id: string;
+  status: "governed" | "partial" | "blocked" | "legacy_unverified";
+  graph_sha256: string;
+  source_manifest_sha256: string;
+  measurement_lexicon: {
+    target: { canonical_name: string; brand_aliases: string[]; company_names: string[]; product_names: string[] };
+    competitors: Array<{ entity_id: string; canonical_name: string; aliases: string[] }>;
+  };
+  public_jsonld: Record<string, unknown>;
+  ambiguous_aliases: Array<{ normalized_value: string; observed_values: string[]; entity_ids: string[]; excluded_from_measurement: boolean }>;
+  known_limitations: string[];
+  created_by: string;
+  created_at: string;
+};
+
+export type BrandGraphPortfolio = {
+  contract_version: "airank.brand-graph.v1";
+  project_id: string;
+  entities: BrandGraphEntity[];
+  aliases: BrandGraphAlias[];
+  relations: BrandGraphRelation[];
+  latest_snapshot: BrandGraphSnapshot | null;
+  measurement_ready: boolean;
+  public_export_ready: boolean;
+  known_limitations: string[];
+};
+
 export type KnowledgeGovernanceAlert = {
   alert_id: string;
   kind: "source_stale" | "source_expired" | "source_expiring" | "fact_expired" | "fact_expiring" | "open_conflict";
@@ -1736,6 +1810,10 @@ export type ScanRun = {
   status: "queued" | "running" | "completed" | "failed" | "canceled";
   provider_scope: string[];
   question_scope: { mode: "all_active" | "selected"; question_ids: string[] };
+  entity_graph_snapshot_id: string | null;
+  entity_graph_sha256: string | null;
+  entity_graph_status: "governed" | "partial" | "blocked" | "legacy_unverified" | "not_available_dev";
+  entity_graph_limitations: string[];
   metrics: Record<string, unknown>;
   error?: { code: string; message: string };
   started_at: string | null;
@@ -2735,6 +2813,48 @@ export function searchKnowledge(projectId: string, query: string, signal?: Abort
 
 export function fetchFacts(projectId: string, signal?: AbortSignal): Promise<FactRevision[]> {
   return fetchData(`/api/v1/projects/${projectId}/facts`, "trc_web_facts", signal);
+}
+
+export function fetchBrandGraph(projectId: string, signal?: AbortSignal): Promise<BrandGraphPortfolio> {
+  return fetchData(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-graph`, "trc_web_brand_graph", signal);
+}
+
+async function brandGraphWrite<T>(url: string, method: "POST" | "PUT", body: Record<string, unknown>, tracePrefix: string): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", ...buildApiHeaders(tracePrefix) },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Brand graph request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: T }).data;
+}
+
+export function createBrandGraphEntity(
+  projectId: string,
+  input: Pick<BrandGraphEntity, "entity_role" | "entity_kind" | "canonical_name" | "usage_scope" | "fact_revision_id"> & { website_url?: string },
+): Promise<BrandGraphEntity> {
+  return brandGraphWrite(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-entities`, "POST", input, "trc_web_brand_entity");
+}
+
+export function createBrandGraphAlias(
+  projectId: string,
+  entityId: string,
+  input: Pick<BrandGraphAlias, "alias_text" | "alias_type" | "usage_scope" | "fact_revision_id">,
+): Promise<BrandGraphAlias> {
+  return brandGraphWrite(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-entities/${encodeURIComponent(entityId)}/aliases`, "POST", input, "trc_web_brand_alias");
+}
+
+export function createBrandGraphRelation(
+  projectId: string,
+  input: Pick<BrandGraphRelation, "subject_entity_id" | "predicate" | "object_entity_id" | "usage_scope" | "fact_revision_id">,
+): Promise<BrandGraphRelation> {
+  return brandGraphWrite(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-relations`, "POST", input, "trc_web_brand_relation");
+}
+
+export function compileBrandGraph(projectId: string, requestedBy: string): Promise<BrandGraphSnapshot> {
+  return brandGraphWrite(`/api/v1/projects/${encodeURIComponent(projectId)}/brand-graph/snapshots`, "POST", { requested_by: requestedBy }, "trc_web_brand_graph_compile");
 }
 
 export function fetchFactConflicts(projectId: string, signal?: AbortSignal): Promise<FactConflict[]> {

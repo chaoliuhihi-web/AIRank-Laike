@@ -259,6 +259,7 @@ def call_api_provider_for_brand_rank(
     brand_aliases: list[str] | None = None,
     company_names: list[str] | None = None,
     product_names: list[str] | None = None,
+    competitor_aliases: dict[str, list[str]] | None = None,
     tenant_id: str | None = None,
     project_id: str | None = None,
     task_id: str | None = None,
@@ -345,6 +346,7 @@ def call_api_provider_for_brand_rank(
         brand_aliases=brand_aliases,
         company_names=company_names,
         product_names=product_names,
+        competitor_aliases=competitor_aliases,
     )
     native_citations = [
         {
@@ -498,6 +500,7 @@ def call_provider_for_brand_rank(
     brand_aliases: list[str] | None = None,
     company_names: list[str] | None = None,
     product_names: list[str] | None = None,
+    competitor_aliases: dict[str, list[str]] | None = None,
     tenant_id: str | None = None,
     project_id: str | None = None,
     task_id: str | None = None,
@@ -575,6 +578,7 @@ def call_provider_for_brand_rank(
         brand_aliases=brand_aliases,
         company_names=company_names,
         product_names=product_names,
+        competitor_aliases=competitor_aliases,
     )
     if looks_login_blocked(browser_result["answer_text"]):
         raise ProviderCallError(
@@ -1245,6 +1249,7 @@ def parse_provider_answer(
     brand_aliases: list[str] | None = None,
     company_names: list[str] | None = None,
     product_names: list[str] | None = None,
+    competitor_aliases: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     answer_text = content.strip()
     target_entity = BrandEntity(
@@ -1255,11 +1260,22 @@ def parse_provider_answer(
     )
     target_mentions = find_entity_mentions(answer_text, target_entity)
     target_names = [name for name, _entity_type in target_entity.names_by_type()]
-    ranking_payload = extract_rank_lines(answer_text, [*target_names, *competitor_names])
+    competitor_aliases = competitor_aliases or {}
+    competitor_search_names = [
+        search_name
+        for canonical_name in competitor_names
+        for search_name in [canonical_name, *competitor_aliases.get(canonical_name, [])]
+    ]
+    ranking_payload = extract_rank_lines(answer_text, [*target_names, *competitor_search_names])
     brand_mentioned = bool(target_mentions)
     brand_ranks = [rank_for_brand(ranking_payload, name) for name in target_names]
     brand_rank = min((rank for rank in brand_ranks if rank is not None), default=None)
-    competitor_mentions = build_competitor_mentions(answer_text, ranking_payload, competitor_names)
+    competitor_mentions = build_competitor_mentions(
+        answer_text,
+        ranking_payload,
+        competitor_names,
+        competitor_aliases=competitor_aliases,
+    )
     matched_target_name = target_mentions[0].matched_name if target_mentions else brand_name
     sentiment = infer_sentiment(answer_text, matched_target_name)
     mention_class = classify_mention(answer_text, matched_target_name, brand_mentioned, brand_rank, sentiment)
@@ -1339,12 +1355,29 @@ def classify_mention(
     return MentionClass.MENTIONED
 
 
-def build_competitor_mentions(answer_text: str, ranking_payload: list[Any], competitor_names: list[str]) -> list[dict[str, Any]]:
+def build_competitor_mentions(
+    answer_text: str,
+    ranking_payload: list[Any],
+    competitor_names: list[str],
+    *,
+    competitor_aliases: dict[str, list[str]] | None = None,
+) -> list[dict[str, Any]]:
     mentions = []
+    competitor_aliases = competitor_aliases or {}
     for competitor_name in competitor_names:
-        rank = rank_for_brand(ranking_payload, competitor_name)
-        mentioned = competitor_name in answer_text or rank is not None
-        mentions.append({"name": competitor_name, "mentioned": mentioned, "rank": rank})
+        names = [competitor_name, *competitor_aliases.get(competitor_name, [])]
+        ranks = [rank_for_brand(ranking_payload, name) for name in names]
+        rank = min((value for value in ranks if value is not None), default=None)
+        matched_names = [name for name in names if name in answer_text]
+        mentioned = bool(matched_names) or rank is not None
+        mentions.append(
+            {
+                "name": competitor_name,
+                "mentioned": mentioned,
+                "rank": rank,
+                **({"matched_names": matched_names} if matched_names and matched_names != [competitor_name] else {}),
+            }
+        )
     return mentions
 
 

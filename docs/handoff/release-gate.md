@@ -1373,3 +1373,25 @@ Decision:
 ### Decision
 
 - AIRank now turns evidence-backed opportunities into an auditable, resource-constrained 90-day delivery portfolio without inventing ROI. This slice is complete, but the product remains commercial `NO-GO` until external production, browser, publishing and customer-outcome gates pass.
+
+## Governed brand graph gate (2026-08-09)
+
+### Implemented and verified
+
+- Alembic `20260809_0039` adds evidence-bound, optimistic-versioned brand/company/product/service entities, aliases, directional relations, previous-hash-linked events and immutable graph snapshots. The real MySQL database is at head with 101 AIRank tables.
+- `airank.brand-graph.v1` only accepts a current approved FactRevision with no open conflict and active source evidence. Public JSON-LD additionally requires `public/redacted` disclosure; measurement-only records do not leak into public output.
+- `airank.brand-graph-compiler.v1` normalizes identity tokens using NFKC/case/space/punctuation rules. Cross-entity ambiguity is excluded from measurement and JSON-LD, while a missing or ambiguous target brand blocks ScanRun creation. Historical project fields remain explicit `legacy_unverified` inputs and cannot emit public JSON-LD.
+- ScanRun creation freezes graph snapshot/hash/status/limitations into the run and each task request. Worker parsing uses frozen target aliases and canonical competitor aliases, plus the task's frozen website/industry context. It never rereads mutable project or competitor names for a queued run.
+- Real MySQL integration creates approved identity evidence, compiles a governed graph, freezes it into a blind scan, updates the entity to version 2 and confirms the original run still references version 1. The internal registry now contains 11 Skills and all 33 contract/holdout/adversarial cases pass.
+- The knowledge and task-center UI uses real graph APIs and shows status, evidence bindings, ambiguity exclusions, limitations and hashes. Node 24 production build is required; this slice deliberately does not repeat Consumer Browser/visual E2E after the browser lifecycle was closed.
+
+### Still blocked
+
+- Existing projects have not been bulk-reviewed and migrated from `legacy_unverified`; an explicit human evidence review is required before their identity data can become governed or public.
+- Predicate vocabulary governance, manual ambiguity adjudication, full Schema.org validator coverage and a real customer entity-resolution benchmark remain incomplete.
+- Consumer Browser L3 remains at the last verified 0/4 and was not rerun. API evidence and a generated JSON-LD object cannot substitute for consumer-surface capture or prove that a model recommends the brand.
+- Production Yudao authentication/directory, HTTPS object storage, customer publishing/notification receipts, 20-case reviewer benchmark, Kimi credential rotation, DeepSeek model migration and elapsed T+7/T+14/T+30 evidence remain open.
+
+### Decision
+
+- The measurement identity boundary is now versioned and evidence-governed, preventing alias drift and mutable competitor data from rewriting historical samples. This engineering slice is complete, but AIRank remains commercial `NO-GO` until all external production and customer-evidence gates pass.

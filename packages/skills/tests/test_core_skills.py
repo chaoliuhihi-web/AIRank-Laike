@@ -15,6 +15,7 @@ CORE_SKILL_IDS = {
     "measurement.citation-extractor",
     "research.intent-miner",
     "knowledge.fact-builder",
+    "knowledge.entity-graph-compiler",
     "governance.claim-verifier",
     "intervention.page-blueprint",
     "intervention.explainer-builder",
@@ -138,6 +139,29 @@ def test_intent_miner_requires_observation_reference_before_marking_query_observ
     assert observed["observed_query"] is True
     assert observed["provenance_records"][0]["occurrence_count"] == 6
     assert all(item["question_text"] != "伪造观察问题?" for item in output["questions"])
+
+
+def test_entity_graph_compiler_excludes_ambiguous_alias_without_touching_evidence() -> None:
+    evidence_hash = "a" * 64
+    output = run_skill(
+        "knowledge.entity-graph-compiler",
+        {
+            "entities": [
+                {"entity_id": "target", "entity_role": "target", "entity_kind": "brand", "canonical_name": "AIRank", "fact_revision_id": "rev_1", "fact_eligible": True, "evidence_manifest_sha256": evidence_hash},
+                {"entity_id": "peer", "entity_role": "competitor", "entity_kind": "brand", "canonical_name": "竞品", "fact_revision_id": "rev_2", "fact_eligible": True, "evidence_manifest_sha256": evidence_hash},
+            ],
+            "aliases": [
+                {"alias_id": "alias_1", "entity_id": "target", "alias_text": "星河", "fact_revision_id": "rev_1", "fact_eligible": True, "evidence_manifest_sha256": evidence_hash},
+                {"alias_id": "alias_2", "entity_id": "peer", "alias_text": "星河", "fact_revision_id": "rev_2", "fact_eligible": True, "evidence_manifest_sha256": evidence_hash},
+            ],
+            "relations": [],
+        },
+    )
+
+    assert output["status"] == "partial"
+    assert output["ambiguous_aliases"][0]["excluded_from_measurement"] is True
+    assert all(item["ambiguous"] is True for item in output["graph"]["aliases"])
+    assert output["raw_evidence_mutated"] is False
 
 
 def test_page_blueprint_binds_every_claim_to_exact_source_evidence() -> None:
@@ -444,8 +468,8 @@ def test_retest_report_blocks_non_comparable_cohorts() -> None:
 def test_every_core_skill_passes_contract_holdout_and_adversarial_suites() -> None:
     reports = evaluate_registry()
 
-    assert len(reports) == 10
-    assert sum(report.total_cases for report in reports) == 30
+    assert len(reports) == len(CORE_SKILL_IDS)
+    assert sum(report.total_cases for report in reports) == len(CORE_SKILL_IDS) * 3
     assert all(report.local_eval_status == "passed" for report in reports)
     assert all(report.passed_cases == report.total_cases == 3 for report in reports)
     assert all(set(report.executed_suites) == {"contract", "holdout", "adversarial"} for report in reports)

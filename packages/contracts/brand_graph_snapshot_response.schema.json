@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/brand_graph_snapshot_response.schema.json",
+  "title": "AIRank Brand Graph Snapshot Response",
+  "type": "object",
+  "required": ["data", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "data": { "$ref": "#/$defs/snapshot" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "required": ["snapshot_id", "tenant_id", "project_id", "contract_version", "compiler_version", "status", "source_manifest_sha256", "graph_sha256", "graph", "measurement_lexicon", "public_jsonld", "ambiguous_aliases", "known_limitations", "created_by", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": { "type": "string", "pattern": "^brand_graph_[A-Za-z0-9_-]+$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "project_id": { "type": "string", "pattern": "^project_[A-Za-z0-9_-]+$" },
+        "contract_version": { "const": "airank.brand-graph.v1" },
+        "compiler_version": { "const": "airank.brand-graph-compiler.v1" },
+        "status": { "type": "string", "enum": ["governed", "partial", "blocked", "legacy_unverified"] },
+        "source_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "graph_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "graph": { "type": "object" },
+        "measurement_lexicon": {
+          "type": "object",
+          "required": ["target", "competitors"],
+          "properties": {
+            "target": { "type": "object" },
+            "competitors": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "public_jsonld": { "type": "object" },
+        "ambiguous_aliases": { "type": "array", "items": { "type": "object" } },
+        "known_limitations": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "created_by": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["trace_id", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

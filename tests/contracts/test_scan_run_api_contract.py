@@ -164,6 +164,12 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                 CREATE TABLE airank_projects (
                   id VARCHAR(64) PRIMARY KEY,
                   tenant_id VARCHAR(64) NOT NULL,
+                  brand_name VARCHAR(255) NULL,
+                  name VARCHAR(255) NULL,
+                  website_url VARCHAR(2048) NULL,
+                  industry VARCHAR(255) NULL,
+                  products_services_json TEXT NULL,
+                  updated_at DATETIME NULL,
                   deleted_at DATETIME NULL
                 )
                 """
@@ -210,6 +216,10 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   cohort_type VARCHAR(32) NOT NULL,
                   repetitions INT NOT NULL,
                   collector_surfaces_json TEXT NULL,
+                  entity_graph_snapshot_id VARCHAR(64) NULL,
+                  entity_graph_sha256 VARCHAR(64) NULL,
+                  entity_graph_status VARCHAR(32) NULL,
+                  entity_graph_limitations_json TEXT NULL,
                   status VARCHAR(32) NOT NULL,
                   provider_scope_json TEXT NULL,
                   question_scope_json TEXT NULL,
@@ -219,6 +229,62 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                   finished_at DATETIME NULL,
                   created_at DATETIME NOT NULL,
                   updated_at DATETIME NOT NULL,
+                  deleted_at DATETIME NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_brand_entities (
+                  id VARCHAR(64) PRIMARY KEY,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  project_id VARCHAR(64) NOT NULL,
+                  entity_role VARCHAR(32) NULL,
+                  entity_kind VARCHAR(32) NULL,
+                  normalized_name VARCHAR(255) NULL,
+                  status VARCHAR(32) NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_brand_graph_snapshots (
+                  id VARCHAR(64) PRIMARY KEY,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  project_id VARCHAR(64) NOT NULL,
+                  contract_version VARCHAR(64) NOT NULL,
+                  compiler_version VARCHAR(64) NOT NULL,
+                  status VARCHAR(32) NOT NULL,
+                  source_manifest_json TEXT NOT NULL,
+                  source_manifest_sha256 VARCHAR(64) NOT NULL,
+                  graph_json TEXT NOT NULL,
+                  graph_sha256 VARCHAR(64) NOT NULL,
+                  measurement_lexicon_json TEXT NOT NULL,
+                  public_jsonld_json TEXT NOT NULL,
+                  ambiguous_aliases_json TEXT NOT NULL,
+                  known_limitations_json TEXT NOT NULL,
+                  created_by VARCHAR(128) NOT NULL,
+                  created_at DATETIME NOT NULL,
+                  UNIQUE (tenant_id, project_id, graph_sha256)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE airank_competitors (
+                  id VARCHAR(64) PRIMARY KEY,
+                  tenant_id VARCHAR(64) NOT NULL,
+                  project_id VARCHAR(64) NOT NULL,
+                  name VARCHAR(255) NOT NULL,
+                  website_url VARCHAR(2048) NULL,
+                  metadata_json TEXT NULL,
+                  updated_at DATETIME NULL,
                   deleted_at DATETIME NULL
                 )
                 """
@@ -290,7 +356,15 @@ def create_scan_repository_tables(repository: MySQLScanRepository) -> None:
                 """
             )
         )
-        conn.execute(text("INSERT INTO airank_projects (id, tenant_id) VALUES ('project_real', 'tenant_real')"))
+        conn.execute(text("""
+            INSERT INTO airank_projects (
+              id, tenant_id, brand_name, name, website_url, industry,
+              products_services_json, updated_at
+            ) VALUES (
+              'project_real', 'tenant_real', 'AIRank', '星河科技',
+              'https://airank.example', 'GEO', '[\"来客\"]', '2026-05-17 09:00:00'
+            )
+        """))
         conn.execute(
             text(
                 """
@@ -355,6 +429,10 @@ def test_mysql_scan_repository_persists_run_and_tasks() -> None:
     assert run.status == "queued"
     assert run.metrics["task_count"] == 2
     assert run.question_scope.question_ids == ["question_real_1"]
+    assert run.entity_graph_snapshot_id is not None
+    assert run.entity_graph_sha256 is not None
+    assert run.entity_graph_status == "legacy_unverified"
+    assert "legacy_project_fields_are_not_bound_to_approved_fact_revisions" in run.entity_graph_limitations
 
     fetched_run = repository.get_run("tenant_real", run.run_id)
     tasks = repository.list_tasks("tenant_real", run.run_id)
@@ -376,6 +454,13 @@ def test_mysql_scan_repository_persists_run_and_tasks() -> None:
     assert first_payload["taxonomy_version"] == "taxonomy_test_v1"
     assert first_payload["provider"] in {"chatgpt", "deepseek"}
     assert first_payload["question_text"]
+    assert first_payload["entity_graph_snapshot_id"] == run.entity_graph_snapshot_id
+    assert first_payload["entity_graph_sha256"] == run.entity_graph_sha256
+    assert first_payload["entity_graph_status"] == "legacy_unverified"
+    assert first_payload["provider_prompt_context"] == {
+        "website_url": "https://airank.example",
+        "industry": "GEO",
+    }
 
 
 def test_mysql_scan_repository_all_active_excludes_archived_questions() -> None:

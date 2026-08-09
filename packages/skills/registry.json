@@ -86,6 +86,104 @@
       "entrypoint": "airank_skills.core:intent_miner"
     },
     {
+      "skill_id": "knowledge.entity-graph-compiler",
+      "version": "1.0.0",
+      "category": "knowledge",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["entities", "aliases", "relations"],
+        "properties": {
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["entity_id", "entity_role", "entity_kind", "canonical_name", "fact_revision_id", "fact_eligible", "evidence_manifest_sha256"],
+              "properties": {
+                "entity_id": { "type": "string", "minLength": 1 },
+                "entity_role": { "enum": ["target", "competitor", "related"] },
+                "entity_kind": { "enum": ["brand", "company", "product", "service"] },
+                "canonical_name": { "type": "string", "minLength": 2 },
+                "fact_revision_id": { "type": "string", "minLength": 1 },
+                "fact_eligible": { "type": "boolean" },
+                "evidence_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            }
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["alias_id", "entity_id", "alias_text", "fact_revision_id", "fact_eligible", "evidence_manifest_sha256"],
+              "properties": {
+                "alias_id": { "type": "string", "minLength": 1 },
+                "entity_id": { "type": "string", "minLength": 1 },
+                "alias_text": { "type": "string", "minLength": 2 },
+                "fact_revision_id": { "type": "string", "minLength": 1 },
+                "fact_eligible": { "type": "boolean" },
+                "evidence_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            }
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["relation_id", "subject_entity_id", "predicate", "object_entity_id", "fact_revision_id", "fact_eligible", "evidence_manifest_sha256"],
+              "properties": {
+                "relation_id": { "type": "string", "minLength": 1 },
+                "subject_entity_id": { "type": "string", "minLength": 1 },
+                "predicate": { "type": "string", "minLength": 1 },
+                "object_entity_id": { "type": "string", "minLength": 1 },
+                "fact_revision_id": { "type": "string", "minLength": 1 },
+                "fact_eligible": { "type": "boolean" },
+                "evidence_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["skill_id", "skill_version", "status", "graph_sha256", "graph", "ambiguous_aliases", "invalid_records", "raw_evidence_mutated"],
+        "properties": {
+          "skill_id": { "const": "knowledge.entity-graph-compiler" },
+          "skill_version": { "const": "1.0.0" },
+          "status": { "enum": ["governed", "partial", "blocked"] },
+          "graph_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "graph": { "type": "object" },
+          "ambiguous_aliases": { "type": "array" },
+          "invalid_records": { "type": "array" },
+          "raw_evidence_mutated": { "const": false }
+        }
+      },
+      "dependencies": ["FactRevision", "KnowledgeSource", "ClaimSupport"],
+      "provider_requirements": [],
+      "evidence_level": ["approved_current_fact_and_source_hash"],
+      "fact_policy": { "mode": "approved_current_evidence_only", "rule": "every active entity, alias, and directional relation must bind an eligible current fact revision and source manifest hash" },
+      "failure_policy": { "missing_target_brand": "blocked", "ambiguous_target": "blocked", "ambiguous_alias": "exclude_and_partial", "stale_evidence": "exclude_and_partial" },
+      "quality_rubric": [
+        { "key": "identity_safety", "threshold": "exactly one eligible target brand and no ambiguous target canonical token" },
+        { "key": "evidence_binding", "threshold": "every compiled record retains fact revision id and evidence manifest SHA-256" },
+        { "key": "immutability", "threshold": "compiler emits a deterministic graph hash and never mutates raw evidence" }
+      ],
+      "eval_cases": [
+        {
+          "case_id": "compile-one-governed-target",
+          "input": {
+            "entities": [{ "entity_id": "brand_entity_target", "entity_role": "target", "entity_kind": "brand", "canonical_name": "AIRank", "fact_revision_id": "revision_target", "fact_eligible": true, "evidence_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+            "aliases": [],
+            "relations": []
+          },
+          "expected": { "skill_id": "knowledge.entity-graph-compiler", "skill_version": "1.0.0", "status": "governed", "ambiguous_aliases": [], "invalid_records": [], "raw_evidence_mutated": false }
+        }
+      ],
+      "promotion_policy": { "required_suites": ["contract", "holdout", "adversarial"], "minimum_pass_rate": 1.0, "required_evidence": ["fact_expiry_conflict_and_alias_ambiguity_integration"] },
+      "status": "partial",
+      "entrypoint": "airank_skills.core:entity_graph_compiler"
+    },
+    {
       "skill_id": "knowledge.fact-builder",
       "version": "1.0.0",
       "category": "knowledge",

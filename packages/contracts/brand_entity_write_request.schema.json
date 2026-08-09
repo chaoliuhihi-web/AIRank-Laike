@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/brand_entity_write_request.schema.json",
+  "title": "AIRank Brand Entity Write Request",
+  "type": "object",
+  "required": ["entity_role", "entity_kind", "canonical_name", "fact_revision_id"],
+  "additionalProperties": false,
+  "properties": {
+    "entity_role": { "type": "string", "enum": ["target", "competitor", "related"] },
+    "entity_kind": { "type": "string", "enum": ["brand", "company", "product", "service"] },
+    "canonical_name": { "type": "string", "minLength": 2, "maxLength": 255 },
+    "website_url": { "type": ["string", "null"], "minLength": 1, "maxLength": 2048 },
+    "external_ref_type": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+    "external_ref_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+    "usage_scope": { "type": "string", "enum": ["measurement_only", "public_and_measurement"], "default": "measurement_only" },
+    "fact_revision_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": { "type": "string", "enum": ["active", "disabled"], "default": "active" },
+    "expected_version": { "type": ["integer", "null"], "minimum": 1 }
+  }
+}

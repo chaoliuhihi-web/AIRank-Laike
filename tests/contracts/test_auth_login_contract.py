@@ -220,7 +220,7 @@ def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monk
     )
 
     assert allowed.status_code == 200
-    assert len(allowed.json()["data"]["skills"]) == 10
+    assert len(allowed.json()["data"]["skills"]) == 11
 
 
 def test_provider_route_admin_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:

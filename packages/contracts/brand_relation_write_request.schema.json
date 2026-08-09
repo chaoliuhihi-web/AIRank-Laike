@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/brand_relation_write_request.schema.json",
+  "title": "AIRank Brand Relation Write Request",
+  "type": "object",
+  "required": ["subject_entity_id", "predicate", "object_entity_id", "fact_revision_id"],
+  "additionalProperties": false,
+  "properties": {
+    "subject_entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" },
+    "predicate": { "type": "string", "enum": ["legal_name_of", "owns_product", "offers", "competitor_of", "former_name_of", "part_of"] },
+    "object_entity_id": { "type": "string", "pattern": "^brand_entity_[A-Za-z0-9_-]+$" },
+    "usage_scope": { "type": "string", "enum": ["measurement_only", "public_and_measurement"], "default": "measurement_only" },
+    "fact_revision_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": { "type": "string", "enum": ["active", "disabled"], "default": "active" },
+    "expected_version": { "type": ["integer", "null"], "minimum": 1 }
+  }
+}

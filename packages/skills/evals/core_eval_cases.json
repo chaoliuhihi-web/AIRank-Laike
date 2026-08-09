@@ -58,6 +58,38 @@
       "expected": { "status": "blocked", "question_count": 0, "questions": [] }
     },
     {
+      "skill_id": "knowledge.entity-graph-compiler",
+      "case_id": "holdout-evidence-bound-alias-and-relation",
+      "suite": "holdout",
+      "input": {
+        "entities": [
+          { "entity_id": "brand_target", "entity_role": "target", "entity_kind": "brand", "canonical_name": "AIRank", "fact_revision_id": "revision_target", "fact_eligible": true, "evidence_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          { "entity_id": "brand_peer", "entity_role": "competitor", "entity_kind": "brand", "canonical_name": "竞品甲", "fact_revision_id": "revision_peer", "fact_eligible": true, "evidence_manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+        ],
+        "aliases": [
+          { "alias_id": "alias_target", "entity_id": "brand_target", "alias_text": "来客", "fact_revision_id": "revision_alias", "fact_eligible": true, "evidence_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+        ],
+        "relations": [
+          { "relation_id": "relation_competes", "subject_entity_id": "brand_target", "predicate": "competes_with", "object_entity_id": "brand_peer", "fact_revision_id": "revision_relation", "fact_eligible": true, "evidence_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+        ]
+      },
+      "expected": { "status": "governed", "ambiguous_aliases": [], "invalid_records": [], "raw_evidence_mutated": false }
+    },
+    {
+      "skill_id": "knowledge.entity-graph-compiler",
+      "case_id": "adversarial-ambiguous-target-token",
+      "suite": "adversarial",
+      "input": {
+        "entities": [
+          { "entity_id": "brand_target", "entity_role": "target", "entity_kind": "brand", "canonical_name": "ＡＩＲａｎｋ", "fact_revision_id": "revision_target", "fact_eligible": true, "evidence_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          { "entity_id": "brand_peer", "entity_role": "competitor", "entity_kind": "brand", "canonical_name": "AIRank", "fact_revision_id": "revision_peer", "fact_eligible": true, "evidence_manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+        ],
+        "aliases": [],
+        "relations": []
+      },
+      "expected": { "status": "blocked", "raw_evidence_mutated": false }
+    },
+    {
       "skill_id": "knowledge.fact-builder",
       "case_id": "holdout-exact-sentence",
       "suite": "holdout",

@@ -21,6 +21,12 @@ M1 已冻结的 API schema：
 - `competitor_response.schema.json`
 - `buyer_question_create_request.schema.json`
 - `buyer_question_response.schema.json`
+- `brand_entity_write_request.schema.json`
+- `brand_alias_write_request.schema.json`
+- `brand_relation_write_request.schema.json`
+- `brand_graph_compile_request.schema.json`
+- `brand_graph_snapshot_response.schema.json`
+- `brand_graph_portfolio_response.schema.json`
 - `scan_run_create_request.schema.json`
 - `scan_run_response.schema.json`
 - `scan_task_response.schema.json`
@@ -86,6 +92,8 @@ M1 已冻结的 API schema：
 机会执行计划使用 `airank.opportunity-execution-plan.v1`。工时和人民币预算必须明确为 `human_estimate`，完整覆盖所有未终结行动后才允许汇总；任何计划均固定 `outcome_forecast_allowed=false`。前置依赖按项目串行锁定后检查有向无环图，未满足依赖会阻止行动进入执行中；依赖只能在目标行动尚未执行时新增。显式人工豁免要求版本、至少 20 字原因及“不得形成效果声明”的确认。计划、依赖和豁免都写入带前序 hash 的追加事件，但人工计划不等同于工时单、发票或实际支出。
 
 容量日历和排程分别使用 `airank.opportunity-capacity-calendar.v1` 与 `airank.opportunity-capacity-schedule.v1`。当前日历只接受管理员明确提交的 IANA 时区、ISO 工作日、每周可用工时、依据和日期例外，并固定 `capacity_source=manual`、`external_calendar_verified=false`；同内容重放不升级版本，变更进入带前序 hash 的事件链。90 天排程冻结行动、计划、成员、日历、例外和依赖版本/hash，逐日分配人工计划工时，识别同一成员跨行动容量冲突并输出 0–30、31–60、61–90 三个窗口。排程不会自动移动任务，也不生成增长、推荐或商业效果预测；历史排程不可覆盖，只能以新来源清单生成新快照。
+
+品牌实体图谱使用 `airank.brand-graph.v1` 与 `airank.brand-graph-compiler.v1`。实体、别名和有方向关系必须绑定当前有效、无冲突、已审核 FactRevision 及 KnowledgeSource 证据清单 hash；任何更新都生成新版本和前序 hash 事件。编译器按 NFKC/case/空白/标点规范化名称，跨实体冲突名称退出测量词典，目标品牌缺失或歧义时失败关闭。每次 ScanRun 在创建任务前冻结不可变图谱 snapshot/hash，Worker 只读取该快照，不读取之后变化的项目、竞品或别名。历史项目字段只允许形成明确的 `legacy_unverified` 快照，禁止导出公开 JSON-LD，也不能冒充已治理实体证据。
 
 后续领域 schema：
 

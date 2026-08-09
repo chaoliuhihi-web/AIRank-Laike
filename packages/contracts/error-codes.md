@@ -25,6 +25,9 @@ FACT_DISCLOSURE_FORBIDDEN
 | `RESOURCE_NOT_FOUND` | 404 | 资源不存在 |
 | `METHOD_NOT_ALLOWED` | 405 | HTTP 方法不支持 |
 | `STATE_CONFLICT` | 409 | 状态冲突 |
+| `EXPECTED_VERSION_REQUIRED` | 409 | 更新版本化对象时缺少当前 `expected_version` |
+| `EXPECTED_VERSION_NOT_ALLOWED_ON_CREATE` | 409 | 创建对象时错误提交了仅用于更新的 `expected_version` |
+| `STATE_VERSION_CONFLICT` | 409 | 客户端提交的版本已落后，必须重新读取后更新 |
 | `IDEMPOTENCY_CONFLICT` | 409 | 同一幂等键对应了不同请求内容，拒绝重复副作用 |
 | `RATE_LIMITED` | 429 | 被限流 |
 | `INTERNAL_ERROR` | 500 | 未预期错误 |
@@ -181,6 +184,21 @@ FACT_DISCLOSURE_FORBIDDEN
 | `FACT_DISCLOSURE_FORBIDDEN` | 403 | 不允许用于公开内容 |
 | `ASSET_NOT_FOUND` | 404 | 内容资产不存在 |
 | `ASSET_REVIEW_REQUIRED` | 409 | 内容需要审校 |
+
+## 品牌实体图谱
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `BRAND_GRAPH_FACT_NOT_ELIGIBLE` | 409 | 实体、别名或关系未绑定当前已批准、有效、无冲突且具备有效来源的 FactRevision |
+| `BRAND_GRAPH_BLOCKED` | 409 | 编译后缺少唯一无歧义目标品牌，禁止冻结为 ScanRun 测量口径 |
+| `BRAND_GRAPH_SNAPSHOT_NOT_FOUND` | 404 | 图谱快照不存在或不属于当前租户 |
+| `BRAND_ENTITY_NOT_FOUND` | 404 | 品牌图谱实体不存在或不属于当前租户项目 |
+| `BRAND_ENTITY_DUPLICATE` | 409 | 项目中已存在相同角色、类型和规范化名称的实体 |
+| `BRAND_ALIAS_NOT_FOUND` | 404 | 品牌别名不存在或不属于当前租户项目 |
+| `BRAND_ALIAS_DUPLICATE` | 409 | 同一实体已存在相同规范化别名 |
+| `BRAND_ALIAS_REDUNDANT` | 409 | 别名规范化后与所属实体标准名称相同 |
+| `BRAND_RELATION_NOT_FOUND` | 404 | 品牌关系不存在或不属于当前租户项目 |
+| `BRAND_RELATION_DUPLICATE` | 409 | 相同主体、谓词和客体的有方向关系已存在 |
 
 ## 引用支持度
 

@@ -68,6 +68,7 @@ import {
   fallbackAssetBundle,
   clearAuthSession,
   compileQuestionMap,
+  compileBrandGraph,
   claimEvidenceReviewAssignment,
   claimOpportunityAction,
   createOpportunityDependency,
@@ -83,6 +84,9 @@ import {
   createCitationSourceCapture,
   createCitationSourceCaptureBatch,
   createCitationEvidenceReviewCase,
+  createBrandGraphAlias,
+  createBrandGraphEntity,
+  createBrandGraphRelation,
   createFactEvidenceReviewCase,
   createFactAcquisitionTask,
   createPageAudit,
@@ -95,6 +99,7 @@ import {
   fetchAnswerSample,
   fetchAnswerSamples,
   fetchBuyerQuestions,
+  fetchBrandGraph,
   fetchAssetBundle,
   fetchConsoleOverview,
   fetchContentAssets,
@@ -178,6 +183,7 @@ import {
   type AssetBundle,
   type BuyerQuestion,
   type BrandCheckResult,
+  type BrandGraphPortfolio,
   type ConsoleActionInput,
   type ConsoleMetricCard,
   type ConsoleOverview,
@@ -1558,6 +1564,30 @@ function FactsPage() {
   const [syncAction, setSyncAction] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<FactConflict[]>([]);
   const [governance, setGovernance] = useState<KnowledgeGovernance | null>(null);
+  const [brandGraph, setBrandGraph] = useState<BrandGraphPortfolio | null>(null);
+  const [brandGraphAction, setBrandGraphAction] = useState<string | null>(null);
+  const [entityDraft, setEntityDraft] = useState({
+    entityRole: "target" as "target" | "competitor" | "related",
+    entityKind: "brand" as "brand" | "company" | "product" | "service",
+    canonicalName: "",
+    websiteUrl: "",
+    usageScope: "measurement_only" as "measurement_only" | "public_and_measurement",
+    factRevisionId: "",
+  });
+  const [aliasDraft, setAliasDraft] = useState({
+    entityId: "",
+    aliasText: "",
+    aliasType: "official" as "official" | "english" | "abbreviation" | "former_name" | "misspelling" | "product_variant",
+    usageScope: "measurement_only" as "measurement_only" | "public_and_measurement",
+    factRevisionId: "",
+  });
+  const [relationDraft, setRelationDraft] = useState({
+    subjectEntityId: "",
+    predicate: "competitor_of" as "legal_name_of" | "owns_product" | "offers" | "competitor_of" | "former_name_of" | "part_of",
+    objectEntityId: "",
+    usageScope: "measurement_only" as "measurement_only" | "public_and_measurement",
+    factRevisionId: "",
+  });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reviewingRevisionId, setReviewingRevisionId] = useState<string | null>(null);
   const [resolvingConflictId, setResolvingConflictId] = useState<string | null>(null);
@@ -1582,13 +1612,14 @@ function FactsPage() {
 
   const refreshKnowledge = useCallback(async (signal?: AbortSignal) => {
     if (!project.id) return;
-    const [nextFacts, nextSources, nextConflicts, nextGovernance, nextSyncPolicies, nextSyncRuns] = await Promise.all([
+    const [nextFacts, nextSources, nextConflicts, nextGovernance, nextSyncPolicies, nextSyncRuns, nextBrandGraph] = await Promise.all([
       fetchFacts(project.id, signal),
       fetchKnowledgeSources(project.id, signal),
       fetchFactConflicts(project.id, signal),
       fetchKnowledgeGovernance(project.id, signal),
       fetchKnowledgeSyncPolicies(project.id, signal),
       fetchKnowledgeSyncRuns(project.id, signal),
+      fetchBrandGraph(project.id, signal),
     ]);
     setFacts(nextFacts);
     setSources(nextSources);
@@ -1596,6 +1627,7 @@ function FactsPage() {
     setGovernance(nextGovernance);
     setSyncPolicies(nextSyncPolicies);
     setSyncRuns(nextSyncRuns);
+    setBrandGraph(nextBrandGraph);
     setSyncIntervals((current) => {
       const next = { ...current };
       nextSources.forEach((source) => {
@@ -1639,6 +1671,7 @@ function FactsPage() {
   const approved = facts.filter((item) => item.status === "approved").length;
   const pending = facts.filter((item) => item.status === "proposed").length;
   const eligible = facts.filter((item) => item.eligible_for_generation).length;
+  const eligibleFactRevisions = facts.filter((item) => item.status === "approved" && item.eligible_for_generation);
 
   const reviewRevision = async (revision: FactRevision, action: "approved" | "rejected") => {
     const actor = getStoredAuthSession()?.user.userId;
@@ -1817,6 +1850,93 @@ function FactsPage() {
     }
   };
 
+  const submitBrandEntity = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project.id || !entityDraft.factRevisionId || entityDraft.canonicalName.trim().length < 2) return;
+    setBrandGraphAction("entity");
+    try {
+      await createBrandGraphEntity(project.id, {
+        entity_role: entityDraft.entityRole,
+        entity_kind: entityDraft.entityKind,
+        canonical_name: entityDraft.canonicalName.trim(),
+        website_url: entityDraft.websiteUrl.trim() || undefined,
+        usage_scope: entityDraft.usageScope,
+        fact_revision_id: entityDraft.factRevisionId,
+      });
+      setEntityDraft((current) => ({ ...current, canonicalName: "", websiteUrl: "" }));
+      await refreshKnowledge();
+      notify({ title: "品牌实体已登记", desc: "实体已绑定当前审核事实和来源 Hash；重新编译后才会进入新的测量快照。", tone: "success" });
+    } catch (error) {
+      notify({ title: "实体未登记", desc: error instanceof Error ? error.message : "品牌实体接口不可用", tone: "danger" });
+    } finally {
+      setBrandGraphAction(null);
+    }
+  };
+
+  const submitBrandAlias = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project.id || !aliasDraft.entityId || !aliasDraft.factRevisionId || aliasDraft.aliasText.trim().length < 2) return;
+    setBrandGraphAction("alias");
+    try {
+      await createBrandGraphAlias(project.id, aliasDraft.entityId, {
+        alias_text: aliasDraft.aliasText.trim(),
+        alias_type: aliasDraft.aliasType,
+        usage_scope: aliasDraft.usageScope,
+        fact_revision_id: aliasDraft.factRevisionId,
+      });
+      setAliasDraft((current) => ({ ...current, aliasText: "" }));
+      await refreshKnowledge();
+      notify({ title: "别名已登记", desc: "编译时会跨全部实体检查规范化歧义；歧义别名不会进入测量词表。", tone: "success" });
+    } catch (error) {
+      notify({ title: "别名未登记", desc: error instanceof Error ? error.message : "品牌别名接口不可用", tone: "danger" });
+    } finally {
+      setBrandGraphAction(null);
+    }
+  };
+
+  const submitBrandRelation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!project.id || !relationDraft.subjectEntityId || !relationDraft.objectEntityId || !relationDraft.factRevisionId) return;
+    setBrandGraphAction("relation");
+    try {
+      await createBrandGraphRelation(project.id, {
+        subject_entity_id: relationDraft.subjectEntityId,
+        predicate: relationDraft.predicate,
+        object_entity_id: relationDraft.objectEntityId,
+        usage_scope: relationDraft.usageScope,
+        fact_revision_id: relationDraft.factRevisionId,
+      });
+      await refreshKnowledge();
+      notify({ title: "实体关系已登记", desc: "方向、事实修订和证据清单已进入追加事件链。", tone: "success" });
+    } catch (error) {
+      notify({ title: "关系未登记", desc: error instanceof Error ? error.message : "实体关系接口不可用", tone: "danger" });
+    } finally {
+      setBrandGraphAction(null);
+    }
+  };
+
+  const compileCurrentBrandGraph = async () => {
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor) {
+      notify({ title: "无法编译图谱", desc: "当前登录会话缺少可信操作人。", tone: "danger" });
+      return;
+    }
+    setBrandGraphAction("compile");
+    try {
+      const snapshot = await compileBrandGraph(project.id, actor);
+      await refreshKnowledge();
+      notify({
+        title: snapshot.status === "blocked" ? "图谱已编译但被阻断" : "不可变图谱快照已生成",
+        desc: `${snapshot.status} · ${snapshot.graph_sha256.slice(0, 12)}… · ${snapshot.known_limitations.length} 项限制`,
+        tone: snapshot.status === "blocked" ? "danger" : snapshot.status === "partial" || snapshot.status === "legacy_unverified" ? "warning" : "success",
+      });
+    } catch (error) {
+      notify({ title: "图谱编译失败", desc: error instanceof Error ? error.message : "图谱编译接口不可用", tone: "danger" });
+    } finally {
+      setBrandGraphAction(null);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -1841,6 +1961,116 @@ function FactsPage() {
           </div>
         }
       />
+      <Panel title="品牌实体图谱 · 测量口径">
+        <div className="brand-graph-toolbar">
+          <div>
+            <strong>把品牌、公司、产品、竞品和别名编译成不可变测量词表</strong>
+            <span>每条记录必须绑定当前已批准 FactRevision；歧义词会被排除，公开 JSON-LD 与内部测量词表分开。</span>
+          </div>
+          <button className="airank-console-primary-button" type="button" disabled={brandGraphAction !== null || eligibleFactRevisions.length === 0} onClick={() => void compileCurrentBrandGraph()}>
+            {brandGraphAction === "compile" ? "编译中…" : "编译不可变快照"}
+          </button>
+        </div>
+        {!brandGraph && !loadError && <DataStateCard title="实体图谱尚未加载" desc="等待真实 API 返回；不会用项目字段伪造成已治理图谱。" tone="warning" />}
+        {brandGraph && (
+          <>
+            <div className="brand-graph-summary">
+              <Badge tone={brandGraph.latest_snapshot?.status === "governed" ? "success" : brandGraph.latest_snapshot?.status === "blocked" ? "danger" : "warning"}>{brandGraph.latest_snapshot?.status ?? "not_compiled"}</Badge>
+              <span>实体 {brandGraph.entities.length}</span>
+              <span>别名 {brandGraph.aliases.length}</span>
+              <span>关系 {brandGraph.relations.length}</span>
+              <span>测量词表 {brandGraph.measurement_ready ? "可用" : "不可用"}</span>
+              <span>公开 JSON-LD {brandGraph.public_export_ready ? "可导出" : "已关闭"}</span>
+              {brandGraph.latest_snapshot && <code title={brandGraph.latest_snapshot.graph_sha256}>{brandGraph.latest_snapshot.graph_sha256.slice(0, 12)}…</code>}
+            </div>
+            {brandGraph.known_limitations.length > 0 && (
+              <div className="brand-graph-limitations">
+                {brandGraph.known_limitations.map((item) => <Badge tone="warning" key={item}>{item}</Badge>)}
+              </div>
+            )}
+            {brandGraph.latest_snapshot?.ambiguous_aliases.map((item) => (
+              <DataStateCard key={item.normalized_value} title={`歧义词已排除：${item.observed_values.join(" / ")}`} desc={`同时指向 ${item.entity_ids.length} 个实体；该词不会参与品牌或竞品提及计算。`} tone="danger" />
+            ))}
+            <div className="brand-graph-records">
+              {brandGraph.entities.map((entity) => (
+                <article key={entity.entity_id}>
+                  <div><strong>{entity.canonical_name}</strong><Badge tone={entity.entity_role === "target" ? "primary" : "muted"}>{entity.entity_role} · {entity.entity_kind}</Badge></div>
+                  <span>{brandGraph.aliases.filter((alias) => alias.entity_id === entity.entity_id && alias.status === "active").map((alias) => alias.alias_text).join(" / ") || "无已登记别名"}</span>
+                  <code>Fact {entity.fact_revision_id} · v{entity.version} · {entity.evidence_manifest_sha256.slice(0, 10)}…</code>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+        {eligibleFactRevisions.length === 0 ? (
+          <DataStateCard title="没有可绑定的审核事实" desc="先完成来源导入、事实审核、冲突与有效期门禁，再登记实体；项目名称本身不等于已证实身份。" tone="warning" />
+        ) : (
+          <div className="brand-graph-forms">
+            <form onSubmit={submitBrandEntity}>
+              <strong>登记实体</strong>
+              <input value={entityDraft.canonicalName} onChange={(event) => setEntityDraft({ ...entityDraft, canonicalName: event.target.value })} placeholder="规范名称" required minLength={2} />
+              <div className="brand-graph-form-row">
+                <select value={entityDraft.entityRole} onChange={(event) => setEntityDraft({ ...entityDraft, entityRole: event.target.value as typeof entityDraft.entityRole })}>
+                  <option value="target">目标实体</option><option value="competitor">竞品实体</option><option value="related">关联实体</option>
+                </select>
+                <select value={entityDraft.entityKind} onChange={(event) => setEntityDraft({ ...entityDraft, entityKind: event.target.value as typeof entityDraft.entityKind })}>
+                  <option value="brand">品牌</option><option value="company">公司</option><option value="product">产品</option><option value="service">服务</option>
+                </select>
+              </div>
+              <input type="url" value={entityDraft.websiteUrl} onChange={(event) => setEntityDraft({ ...entityDraft, websiteUrl: event.target.value })} placeholder="官网 URL（可选）" />
+              <select value={entityDraft.factRevisionId} onChange={(event) => setEntityDraft({ ...entityDraft, factRevisionId: event.target.value })} required>
+                <option value="">选择身份事实证据</option>
+                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+              </select>
+              <select value={entityDraft.usageScope} onChange={(event) => setEntityDraft({ ...entityDraft, usageScope: event.target.value as typeof entityDraft.usageScope })}>
+                <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
+              </select>
+              <button className="outline-button" type="submit" disabled={brandGraphAction !== null}>{brandGraphAction === "entity" ? "登记中…" : "登记实体"}</button>
+            </form>
+            <form onSubmit={submitBrandAlias}>
+              <strong>登记别名</strong>
+              <select value={aliasDraft.entityId} onChange={(event) => setAliasDraft({ ...aliasDraft, entityId: event.target.value })} required>
+                <option value="">选择所属实体</option>
+                {brandGraph?.entities.filter((entity) => entity.status === "active").map((entity) => <option value={entity.entity_id} key={entity.entity_id}>{entity.canonical_name}</option>)}
+              </select>
+              <input value={aliasDraft.aliasText} onChange={(event) => setAliasDraft({ ...aliasDraft, aliasText: event.target.value })} placeholder="简称、英文名、旧称或常见误写" required minLength={2} />
+              <select value={aliasDraft.aliasType} onChange={(event) => setAliasDraft({ ...aliasDraft, aliasType: event.target.value as typeof aliasDraft.aliasType })}>
+                <option value="official">官方别名</option><option value="english">英文名</option><option value="abbreviation">简称</option><option value="former_name">旧称</option><option value="misspelling">常见误写</option><option value="product_variant">产品变体</option>
+              </select>
+              <select value={aliasDraft.factRevisionId} onChange={(event) => setAliasDraft({ ...aliasDraft, factRevisionId: event.target.value })} required>
+                <option value="">选择别名事实证据</option>
+                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+              </select>
+              <select value={aliasDraft.usageScope} onChange={(event) => setAliasDraft({ ...aliasDraft, usageScope: event.target.value as typeof aliasDraft.usageScope })}>
+                <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
+              </select>
+              <button className="outline-button" type="submit" disabled={brandGraphAction !== null}>{brandGraphAction === "alias" ? "登记中…" : "登记别名"}</button>
+            </form>
+            <form onSubmit={submitBrandRelation}>
+              <strong>登记方向关系</strong>
+              <select value={relationDraft.subjectEntityId} onChange={(event) => setRelationDraft({ ...relationDraft, subjectEntityId: event.target.value })} required>
+                <option value="">选择主语实体</option>
+                {brandGraph?.entities.filter((entity) => entity.status === "active").map((entity) => <option value={entity.entity_id} key={entity.entity_id}>{entity.canonical_name}</option>)}
+              </select>
+              <select value={relationDraft.predicate} onChange={(event) => setRelationDraft({ ...relationDraft, predicate: event.target.value as typeof relationDraft.predicate })}>
+                <option value="legal_name_of">法定名称对应</option><option value="owns_product">拥有产品</option><option value="offers">提供服务</option><option value="competitor_of">竞争关系</option><option value="former_name_of">曾用名对应</option><option value="part_of">隶属于</option>
+              </select>
+              <select value={relationDraft.objectEntityId} onChange={(event) => setRelationDraft({ ...relationDraft, objectEntityId: event.target.value })} required>
+                <option value="">选择宾语实体</option>
+                {brandGraph?.entities.filter((entity) => entity.status === "active").map((entity) => <option value={entity.entity_id} key={entity.entity_id}>{entity.canonical_name}</option>)}
+              </select>
+              <select value={relationDraft.factRevisionId} onChange={(event) => setRelationDraft({ ...relationDraft, factRevisionId: event.target.value })} required>
+                <option value="">选择关系事实证据</option>
+                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+              </select>
+              <select value={relationDraft.usageScope} onChange={(event) => setRelationDraft({ ...relationDraft, usageScope: event.target.value as typeof relationDraft.usageScope })}>
+                <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
+              </select>
+              <button className="outline-button" type="submit" disabled={brandGraphAction !== null || relationDraft.subjectEntityId === relationDraft.objectEntityId}>{brandGraphAction === "relation" ? "登记中…" : "登记关系"}</button>
+            </form>
+          </div>
+        )}
+      </Panel>
       {sourceEditor && (
         <Panel title={sourceEditor.parent ? `更新来源 · ${sourceEditor.parent.title}` : "导入知识来源"}>
           <form className="knowledge-source-form" onSubmit={submitSource}>
@@ -3990,6 +4220,14 @@ function TaskCenterPage() {
         <label>测量批次<select value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)}>{runs.map((run) => <option value={run.run_id} key={run.run_id}>{run.name || run.run_id} · {run.status}</option>)}</select></label>
         <span>{selectedRun ? `${selectedRun.cohort_type} · ${selectedRun.collector_surfaces.join("/")} · 重复 ${selectedRun.repetitions} 次` : "暂无批次"}</span>
       </div>
+      {selectedRun && (
+        <div className="brand-graph-summary">
+          <Badge tone={selectedRun.entity_graph_status === "governed" ? "success" : selectedRun.entity_graph_status === "blocked" ? "danger" : "warning"}>{selectedRun.entity_graph_status}</Badge>
+          <span>实体口径快照 {selectedRun.entity_graph_snapshot_id ?? "dev-only 未冻结"}</span>
+          <code title={selectedRun.entity_graph_sha256 ?? undefined}>{selectedRun.entity_graph_sha256 ? `${selectedRun.entity_graph_sha256.slice(0, 12)}…` : "无图谱 hash"}</code>
+          {selectedRun.entity_graph_limitations.map((item) => <Badge tone="warning" key={item}>{item}</Badge>)}
+        </div>
+      )}
       <section className="summary-band evidence-summary">
         <SummaryMetric label="任务总数" value={String(tasks.length)} tone="primary" />
         <SummaryMetric label="已完成" value={String(completed)} tone="success" />

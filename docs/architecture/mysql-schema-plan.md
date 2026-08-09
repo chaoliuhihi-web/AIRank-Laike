@@ -35,6 +35,11 @@ yudao 负责账号、租户、权限、模型配置。AIRank 负责产品业务�
 | `airank_user_bindings` | yudao 用户与 AIRank 用户缓存绑定 | 是 |
 | `airank_projects` | 企业品牌项目 | 是 |
 | `airank_competitors` | 竞品 | 是 |
+| `airank_brand_entities` | 证据绑定、版本化的品牌/公司/产品/服务实体当前投影 | 是 |
+| `airank_brand_entity_aliases` | 实体别名、用途范围和事实证据绑定 | 是 |
+| `airank_brand_relations` | 主体—谓词—客体有方向关系及事实证据绑定 | 是 |
+| `airank_brand_graph_events` | 实体、别名和关系变更的前序 hash 追加事件 | 是 |
+| `airank_brand_graph_snapshots` | 测量词典与公开 JSON-LD 的不可变编译快照 | 是 |
 | `airank_buyer_questions` | AI 来客问题地图 | 是 |
 | `airank_scan_runs` | 一次扫描批次 | 是 |
 | `airank_scan_tasks` | 单平台、单问题扫描任务 | 是 |
@@ -160,6 +165,11 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 | `airank_projects` | `tenant_id` | `id` 即 project id | 租户项目列表、按品牌名查项目、软删除过滤 | `idx_airank_projects_tenant_status`、`idx_airank_projects_brand` 覆盖；API 必须额外过滤 `deleted_at IS NULL` |
 | `airank_project_members` | `tenant_id` | `project_id` | 项目成员列表、按 yudao 用户查项目角色 | `uk_airank_project_members_user`、`idx_airank_project_members_project` 覆盖 |
 | `airank_competitors` | `tenant_id` | `project_id` | 项目竞品列表，按 `priority` 排序 | `idx_airank_competitors_project` 覆盖；API 必须过滤 `deleted_at IS NULL` |
+| `airank_brand_entities` | `tenant_id` | `project_id` | 图谱实体列表、角色/类型/规范化名称唯一性、事实修订回溯 | 项目状态、规范化名称和 FactRevision 索引覆盖；更新只产生新版本事件 |
+| `airank_brand_entity_aliases` | `tenant_id` | `project_id` | 按实体读取别名、跨实体规范化名称消歧、事实修订回溯 | 项目/实体/状态和规范化别名索引覆盖；跨实体冲突由编译器排除 |
+| `airank_brand_relations` | `tenant_id` | `project_id` | 查询主体或客体关系、同方向三元组去重、事实修订回溯 | 项目/主体/客体索引覆盖；禁止自关系 |
+| `airank_brand_graph_events` | `tenant_id` | `project_id` | 实体/别名/关系按 aggregate/version 回放与校验 hash 链 | aggregate/version 唯一，项目/aggregate/时间索引覆盖 |
+| `airank_brand_graph_snapshots` | `tenant_id` | `project_id` | 按项目读取最新编译结果、ScanRun 按 snapshot/hash 回放测量词典 | 项目/创建时间、graph SHA-256 索引覆盖；快照不可覆盖 |
 | `airank_buyer_questions` | `tenant_id` | `project_id` | 问题列表、按类型/意图筛选、按优先级排序 | `idx_airank_questions_project_priority`、`idx_airank_questions_type`、`idx_airank_questions_intent` 覆盖 |
 | `airank_scan_runs` | `tenant_id` | `project_id` | 项目扫描批次列表、按状态筛选、租户级最近扫描 | `idx_airank_scan_runs_project_status`、`idx_airank_scan_runs_created` 覆盖 |
 | `airank_scan_tasks` | `tenant_id` | `project_id` | worker 领取任务、项目任务状态列表、单 run 采样槽去重 | `idx_airank_scan_tasks_worker`、`idx_airank_scan_tasks_project`、`uk_airank_scan_tasks_sample` 覆盖 |
@@ -235,7 +245,7 @@ AIRANK_DATABASE_URL=mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/ai
 
 - Bootstrap SQL 和 Alembic 初始迁移的核心 tenant/project 查询索引可支撑 M1 CRUD、M2 worker claim、M3/M4 证据回溯的最小闭环。
 - M1 不新增 DDL；后续如出现慢查询，优先基于真实 query plan 新增 Alembic migration，不在业务代码里绕过租户过滤。
-- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0038`，共 96 张 `airank_*` 表；这只证明本地迁移和数据库链路，不替代生产备份、回滚演练、容量或外部服务验收。
+- 当前本机真实 MySQL 已执行 `alembic upgrade head` 到 `20260809_0039`，共 101 张 `airank_*` 表。`airank_scan_runs` 新增图谱 snapshot/hash/status/limitations 绑定，旧项目可显式落为 `legacy_unverified`，新治理图谱则冻结审核事实、名称/别名和竞品口径；这只证明本地迁移和数据库链路，不替代生产备份、回滚演练、容量或外部服务验收。
 
 ## 与 yudao 的字段映射
 

@@ -101,6 +101,26 @@ M1 问题治理通过同一套 repository 契约支持测试内存实现与生�
 
 `tenant_id`、导入人和审核人必须来自认证上下文，不能信任 request body。观察导入要求显式来源授权声明，按 payload SHA-256 幂等；`occurrence_count` 只表示来源内频次，不等于搜索量。疑似 PII 原文不得进入持久化记录、manifest 或响应。问题地图按输入内容和 taxonomy 版本幂等；问题按规范化 hash 去重。只有 `confirmed` 且其不可变修订 Cohort 与 ScanRun 完全一致的问题才能进入任务编译。in-memory adapter 只用于 contract test 和本地开发，MySQL 路径由 Alembic `20260808_0010` 支持。
 
+### 品牌实体图谱与扫描绑定
+
+品牌、公司、产品、服务、别名和有方向关系使用独立的治理接口：
+
+```text
+GET  /api/v1/projects/{project_id}/brand-graph
+POST /api/v1/projects/{project_id}/brand-entities
+PUT  /api/v1/projects/{project_id}/brand-entities/{entity_id}
+POST /api/v1/projects/{project_id}/brand-entities/{entity_id}/aliases
+PUT  /api/v1/projects/{project_id}/brand-aliases/{alias_id}
+POST /api/v1/projects/{project_id}/brand-relations
+PUT  /api/v1/projects/{project_id}/brand-relations/{relation_id}
+POST /api/v1/projects/{project_id}/brand-graph/snapshots
+GET  /api/v1/brand-graph-snapshots/{snapshot_id}
+```
+
+写操作要求 `airank:knowledge:admin`，操作者来自认证上下文。每条记录必须绑定当前已批准、未过期、无开放冲突且拥有有效 KnowledgeSource 的 FactRevision；公开 JSON-LD 还要求事实 disclosure 为 `public/redacted`，`measurement_only` 内部身份只能进入测量词典。更新必须提交 `expected_version`，并追加前序 hash 事件，不能覆盖历史。编译器执行 NFKC/case/空白/标点规范化；同一规范化名称若属于多个实体，则从测量别名和公开 JSON-LD 排除。缺少唯一、无歧义的目标品牌时快照状态为 `blocked`，禁止创建 ScanRun。
+
+创建 ScanRun 时必须先编译或复用不可变品牌图谱快照，并把 `entity_graph_snapshot_id`、`entity_graph_sha256`、状态与限制同时写入 run、task request 和最终样本元数据。Worker 只能使用该快照里的目标品牌、公司/产品名、品牌别名和竞品别名；项目随后编辑不会改变已排队任务的口径。尚未迁移到治理实体的项目允许生成 `legacy_unverified` 快照以保持历史流程，但必须暴露限制、禁用公开 JSON-LD，且不得宣称其身份已由事实证据审核。
+
 ## M2 扫描契约
 
 `M2-WIN-000` 只冻结 scan run / scan task 的 request、response 和 status schema，不实现 worker 调度：

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 import re
+import unicodedata
 from typing import Any
 from uuid import uuid4
 
@@ -199,6 +200,119 @@ def fact_builder(payload: dict[str, Any]) -> dict[str, Any]:
         "source_sha256": sha256_text(excerpt),
         "source_excerpt": excerpt,
         "support_mode": "exact_excerpt" if supported else "not_supported",
+    }
+
+
+ENTITY_GRAPH_SKILL_VERSION = "1.0.0"
+
+
+def _normalized_entity_token(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value)).casefold().strip()
+    return "".join(character for character in normalized if character.isalnum())
+
+
+def entity_graph_compiler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compile evidence-qualified entity records without mutating source evidence.
+
+    Persistence, current-fact checks, and immutable snapshot storage remain API
+    responsibilities. This Skill enforces the portable graph/ambiguity contract.
+    """
+
+    entities = [dict(item) for item in payload.get("entities", []) if isinstance(item, dict)]
+    aliases = [dict(item) for item in payload.get("aliases", []) if isinstance(item, dict)]
+    relations = [dict(item) for item in payload.get("relations", []) if isinstance(item, dict)]
+    invalid_records: list[dict[str, str]] = []
+
+    def evidence_valid(item: dict[str, Any], record_type: str) -> bool:
+        record_id = str(item.get(f"{record_type}_id") or item.get("id") or "")
+        evidence_hash = str(item.get("evidence_manifest_sha256") or "")
+        valid = (
+            item.get("fact_eligible") is True
+            and bool(str(item.get("fact_revision_id") or "").strip())
+            and bool(re.fullmatch(r"[0-9a-f]{64}", evidence_hash))
+        )
+        if not valid:
+            invalid_records.append({"record_type": record_type, "record_id": record_id, "reason": "eligible_fact_evidence_required"})
+        return valid
+
+    accepted_entities = [item for item in entities if evidence_valid(item, "entity")]
+    entity_ids = {str(item.get("entity_id") or item.get("id")) for item in accepted_entities}
+    accepted_aliases = [
+        item
+        for item in aliases
+        if str(item.get("entity_id") or "") in entity_ids and evidence_valid(item, "alias")
+    ]
+    accepted_relations = [
+        item
+        for item in relations
+        if str(item.get("subject_entity_id") or "") in entity_ids
+        and str(item.get("object_entity_id") or "") in entity_ids
+        and str(item.get("subject_entity_id") or "") != str(item.get("object_entity_id") or "")
+        and evidence_valid(item, "relation")
+    ]
+
+    owners: dict[str, set[str]] = {}
+    observed_values: dict[str, set[str]] = {}
+    for item in accepted_entities:
+        token = _normalized_entity_token(item.get("canonical_name", ""))
+        entity_id = str(item.get("entity_id") or item.get("id"))
+        owners.setdefault(token, set()).add(entity_id)
+        observed_values.setdefault(token, set()).add(str(item.get("canonical_name") or ""))
+    for item in accepted_aliases:
+        token = _normalized_entity_token(item.get("alias_text", ""))
+        owners.setdefault(token, set()).add(str(item.get("entity_id") or ""))
+        observed_values.setdefault(token, set()).add(str(item.get("alias_text") or ""))
+    ambiguous_tokens = {token for token, values in owners.items() if token and len(values) > 1}
+    ambiguous_aliases = [
+        {
+            "normalized_value": token,
+            "observed_values": sorted(observed_values[token]),
+            "entity_ids": sorted(owners[token]),
+            "excluded_from_measurement": True,
+        }
+        for token in sorted(ambiguous_tokens)
+    ]
+    target_brands = [
+        item
+        for item in accepted_entities
+        if item.get("entity_role") == "target" and item.get("entity_kind") == "brand"
+    ]
+    target_blocked = (
+        len(target_brands) != 1
+        or _normalized_entity_token(target_brands[0].get("canonical_name", "")) in ambiguous_tokens
+    )
+    status = "blocked" if target_blocked else "partial" if invalid_records or ambiguous_aliases else "governed"
+    graph = {
+        "entities": accepted_entities,
+        "aliases": [
+            {**item, "ambiguous": _normalized_entity_token(item.get("alias_text", "")) in ambiguous_tokens}
+            for item in accepted_aliases
+        ],
+        "relations": accepted_relations,
+    }
+    graph_sha256 = sha256_text(
+        json.dumps(
+            {
+                "skill_version": ENTITY_GRAPH_SKILL_VERSION,
+                "status": status,
+                "graph": graph,
+                "ambiguous_aliases": ambiguous_aliases,
+                "invalid_records": invalid_records,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return {
+        "skill_id": "knowledge.entity-graph-compiler",
+        "skill_version": ENTITY_GRAPH_SKILL_VERSION,
+        "status": status,
+        "graph_sha256": graph_sha256,
+        "graph": graph,
+        "ambiguous_aliases": ambiguous_aliases,
+        "invalid_records": invalid_records,
+        "raw_evidence_mutated": False,
     }
 
 
@@ -1007,6 +1121,7 @@ SKILL_RUNNERS: dict[str, SkillRunner] = {
     "measurement.citation-extractor": citation_extractor,
     "research.intent-miner": intent_miner,
     "knowledge.fact-builder": fact_builder,
+    "knowledge.entity-graph-compiler": entity_graph_compiler,
     "governance.claim-verifier": claim_verifier,
     "intervention.page-blueprint": page_blueprint,
     "intervention.explainer-builder": explainer_builder,

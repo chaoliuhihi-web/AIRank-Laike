@@ -19,6 +19,8 @@
         "status",
         "provider_scope",
         "question_scope",
+        "entity_graph_status",
+        "entity_graph_limitations",
         "created_at",
         "updated_at"
       ],
@@ -47,6 +49,23 @@
           "uniqueItems": true
         },
         "question_scope": { "$ref": "#/$defs/question_scope" },
+        "entity_graph_snapshot_id": {
+          "type": ["string", "null"],
+          "pattern": "^brand_graph_[A-Za-z0-9_-]+$"
+        },
+        "entity_graph_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "entity_graph_status": {
+          "type": "string",
+          "enum": ["governed", "partial", "blocked", "legacy_unverified", "not_available_dev"]
+        },
+        "entity_graph_limitations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "metrics": {
           "type": "object",
           "additionalProperties": { "type": ["number", "integer", "string", "boolean", "null"] }

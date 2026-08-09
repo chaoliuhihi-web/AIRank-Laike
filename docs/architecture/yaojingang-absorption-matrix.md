@@ -42,6 +42,7 @@
 32. `yao-geo-execution-roadmap` 的“从机会进入执行”边界已改造成 AIRank 自有行动、路由和计划域，而不是生成不可验收的 30/60/90 天营销承诺。`airank.opportunity-action.v1` 只从最新完整快照创建行动，保留责任人、SLA、证据刷新、复测终结和 `effect_claim_allowed=false`；`airank.opportunity-action-routing.v1` 按四类来源保存团队、成员容量和无身份逾期 Outbox。新增 `airank.opportunity-execution-plan.v1` 后，每个未终结行动可保存 `human_estimate` 工时、CNY 预算和人工计划，只有 100% approved 覆盖才汇总；行动前置依赖按项目串行锁定、拒绝自依赖/执行中追加/有向环，未满足时阻止进入执行，人工豁免必须记录版本、原因和非效果确认。所有计划/依赖/豁免进入前序 hash 事件链。人工计划不冒充发票、实际支出或增长预测。
 33. TokHub 的“运行时凭证 + 版本化任务 + 失败关闭”模式已改造成独立的 `airank.opportunity-action-directory-sync.v1`，没有复用审核角色业务域。`20260809_0037` 为每个机会团队保存一个 Yudao 部门绑定及同步运行；Scheduler 派发 `opportunity.directory.sync`，Worker 在外部请求前重检租户、项目、团队、部门和 binding version。同步只增改 Yudao 来源成员，未变化快照不递增版本，消失的外部成员才停用；同 user ID 手工成员保持名称、容量、版本和未核验状态，并计入 `manual_conflict_count`。成功/失败运行保存 endpoint host、响应 hash、变更计数、错误分类和审计事件，token 只在运行时注入。契约、SQLite、Scheduler、Worker、真实 MySQL 91 表迁移及完整队列链已通过；前端已接真实 API，但无生产 Yudao 部门/凭证且本轮未做浏览器视觉验收，所以能力仍为 `partial/blocked`。
 34. `yao-geo-execution-roadmap` 的 30/60/90、owner、resource、dependency 与 acceptance 方法已进一步 `adapt` 为 AIRank 自有容量排程，而非复制 Skill 的 Markdown 输出。`20260809_0038` 新增成员人工计划、日期例外、前序 hash 事件和不可变排程运行/逐行动结果；排程冻结行动、批准计划、成员、日历、例外和依赖版本/hash，逐日分配人工计划工时，识别共享成员跨行动超配，并明确区分未计划、缺日期、缺责任人、缺日历、依赖阻断、容量冲突与超出窗口。前端以真实 API 展示三窗口、来源/结果 hash 和限制。当前日历固定 `manual`、`external_calendar_verified=false`，排程不自动移动任务且永久 `outcome_forecast_allowed=false`；外部日历、工时单和生产团队真实 E2E 仍未验证。
+35. `yao-geo-brand-graph` 的“来源账本 → 提及 → 候选实体 → 规范实体 → 有方向关系”方法已 `adapt` 为 AIRank 自有 `airank.brand-graph.v1` 与内部 `knowledge.entity-graph-compiler@1.0.0`。`20260809_0039` 新增实体、别名、关系、前序 hash 事件和不可变图谱快照五张表；所有记录必须绑定当前有效且已审核的 FactRevision 与来源证据清单 hash。NFKC/case/空白/标点归一后跨实体冲突的名称会退出测量词典和公开 JSON-LD，目标品牌缺失或歧义则失败关闭。ScanRun 在入队前冻结图谱 snapshot/hash，Worker 使用冻结的品牌、公司/产品、品牌/竞品别名和项目上下文，不再读取之后变化的项目或竞品当前值。真实 MySQL 已验证 v1 扫描创建后实体更新为 v2，旧扫描仍保持 v1；旧项目字段只形成 `legacy_unverified`，公开 JSON-LD 禁用。浏览器界面已接真实 API，但本轮按既定 Browser 生命周期不重复执行视觉 E2E，因此仍为 `partial`。
 
 ## yao-geo-skills：21 个 Skill 全覆盖
 
@@ -57,7 +58,7 @@
 | yao-geo-skills | `yao-geo-page-audit` | 页面可抓取性、结构和证据诊断 | `skills/yao-geo-page-audit` | URL → 技术与内容修复清单 | 安全抓取、HTML/Schema 解析 | MIT | 已有 DNS 固定安全抓取、11 条规则、不可变运行/发现表、异步任务、API 和控制台；每项结果带 HTTP/DOM 证据、内容 hash、连接 IP 和规则版本 | sitemap、批量页面、robots.txt/llms.txt 联合诊断和客户站点 corpus 仍缺 | adapt | Page Extractability Skill | P1 | partial | 真实 `example.com` 得到 68 技术分和 11 条可复算发现；桌面/390px 页面无横向溢出且无 console 告警；分数明确不等于品牌推荐率 |
 | yao-geo-skills | `yao-geo-page-blueprint` | 将证据缺口转成页面结构 | `skills/yao-geo-page-blueprint` | 缺口/事实 → 模块、Schema、CMS 字段 | 已审核事实、页面诊断 | MIT | `intervention.page-blueprint@1.1.0` 已把 7 类通用页面产物绑定到已审核 FactRevision、ClaimSupport、source hash 和精确原文边界；比较页被强制路由到专用 Comparison Skill；页面审计失败已进入统一机会看板，但不会绕过事实门禁自动生成蓝图 | 机会尚未自动创建带责任人的蓝图任务；CMS 字段映射与完整 Schema.org 语义验证仍缺 | adapt | Page Intervention Skill | P1 | partial | contract/holdout/adversarial 评测通过；真实 HTTP/MySQL 验证来源→事实→批准→FAQ 蓝图→审核→不可变导出，编辑方向明文未落库；后续补多类型 Schema benchmark |
 | yao-geo-skills | `yao-geo-knowledge-base-builder` | 企业知识与事实卡构建 | `skills/yao-geo-knowledge-base-builder` | 多来源资料 → 实体、事实卡、来源索引 | 安全导入、切片、审核 | MIT | 已有 content-addressed 来源导入、不可变来源修订、原文边界切片、事实修订/冲突/审核、ClaimSupport、到期提醒、人工冲突队列、当前有效来源检索，以及客户授权公开 URL 的持久自动同步策略、Scheduler/Worker、运行证据和前端工作台 | 增量重嵌入和混合检索仍缺；当前明确为 `lexical_only`，不会擅自发现未授权站点 | adapt | Knowledge Build Skill | P0 | partial | 真实 MySQL 与浏览器验证首次变更追加 v2、v1 stale、双对象存证；第二次相同正文为 `unchanged` 且不生成 v3；旧来源、过期来源或冲突即时撤销生成资格 |
-| yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 项目含品牌/竞品，未成图 | 无实体版本、关系证据和消歧 | adapt | Entity Graph Skill | P1 | planned | 每条关系带 ClaimSupport；冲突实体进入人工审核 |
+| yao-geo-skills | `yao-geo-brand-graph` | 品牌实体消歧和关系治理 | `skills/yao-geo-brand-graph` | 事实/实体 → 图、JSON-LD、三元组 | 审核事实、实体规则 | MIT | 已有证据绑定、乐观锁版本化实体/别名/方向关系、前序 hash 事件、NFKC 消歧、测量词典/公开 JSON-LD 分流、不可变 snapshot/hash；ScanRun/Task/Worker 冻结同一图谱口径，前端事实库与任务中心使用真实 API 展示 | 旧项目需逐项迁移出 `legacy_unverified`；关系谓词词表、人工歧义裁决、完整 Schema.org validator、客户实体 benchmark 和浏览器视觉 E2E 仍缺 | adapt | Entity Graph Skill | P1 | partial | contract/holdout/adversarial 33/33 Skill 总门禁；真实 MySQL 验证审核事实→实体/别名→governed 快照→扫描冻结→实体 v2 后旧 run 不漂移；无唯一目标或事实失效时失败关闭 |
 | yao-geo-skills | `yao-geo-title-optimizer` | 产生可审核的标题候选 | `skills/yao-geo-title-optimizer` | 事实/方向 → 标题与评分 | 已审核事实、风险规则 | MIT | 内容资产骨架 | 评分缺少可验证 rubric | reference_only | Intervention Title Skill | P2 | planned | 候选不含无证据声明；rubric 与人工评审一致性达门槛 |
 | yao-geo-skills | `yao-geo-explainer-builder` | 生成科普/How-to/FAQ 页面 | `skills/yao-geo-explainer-builder` | 审核事实/问题 → 文章与核验矩阵 | FactAtom、ClaimSupport | MIT | `intervention.explainer-builder@1.0.0` 已实现七类角色、12 条事实、1400 个证据字符、品牌露出上限、逐 Claim 精确边界、HowTo/FAQPage、真实 API/工作台/审核/导出快照 | 尚无真实客户内容质量 benchmark、多格式导出与页面审计自动编排 | adapt | Explainer Skill | P1 | partial | 缺角色、长度、主体或品牌露出门禁不出正文；真实 MySQL 从 12 条主体事实生成 7 段解释、审核并导出 v2 快照 |
 | yao-geo-skills | `yao-geo-comparison-builder` | 高意图竞品比较页 | `skills/yao-geo-comparison-builder` | 同口径证据 → 比较页、FAQ | 双方公开证据、风险审校 | MIT | `intervention.comparison-builder@1.0.0` 已实现不可变事实主体、2–4 主体、至少 10 个统一维度、100% 对称证据矩阵、逐 Claim 精确边界和无排名输出；普通蓝图不能绕过 | 尚无真实客户公平性 benchmark、3–4 主体 UI 和外部 CMS 对比模板 | adapt | Comparison Skill | P1 | partial | 缺任一主体维度不出正文；真实 MySQL 以 2 主体×10 维度生成 20 条 ClaimSupport、审核并导出 v2 快照 |
@@ -123,8 +124,8 @@
 
 | 来源仓库 | 能力名称 | 业务价值 | 代码位置 | 输入输出 | 依赖条件 | 许可证 | AIRank 当前能力 | 差距 | 吸收方式 | 目标模块 | 优先级 | 状态 | 验收方法 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 核心 10 Skill 已有 manifest/schema/entrypoint | 尚无 target compiler 和升级迁移 | adapt | `packages/skills` | P0 | partial | 核心 10 Skill 均能序列化、校验和升级 |
-| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 10 个 Skill 已执行 30 个 contract/holdout/adversarial 用例并通过 schema 与 rubric | 真实 Provider 和人工标注 benchmark 仍未绑定 | absorb | Skill Eval Lab | P0 | partial | `scripts/evaluate_core_skills.py` 必须 30/30；真实证据缺失时不晋级 |
+| yao-meta-skill | Skill IR 与 target compiler | 统一内部 Skill 契约和版本 | `export_skill_ir.py`、compiler scripts | Skill 包 → IR/target artifacts | schema、registry | MIT | 核心 11 Skill 已有 manifest/schema/entrypoint | 尚无 target compiler 和升级迁移 | adapt | `packages/skills` | P0 | partial | 核心 11 Skill 均能序列化、校验和升级 |
+| yao-meta-skill | Trigger/输出/盲测 eval | 防止 Skill 只有 Prompt 没能力 | `evals/`、output eval scripts | cases → score/evidence | fixtures/provider runner | MIT | 11 个 Skill 已执行 33 个 contract/holdout/adversarial 用例并通过 schema 与 rubric | 真实 Provider 和人工标注 benchmark 仍未绑定 | absorb | Skill Eval Lab | P0 | partial | `scripts/evaluate_core_skills.py` 必须 33/33；真实证据缺失时不晋级 |
 | yao-meta-skill | promotion 与 claim guard | 防止 partial 被宣传为 ready | promotion/claim guard scripts | evidence → promote/block | evidence ledger | MIT | 已生成绑定 registry/eval/实现 hash 的 promotion ledger；10 个 Skill 均因外部证据缺失保留 partial | 尚需逐项提交可校验的真实 Provider/人工 benchmark artifact | adapt | Skill Registry | P0 | partial | artifact 路径与 SHA-256 校验通过才解除 blocker；伪造 header 无法访问管理员 API |
 | yao-meta-skill | trust/permission/package gate | 控制网络、凭证和可移植性 | trust/package/install scripts | Skill 包 → trust/report/package | sandbox/manifest | MIT | 无 | 无依赖与权限声明验证 | adapt | Skill Trust Gate | P1 | planned | 依赖、网络、secret、权限、安装模拟全部可审计 |
 | yao-open-tools | `tokscr` 本地网页截图 | 保存消费者页面与来源面板证据 | `tools/tokscr` | 页面 → PNG/PDF | 浏览器扩展 | MIT | Playwright 截图会先复制到内容寻址 filesystem/S3/MinIO，并以鉴权 API 读取和复验 hash | viewport、区域与来源面板裁剪元数据仍未完整保存 | reference_only | Evidence Capture | P1 | partial | 截图对象真实 MinIO 往返与租户隔离通过；继续补 viewport/区域/裁剪契约 |
@@ -144,20 +145,21 @@
 
 `/Users/bruce/Developer/work/ai-geo-monitoring` 中已经完成 Provider 成本、验证、任务进度、失败重试、知识导入、通知和付费试点门禁。它属于 AIRank 的本地实验实现，不作为外部开源项目直接复制；只把通过测试的契约和行为迁移到本仓的 Python/FastAPI 领域模型，并重新跑本仓单元、迁移、Provider 和浏览器门禁。
 
-## 当前核心 10 Skill
+## 当前核心 11 Skill
 
 1. `measurement.sample-runner`
 2. `measurement.answer-parser`
 3. `measurement.citation-extractor`
 4. `research.intent-miner`
-5. `knowledge.fact-builder`
-6. `governance.claim-verifier`
-7. `intervention.page-blueprint`
-8. `intervention.explainer-builder`
-9. `intervention.comparison-builder`
-10. `delivery.retest-report`
+5. `knowledge.entity-graph-compiler`
+6. `knowledge.fact-builder`
+7. `governance.claim-verifier`
+8. `intervention.page-blueprint`
+9. `intervention.explainer-builder`
+10. `intervention.comparison-builder`
+11. `delivery.retest-report`
 
-核心 10 Skill 已完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric、entrypoint，以及独立 contract/holdout/adversarial 评测。30/30 用例通过，Promotion Evidence Ledger 绑定 registry、评测语料、实现和评测引擎 hash；因真实 Provider/人工标注 benchmark 尚未逐项绑定，全部继续保持 `partial`。内部 Skill 控制台明确展示本地通过数、可晋级数和每项缺证 blocker。
+核心 11 Skill 已完成统一 manifest、输入输出 schema、证据等级、事实政策、失败政策、rubric、entrypoint，以及独立 contract/holdout/adversarial 评测。33/33 用例通过，Promotion Evidence Ledger 绑定 registry、评测语料、实现和评测引擎 hash；因真实 Provider/人工标注 benchmark 尚未逐项绑定，全部继续保持 `partial`。内部 Skill 控制台明确展示本地通过数、可晋级数和每项缺证 blocker。
 
 ## 阶段一完成判定
 
