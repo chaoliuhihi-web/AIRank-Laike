@@ -5234,11 +5234,13 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function CustomerAssetsPage({ onNavigate, reviewOnly = false }: { onNavigate: (path: string) => void; reviewOnly?: boolean }) {
   const { project, dataStatus } = useConsoleOverview();
+  const { notify } = useActionFeedback();
   const [assets, setAssets] = useState<GovernedContentAsset[]>([]);
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [gaps, setGaps] = useState<EvidenceGapList | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reviewingAssetId, setReviewingAssetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) {
@@ -5272,6 +5274,27 @@ function CustomerAssetsPage({ onNavigate, reviewOnly = false }: { onNavigate: (p
   const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
   const visibleAssets = reviewOnly ? assets.filter((asset) => asset.status === "draft" || asset.status === "changes_requested") : assets;
   const generationAllowed = dataStatus === "provider_evidence" && eligibleFacts.length > 0 && Boolean(gaps?.gaps.length);
+  const reviewAsset = async (asset: GovernedContentAsset, action: "approved" | "rejected" | "changes_requested") => {
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!actor) {
+      notify({ title: "无法提交审核", desc: "当前登录会话缺少可信审核人身份，请重新登录。", tone: "danger" });
+      return;
+    }
+    setReviewingAssetId(asset.asset_id);
+    try {
+      const review = await reviewContentAsset(asset.asset_id, action, actor);
+      setAssets((current) => current.map((item) => item.asset_id === asset.asset_id ? { ...item, status: action } : item));
+      notify({
+        title: action === "approved" ? "资产已通过人工审核" : action === "rejected" ? "资产已驳回" : "已要求修改",
+        desc: `事实核验 ${review.fact_check_status}，风险等级 ${review.risk_level}；只有通过项才会进入发布。`,
+        tone: action === "approved" && review.fact_check_status === "passed" ? "success" : "warning",
+      });
+    } catch (error) {
+      notify({ title: "资产审核未提交", desc: error instanceof Error ? error.message : "内容审核接口不可用。", tone: "danger" });
+    } finally {
+      setReviewingAssetId(null);
+    }
+  };
 
   return (
     <>
@@ -5307,7 +5330,18 @@ function CustomerAssetsPage({ onNavigate, reviewOnly = false }: { onNavigate: (p
           <div className="section-heading"><div><span>{reviewOnly ? "待审核" : "内容工作台"}</span><h2>{reviewOnly ? "需要人工确认的资产" : "已创建的答案资产"}</h2></div><Badge tone={visibleAssets.length ? "primary" : "muted"}>{visibleAssets.length} 项</Badge></div>
           {visibleAssets.length === 0 ? <DataStateCard title={reviewOnly ? "当前没有待审核资产" : "尚未创建答案资产"} desc={reviewOnly ? "所有资产都已处理，或还没有通过生成门禁的草稿。" : "从证据缺口选择机会，并绑定已通过事实后创建第一项资产。"} tone="muted" /> : (
             <div className="content-asset-list">
-              {visibleAssets.map((asset) => (
+              {visibleAssets.map((asset) => reviewOnly ? (
+                <article className="airank-console-card content-asset-row content-asset-review-row" key={asset.asset_id}>
+                  <div><Badge tone="warning">{contentStatusLabel(asset.status)}</Badge><span>{assetTypeLabel(asset.asset_type)}</span></div>
+                  <strong>{asset.title}</strong><span>绑定 {asset.fact_revision_ids.length} 条事实 · {formatDateTime(asset.created_at)}</span>
+                  <div className="fact-review-actions">
+                    <button className="ghost-button" type="button" onClick={() => onNavigate(`/console/assets/${asset.asset_id}`)}>查看草稿</button>
+                    <button className="outline-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "changes_requested")}>要求修改</button>
+                    <button className="outline-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "rejected")}>驳回</button>
+                    <button className="airank-console-primary-button" type="button" disabled={reviewingAssetId === asset.asset_id} onClick={() => void reviewAsset(asset, "approved")}>{reviewingAssetId === asset.asset_id ? "审核中…" : "通过审核"}</button>
+                  </div>
+                </article>
+              ) : (
                 <button className="airank-console-card content-asset-row" key={asset.asset_id} type="button" onClick={() => onNavigate(`/console/assets/${asset.asset_id}`)}>
                   <div><Badge tone={asset.status === "approved" ? "success" : asset.status === "rejected" ? "danger" : "warning"}>{contentStatusLabel(asset.status)}</Badge><span>{assetTypeLabel(asset.asset_type)}</span></div>
                   <strong>{asset.title}</strong><span>绑定 {asset.fact_revision_ids.length} 条事实 · {formatDateTime(asset.created_at)}</span><ChevronRight size={18} />

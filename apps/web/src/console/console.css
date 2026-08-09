@@ -6872,6 +6872,15 @@ button:disabled {
 .content-asset-row > strong { color: var(--console-text-strong); }
 .content-asset-row > span { color: var(--console-text-muted); font-size: 12px; }
 
+.content-asset-review-row {
+  grid-template-columns: minmax(150px, 0.5fr) minmax(240px, 1.4fr) minmax(190px, 0.8fr);
+}
+
+.content-asset-review-row > .fact-review-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
 .asset-editor-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.75fr);
