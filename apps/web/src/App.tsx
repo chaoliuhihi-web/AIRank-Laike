@@ -1473,7 +1473,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   }, [project.id]);
 
   const latest = runs[0] ?? null;
-  const hasCurrentProfileEvidence = latest !== null && dataStatus === "provider_evidence";
+  const hasCurrentProfileEvidence = latest?.status === "completed" && dataStatus === "provider_evidence";
   const eligibleBlindQuestions = questions.filter((question) => question.status === "confirmed" && question.cohort_type === "blind");
   const readyProviderIds = new Set(readiness?.providers.filter((item) => item.status === "ready").map((item) => item.provider) ?? []);
   const selectedReadyProviders = selectedProviders.filter((provider) => readyProviderIds.has(provider));

@@ -115,7 +115,7 @@ def test_scan_summary_and_question_gaps_are_scoped_to_current_profile() -> None:
     app = read("apps/web/src/App.tsx")
     checkup = app.split("function CheckupPage", 1)[1].split("function pageAuditTone", 1)[0]
 
-    assert 'const hasCurrentProfileEvidence = latest !== null && dataStatus === "provider_evidence"' in checkup
+    assert 'const hasCurrentProfileEvidence = latest?.status === "completed" && dataStatus === "provider_evidence"' in checkup
     assert '{hasCurrentProfileEvidence && <section className="metric-grid">' in checkup
     assert "hasCurrentProfileEvidence && message ? message" in checkup
     assert 'row.status !== "archived" && (row.coverage_status === "gap"' in app
