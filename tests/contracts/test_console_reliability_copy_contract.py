@@ -24,6 +24,8 @@ def test_console_localizes_api_errors_and_does_not_render_false_zero_summaries()
     assert "无权限或不可用" in settings_source
     assert "providerRoutesLoaded" in settings_source
     assert "providerPricesLoaded" in settings_source
+    assert "!providerPriceError && providerPricesLoaded" in settings_source
+    assert "加载完成前不展示录入表单、版本数量或空数据结论" in settings_source
 
 
 def test_provider_health_page_uses_persisted_l3_copy() -> None:

@@ -7360,18 +7360,21 @@ function SettingsPage() {
           <Badge tone={providerPriceError ? "warning" : "primary"}>{providerPriceError ? "无权限或不可用" : providerPricesLoaded ? `${providerPrices.length} 个版本` : "正在读取"}</Badge>
         </div>
         {providerPriceError && <DataStateCard title="价格目录不可用" desc={providerPriceError} tone="danger" />}
-        <div className="provider-credential-form">
-          <label>路由 / 模型<select value={priceDraft.routeKey} onChange={(event) => setPriceDraft((current) => ({ ...current, routeKey: event.target.value }))}>{providerRoutes.map((route) => <option key={`${route.provider}/${route.route_id}`} value={`${route.provider}/${route.route_id}`}>{route.label} · {route.route_id} · {route.model}</option>)}</select></label>
-          <label>币种<input value={priceDraft.currency} maxLength={3} onChange={(event) => setPriceDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} /></label>
-          <label>输入 / 百万 Token<input inputMode="decimal" value={priceDraft.inputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, inputPrice: event.target.value }))} /></label>
-          <label>输出 / 百万 Token<input inputMode="decimal" value={priceDraft.outputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, outputPrice: event.target.value }))} /></label>
-          <label>生效时间<input type="datetime-local" value={priceDraft.effectiveFrom} onChange={(event) => setPriceDraft((current) => ({ ...current, effectiveFrom: event.target.value }))} /></label>
-          <label>来源类型<select value={priceDraft.sourceKind} onChange={(event) => setPriceDraft((current) => ({ ...current, sourceKind: event.target.value as ProviderPriceVersion["source_kind"] }))}><option value="official_price_page">官方价格页</option><option value="provider_invoice">Provider 账单</option><option value="customer_contract">客户合同</option><option value="manual_verified">人工核验</option></select></label>
-          <label>来源引用<input value={priceDraft.sourceReference} maxLength={2048} placeholder="URL / 合同或账单证据编号" onChange={(event) => setPriceDraft((current) => ({ ...current, sourceReference: event.target.value }))} /></label>
-          <label>变更理由<input value={priceDraft.reason} maxLength={500} placeholder="必填：为什么新增此版本" onChange={(event) => setPriceDraft((current) => ({ ...current, reason: event.target.value }))} /></label>
-          <button className="primary-button" type="button" disabled={creatingPrice || providerRoutes.length === 0} onClick={() => void createProviderPrice()}>{creatingPrice ? "追加中…" : "追加价格版本并回算"}</button>
-        </div>
-        {providerPrices.length === 0 ? (
+        {!providerPriceError && !providerPricesLoaded && <DataStateCard title="正在读取价格目录" desc="加载完成前不展示录入表单、版本数量或空数据结论。" tone="primary" />}
+        {!providerPriceError && providerPricesLoaded && (
+          <div className="provider-credential-form">
+            <label>路由 / 模型<select value={priceDraft.routeKey} onChange={(event) => setPriceDraft((current) => ({ ...current, routeKey: event.target.value }))}>{providerRoutes.map((route) => <option key={`${route.provider}/${route.route_id}`} value={`${route.provider}/${route.route_id}`}>{route.label} · {route.route_id} · {route.model}</option>)}</select></label>
+            <label>币种<input value={priceDraft.currency} maxLength={3} onChange={(event) => setPriceDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} /></label>
+            <label>输入 / 百万 Token<input inputMode="decimal" value={priceDraft.inputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, inputPrice: event.target.value }))} /></label>
+            <label>输出 / 百万 Token<input inputMode="decimal" value={priceDraft.outputPrice} placeholder="真实价格" onChange={(event) => setPriceDraft((current) => ({ ...current, outputPrice: event.target.value }))} /></label>
+            <label>生效时间<input type="datetime-local" value={priceDraft.effectiveFrom} onChange={(event) => setPriceDraft((current) => ({ ...current, effectiveFrom: event.target.value }))} /></label>
+            <label>来源类型<select value={priceDraft.sourceKind} onChange={(event) => setPriceDraft((current) => ({ ...current, sourceKind: event.target.value as ProviderPriceVersion["source_kind"] }))}><option value="official_price_page">官方价格页</option><option value="provider_invoice">Provider 账单</option><option value="customer_contract">客户合同</option><option value="manual_verified">人工核验</option></select></label>
+            <label>来源引用<input value={priceDraft.sourceReference} maxLength={2048} placeholder="URL / 合同或账单证据编号" onChange={(event) => setPriceDraft((current) => ({ ...current, sourceReference: event.target.value }))} /></label>
+            <label>变更理由<input value={priceDraft.reason} maxLength={500} placeholder="必填：为什么新增此版本" onChange={(event) => setPriceDraft((current) => ({ ...current, reason: event.target.value }))} /></label>
+            <button className="primary-button" type="button" disabled={creatingPrice || providerRoutes.length === 0} onClick={() => void createProviderPrice()}>{creatingPrice ? "追加中…" : "追加价格版本并回算"}</button>
+          </div>
+        )}
+        {!providerPriceError && providerPricesLoaded && (providerPrices.length === 0 ? (
           <DataStateCard title="暂无价格版本" desc="真实 Token 仍会入账，但成本保持 unknown；补充有来源的价格后才能回算。" tone="warning" />
         ) : (
           <div className="table-shell">
@@ -7380,7 +7383,7 @@ function SettingsPage() {
               <tbody>{providerPrices.map((price) => <tr key={price.price_version_id}><td><strong>{price.provider} · {price.route_id}</strong><small>{price.model} · v{price.catalog_version}</small></td><td><span>{price.currency} / 1M</span><small>in {price.input_price_per_million} · out {price.output_price_per_million}</small></td><td><span>{formatDateTime(price.effective_from)}</span><small>{price.effective_until ? `至 ${formatDateTime(price.effective_until)}` : "持续生效，后续版本优先"}</small></td><td><span>{price.source_kind}</span><small>{price.source_reference}</small></td><td><span>{price.created_by}</span><small>{price.source_sha256.slice(0, 12)}…</small></td></tr>)}</tbody>
             </table>
           </div>
-        )}
+        ))}
       </section>
       <section className="airank-console-card provider-route-control" data-testid="provider-route-control">
         <div className="provider-route-control-head">
