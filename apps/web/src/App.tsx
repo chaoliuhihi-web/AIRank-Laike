@@ -4665,7 +4665,10 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
   const handleCompile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!project.id) return;
-    const seeds = splitLines(seedQuestions);
+    const seeds = seedQuestions
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
     const products = splitQuestionInput(productTerms);
     if (seeds.length === 0 && products.length === 0 && selectedObservationBatchIds.length === 0) {
       setCompileError("至少填写一个种子问题、产品/服务词或选择一个观察批次。系统不会凭空生成问题。");

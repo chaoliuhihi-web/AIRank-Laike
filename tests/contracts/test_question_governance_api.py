@@ -128,6 +128,30 @@ def test_question_map_preview_does_not_persist_candidates() -> None:
     assert questions.json()["data"] == []
 
 
+def test_question_map_rejects_short_seed_as_validation_error_instead_of_500() -> None:
+    client = TestClient(app)
+    tenant_id = f"tenant_qshort_{uuid4().hex[:10]}"
+    project_id = client.post(
+        "/api/v1/projects",
+        headers=_headers(tenant_id, "trc_qshort_project"),
+        json={"website_url": "https://short-question.example", "brand_name_hint": "ShortBrand"},
+    ).json()["data"]["project_id"]
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/question-maps/compile",
+        headers=_headers(tenant_id, "trc_qshort_compile"),
+        json={
+            "seed_questions": ["CPU"],
+            "include_template_candidates": False,
+            "persist": True,
+            "created_by": "reviewer_short",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
 def test_observation_batch_is_immutable_pii_safe_and_compiles_as_attested_query() -> None:
     client = TestClient(app)
     tenant_id = f"tenant_qobs_{uuid4().hex[:10]}"

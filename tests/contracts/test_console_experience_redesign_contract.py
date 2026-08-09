@@ -94,3 +94,10 @@ def test_workspace_header_does_not_mutate_navigation_order() -> None:
 
     assert "[...routesForAudience(audienceForPath(activePath))]" in sidebar
     assert "sidebarRef.current?.scrollTo({ top: 0 })" in sidebar
+
+
+def test_multiline_seed_questions_are_not_split_on_in_sentence_punctuation() -> None:
+    app = read("apps/web/src/App.tsx")
+
+    assert "const seeds = seedQuestions" in app
+    assert ".split(/\\r?\\n/)" in app

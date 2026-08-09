@@ -110,10 +110,12 @@ class QuestionMapCompileRequest(BaseModel):
 
     @field_validator("company_names", "product_terms", "competitor_names", "regions", "seed_questions")
     @classmethod
-    def values_must_be_nonempty(cls, value: list[str]) -> list[str]:
+    def values_must_be_nonempty(cls, value: list[str], info: Any) -> list[str]:
         normalized = [normalize_question(item) for item in value]
         if any(not item for item in normalized):
             raise ValueError("values must be non-empty after normalization")
+        if info.field_name == "seed_questions" and any(len(item) < 4 for item in normalized):
+            raise ValueError("seed questions must contain at least 4 characters")
         return normalized
 
     @field_validator("observation_batch_ids")
