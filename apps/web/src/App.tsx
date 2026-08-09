@@ -642,7 +642,7 @@ function App() {
 function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [yudaoTenantId, setYudaoTenantId] = useState("1");
+  const [tenantId, setTenantId] = useState("1");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -651,10 +651,14 @@ function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
     setError(null);
     setSubmitting(true);
     try {
-      const session = await loginToAirank({ username, password, yudaoTenantId });
+      const session = await loginToAirank({ username, password, yudaoTenantId: tenantId });
       onLogin(session);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Login failed");
+      setError(
+        nextError instanceof Error && nextError.message.includes("租户")
+          ? nextError.message
+          : "登录失败，请核对租户编号、账号和密码后重试。",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -664,29 +668,28 @@ function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
     <main className="airank-login">
       <section className="airank-login-panel">
         <div className="brand-lockup login-brand">
-          <div className="brand-mark">
-            <Sparkles size={25} />
-          </div>
+          <img className="login-brand-logo" src="/favicon.svg" alt="AIRank Logo" />
           <div>
-            <div className="brand-title">AIRank Laike</div>
-            <div className="brand-subtitle">Product console</div>
+            <div className="brand-title">AIRank 来客</div>
+            <div className="brand-subtitle">企业 GEO 增长平台</div>
           </div>
         </div>
         <div className="login-copy">
-          <h1>Sign in</h1>
-          <p>Use yudao credentials to open the AIRank console. Local demos can set AIRANK_AUTH_MODE=dev_only.</p>
+          <span className="login-eyebrow">AIRank 企业控制台</span>
+          <h1>欢迎登录</h1>
+          <p>进入品牌 AI 可见度、可信证据与增长干预工作台。</p>
         </div>
         <form className="login-form" onSubmit={submitLogin}>
           <label>
-            <span>Yudao tenant</span>
-            <input value={yudaoTenantId} onChange={(event) => setYudaoTenantId(event.target.value)} autoComplete="organization" />
+            <span>企业租户编号</span>
+            <input value={tenantId} onChange={(event) => setTenantId(event.target.value)} autoComplete="organization" inputMode="numeric" required />
           </label>
           <label>
-            <span>Username</span>
+            <span>账号</span>
             <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
           </label>
           <label>
-            <span>Password</span>
+            <span>密码</span>
             <input
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -702,10 +705,14 @@ function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
             </div>
           )}
           <button className="airank-console-primary-button login-submit" type="submit" disabled={submitting}>
-            {submitting ? "Signing in" : "Sign in"}
+            {submitting ? "正在登录…" : "登录 AIRank"}
             <ArrowRight size={18} />
           </button>
         </form>
+        <div className="login-assurance">
+          <ShieldCheck size={16} />
+          <span>企业数据隔离 · 全链路证据可追溯</span>
+        </div>
       </section>
     </main>
   );

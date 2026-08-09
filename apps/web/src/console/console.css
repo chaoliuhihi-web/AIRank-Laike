@@ -1288,28 +1288,38 @@ button:disabled {
 }
 
 .airank-login-panel {
-  width: min(440px, 100%);
-  padding: 32px;
+  width: min(480px, 100%);
+  padding: 38px 40px 32px;
   border: 1px solid var(--console-border);
-  border-radius: 8px;
+  border-radius: 18px;
   background: #ffffff;
-  box-shadow: var(--console-shadow-card);
+  box-shadow: 0 28px 80px rgba(41, 37, 116, 0.16);
   box-sizing: border-box;
 }
 
 .login-brand {
   height: auto;
-  margin: 0 0 26px;
+  margin: 0 0 34px;
   color: var(--console-title);
 }
 
-.login-brand .brand-mark {
-  background: var(--console-sidebar-bg);
-  color: #ffffff;
+.login-brand-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  box-shadow: 0 10px 22px rgba(68, 62, 253, 0.2);
 }
 
 .login-brand .brand-subtitle {
   color: var(--console-text);
+}
+
+.login-eyebrow {
+  display: inline-flex;
+  margin-bottom: 8px;
+  color: var(--console-primary);
+  font: 750 12px / 18px var(--console-font-family);
+  letter-spacing: 0.08em;
 }
 
 .login-copy h1 {
@@ -1367,6 +1377,31 @@ button:disabled {
   justify-content: center;
   min-height: 46px;
   width: 100%;
+}
+
+.login-assurance {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 20px;
+  color: var(--console-text-muted);
+  font: 650 12px / 18px var(--console-font-family);
+}
+
+.login-assurance svg {
+  color: var(--console-success);
+}
+
+@media (max-width: 560px) {
+  .airank-login {
+    padding: 18px;
+  }
+
+  .airank-login-panel {
+    padding: 30px 24px 26px;
+    border-radius: 16px;
+  }
 }
 
 .action-toast {
