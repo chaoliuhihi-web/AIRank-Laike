@@ -10,6 +10,17 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine, text
 
+try:
+    from .provider_model_lifecycle import (
+        MySQLProviderModelLifecycle,
+        derive_model_lifecycle,
+    )
+except ImportError:  # pragma: no cover - direct module execution compatibility
+    from provider_model_lifecycle import (  # type: ignore[no-redef]
+        MySQLProviderModelLifecycle,
+        derive_model_lifecycle,
+    )
+
 from airank_provider_gateway import (
     NATIVE_CITATION_PARSER_VERSION,
     ProbeResult,
@@ -280,6 +291,7 @@ class MySQLProviderOperations:
             for manifest in manifests
             for route in resolve_provider_routes(manifest, self.env)
         ]
+        migration_plans = MySQLProviderModelLifecycle(self.engine).latest_plan_map(tenant_id)
         with self.engine.connect() as conn:
             controls = {
                 (str(row["provider_key"]), str(row["route_id"])): row
@@ -384,6 +396,25 @@ class MySQLProviderOperations:
                 aggregate_cost_precision = "exact"
             else:
                 aggregate_cost_precision = "unknown"
+            route_fingerprint = route.settings.configuration_fingerprint(
+                manifest.provider, route.route_id
+            )
+            migration_plan = migration_plans.get(
+                (
+                    manifest.provider,
+                    route.route_id,
+                    route.settings.model,
+                    route_fingerprint,
+                )
+            )
+            lifecycle = derive_model_lifecycle(
+                manifest.lifecycle.get(route.settings.model),
+                migration_status=(
+                    str(migration_plan["status"])
+                    if migration_plan is not None and bool(migration_plan["release_eligible"])
+                    else None
+                ),
+            )
             records.append(
                 {
                     "provider": manifest.provider,
@@ -409,8 +440,43 @@ class MySQLProviderOperations:
                     "updated_by": str(control["updated_by"]) if control else None,
                     "reason": str(control["reason"]) if control else None,
                     "updated_at": control["updated_at"].isoformat() if control else None,
-                    "configuration_fingerprint": route.settings.configuration_fingerprint(
-                        manifest.provider, route.route_id
+                    "configuration_fingerprint": route_fingerprint,
+                    **lifecycle,
+                    "migration_id": (
+                        str(migration_plan["migration_id"])
+                        if migration_plan is not None
+                        else None
+                    ),
+                    "migration_status": (
+                        str(migration_plan["status"])
+                        if migration_plan is not None
+                        else None
+                    ),
+                    "migration_plan_version": (
+                        int(migration_plan["plan_version"])
+                        if migration_plan is not None
+                        else None
+                    ),
+                    "migration_validation_request_audit_id": (
+                        str(migration_plan["validation_request_audit_id"])
+                        if migration_plan is not None
+                        and migration_plan["validation_request_audit_id"]
+                        else None
+                    ),
+                    "migration_event_chain_status": (
+                        str(migration_plan["event_chain_status"])
+                        if migration_plan is not None
+                        else None
+                    ),
+                    "migration_validation_evidence_status": (
+                        str(migration_plan["validation_evidence_status"])
+                        if migration_plan is not None
+                        else None
+                    ),
+                    "migration_release_eligible": (
+                        bool(migration_plan["release_eligible"])
+                        if migration_plan is not None
+                        else False
                     ),
                     "request_count_24h": request_count,
                     "success_count_24h": success_count,

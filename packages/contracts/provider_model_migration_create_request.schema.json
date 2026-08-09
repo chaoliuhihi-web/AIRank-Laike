@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_model_migration_create_request.schema.json",
+  "title": "AIRank Provider Model Migration Create Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "route_id", "from_model", "to_model", "from_configuration_fingerprint", "reason"],
+  "properties": {
+    "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+    "route_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "from_model": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "to_model": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "from_configuration_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reason": { "type": "string", "minLength": 3, "maxLength": 500 }
+  }
+}

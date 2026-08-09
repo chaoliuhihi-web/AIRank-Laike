@@ -136,6 +136,7 @@ import {
   fetchProviderCredentials,
   fetchProviderCredentialOperation,
   fetchProviderCredentialOperations,
+  fetchProviderModelMigrations,
   fetchProviderPrices,
   fetchProviderRoutes,
   fetchProviderUsageLedger,
@@ -175,7 +176,10 @@ import {
   runEvidenceReviewerDirectorySync,
   storeAuthSession,
   updateProviderRoute,
+  createProviderModelMigration,
   createProviderPriceVersion,
+  validateProviderModelMigration,
+  approveProviderModelMigration,
   upsertProviderCredential,
   updateKnowledgeSyncPolicy,
   upsertOpportunityActionMember,
@@ -236,6 +240,7 @@ import {
   type ProviderCredentialOperation,
   type ProviderCredentialOperationList,
   type ProviderCredentialStatus,
+  type ProviderModelMigration,
   type ProviderRouteStatus,
   type ProviderPriceVersion,
   type ProviderUsageLedger,
@@ -6376,6 +6381,10 @@ function SettingsPage() {
   const [routeLoadError, setRouteLoadError] = useState<string | null>(null);
   const [updatingRoute, setUpdatingRoute] = useState<string | null>(null);
   const [routeDrafts, setRouteDrafts] = useState<Record<string, { enabled: boolean; priority: string; reason: string }>>({});
+  const [providerMigrations, setProviderMigrations] = useState<ProviderModelMigration[]>([]);
+  const [migrationLoadError, setMigrationLoadError] = useState<string | null>(null);
+  const [updatingMigration, setUpdatingMigration] = useState<string | null>(null);
+  const [migrationAuditDrafts, setMigrationAuditDrafts] = useState<Record<string, string>>({});
   const [usageLedger, setUsageLedger] = useState<ProviderUsageLedger | null>(null);
   const [usageCostFilter, setUsageCostFilter] = useState<ProviderUsagePrecision | "all">("all");
   const [usageLedgerError, setUsageLedgerError] = useState<string | null>(null);
@@ -6437,6 +6446,17 @@ function SettingsPage() {
     }
   }, []);
 
+  const loadProviderMigrations = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setProviderMigrations(await fetchProviderModelMigrations(signal));
+      setMigrationLoadError(null);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setProviderMigrations([]);
+      setMigrationLoadError(error instanceof Error ? error.message : "Provider 模型迁移接口不可用");
+    }
+  }, []);
+
   const loadProviderCredentialOperations = useCallback(async (signal?: AbortSignal) => {
     try {
       const operations = await fetchProviderCredentialOperations(signal);
@@ -6475,12 +6495,13 @@ function SettingsPage() {
     const controller = new AbortController();
     fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
     void loadProviderRoutes(controller.signal);
+    void loadProviderMigrations(controller.signal);
     void loadProviderCredentials(controller.signal);
     void loadProviderCredentialOperations(controller.signal);
     void loadProviderUsage(undefined, controller.signal);
     void loadProviderPrices(controller.signal);
     return () => controller.abort();
-  }, [loadProviderCredentialOperations, loadProviderCredentials, loadProviderPrices, loadProviderRoutes, loadProviderUsage]);
+  }, [loadProviderCredentialOperations, loadProviderCredentials, loadProviderMigrations, loadProviderPrices, loadProviderRoutes, loadProviderUsage]);
 
   useEffect(() => {
     if (priceDraft.routeKey || providerRoutes.length === 0) return;
@@ -6565,6 +6586,51 @@ function SettingsPage() {
       notify({ title: "路由控制更新失败", desc: error instanceof Error ? error.message : "请刷新状态后重试。", tone: "danger" });
     } finally {
       setUpdatingRoute(null);
+    }
+  };
+
+  const migrationForRoute = (route: ProviderRouteStatus) => providerMigrations.find((item) => (
+    item.provider === route.provider
+    && item.route_id === route.route_id
+    && item.from_model === route.model
+    && item.from_configuration_fingerprint === route.configuration_fingerprint
+  ));
+
+  const runProviderMigrationAction = async (
+    route: ProviderRouteStatus,
+    action: "create" | "validate" | "approve",
+  ) => {
+    const key = `${route.provider}/${route.route_id}`;
+    const reason = (routeDrafts[key]?.reason ?? "").trim();
+    if (reason.length < 3) {
+      notify({ title: "需要迁移理由", desc: "理由至少 3 个字符，并会进入不可变迁移事件。", tone: "warning" });
+      return;
+    }
+    const migration = migrationForRoute(route);
+    if (action !== "create" && !migration) {
+      notify({ title: "迁移计划不存在", desc: "请先刷新或创建迁移计划。", tone: "warning" });
+      return;
+    }
+    const requestAuditId = (migrationAuditDrafts[key] ?? "").trim();
+    if (action === "validate" && !requestAuditId) {
+      notify({ title: "缺少真实 L3 审计", desc: "请粘贴目标模型成功请求的 request_audit_id；失败调用不能审批。", tone: "warning" });
+      return;
+    }
+    setUpdatingMigration(key);
+    try {
+      if (action === "create") await createProviderModelMigration(route, reason);
+      if (action === "validate" && migration) await validateProviderModelMigration(migration, requestAuditId, reason);
+      if (action === "approve" && migration) await approveProviderModelMigration(migration, reason);
+      await Promise.all([loadProviderMigrations(), loadProviderRoutes()]);
+      notify({
+        title: action === "create" ? "迁移计划已建立" : action === "validate" ? "目标模型证据已验证" : "迁移计划已批准",
+        desc: action === "approve" ? "发布门禁将重新按生命周期窗口计算；执行窗口内仍必须切换模型。" : "状态和哈希事件已更新。",
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "模型迁移操作失败", desc: error instanceof Error ? error.message : "请刷新状态后重试。", tone: "danger" });
+    } finally {
+      setUpdatingMigration(null);
     }
   };
 
@@ -6979,16 +7045,18 @@ function SettingsPage() {
           <Badge tone={routeLoadError ? "danger" : "success"}>{routeLoadError ? "blocked" : `${providerRoutes.length} routes`}</Badge>
         </div>
         {routeLoadError && <DataStateCard title="路由控制不可用" desc={routeLoadError} tone="danger" />}
+        {migrationLoadError && <DataStateCard title="模型迁移治理不可用" desc={migrationLoadError} tone="danger" />}
         {!routeLoadError && providerRoutes.length === 0 && <DataStateCard title="没有运行时路由" desc="没有已配置凭证时不生成演示路由，也不允许在页面录入密钥。" tone="warning" />}
         {providerRoutes.length > 0 && (
           <div className="provider-route-table-wrap">
             <table className="question-table provider-route-table">
-              <thead><tr><th>Provider / 路由</th><th>状态</th><th>24h 实际调用</th><th>优先级</th><th>变更理由</th><th>操作</th></tr></thead>
+              <thead><tr><th>Provider / 路由</th><th>状态</th><th>模型生命周期</th><th>24h 实际调用</th><th>优先级</th><th>变更理由</th><th>操作</th></tr></thead>
               <tbody>
                 {providerRoutes.map((route) => {
                   const key = `${route.provider}/${route.route_id}`;
                   const draft = routeDrafts[key] ?? { enabled: route.enabled, priority: route.priority_override == null ? "" : String(route.priority_override), reason: "" };
                   const successRate = route.success_rate_24h == null ? "无样本" : `${(route.success_rate_24h * 100).toFixed(1)}%`;
+                  const migration = migrationForRoute(route);
                   return (
                     <tr key={key}>
                       <td>
@@ -7006,6 +7074,14 @@ function SettingsPage() {
                           />
                           <Badge tone={!route.configured ? "warning" : draft.enabled ? "success" : "danger"}>{!route.configured ? "not configured" : draft.enabled ? "enabled" : "disabled"}</Badge>
                         </label>
+                      </td>
+                      <td>
+                        <Badge tone={route.release_gate_status === "blocked" ? "danger" : route.lifecycle_status === "unmanaged" ? "warning" : "success"}>{route.lifecycle_status}</Badge>
+                        <small>{route.sunset_at ? `${formatDateTime(route.sunset_at)} · 剩余 ${route.days_to_sunset} 天` : "manifest 未登记下架日期"}</small>
+                        <small>{route.replacement_model ? `替代：${route.replacement_model}` : route.lifecycle_reason}</small>
+                        <small>执行门禁 {route.execution_gate_status} · 发布门禁 {route.release_gate_status}</small>
+                        <small>{migration ? `迁移 ${migration.status} · v${migration.plan_version}` : route.replacement_model ? "尚未建立迁移计划" : "无需创建迁移计划"}</small>
+                        {migration && <small>事件链 {migration.event_chain_status} · L3 证据 {migration.validation_evidence_status} · 发布资格 {migration.release_eligible ? "valid" : "blocked"}</small>}
                       </td>
                       <td><strong>{route.request_count_24h} 次 · {successRate}</strong><small>{route.average_duration_ms_24h == null ? "无延迟样本" : `均值 ${route.average_duration_ms_24h} ms`} · {route.total_tokens_24h ?? "无 token"}</small><small>用量 exact/estimated/unknown：{route.exact_usage_count_24h}/{route.estimated_usage_count_24h}/{route.unknown_usage_count_24h}</small><small>成本覆盖 {(route.cost_coverage_rate_24h * 100).toFixed(1)}% · {route.known_cost_amount_24h == null ? "无已知金额" : `${route.known_cost_currency} ${route.known_cost_amount_24h}`} · {route.aggregate_cost_precision_24h}</small></td>
                       <td>
@@ -7035,7 +7111,23 @@ function SettingsPage() {
                         />
                         <small>{route.reason ? `上次：${route.reason}` : "尚无人工控制记录"}</small>
                       </td>
-                      <td><button className="outline-button" type="button" disabled={!route.configured || updatingRoute === key} onClick={() => void applyProviderRoute(route)}>{updatingRoute === key ? "保存中…" : "应用"}</button></td>
+                      <td>
+                        <button className="outline-button" type="button" disabled={!route.configured || updatingRoute === key} onClick={() => void applyProviderRoute(route)}>{updatingRoute === key ? "保存中…" : "应用路由"}</button>
+                        {route.replacement_model && !migration && <button className="outline-button" type="button" disabled={updatingMigration === key} onClick={() => void runProviderMigrationAction(route, "create")}>{updatingMigration === key ? "处理中…" : "建立迁移计划"}</button>}
+                        {migration && ["planned", "validation_failed"].includes(migration.status) && (
+                          <>
+                            <input
+                              className="provider-route-reason"
+                              value={migrationAuditDrafts[key] ?? ""}
+                              placeholder="目标模型成功 request_audit_id"
+                              onChange={(event) => setMigrationAuditDrafts((current) => ({ ...current, [key]: event.target.value }))}
+                              aria-label={`${route.route_id} 目标模型验证审计 ID`}
+                            />
+                            <button className="outline-button" type="button" disabled={updatingMigration === key} onClick={() => void runProviderMigrationAction(route, "validate")}>{updatingMigration === key ? "验证中…" : "绑定真实 L3"}</button>
+                          </>
+                        )}
+                        {migration?.status === "validated" && <button className="outline-button" type="button" disabled={updatingMigration === key} onClick={() => void runProviderMigrationAction(route, "approve")}>{updatingMigration === key ? "审批中…" : "批准迁移"}</button>}
+                      </td>
                     </tr>
                   );
                 })}

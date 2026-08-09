@@ -58,6 +58,13 @@ from apps.api.knowledge_routes import (
     derive_knowledge_governance,
 )
 from apps.api.provider_operations import MySQLProviderOperations
+from apps.api.provider_model_lifecycle import (
+    MySQLProviderModelLifecycle,
+    ProviderModelMigrationApproveRequest,
+    ProviderModelMigrationCreateRequest,
+    ProviderModelMigrationError,
+    ProviderModelMigrationValidateRequest,
+)
 from apps.api.provider_usage import MySQLProviderUsageLedger, persist_provider_usage_event
 from apps.api.provider_credentials import (
     CredentialRevokeRequest,
@@ -167,7 +174,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0043"
+EXPECTED_ALEMBIC_HEAD = "20260809_0044"
 
 
 def require_real_flag(flag: str) -> None:
@@ -233,8 +240,10 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 107
+        assert table_count == 109
         for table_name in (
+            "airank_provider_model_migrations",
+            "airank_provider_model_migration_events",
             "airank_provider_price_versions",
             "airank_provider_usage_costs",
             "airank_provider_credentials",
@@ -5837,6 +5846,180 @@ def test_real_mysql_opportunity_directory_scheduler_worker_chain() -> None:
             "opportunity_action.directory_sync_dispatched",
             "opportunity_action.directory_sync_succeeded",
         } <= event_types
+    finally:
+        cleanup_tenant(engine, tenant_id)
+
+
+def test_real_mysql_provider_model_migration_requires_target_l3_evidence_and_approval() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_model_migration_{uuid4().hex[:8]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    route_env = {
+        "DEEPSEEK_API_KEY": "integration-not-sent",
+        "DEEPSEEK_API_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "DEEPSEEK_MODEL": "deepseek-v3.2",
+        "DEEPSEEK_PROVIDER_DISABLED": "false",
+    }
+    route_operations = MySQLProviderOperations(database_url(), env=route_env)
+    route_operations.sync_manifests([PROVIDER_MANIFESTS["deepseek"]])
+    repository = MySQLProviderModelLifecycle(database_url())
+    audit_id = f"pra_migration_{uuid4().hex}"
+    try:
+        with engine.connect() as conn:
+            route = conn.execute(
+                text(
+                    "SELECT route_id,model_name,configuration_fingerprint "
+                    "FROM airank_provider_routes WHERE provider_key='deepseek' "
+                    "AND route_id='deepseek:default' AND is_current=1"
+                )
+            ).mappings().one()
+        payload = ProviderModelMigrationCreateRequest(
+            provider="deepseek",
+            route_id=str(route["route_id"]),
+            from_model=str(route["model_name"]),
+            to_model="deepseek-v4-pro",
+            from_configuration_fingerprint=str(route["configuration_fingerprint"]),
+            reason="prepare verified migration before provider sunset",
+        )
+        def create_same_plan(index: int) -> dict[str, object]:
+            return repository.create(
+                tenant_id,
+                payload,
+                actor="provider_operator",
+                trace_id=f"trc_model_migration_plan_{index}",
+                idempotency_key="deepseek-v32-to-v4-plan",
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            concurrent_results = list(pool.map(create_same_plan, range(4)))
+        assert len({str(item["migration_id"]) for item in concurrent_results}) == 1
+        planned = concurrent_results[0]
+        replay = repository.create(
+            tenant_id,
+            payload,
+            actor="provider_operator",
+            trace_id="trc_model_migration_replay",
+            idempotency_key="deepseek-v32-to-v4-plan",
+        )
+        assert replay["migration_id"] == planned["migration_id"]
+        assert len(planned["events"]) == 1
+        with pytest.raises(ProviderModelMigrationError) as invalid_evidence:
+            repository.bind_validation(
+                tenant_id,
+                str(planned["migration_id"]),
+                ProviderModelMigrationValidateRequest(
+                    request_audit_id="missing_target_l3_audit",
+                    expected_version=1,
+                    reason="reject missing target L3 evidence",
+                ),
+                actor="provider_operator",
+                trace_id="trc_model_migration_invalid",
+            )
+        assert invalid_evidence.value.code == "PROVIDER_MODEL_MIGRATION_VALIDATION_FAILED"
+        failed = repository.get(tenant_id, str(planned["migration_id"]))
+        assert failed is not None
+        assert failed["status"] == "validation_failed"
+        assert failed["plan_version"] == 2
+
+        requested_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO airank_provider_request_audits "
+                    "(id,tenant_id,project_id,provider_key,route_id,model_name,endpoint_host,"
+                    "configuration_fingerprint,provider_request_id,prompt_sha256,outcome,"
+                    "attempt_count,duration_ms,requested_at,completed_at,created_at) VALUES "
+                    "(:id,:tenant_id,'project_model_migration','deepseek','deepseek:default',"
+                    "'deepseek-v4-pro','dashscope.aliyuncs.com',:fingerprint,:provider_request_id,"
+                    ":prompt_sha256,'success',1,12,:requested_at,:completed_at,:created_at)"
+                ),
+                {
+                    "id": audit_id,
+                    "tenant_id": tenant_id,
+                    "fingerprint": "c" * 64,
+                    "provider_request_id": f"provider_request_{uuid4().hex}",
+                    "prompt_sha256": "d" * 64,
+                    "requested_at": requested_at,
+                    "completed_at": requested_at + timedelta(milliseconds=12),
+                    "created_at": requested_at,
+                },
+            )
+        validated = repository.bind_validation(
+            tenant_id,
+            str(planned["migration_id"]),
+            ProviderModelMigrationValidateRequest(
+                request_audit_id=audit_id,
+                expected_version=2,
+                reason="bind successful target model L3 request audit",
+            ),
+            actor="provider_operator",
+            trace_id="trc_model_migration_valid",
+        )
+        assert validated["status"] == "validated"
+        assert validated["validation_provider_request_id_present"] is True
+        approved = repository.approve(
+            tenant_id,
+            str(planned["migration_id"]),
+            ProviderModelMigrationApproveRequest(
+                expected_version=3,
+                reason="approve migration backed by real L3 audit",
+            ),
+            actor="release_approver",
+            trace_id="trc_model_migration_approve",
+        )
+        assert approved["status"] == "approved"
+        assert approved["plan_version"] == 4
+        assert approved["event_chain_status"] == "valid"
+        assert approved["validation_evidence_status"] == "valid"
+        assert approved["release_eligible"] is True
+        events = approved["events"]
+        assert [event["event_sequence"] for event in events] == [1, 2, 3, 4]
+        assert [event["event_type"] for event in events] == [
+            "migration_planned",
+            "validation_rejected",
+            "target_l3_validated",
+            "migration_approved",
+        ]
+        assert all(
+            events[index]["previous_event_sha256"] == events[index - 1]["event_sha256"]
+            for index in range(1, len(events))
+        )
+        assert repository.list(f"other_{tenant_id}") == []
+        deepseek_gate = next(
+            gate
+            for gate in repository.list_release_gates(
+                tenant_id,
+                now=datetime(2026, 8, 9, tzinfo=timezone.utc),
+                execution_window_days=30,
+                release_window_days=90,
+            )
+            if gate["provider"] == "deepseek"
+        )
+        assert deepseek_gate["migration_status"] == "approved"
+        assert deepseek_gate["release_gate_status"] == "pass"
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE airank_provider_request_audits SET outcome='failed' "
+                    "WHERE tenant_id=:tenant_id AND id=:audit_id"
+                ),
+                {"tenant_id": tenant_id, "audit_id": audit_id},
+            )
+        invalidated = repository.get(tenant_id, str(planned["migration_id"]))
+        assert invalidated is not None
+        assert invalidated["validation_evidence_status"] == "invalid"
+        assert invalidated["release_eligible"] is False
+        invalidated_gate = next(
+            gate
+            for gate in repository.list_release_gates(
+                tenant_id,
+                now=datetime(2026, 8, 9, tzinfo=timezone.utc),
+                execution_window_days=30,
+                release_window_days=90,
+            )
+            if gate["provider"] == "deepseek"
+        )
+        assert invalidated_gate["release_gate_status"] == "blocked"
     finally:
         cleanup_tenant(engine, tenant_id)
 

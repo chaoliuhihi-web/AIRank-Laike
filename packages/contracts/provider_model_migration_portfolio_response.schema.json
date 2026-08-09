@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_model_migration_portfolio_response.schema.json",
+  "title": "AIRank Provider Model Migration Portfolio Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "migrations"],
+      "properties": {
+        "contract": { "const": "airank.provider-model-migration.v1" },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "$ref": "provider_model_migration_response.schema.json#/$defs/migration" }
+            ]
+          }
+        }
+      }
+    },
+    "meta": { "$ref": "provider_model_migration_response.schema.json#/$defs/meta" }
+  }
+}

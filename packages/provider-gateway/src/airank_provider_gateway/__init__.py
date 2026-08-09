@@ -23,6 +23,7 @@ from .credentials import CredentialEnvelope, CredentialKeyring, CredentialVaultE
 from .models import (
     HealthState,
     ImplementationStatus,
+    ModelLifecycle,
     ProbeLevel,
     ProbeResult,
     ProviderCapabilities,
@@ -42,6 +43,7 @@ __all__ = [
     "HealthState",
     "HttpResponse",
     "ImplementationStatus",
+    "ModelLifecycle",
     "InMemoryQuotaLedger",
     "NoopProviderCapacityLedger",
     "NoopProviderRoutePolicy",

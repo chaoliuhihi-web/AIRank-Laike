@@ -276,6 +276,15 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPERATION_NOT_FOUND` | 404 | 当前租户不存在该操作回执，或操作不属于 Provider 凭证域 |
 | `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
 | `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
+| `PROVIDER_MODEL_MIGRATION_NOT_FOUND` | 404 | Provider 模型迁移计划不存在或不属于当前租户 |
+| `PROVIDER_MODEL_MIGRATION_IDEMPOTENCY_CONFLICT` | 409 | 幂等键已绑定不同的模型迁移请求 |
+| `PROVIDER_MODEL_MIGRATION_BASIS_CONFLICT` | 409 | 路由模型或配置指纹已变化，需刷新后重新建计划 |
+| `PROVIDER_MODEL_LIFECYCLE_UNMANAGED` | 422 | 当前模型没有已登记的下架生命周期，禁止伪造迁移依据 |
+| `PROVIDER_MODEL_MIGRATION_TARGET_INVALID` | 422 | 目标模型与 Provider manifest 公告的替代模型不一致 |
+| `PROVIDER_MODEL_MIGRATION_VERSION_CONFLICT` | 409 | 模型迁移计划版本已变化，需要刷新后重试 |
+| `PROVIDER_MODEL_MIGRATION_STATE_INVALID` | 409 | 当前迁移状态不允许执行该操作 |
+| `PROVIDER_MODEL_MIGRATION_VALIDATION_FAILED` | 422 | 没有绑定计划创建后的目标模型真实成功 L3 请求审计 |
+| `PROVIDER_MODEL_MIGRATION_APPROVAL_BLOCKED` | 409 | 迁移审批缺少仍然有效的目标模型 L3 验证证据 |
 | `PROVIDER_PRICE_INVALID` | 422 | Provider 价格版本缺少有效费率、来源、币种或生效区间，或证据字段疑似包含凭证 |
 | `PROVIDER_PRICE_VERSION_CONFLICT` | 409 | Provider 价格目录版本已变化，需要刷新后追加新版本 |
 | `PROVIDER_USAGE_FILTER_INVALID` | 422 | Provider 用量账本筛选时间范围无效 |

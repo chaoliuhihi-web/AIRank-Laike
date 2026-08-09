@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_model_migration_validate_request.schema.json",
+  "title": "AIRank Provider Model Migration Validate Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_audit_id", "expected_version", "reason"],
+  "properties": {
+    "request_audit_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "expected_version": { "type": "integer", "minimum": 1 },
+    "reason": { "type": "string", "minLength": 3, "maxLength": 500 }
+  }
+}

@@ -11,6 +11,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import release_readiness  # noqa: E402
 from release_readiness import capability_blockers  # noqa: E402
+from apps.api.provider_model_lifecycle import derive_model_lifecycle  # noqa: E402
+from apps.api.provider_model_lifecycle import MySQLProviderModelLifecycle  # noqa: E402
+from airank_provider_gateway import ModelLifecycle  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 
 
 def test_api_requirements_include_browser_provider_runtime() -> None:
@@ -25,6 +29,89 @@ def test_release_readiness_runs_skill_trust_as_an_explicit_gate() -> None:
     source = (ROOT / "scripts" / "release_readiness.py").read_text(encoding="utf-8")
 
     assert 'command_check("skill trust gate", "python3 scripts/audit_skill_trust.py"' in source
+
+
+def test_provider_model_release_window_blocks_without_approved_real_migration() -> None:
+    lifecycle = ModelLifecycle(
+        sunset_at=datetime(2026, 10, 10, tzinfo=timezone.utc),
+        replacement="deepseek-v4-pro",
+        source="provider_announcement",
+    )
+    now = datetime(2026, 8, 9, tzinfo=timezone.utc)
+
+    blocked = derive_model_lifecycle(
+        lifecycle,
+        now=now,
+        execution_window_days=30,
+        release_window_days=90,
+    )
+    approved = derive_model_lifecycle(
+        lifecycle,
+        migration_status="approved",
+        now=now,
+        execution_window_days=30,
+        release_window_days=90,
+    )
+
+    assert blocked["lifecycle_status"] == "migration_planning"
+    assert blocked["execution_gate_status"] == "pass"
+    assert blocked["release_gate_status"] == "blocked"
+    assert approved["release_gate_status"] == "pass"
+
+
+def test_provider_model_execution_window_blocks_even_with_approved_plan() -> None:
+    lifecycle = ModelLifecycle(
+        sunset_at=datetime(2026, 10, 10, tzinfo=timezone.utc),
+        replacement="deepseek-v4-pro",
+        source="provider_announcement",
+    )
+    result = derive_model_lifecycle(
+        lifecycle,
+        migration_status="approved",
+        now=datetime(2026, 9, 20, tzinfo=timezone.utc),
+        execution_window_days=30,
+        release_window_days=90,
+    )
+
+    assert result["lifecycle_status"] == "required"
+    assert result["execution_gate_status"] == "blocked"
+    assert result["release_gate_status"] == "blocked"
+
+
+def test_release_gate_reports_persisted_provider_model_migration_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        MySQLProviderModelLifecycle,
+        "list_release_gates",
+        lambda self, tenant_id: [
+            {
+                "provider": "deepseek",
+                "route_id": "deepseek:default",
+                "model": "deepseek-v3.2",
+                "configuration_fingerprint": "a" * 64,
+                "lifecycle_status": "migration_planning",
+                "sunset_at": "2026-10-10T00:00:00+00:00",
+                "replacement_model": "deepseek-v4-pro",
+                "lifecycle_source": "provider_announcement",
+                "days_to_sunset": 62,
+                "execution_min_days_to_sunset": 30,
+                "release_min_days_to_sunset": 90,
+                "execution_gate_status": "pass",
+                "release_gate_status": "blocked",
+                "lifecycle_reason": "release requires a validated and approved migration",
+                "migration_id": None,
+                "migration_status": None,
+                "migration_release_eligible": False,
+            }
+        ],
+    )
+
+    check = release_readiness.provider_model_lifecycle_check("mysql+pymysql://unused")
+
+    assert check.status == "BLOCKED"
+    assert "deepseek-v3.2" in check.detail
+    assert "migration=missing" in check.detail
 
 
 def test_release_readiness_blocks_required_dev_only_capabilities() -> None:

@@ -76,6 +76,8 @@ def test_provider_route_admin_lists_only_public_operational_state(monkeypatch) -
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["routes"][0]["request_count_24h"] == 3
+    assert body["data"]["routes"][0]["lifecycle_status"] == "unmanaged"
+    assert body["data"]["routes"][0]["release_gate_status"] == "pass"
     assert "api_key" not in response.text
     assert "secret" not in response.text
     validate_response("provider_route_status_response.schema.json", body)

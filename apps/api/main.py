@@ -268,6 +268,15 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "PROVIDER_NOT_SUPPORTED": (404, "Provider is not supported"),
     "PROVIDER_ROUTE_CONTROL_INVALID": (422, "Provider route control is invalid"),
     "PROVIDER_ROUTE_CONTROL_CONFLICT": (409, "Provider route control version conflict"),
+    "PROVIDER_MODEL_MIGRATION_NOT_FOUND": (404, "Provider model migration was not found"),
+    "PROVIDER_MODEL_MIGRATION_IDEMPOTENCY_CONFLICT": (409, "Provider model migration idempotency conflict"),
+    "PROVIDER_MODEL_MIGRATION_BASIS_CONFLICT": (409, "Provider model migration basis changed"),
+    "PROVIDER_MODEL_LIFECYCLE_UNMANAGED": (422, "Provider model lifecycle is unmanaged"),
+    "PROVIDER_MODEL_MIGRATION_TARGET_INVALID": (422, "Provider model migration target is invalid"),
+    "PROVIDER_MODEL_MIGRATION_VERSION_CONFLICT": (409, "Provider model migration version conflict"),
+    "PROVIDER_MODEL_MIGRATION_STATE_INVALID": (409, "Provider model migration state is invalid"),
+    "PROVIDER_MODEL_MIGRATION_VALIDATION_FAILED": (422, "Provider model migration validation failed"),
+    "PROVIDER_MODEL_MIGRATION_APPROVAL_BLOCKED": (409, "Provider model migration approval is blocked"),
     "PROVIDER_PRICE_INVALID": (422, "Provider price version is invalid"),
     "PROVIDER_PRICE_VERSION_CONFLICT": (409, "Provider price version is stale"),
     "PROVIDER_USAGE_FILTER_INVALID": (422, "Provider usage filter is invalid"),
@@ -1038,6 +1047,29 @@ class ProviderRouteStatus(BaseModel):
     reason: Optional[str] = None
     updated_at: Optional[datetime] = None
     configuration_fingerprint: str
+    lifecycle_status: Literal[
+        "current", "migration_planning", "required", "expired", "unmanaged"
+    ] = "unmanaged"
+    sunset_at: Optional[datetime] = None
+    replacement_model: Optional[str] = None
+    lifecycle_source: Optional[str] = None
+    days_to_sunset: Optional[int] = None
+    execution_min_days_to_sunset: int = 30
+    release_min_days_to_sunset: int = 90
+    execution_gate_status: Literal["pass", "blocked"] = "pass"
+    release_gate_status: Literal["pass", "blocked"] = "pass"
+    lifecycle_reason: str = "manifest has no announced sunset for the configured model"
+    migration_id: Optional[str] = None
+    migration_status: Optional[
+        Literal["planned", "validation_failed", "validated", "approved", "activated", "canceled"]
+    ] = None
+    migration_plan_version: Optional[int] = None
+    migration_validation_request_audit_id: Optional[str] = None
+    migration_event_chain_status: Optional[Literal["valid", "invalid"]] = None
+    migration_validation_evidence_status: Optional[
+        Literal["valid", "missing", "invalid"]
+    ] = None
+    migration_release_eligible: bool = False
     request_count_24h: int
     success_count_24h: int
     failure_count_24h: int
@@ -6589,3 +6621,10 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from provider_credentials import router as provider_credential_router  # type: ignore[no-redef]
 
 app.include_router(provider_credential_router)
+
+try:
+    from .provider_model_lifecycle import router as provider_model_lifecycle_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from provider_model_lifecycle import router as provider_model_lifecycle_router  # type: ignore[no-redef]
+
+app.include_router(provider_model_lifecycle_router)

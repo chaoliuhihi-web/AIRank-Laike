@@ -1772,6 +1772,23 @@ export type ProviderRouteStatus = {
   reason?: string | null;
   updated_at?: string | null;
   configuration_fingerprint: string;
+  lifecycle_status: "current" | "migration_planning" | "required" | "expired" | "unmanaged";
+  sunset_at?: string | null;
+  replacement_model?: string | null;
+  lifecycle_source?: string | null;
+  days_to_sunset?: number | null;
+  execution_min_days_to_sunset: number;
+  release_min_days_to_sunset: number;
+  execution_gate_status: "pass" | "blocked";
+  release_gate_status: "pass" | "blocked";
+  lifecycle_reason: string;
+  migration_id?: string | null;
+  migration_status?: ProviderModelMigrationStatus | null;
+  migration_plan_version?: number | null;
+  migration_validation_request_audit_id?: string | null;
+  migration_event_chain_status?: "valid" | "invalid" | null;
+  migration_validation_evidence_status?: "valid" | "missing" | "invalid" | null;
+  migration_release_eligible: boolean;
   request_count_24h: number;
   success_count_24h: number;
   failure_count_24h: number;
@@ -1788,6 +1805,57 @@ export type ProviderRouteStatus = {
   known_cost_amount_24h?: string | null;
   known_cost_currency?: string | null;
   aggregate_cost_precision_24h: "exact" | "estimated" | "unknown";
+};
+
+export type ProviderModelMigrationStatus =
+  | "planned"
+  | "validation_failed"
+  | "validated"
+  | "approved"
+  | "activated"
+  | "canceled";
+
+export type ProviderModelMigration = {
+  contract_version: "airank.provider-model-migration.v1";
+  migration_id: string;
+  tenant_id: string;
+  provider: "doubao" | "qianwen" | "kimi" | "deepseek";
+  route_id: string;
+  from_model: string;
+  to_model: string;
+  from_configuration_fingerprint: string;
+  status: ProviderModelMigrationStatus;
+  plan_version: number;
+  validation_request_audit_id?: string | null;
+  validation_provider_request_id_present: boolean;
+  validation_configuration_fingerprint?: string | null;
+  validation_requested_at?: string | null;
+  reason: string;
+  created_by: string;
+  validated_by?: string | null;
+  approved_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  validated_at?: string | null;
+  approved_at?: string | null;
+  latest_event_sha256: string;
+  event_chain_status: "valid" | "invalid";
+  validation_evidence_status: "valid" | "missing" | "invalid";
+  release_eligible: boolean;
+  events: Array<{
+    event_sequence: number;
+    event_type: string;
+    from_status?: string | null;
+    to_status: string;
+    plan_version: number;
+    request_audit_id?: string | null;
+    previous_event_sha256?: string | null;
+    event_sha256: string;
+    actor: string;
+    reason: string;
+    trace_id: string;
+    created_at: string;
+  }>;
 };
 
 export type ProviderUsagePrecision = "exact" | "estimated" | "unknown";
@@ -4083,6 +4151,82 @@ export async function fetchProviderRoutes(signal?: AbortSignal): Promise<Provide
     signal,
   );
   return data.routes;
+}
+
+export async function fetchProviderModelMigrations(signal?: AbortSignal): Promise<ProviderModelMigration[]> {
+  const data = await fetchData<{
+    contract: "airank.provider-model-migration.v1";
+    migrations: ProviderModelMigration[];
+  }>("/api/v1/admin/provider-model-migrations", "trc_web_provider_model_migrations", signal);
+  return data.migrations;
+}
+
+export async function createProviderModelMigration(
+  route: ProviderRouteStatus,
+  reason: string,
+): Promise<ProviderModelMigration> {
+  if (!route.replacement_model) throw new Error("当前模型没有已登记的替代模型");
+  const response = await fetch("/api/v1/admin/provider-model-migrations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": `provider-model-migration:${route.provider}:${route.route_id}:${route.configuration_fingerprint}`,
+      ...buildApiHeaders("trc_web_provider_model_migration_create"),
+    },
+    body: JSON.stringify({
+      provider: route.provider,
+      route_id: route.route_id,
+      from_model: route.model,
+      to_model: route.replacement_model,
+      from_configuration_fingerprint: route.configuration_fingerprint,
+      reason,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Provider model migration create failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: ProviderModelMigration }).data;
+}
+
+export async function validateProviderModelMigration(
+  migration: ProviderModelMigration,
+  requestAuditId: string,
+  reason: string,
+): Promise<ProviderModelMigration> {
+  const response = await fetch(
+    `/api/v1/admin/provider-model-migrations/${encodeURIComponent(migration.migration_id)}/validate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_provider_model_migration_validate") },
+      body: JSON.stringify({
+        request_audit_id: requestAuditId,
+        expected_version: migration.plan_version,
+        reason,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Provider model validation failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: ProviderModelMigration }).data;
+}
+
+export async function approveProviderModelMigration(
+  migration: ProviderModelMigration,
+  reason: string,
+): Promise<ProviderModelMigration> {
+  const response = await fetch(
+    `/api/v1/admin/provider-model-migrations/${encodeURIComponent(migration.migration_id)}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_provider_model_migration_approve") },
+      body: JSON.stringify({ expected_version: migration.plan_version, reason }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Provider model approval failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: ProviderModelMigration }).data;
 }
 
 export function fetchProviderUsageLedger(

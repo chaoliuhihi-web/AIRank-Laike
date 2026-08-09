@@ -97,6 +97,12 @@ M1 已冻结的 API schema：
 - `evidence_review_escalation_response.schema.json`
 - `evidence_review_routing_response.schema.json`
 - `skill_trust_report_response.schema.json`
+- `provider_route_status_response.schema.json`
+- `provider_model_migration_create_request.schema.json`
+- `provider_model_migration_validate_request.schema.json`
+- `provider_model_migration_approve_request.schema.json`
+- `provider_model_migration_response.schema.json`
+- `provider_model_migration_portfolio_response.schema.json`
 
 双人证据复核契约同时服务引用支持与事实准确性：第一审核、第二审核和第三人裁决账号必须互不相同；待终结任务对其他审核人隐藏既有标签与依据。`production` 任务只有双人一致或完成裁决后才能进入商业指标，`benchmark` 任务只计算一致率与 Cohen's kappa。actor-specific inbox 只返回当前账号可执行任务，采用不透明 seek cursor，每页最多 50 条并优先争议裁决；它不承担全项目质量统计。assignment 契约保存持久领取、租约、SLA、心跳、释放和过期状态，但不向其他审核人暴露领取者身份。review routing 契约按项目保存审核团队、角色成员、并发上限与 secondary/adjudicator 路由：没有任何路由时显式兼容 `unrestricted_legacy`，一旦配置则只有有效团队成员可以领取；手工成员不得冒充 Yudao 已同步。团队可按角色绑定 Yudao 部门；同步只落库审核身份所需字段、响应 hash 和变更计数，服务凭证不进入契约、数据库或前端。SLA escalation 先证明逾期事件及路由快照已进入持久 Outbox；只有 HTTPS Webhook Consumer 得到 2xx 并保存不可变渠道回执后，`external_delivery_verified` 才能为 `true`。pending、失败、无渠道配置或仅有 Outbox 状态不得写成已通知。当前商业门禁仍要求真实 Yudao/客户 Webhook E2E，以及至少 20 个已完成双人样本且 kappa 不低于 0.80。
 

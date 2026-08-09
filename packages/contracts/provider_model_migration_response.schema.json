@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/provider_model_migration_response.schema.json",
+  "title": "AIRank Provider Model Migration Response",
+  "$ref": "#/$defs/response",
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_sequence", "event_type", "to_status", "plan_version", "event_sha256", "actor", "reason", "trace_id", "created_at"],
+      "properties": {
+        "event_sequence": { "type": "integer", "minimum": 1 },
+        "event_type": { "type": "string", "minLength": 1 },
+        "from_status": { "type": "string" },
+        "to_status": { "type": "string", "enum": ["planned", "validation_failed", "validated", "approved", "activated", "canceled"] },
+        "plan_version": { "type": "integer", "minimum": 1 },
+        "request_audit_id": { "type": "string", "minLength": 1 },
+        "previous_event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "actor": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 3 },
+        "trace_id": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "migration_id", "tenant_id", "provider", "route_id", "from_model", "to_model", "from_configuration_fingerprint", "status", "plan_version", "validation_provider_request_id_present", "reason", "created_by", "created_at", "updated_at", "latest_event_sha256", "event_chain_status", "validation_evidence_status", "release_eligible", "events"],
+      "properties": {
+        "contract_version": { "const": "airank.provider-model-migration.v1" },
+        "migration_id": { "type": "string", "pattern": "^pmm_[0-9a-f]{32}$" },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
+        "route_id": { "type": "string", "minLength": 1 },
+        "from_model": { "type": "string", "minLength": 1 },
+        "to_model": { "type": "string", "minLength": 1 },
+        "from_configuration_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "status": { "type": "string", "enum": ["planned", "validation_failed", "validated", "approved", "activated", "canceled"] },
+        "plan_version": { "type": "integer", "minimum": 1 },
+        "validation_request_audit_id": { "type": "string", "minLength": 1 },
+        "validation_provider_request_id_present": { "type": "boolean" },
+        "validation_configuration_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "validation_requested_at": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string", "minLength": 3 },
+        "created_by": { "type": "string", "minLength": 1 },
+        "validated_by": { "type": "string", "minLength": 1 },
+        "approved_by": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "validated_at": { "type": "string", "format": "date-time" },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "latest_event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "event_chain_status": { "type": "string", "enum": ["valid", "invalid"] },
+        "validation_evidence_status": { "type": "string", "enum": ["valid", "missing", "invalid"] },
+        "release_eligible": { "type": "boolean" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "meta"],
+      "properties": {
+        "data": { "$ref": "#/$defs/migration" },
+        "meta": { "$ref": "#/$defs/meta" }
+      }
+    }
+  }
+}

@@ -419,6 +419,46 @@ def browser_provider_readiness_check() -> Check:
     )
 
 
+def provider_model_lifecycle_check(database_url: str | None) -> Check:
+    command = "MySQLProviderModelLifecycle.list_release_gates(tenant_id)"
+    if not database_url:
+        return Check(
+            "provider model lifecycle",
+            "BLOCKED",
+            command,
+            "No release database URL is configured; persisted Provider model lifecycle cannot be verified.",
+        )
+    try:
+        from apps.api.provider_model_lifecycle import MySQLProviderModelLifecycle  # noqa: PLC0415
+
+        tenant_id = os.getenv("AIRANK_RELEASE_TENANT_ID", "tenant_demo").strip() or "tenant_demo"
+        records = MySQLProviderModelLifecycle(database_url).list_release_gates(tenant_id)
+    except Exception as exc:  # pragma: no cover - defensive release-gate output
+        return Check("provider model lifecycle", "BLOCKED", command, repr(exc))
+    blockers = [
+        (
+            f"{record['provider']}/{record['route_id']} model={record['model']} "
+            f"status={record['lifecycle_status']} days_to_sunset={record['days_to_sunset']} "
+            f"migration={record.get('migration_status') or 'missing'}: {record['lifecycle_reason']}"
+        )
+        for record in records
+        if record["release_gate_status"] == "blocked"
+    ]
+    detail = json.dumps(
+        {"tenant_id": tenant_id, "routes": records}, ensure_ascii=False, indent=2
+    )
+    if not records:
+        blockers.append("no persisted enabled Provider routes were found")
+    if blockers:
+        detail += "\n\nBlockers:\n" + "\n".join(f"- {item}" for item in blockers)
+    return Check(
+        "provider model lifecycle",
+        "BLOCKED" if blockers else "PASS",
+        command,
+        detail,
+    )
+
+
 def release_database_url(explicit_database_url: str | None = None) -> str | None:
     return (
         explicit_database_url
@@ -494,6 +534,7 @@ def release_checks(
             env=real_mysql_env,
         ),
         command_check("alembic real mysql", "cd apps/api && python3 -m alembic upgrade head", env=real_mysql_env),
+        provider_model_lifecycle_check(db_url),
         capability_check(require_optional_capabilities=require_optional_capabilities),
     ]
     if require_browser_providers:
