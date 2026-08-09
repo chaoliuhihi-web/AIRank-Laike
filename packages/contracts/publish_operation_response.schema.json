@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publish_operation_response.schema.json",
+  "title": "AIRank Publish Operation Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": { "$ref": "#/$defs/operation" },
+    "meta": { "$ref": "#/$defs/meta" }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_sequence", "event_type", "from_state", "to_state", "request_sha256", "previous_event_sha256", "event_sha256", "actor", "trace_id", "created_at"],
+      "properties": {
+        "event_sequence": { "type": "integer", "minimum": 1 },
+        "event_type": { "type": "string", "minLength": 1 },
+        "from_state": { "type": ["string", "null"] },
+        "to_state": { "type": "string", "enum": ["claimed", "external_started", "succeeded", "failed"] },
+        "request_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "previous_event_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "event_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "actor": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "trace_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "operation_id", "operation_type", "package_id", "state", "external_effect_started", "request_sha256", "error_code", "created_by", "trace_id", "created_at", "updated_at", "completed_at", "reconciliation_required", "replay_status", "response_published_url", "response_status", "response_sha256", "events"],
+      "properties": {
+        "contract_version": { "const": "airank.operation-guard.v1" },
+        "operation_id": { "type": "string", "pattern": "^operation_guard_[0-9a-f]{16}$" },
+        "operation_type": { "const": "publisher.publish" },
+        "package_id": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "enum": ["claimed", "external_started", "succeeded", "failed"] },
+        "external_effect_started": { "type": "boolean" },
+        "request_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "error_code": { "type": ["string", "null"], "maxLength": 96 },
+        "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "trace_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "reconciliation_required": { "type": "boolean" },
+        "replay_status": { "type": "string", "enum": ["available", "in_progress", "forbidden_unknown", "forbidden_failed"] },
+        "response_published_url": { "type": ["string", "null"], "format": "uri" },
+        "response_status": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+        "response_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

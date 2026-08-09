@@ -199,6 +199,16 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "CONTENT_REVIEW_REQUIRED": (409, "Content review is required"),
     "CONTENT_RISK_OVERRIDE_REQUIRED": (409, "High-risk content requires an audited override"),
     "PUBLISH_PACKAGE_NOT_FOUND": (404, "Publish package not found"),
+    "PUBLISH_ALREADY_IN_PROGRESS": (409, "Publish package already has an active attempt"),
+    "PUBLISH_OPERATION_NOT_FOUND": (404, "Publish operation audit not found"),
+    "PUBLISH_OPERATION_SCOPE_MISMATCH": (409, "Publish operation does not match the package"),
+    "PUBLISH_OPERATION_STATE_CONFLICT": (409, "Publish operation state conflicts with the package"),
+    "PUBLISH_OPERATION_RECEIPT_INVALID": (409, "Publish operation receipt failed integrity validation"),
+    "PUBLISH_OPERATION_RECEIPT_ORPHANED": (409, "Publish operation receipt has no attempt ledger"),
+    "PUBLISH_ATTEMPT_ABANDONED_BEFORE_EXTERNAL": (409, "Publish attempt stopped before an external effect"),
+    "PUBLISH_OPERATION_AUDIT_INCOMPLETE": (503, "Publish operation audit could not be finalized"),
+    "PUBLISH_RECEIPT_PERSIST_FAILED": (503, "Publish receipt could not be persisted"),
+    "PUBLISH_RECONCILIATION_PERSIST_FAILED": (503, "Reconciled publish receipt could not be persisted"),
     "PUBLICATION_SCREENSHOT_EVIDENCE_INVALID": (409, "Publication screenshot evidence does not match the immutable object"),
     "RETEST_WINDOW_NOT_FOUND": (404, "Retest observation window not found"),
     "RETEST_BASELINE_REQUIRED": (409, "A completed baseline run is required"),
@@ -5450,7 +5460,8 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
                 for item in os.getenv(
                     "AIRANK_DEV_PERMISSIONS",
                     f"{skill_admin_permission()},{provider_admin_permission()},"
-                    f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')}",
+                    f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')},"
+                    f"{os.getenv('AIRANK_DELIVERY_ADMIN_PERMISSION', 'airank:delivery:admin')}",
                 ).split(",")
                 if item.strip()
             ),

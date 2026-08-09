@@ -17,8 +17,10 @@ from airank_domain import sha256_text
 
 try:
     from . import knowledge_routes
+    from .operation_guard import MySQLOperationGuard, OperationAuditRecord
 except ImportError:  # pragma: no cover
     import knowledge_routes  # type: ignore[no-redef]
+    from operation_guard import MySQLOperationGuard, OperationAuditRecord  # type: ignore[no-redef]
 
 
 TRACE_HEADER = "X-AIRank-Trace-Id"
@@ -40,6 +42,20 @@ def trusted_actor(requested_actor: str, authenticated_actor: Optional[str]) -> s
     if not authenticated_actor:
         raise StarletteHTTPException(status_code=401, detail={"code": "AUTH_TOKEN_INVALID"})
     return authenticated_actor
+
+
+def require_delivery_admin(permission_header: Optional[str]) -> None:
+    enforcement = os.getenv("AIRANK_API_AUTH_ENFORCEMENT", "required").strip().lower()
+    if enforcement in {"0", "false", "disabled", "off"}:
+        return
+    required = os.getenv("AIRANK_DELIVERY_ADMIN_PERMISSION", "airank:delivery:admin").strip()
+    granted = {item.strip() for item in (permission_header or "").split(",") if item.strip()}
+    namespace = required.rsplit(":", 1)[0]
+    if not {required, "*", "*:*:*", f"{namespace}:*"}.intersection(granted):
+        raise StarletteHTTPException(
+            status_code=403,
+            detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"required_permission": required}},
+        )
 
 
 class RiskFinding(BaseModel):
@@ -121,7 +137,7 @@ class PublishPackageData(BaseModel):
     snapshot_id: str
     content_review_id: str
     channel: Literal["export", "wordpress", "http"]
-    status: Literal["packaged", "queued", "publishing", "delivered", "failed", "published"]
+    status: Literal["packaged", "queued", "publishing", "delivered", "failed", "outcome_unknown", "published"]
     implementation_status: Literal["ready", "partial"]
     idempotency_key: str
     content_sha256: str
@@ -145,8 +161,12 @@ class PublishAttemptData(BaseModel):
     package_id: str
     attempt_number: int
     channel: str
-    status: Literal["running", "succeeded", "failed"]
+    status: Literal["running", "succeeded", "failed", "outcome_unknown"]
     request_sha256: str
+    operation_id: Optional[str] = None
+    operation_state: Optional[Literal["claimed", "external_started", "succeeded", "failed"]] = None
+    external_effect_started: bool = False
+    reconciliation_required: bool = False
     response_status: Optional[int] = None
     response_sha256: Optional[str] = None
     error_code: Optional[str] = None
@@ -157,6 +177,46 @@ class PublishAttemptData(BaseModel):
 
 class PublishAttemptListResponse(BaseModel):
     data: list[PublishAttemptData]
+    meta: dict[str, str]
+
+
+class PublishOperationEventData(BaseModel):
+    event_sequence: int
+    event_type: str
+    from_state: Optional[str] = None
+    to_state: Literal["claimed", "external_started", "succeeded", "failed"]
+    request_sha256: str
+    previous_event_sha256: Optional[str] = None
+    event_sha256: str
+    actor: str
+    trace_id: str
+    created_at: datetime
+
+
+class PublishOperationData(BaseModel):
+    contract_version: Literal["airank.operation-guard.v1"] = "airank.operation-guard.v1"
+    operation_id: str
+    operation_type: Literal["publisher.publish"] = "publisher.publish"
+    package_id: str
+    state: Literal["claimed", "external_started", "succeeded", "failed"]
+    external_effect_started: bool
+    request_sha256: str
+    error_code: Optional[str] = None
+    created_by: str
+    trace_id: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    reconciliation_required: bool
+    replay_status: Literal["available", "in_progress", "forbidden_unknown", "forbidden_failed"]
+    response_published_url: Optional[str] = None
+    response_status: Optional[int] = None
+    response_sha256: Optional[str] = None
+    events: list[PublishOperationEventData]
+
+
+class PublishOperationResponse(BaseModel):
+    data: PublishOperationData
     meta: dict[str, str]
 
 
@@ -203,6 +263,7 @@ class DeliveryRepository(Protocol):
     def create_package(self, tenant_id: str, asset_id: str, payload: PublishPackageCreateRequest) -> PublishPackageData: ...
     def list_packages(self, tenant_id: str, project_id: str) -> list[PublishPackageData]: ...
     def list_attempts(self, tenant_id: str, package_id: str) -> list[PublishAttemptData]: ...
+    def get_operation(self, tenant_id: str, operation_id: str) -> PublishOperationData: ...
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData: ...
     def mark_published(self, tenant_id: str, package_id: str, payload: PublishEvidenceRequest) -> PublishPackageData: ...
 
@@ -274,6 +335,10 @@ class InMemoryDeliveryRepository:
             raise _not_found("PUBLISH_PACKAGE_NOT_FOUND", {"package_id": package_id})
         return []
 
+    def get_operation(self, tenant_id: str, operation_id: str) -> PublishOperationData:
+        del tenant_id
+        raise _not_found("OPERATION_NOT_FOUND", {"operation_id": operation_id})
+
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         package = self.packages.get((tenant_id, package_id))
         if package is None:
@@ -308,6 +373,7 @@ class InMemoryDeliveryRepository:
 class MySQLDeliveryRepository:
     def __init__(self, database_url: str) -> None:
         self.engine = create_engine(database_url, pool_pre_ping=True)
+        self.operation_guard = MySQLOperationGuard(database_url)
 
     def review_content(self, tenant_id: str, asset_id: str, payload: ContentReviewRequest) -> ContentReviewData:
         reviewed_at = utc_now()
@@ -456,8 +522,12 @@ class MySQLDeliveryRepository:
             rows = conn.execute(
                 text(
                     """
-                    SELECT * FROM airank_publish_attempts
-                    WHERE tenant_id=:tenant_id AND package_id=:package_id
+                    SELECT a.*, o.state AS operation_state,
+                           o.external_effect_started AS operation_external_effect_started
+                    FROM airank_publish_attempts a
+                    LEFT JOIN airank_operation_guards o
+                      ON o.id=a.operation_id AND o.tenant_id=a.tenant_id
+                    WHERE a.tenant_id=:tenant_id AND a.package_id=:package_id
                     ORDER BY attempt_number ASC
                     """
                 ),
@@ -471,6 +541,13 @@ class MySQLDeliveryRepository:
                 channel=row["channel"],
                 status=row["status"],
                 request_sha256=row["request_sha256"],
+                operation_id=row["operation_id"],
+                operation_state=row["operation_state"],
+                external_effect_started=bool(row["operation_external_effect_started"]),
+                reconciliation_required=(
+                    row["status"] == "outcome_unknown"
+                    or row["operation_state"] == "external_started"
+                ),
                 response_status=row["response_status"],
                 response_sha256=row["response_sha256"],
                 error_code=row["error_code"],
@@ -480,6 +557,12 @@ class MySQLDeliveryRepository:
             )
             for row in rows
         ]
+
+    def get_operation(self, tenant_id: str, operation_id: str) -> PublishOperationData:
+        record = self.operation_guard.get_audit(tenant_id, operation_id)
+        if record is None or record.operation_type != "publisher.publish":
+            raise _not_found("OPERATION_NOT_FOUND", {"operation_id": operation_id})
+        return _publish_operation_data(record)
 
     def get_export(self, tenant_id: str, package_id: str) -> PublishExportData:
         with self.engine.begin() as conn:
@@ -618,6 +701,57 @@ def _snapshot_manifest(asset: Any, review: Any, payload: PublishPackageCreateReq
     }
 
 
+def _publish_operation_data(record: OperationAuditRecord) -> PublishOperationData:
+    response = record.response or {}
+    replay_status = {
+        "succeeded": "available",
+        "claimed": "in_progress",
+        "external_started": "forbidden_unknown",
+        "failed": "forbidden_failed",
+    }[record.state]
+    return PublishOperationData(
+        operation_id=record.operation_id,
+        package_id=record.resource_key,
+        state=record.state,
+        external_effect_started=record.external_effect_started,
+        request_sha256=record.request_sha256,
+        error_code=record.error_code,
+        created_by=record.created_by,
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        completed_at=record.completed_at,
+        reconciliation_required=record.state == "external_started",
+        replay_status=replay_status,
+        response_published_url=(
+            str(response.get("published_url")) if response.get("published_url") else None
+        ),
+        response_status=(
+            int(response["response_status"])
+            if response.get("response_status") is not None
+            else None
+        ),
+        response_sha256=(
+            str(response.get("response_sha256")) if response.get("response_sha256") else None
+        ),
+        events=[
+            PublishOperationEventData(
+                event_sequence=event.event_sequence,
+                event_type=event.event_type,
+                from_state=event.from_state,
+                to_state=event.to_state,
+                request_sha256=event.request_sha256,
+                previous_event_sha256=event.previous_event_sha256,
+                event_sha256=event.event_sha256,
+                actor=event.actor,
+                trace_id=event.trace_id,
+                created_at=event.created_at,
+            )
+            for event in record.events
+        ],
+    )
+
+
 def _not_found(code: str, details: dict[str, Any]) -> StarletteHTTPException:
     return StarletteHTTPException(status_code=404, detail={"code": code, "details": details})
 
@@ -655,6 +789,20 @@ def export_publish_package(package_id: str, tenant_id: str = Header(default="ten
 @router.get("/publish-packages/{package_id}/attempts", response_model=PublishAttemptListResponse)
 def list_publish_attempts(package_id: str, tenant_id: str = Header(default="tenant_demo", alias="tenant-id"), trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> PublishAttemptListResponse:
     return PublishAttemptListResponse(data=DELIVERY_REPOSITORY.list_attempts(tenant_id, package_id), meta=response_meta(trace_id))
+
+
+@router.get("/publish-operations/{operation_id}", response_model=PublishOperationResponse)
+def get_publish_operation(
+    operation_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permission_header: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> PublishOperationResponse:
+    require_delivery_admin(permission_header)
+    return PublishOperationResponse(
+        data=DELIVERY_REPOSITORY.get_operation(tenant_id, operation_id),
+        meta=response_meta(trace_id),
+    )
 
 
 @router.post("/publish-packages/{package_id}/publication-evidence", response_model=PublishPackageResponse)

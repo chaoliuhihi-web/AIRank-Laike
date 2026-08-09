@@ -71,7 +71,11 @@ def test_generic_http_publisher_sends_idempotency_and_returns_hash_only_receipt(
         resolver=public_resolver,
     )
 
-    receipt = gateway.publish(snapshot())
+    side_effect_markers: list[str] = []
+    receipt = gateway.publish(
+        snapshot(),
+        before_external_effect=lambda: side_effect_markers.append("started"),
+    )
 
     assert receipt.status_code == 201
     assert receipt.remote_id == "remote_1"
@@ -80,6 +84,7 @@ def test_generic_http_publisher_sends_idempotency_and_returns_hash_only_receipt(
     assert transport.calls[0]["headers"]["Idempotency-Key"] == "publish-task-1"
     assert transport.calls[0]["headers"]["Authorization"] == "Bearer secret-never-persist"
     assert "secret-never-persist" not in repr(receipt)
+    assert side_effect_markers == ["started"]
 
 
 def test_publisher_rejects_non_allowlisted_and_private_endpoints_before_transport() -> None:
@@ -114,14 +119,69 @@ def test_wordpress_uses_deterministic_slug_lookup_before_create() -> None:
         resolver=public_resolver,
     )
 
+    side_effect_markers: list[str] = []
     receipt = gateway.publish(
-        snapshot(channel="wordpress", endpoint="https://publisher.example.test/wp-json/wp/v2/posts")
+        snapshot(channel="wordpress", endpoint="https://publisher.example.test/wp-json/wp/v2/posts"),
+        before_external_effect=lambda: side_effect_markers.append("started"),
     )
 
     assert receipt.idempotent_replay is True
     assert len(transport.calls) == 1
     assert transport.calls[0]["method"] == "GET"
     assert "slug=airank-package-1" in transport.calls[0]["url"]
+    assert side_effect_markers == []
+
+
+def test_wordpress_marks_external_effect_only_after_empty_reconciliation_lookup() -> None:
+    transport = FakePublishTransport(
+        [
+            (200, {}, []),
+            (201, {}, {"id": 43, "link": "https://publisher.example.test/airank-created"}),
+        ]
+    )
+    gateway = PublisherGateway(
+        env={
+            "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+            "AIRANK_WORDPRESS_USERNAME": "publisher",
+            "AIRANK_WORDPRESS_APP_PASSWORD": "app-password",
+        },
+        transport=transport,
+        resolver=public_resolver,
+    )
+    side_effect_markers: list[str] = []
+
+    receipt = gateway.publish(
+        snapshot(channel="wordpress", endpoint="https://publisher.example.test/wp-json/wp/v2/posts"),
+        before_external_effect=lambda: side_effect_markers.append("started"),
+    )
+
+    assert receipt.idempotent_replay is False
+    assert [call["method"] for call in transport.calls] == ["GET", "POST"]
+    assert side_effect_markers == ["started"]
+
+
+def test_wordpress_lookup_failure_never_starts_external_post() -> None:
+    transport = FakePublishTransport([(503, {}, {"code": "temporarily_unavailable"})])
+    gateway = PublisherGateway(
+        env={
+            "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+            "AIRANK_WORDPRESS_USERNAME": "publisher",
+            "AIRANK_WORDPRESS_APP_PASSWORD": "app-password",
+        },
+        transport=transport,
+        resolver=public_resolver,
+    )
+    side_effect_markers: list[str] = []
+
+    with pytest.raises(PublisherError) as caught:
+        gateway.publish(
+            snapshot(channel="wordpress", endpoint="https://publisher.example.test/wp-json/wp/v2/posts"),
+            before_external_effect=lambda: side_effect_markers.append("started"),
+        )
+
+    assert caught.value.code == "PUBLISH_RECONCILIATION_LOOKUP_FAILED"
+    assert [call["method"] for call in transport.calls] == ["GET"]
+    assert side_effect_markers == []
 
 
 def test_publisher_blocks_mutated_snapshot_and_missing_credential() -> None:

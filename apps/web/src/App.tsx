@@ -140,6 +140,7 @@ import {
   fetchProviderRoutes,
   fetchProviderUsageLedger,
   fetchPublishAttempts,
+  fetchPublishOperation,
   fetchPublishPackages,
   fetchRetestWindows,
   fetchSkillPromotionLedger,
@@ -6129,7 +6130,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
               <tr key={item.package_id}>
                 <td><strong>{item.package_id}</strong></td>
                 <td>{item.channel}</td>
-                <td><Badge tone={["published", "delivered"].includes(item.status) ? "success" : item.status === "failed" ? "danger" : item.status === "queued" ? "warning" : "primary"}>{item.status}</Badge></td>
+                <td><Badge tone={["published", "delivered"].includes(item.status) ? "success" : item.status === "failed" ? "danger" : ["queued", "outcome_unknown"].includes(item.status) ? "warning" : "primary"}>{item.status}</Badge></td>
                 <td><Badge tone={item.implementation_status === "ready" ? "success" : "warning"}>{item.implementation_status}</Badge></td>
                 <td>{item.content_sha256.slice(0, 12)}…</td>
                 <td>{formatDateTime(item.created_at)}</td>
@@ -6141,6 +6142,9 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
                       try {
                         const attempts = await fetchPublishAttempts(item.package_id);
                         const latest = attempts[attempts.length - 1];
+                        const operation = latest?.operation_id
+                          ? await fetchPublishOperation(latest.operation_id)
+                          : null;
                         openPanel({
                           title: item.package_id,
                           desc: "发布包与内容审核、不可变快照、Worker attempt 和复测窗口关联。",
@@ -6151,6 +6155,10 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
                             `发布 URL：${item.published_url || "尚未登记"}`,
                             `执行次数：${attempts.length}`,
                             `最近执行：${latest ? `${latest.status}${latest.error_code ? ` / ${latest.error_code}` : ""}` : "尚未执行"}`,
+                            `操作保护：${operation ? `${operation.state} / ${operation.operation_id}` : "尚无 Operation Guard 记录"}`,
+                            `外部副作用：${operation?.external_effect_started ? "可能已开始" : "未记录开始"}`,
+                            `待对账：${latest?.reconciliation_required || operation?.reconciliation_required ? "是，禁止自动重发" : "否"}`,
+                            `事件链：${operation ? `${operation.events.length} 个不可变事件` : "0"}`,
                           ],
                           primaryLabel: "查看复测报告",
                           onPrimary: () => onNavigate("/console/reports"),

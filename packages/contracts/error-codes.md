@@ -176,6 +176,16 @@ FACT_DISCLOSURE_FORBIDDEN
 | `CONTENT_REVIEW_REQUIRED` | 409 | 内容尚未通过与当前内容 hash 一致的审核 |
 | `CONTENT_RISK_OVERRIDE_REQUIRED` | 409 | 高风险内容需要记录人工 override 原因 |
 | `PUBLISH_PACKAGE_NOT_FOUND` | 404 | 发布包不存在 |
+| `PUBLISH_ALREADY_IN_PROGRESS` | 409 | 发布包已有活动执行或未对账执行，禁止并发重放 |
+| `PUBLISH_OPERATION_NOT_FOUND` | 404 | 发布操作审计不存在 |
+| `PUBLISH_OPERATION_SCOPE_MISMATCH` | 409 | 发布操作与不可变发布包不匹配 |
+| `PUBLISH_OPERATION_STATE_CONFLICT` | 409 | 发布包与操作终态冲突 |
+| `PUBLISH_OPERATION_RECEIPT_INVALID` | 409 | 持久发布回执未通过完整性检查 |
+| `PUBLISH_OPERATION_RECEIPT_ORPHANED` | 409 | 成功操作缺少对应 attempt 账本记录 |
+| `PUBLISH_ATTEMPT_ABANDONED_BEFORE_EXTERNAL` | 409 | Worker 在记录外部副作用前停止；原操作封存，需新建发布包 |
+| `PUBLISH_OPERATION_AUDIT_INCOMPLETE` | 503 | 已收到发布回执但 Operation Guard 未完成收口 |
+| `PUBLISH_RECEIPT_PERSIST_FAILED` | 503 | 已验证发布回执未能写入本地账本，可从成功 Operation Guard 安全恢复 |
+| `PUBLISH_RECONCILIATION_PERSIST_FAILED` | 503 | 找回的真实发布回执未能完成持久化 |
 | `PUBLICATION_SCREENSHOT_EVIDENCE_INVALID` | 409 | 发布截图对象不属于当前租户/项目，或客户端提交的 SHA-256 与不可变对象不一致 |
 | `RETEST_WINDOW_NOT_FOUND` | 404 | 复测观察窗口不存在 |
 | `RETEST_BASELINE_REQUIRED` | 409 | 缺少同项目且已完成的 T0 基线扫描 |

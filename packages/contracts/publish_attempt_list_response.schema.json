@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publish_attempt_list_response.schema.json",
+  "title": "AIRank Publish Attempt List Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attempt_id", "package_id", "attempt_number", "channel", "status", "request_sha256", "operation_id", "operation_state", "external_effect_started", "reconciliation_required", "response_status", "response_sha256", "error_code", "error_message", "started_at", "finished_at"],
+        "properties": {
+          "attempt_id": { "type": "string", "pattern": "^publish_attempt_[0-9a-f]{12}$" },
+          "package_id": { "type": "string", "minLength": 1 },
+          "attempt_number": { "type": "integer", "minimum": 1 },
+          "channel": { "type": "string", "enum": ["http", "wordpress"] },
+          "status": { "type": "string", "enum": ["running", "succeeded", "failed", "outcome_unknown"] },
+          "request_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "operation_id": { "type": ["string", "null"], "pattern": "^operation_guard_[0-9a-f]{16}$" },
+          "operation_state": { "type": ["string", "null"], "enum": ["claimed", "external_started", "succeeded", "failed", null] },
+          "external_effect_started": { "type": "boolean" },
+          "reconciliation_required": { "type": "boolean" },
+          "response_status": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+          "response_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "error_code": { "type": ["string", "null"], "maxLength": 96 },
+          "error_message": { "type": ["string", "null"], "maxLength": 1000 },
+          "started_at": { "type": "string", "format": "date-time" },
+          "finished_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "pattern": "^req_[0-9a-f]{16}$" }
+      }
+    }
+  }
+}

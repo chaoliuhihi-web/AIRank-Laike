@@ -1657,7 +1657,7 @@ export type PublishPackage = {
   asset_id: string;
   snapshot_id: string;
   channel: "export" | "wordpress" | "http";
-  status: "packaged" | "queued" | "publishing" | "delivered" | "failed" | "published";
+  status: "packaged" | "queued" | "publishing" | "delivered" | "failed" | "outcome_unknown" | "published";
   implementation_status: "ready" | "partial";
   idempotency_key: string;
   content_sha256: string;
@@ -1683,14 +1683,51 @@ export type PublishAttempt = {
   package_id: string;
   attempt_number: number;
   channel: string;
-  status: "running" | "succeeded" | "failed";
+  status: "running" | "succeeded" | "failed" | "outcome_unknown";
   request_sha256: string;
+  operation_id: string | null;
+  operation_state: "claimed" | "external_started" | "succeeded" | "failed" | null;
+  external_effect_started: boolean;
+  reconciliation_required: boolean;
   response_status: number | null;
   response_sha256: string | null;
   error_code: string | null;
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+};
+
+export type PublishOperation = {
+  contract_version: "airank.operation-guard.v1";
+  operation_id: string;
+  operation_type: "publisher.publish";
+  package_id: string;
+  state: "claimed" | "external_started" | "succeeded" | "failed";
+  external_effect_started: boolean;
+  request_sha256: string;
+  error_code: string | null;
+  created_by: string;
+  trace_id: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  reconciliation_required: boolean;
+  replay_status: "available" | "in_progress" | "forbidden_unknown" | "forbidden_failed";
+  response_published_url: string | null;
+  response_status: number | null;
+  response_sha256: string | null;
+  events: Array<{
+    event_sequence: number;
+    event_type: string;
+    from_state: string | null;
+    to_state: "claimed" | "external_started" | "succeeded" | "failed";
+    request_sha256: string;
+    previous_event_sha256: string | null;
+    event_sha256: string;
+    actor: string;
+    trace_id: string;
+    created_at: string;
+  }>;
 };
 
 export type RetestWindow = {
@@ -4025,6 +4062,10 @@ export async function recordPublicationEvidence(
 
 export function fetchPublishAttempts(packageId: string, signal?: AbortSignal): Promise<PublishAttempt[]> {
   return fetchData(`/api/v1/publish-packages/${packageId}/attempts`, "trc_web_publish_attempts", signal);
+}
+
+export function fetchPublishOperation(operationId: string, signal?: AbortSignal): Promise<PublishOperation> {
+  return fetchData(`/api/v1/publish-operations/${encodeURIComponent(operationId)}`, "trc_web_publish_operation", signal);
 }
 
 export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Promise<RetestWindow[]> {

@@ -167,7 +167,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0042"
+EXPECTED_ALEMBIC_HEAD = "20260809_0043"
 
 
 def require_real_flag(flag: str) -> None:
@@ -288,6 +288,36 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             )
         ).scalar_one()
         assert usage_hash_column == "NO"
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_publish_attempts'
+                  AND column_name='operation_id'
+                """
+            )
+        ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.referential_constraints
+                WHERE constraint_schema=DATABASE()
+                  AND constraint_name='fk_airank_publish_attempt_operation'
+                """
+            )
+        ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.statistics
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_publish_attempts'
+                  AND index_name='uk_airank_publish_attempt_operation'
+                  AND non_unique=0
+                """
+            )
+        ).scalar_one() == 1
         assert conn.execute(
             text(
                 """
@@ -4317,9 +4347,12 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
             attempt = conn.execute(
                 text(
                     """
-                    SELECT status, request_sha256, response_sha256, response_status
-                    FROM airank_publish_attempts
-                    WHERE tenant_id = :tenant_id AND package_id = :package_id
+                    SELECT a.status, a.request_sha256, a.response_sha256,
+                           a.response_status, a.operation_id,
+                           o.state AS operation_state, o.idempotency_key_sha256
+                    FROM airank_publish_attempts a
+                    JOIN airank_operation_guards o ON o.id = a.operation_id
+                    WHERE a.tenant_id = :tenant_id AND a.package_id = :package_id
                     """
                 ),
                 {"tenant_id": tenant_id, "package_id": package.package_id},
@@ -4333,12 +4366,43 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 ),
                 {"tenant_id": tenant_id, "package_id": package.package_id},
             ).scalar_one()
+            operation_events = conn.execute(
+                text(
+                    """
+                    SELECT event_sequence, event_type, previous_event_sha256, event_sha256
+                    FROM airank_operation_guard_events
+                    WHERE tenant_id = :tenant_id AND operation_id = :operation_id
+                    ORDER BY event_sequence
+                    """
+                ),
+                {"tenant_id": tenant_id, "operation_id": attempt["operation_id"]},
+            ).mappings().all()
         assert package_row["status"] == "delivered"
         assert package_row["published_at"] is None
         assert attempt["status"] == "succeeded"
         assert len(attempt["request_sha256"]) == 64
         assert len(attempt["response_sha256"]) == 64
         assert int(attempt["response_status"]) == 201
+        assert attempt["operation_state"] == "succeeded"
+        assert attempt["idempotency_key_sha256"] != "publish-package-it"
+        assert [row["event_type"] for row in operation_events] == [
+            "operation_claimed",
+            "external_effect_started",
+            "operation_succeeded",
+        ]
+        assert operation_events[0]["previous_event_sha256"] is None
+        assert operation_events[1]["previous_event_sha256"] == operation_events[0]["event_sha256"]
+        assert operation_events[2]["previous_event_sha256"] == operation_events[1]["event_sha256"]
+        listed_attempts = delivery_repo.list_attempts(tenant_id, package.package_id)
+        assert listed_attempts[0].operation_state == "succeeded"
+        assert listed_attempts[0].external_effect_started is True
+        assert listed_attempts[0].reconciliation_required is False
+        operation_detail = delivery_repo.get_operation(
+            tenant_id,
+            str(listed_attempts[0].operation_id),
+        )
+        assert operation_detail.replay_status == "available"
+        assert [event.event_sequence for event in operation_detail.events] == [1, 2, 3]
         assert retest_count == 0
         assert "integration-secret" not in str(package_row["metadata_json"])
         assert transport.calls[0]["headers"]["Idempotency-Key"] == "publish-package-it"
@@ -4383,17 +4447,20 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 failing_gateway,
                 worker_id="publisher-integration",
             )
-        assert failed_publish.value.code == "PUBLISH_NETWORK_FAILED"
+        assert failed_publish.value.code == "OPERATION_OUTCOME_UNKNOWN"
         assert job_store.get(retry_job_id).status.value == "failed"
 
         job_store.requeue_for_retry(retry_job_id, datetime.now(timezone.utc))
-        recovered = run_next_publish_job(
-            job_store,
-            execution_repo,
-            gateway,
-            worker_id="publisher-integration-retry",
-        )
-        assert recovered is not None
+        call_count_before_blocked_replay = len(transport.calls)
+        with pytest.raises(PublisherError) as blocked_replay:
+            run_next_publish_job(
+                job_store,
+                execution_repo,
+                gateway,
+                worker_id="publisher-integration-retry",
+            )
+        assert blocked_replay.value.code == "OPERATION_OUTCOME_UNKNOWN"
+        assert len(transport.calls) == call_count_before_blocked_replay
         with engine.connect() as conn:
             retry_package_status = conn.execute(
                 text(
@@ -4414,8 +4481,8 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 ),
                 {"tenant_id": tenant_id, "package_id": retry_package.package_id},
             ).scalars().all()
-        assert retry_package_status == "delivered"
-        assert attempt_statuses == ["failed", "succeeded"]
+        assert retry_package_status == "outcome_unknown"
+        assert attempt_statuses == ["outcome_unknown"]
 
         stale_package = delivery_repo.create_package(
             tenant_id,
@@ -4428,9 +4495,21 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
             ),
         )
         stale_snapshot = execution_repo.load_snapshot(tenant_id, stale_package.package_id)
+        stale_request_sha256 = gateway.request_sha256(stale_snapshot)
+        stale_claim = execution_repo.operation_guard.claim(
+            tenant_id=tenant_id,
+            operation_type="publisher.publish",
+            resource_key=stale_package.package_id,
+            idempotency_key=stale_snapshot.idempotency_key,
+            request_sha256=stale_request_sha256,
+            request_key_id=None,
+            actor="publisher-stale-setup",
+            trace_id="job-stale-setup",
+        )
         execution_repo.begin_attempt(
             stale_snapshot,
-            gateway.request_sha256(stale_snapshot),
+            stale_request_sha256,
+            stale_claim.operation_id,
             datetime.now(timezone.utc) - timedelta(seconds=700),
         )
         with engine.begin() as conn:
@@ -4444,13 +4523,14 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 ),
                 {"tenant_id": tenant_id, "package_id": stale_package.package_id},
             )
-        recovered_stale = run_next_publish_job(
-            job_store,
-            execution_repo,
-            gateway,
-            worker_id="publisher-stale-recovery",
-        )
-        assert recovered_stale is not None
+        with pytest.raises(PublisherError) as stale_blocked:
+            run_next_publish_job(
+                job_store,
+                execution_repo,
+                gateway,
+                worker_id="publisher-stale-recovery",
+            )
+        assert stale_blocked.value.code == "PUBLISH_ATTEMPT_ABANDONED_BEFORE_EXTERNAL"
         with engine.connect() as conn:
             stale_attempts = conn.execute(
                 text(
@@ -4462,8 +4542,120 @@ def test_real_mysql_publish_worker_persists_delivery_receipt_without_auto_retest
                 ),
                 {"tenant_id": tenant_id, "package_id": stale_package.package_id},
             ).mappings().all()
-        assert [row["status"] for row in stale_attempts] == ["failed", "succeeded"]
-        assert stale_attempts[0]["error_code"] == "PUBLISH_ATTEMPT_ABANDONED"
+        assert [row["status"] for row in stale_attempts] == ["failed"]
+        assert stale_attempts[0]["error_code"] == "PUBLISH_ATTEMPT_ABANDONED_BEFORE_EXTERNAL"
+
+        wordpress_package = delivery_repo.create_package(
+            tenant_id,
+            asset.asset_id,
+            PublishPackageCreateRequest(
+                channel="wordpress",
+                idempotency_key="publish-wordpress-reconcile-it",
+                requested_by="integration-test",
+                target_endpoint="https://publisher.example.test/wp-json/wp/v2/posts",
+            ),
+        )
+        with engine.begin() as conn:
+            wordpress_job_id = conn.execute(
+                text(
+                    """
+                    SELECT id FROM airank_async_jobs
+                    WHERE tenant_id = :tenant_id AND job_type = 'publish.package'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.package_id')) = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": wordpress_package.package_id},
+            ).scalar_one()
+            conn.execute(
+                text("UPDATE airank_async_jobs SET priority = -1000 WHERE id = :id"),
+                {"id": wordpress_job_id},
+            )
+
+        class WordPressLostResponseTransport:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def request(self, method, url, *, headers, payload, timeout_seconds):
+                del url, headers, payload, timeout_seconds
+                self.calls.append(method)
+                if method == "GET":
+                    return 200, {}, []
+                raise PublisherError(
+                    "PUBLISH_NETWORK_FAILED",
+                    "simulated response loss after WordPress accepted the request",
+                    retryable=True,
+                )
+
+        lost_response_transport = WordPressLostResponseTransport()
+        wordpress_gateway = PublisherGateway(
+            env={
+                "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+                "AIRANK_WORDPRESS_USERNAME": "integration-publisher",
+                "AIRANK_WORDPRESS_APP_PASSWORD": "integration-app-password",
+            },
+            transport=lost_response_transport,
+            resolver=lambda host, port, **_: [(2, 1, 6, "", ("93.184.216.34", port))],
+        )
+        with pytest.raises(PublisherError) as wordpress_unknown:
+            run_next_publish_job(
+                job_store,
+                execution_repo,
+                wordpress_gateway,
+                worker_id="publisher-wordpress-lost-response",
+            )
+        assert wordpress_unknown.value.code == "OPERATION_OUTCOME_UNKNOWN"
+        assert lost_response_transport.calls == ["GET", "POST"]
+
+        class WordPressReconciliationTransport:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def request(self, method, url, *, headers, payload, timeout_seconds):
+                del url, headers, payload, timeout_seconds
+                self.calls.append(method)
+                return 200, {}, [
+                    {
+                        "id": "wordpress_remote_it",
+                        "link": "https://publisher.example.test/pages/airank-proof",
+                    }
+                ]
+
+        reconciliation_transport = WordPressReconciliationTransport()
+        reconciliation_gateway = PublisherGateway(
+            env={
+                "AIRANK_PUBLISH_ALLOWED_HOSTS": "publisher.example.test",
+                "AIRANK_WORDPRESS_USERNAME": "integration-publisher",
+                "AIRANK_WORDPRESS_APP_PASSWORD": "integration-app-password",
+            },
+            transport=reconciliation_transport,
+            resolver=lambda host, port, **_: [(2, 1, 6, "", ("93.184.216.34", port))],
+        )
+        job_store.requeue_for_retry(wordpress_job_id, datetime.now(timezone.utc))
+        wordpress_recovered = run_next_publish_job(
+            job_store,
+            execution_repo,
+            reconciliation_gateway,
+            worker_id="publisher-wordpress-reconciliation",
+        )
+        assert wordpress_recovered is not None
+        assert wordpress_recovered.idempotent_replay is True
+        assert reconciliation_transport.calls == ["GET"]
+        with engine.connect() as conn:
+            wordpress_attempt = conn.execute(
+                text(
+                    """
+                    SELECT a.status, a.operation_id, o.state AS operation_state,
+                           o.external_effect_started
+                    FROM airank_publish_attempts a
+                    JOIN airank_operation_guards o ON o.id = a.operation_id
+                    WHERE a.tenant_id = :tenant_id AND a.package_id = :package_id
+                    """
+                ),
+                {"tenant_id": tenant_id, "package_id": wordpress_package.package_id},
+            ).mappings().one()
+        assert wordpress_attempt["status"] == "succeeded"
+        assert wordpress_attempt["operation_state"] == "succeeded"
+        assert bool(wordpress_attempt["external_effect_started"]) is True
 
         screenshot_bytes = b"immutable publication screenshot"
         screenshot_sha256 = hashlib.sha256(screenshot_bytes).hexdigest()
