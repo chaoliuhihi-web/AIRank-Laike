@@ -385,6 +385,41 @@ class ConsoleOverview(BaseModel):
     message: str = ""
 
 
+class GrowthLoopStep(BaseModel):
+    step_id: Literal["questions", "scans", "gaps", "facts", "assets", "publishing"]
+    label: str
+    status: Literal["completed", "current", "blocked", "pending"]
+    object_count: Optional[int] = Field(default=None, ge=0)
+    summary: str
+    href: str
+
+
+class ConclusionReadiness(BaseModel):
+    state: Literal["ready", "collecting", "blocked"]
+    data_status: Literal["empty", "collecting", "provider_evidence", "unverified"]
+    valid_sample_count: int = Field(ge=0)
+    required_sample_count: int = Field(ge=0)
+    reason_codes: list[str] = Field(default_factory=list)
+    message: str
+
+
+class GrowthLoopPrimaryAction(BaseModel):
+    label: str
+    href: str
+    reason: str
+
+
+class GrowthLoopData(BaseModel):
+    contract_version: Literal["airank.growth-loop.v1"] = "airank.growth-loop.v1"
+    project_id: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^project_[A-Za-z0-9_-]+$")]
+    current_step: Literal["questions", "scans", "gaps", "facts", "assets", "publishing"]
+    steps: list[GrowthLoopStep]
+    conclusion_readiness: ConclusionReadiness
+    primary_action: GrowthLoopPrimaryAction
+    counts: dict[str, int]
+    measured_at: Optional[datetime] = None
+
+
 class ResponseMeta(BaseModel):
     trace_id: str
     request_id: str
@@ -977,6 +1012,11 @@ class ConsoleOverviewResponse(BaseModel):
     meta: ResponseMeta
 
 
+class GrowthLoopResponse(BaseModel):
+    data: GrowthLoopData
+    meta: ResponseMeta
+
+
 class AuthLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -998,6 +1038,7 @@ class AuthLoginData(BaseModel):
     tenant_id: str
     yudao_tenant_id: str
     user: AuthUser
+    permissions: list[str] = Field(default_factory=list)
     dev_only: bool = False
 
 
@@ -3093,6 +3134,32 @@ def active_provider_scope(tenant_id: str) -> list[Provider]:
         if bool(item["configured"]) and bool(item["enabled"])
     }
     return [provider for provider in DEFAULT_PROVIDER_SCOPE if provider in configured and provider in enabled]
+
+
+def assert_scan_provider_scope_enabled(tenant_id: str, requested_scope: list[Provider]) -> None:
+    """Reject task creation before any disabled or unavailable provider can be queued."""
+
+    # The in-memory repository is a contract-development fixture and supports
+    # synthetic provider names used by API tests. Production deployments always
+    # set AIRANK_DATABASE_URL and must pass the real route/configuration gate.
+    if not str(os.getenv("AIRANK_DATABASE_URL") or "").strip():
+        return
+    enabled_scope = active_provider_scope(tenant_id)
+    blocked = [provider for provider in requested_scope if provider not in enabled_scope]
+    if not blocked:
+        return
+    raise StarletteHTTPException(
+        status_code=502,
+        detail={
+            "code": "SCAN_PROVIDER_BLOCKED",
+            "message": "本轮包含当前未启用或未通过配置门禁的平台，尚未创建任何扫描任务。",
+            "details": {
+                "blocked_providers": blocked,
+                "enabled_providers": enabled_scope,
+                "impact": "no_scan_tasks_created",
+            },
+        },
+    )
 
 
 def provider_probe_stale_seconds() -> int:
@@ -5803,22 +5870,23 @@ def require_provider_platform_admin(permission_header: Optional[str]) -> None:
 def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
     token = f"dev_only_{uuid4().hex}"
     expires_in = 3600
+    dev_permissions = tuple(
+        item.strip()
+        for item in os.getenv(
+            "AIRANK_DEV_PERMISSIONS",
+            f"{skill_admin_permission()},{provider_admin_permission()},"
+            f"{provider_platform_admin_permission()},"
+            f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')},"
+            f"{os.getenv('AIRANK_DELIVERY_ADMIN_PERMISSION', 'airank:delivery:admin')}",
+        ).split(",")
+        if item.strip()
+    )
     with _DEV_AUTH_SESSIONS_LOCK:
         _DEV_AUTH_SESSIONS[token] = {
             "tenant_id": get_airank_default_tenant_id(),
             "yudao_tenant_id": payload.yudao_tenant_id,
             "user_id": payload.username,
-            "permissions": tuple(
-                item.strip()
-                for item in os.getenv(
-                    "AIRANK_DEV_PERMISSIONS",
-                    f"{skill_admin_permission()},{provider_admin_permission()},"
-                    f"{provider_platform_admin_permission()},"
-                    f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')},"
-                    f"{os.getenv('AIRANK_DELIVERY_ADMIN_PERMISSION', 'airank:delivery:admin')}",
-                ).split(",")
-                if item.strip()
-            ),
+            "permissions": dev_permissions,
             "expires_at": datetime.now(timezone.utc).timestamp() + expires_in,
         }
     return AuthLoginResponse(
@@ -5829,6 +5897,7 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
             tenant_id=get_airank_default_tenant_id(),
             yudao_tenant_id=payload.yudao_tenant_id,
             user=AuthUser(user_id=payload.username, username=payload.username, nickname=payload.username),
+            permissions=list(dev_permissions),
             dev_only=True,
         ),
         meta=build_meta(trace_id),
@@ -5900,6 +5969,7 @@ def yudao_login(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLogin
             detail={"code": "TENANT_FORBIDDEN"},
         )
 
+    granted_permissions = extract_yudao_permissions(permission_payload)
     return AuthLoginResponse(
         data=AuthLoginData(
             access_token=token,
@@ -5908,6 +5978,7 @@ def yudao_login(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLogin
             tenant_id=tenant_id,
             yudao_tenant_id=payload.yudao_tenant_id,
             user=extract_yudao_user(permission_payload, payload.username),
+            permissions=list(granted_permissions),
             dev_only=False,
         ),
         meta=build_meta(trace_id),
@@ -6605,6 +6676,7 @@ def create_scan_run(
     tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
     trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
 ) -> ScanRunResponse:
+    assert_scan_provider_scope_enabled(tenant_id, payload.provider_scope)
     return ScanRunResponse(data=SCAN_REPOSITORY.create_run(tenant_id, payload), meta=build_meta(trace_id))
 
 
@@ -6942,6 +7014,224 @@ def get_console_overview(
         ),
         meta=build_meta(trace_id),
     )
+
+
+def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
+    """Build one conservative, evidence-backed workflow view for every console page.
+
+    Counts only enter the response after their owning repository returned them.
+    Missing or failed reads remain ``None`` on the affected step instead of being
+    converted into a misleading zero.
+    """
+
+    questions = PROJECT_REPOSITORY.list_buyer_questions(tenant_id, project_id)
+    confirmed_question_count = sum(item.status == "confirmed" for item in questions)
+    runs = SCAN_REPOSITORY.list_runs(tenant_id, project_id)
+    latest_run = runs[0] if runs else None
+    tasks = SCAN_REPOSITORY.list_tasks(tenant_id, latest_run.run_id) if latest_run else []
+    metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
+    completed_task_count = sum(item.status == "completed" for item in tasks)
+    valid_sample_count = int(metrics.get("provider_success_count") or metrics.get("effective_denominator") or completed_task_count)
+    required_sample_count = int(
+        metrics.get("minimum_success_count")
+        or (
+            minimum_scan_success_count(
+                latest_run.provider_scope,
+                len(latest_run.question_scope.question_ids),
+                len(tasks),
+            )
+            if latest_run
+            else 0
+        )
+    )
+    measurement_ready = bool(
+        latest_run
+        and latest_run.status == "completed"
+        and metrics.get("data_status") == "provider_evidence"
+        and valid_sample_count > 0
+        and valid_sample_count >= required_sample_count
+    )
+    measurement_collecting = bool(latest_run and latest_run.status in {"queued", "running"})
+    reason_codes: list[str] = []
+    if confirmed_question_count == 0:
+        reason_codes.append("BUYER_QUESTIONS_UNCONFIRMED")
+    if latest_run is None:
+        reason_codes.append("SCAN_RUN_MISSING")
+    elif measurement_collecting:
+        reason_codes.append("SCAN_RUN_IN_PROGRESS")
+    elif latest_run.status in {"failed", "canceled"}:
+        reason_codes.append("SCAN_RUN_NOT_COMPLETED")
+    elif metrics.get("data_status") != "provider_evidence":
+        reason_codes.append("PROVIDER_EVIDENCE_UNAVAILABLE")
+    elif valid_sample_count < required_sample_count:
+        reason_codes.append("VALID_SAMPLE_THRESHOLD_NOT_MET")
+
+    if measurement_ready:
+        readiness = ConclusionReadiness(
+            state="ready",
+            data_status="provider_evidence",
+            valid_sample_count=valid_sample_count,
+            required_sample_count=required_sample_count,
+            message="真实 Provider 样本已达到本轮门槛，可以生成样本可下钻的测量结论。",
+        )
+    elif measurement_collecting:
+        readiness = ConclusionReadiness(
+            state="collecting",
+            data_status="collecting",
+            valid_sample_count=valid_sample_count,
+            required_sample_count=required_sample_count,
+            reason_codes=reason_codes,
+            message="真实扫描尚未封版；当前样本可以查看，但不能提前生成最终结论。",
+        )
+    else:
+        readiness = ConclusionReadiness(
+            state="blocked",
+            data_status="unverified",
+            valid_sample_count=valid_sample_count,
+            required_sample_count=required_sample_count,
+            reason_codes=reason_codes,
+            message="当前缺少达到门槛的真实 Provider 证据，不展示品牌指标或效果结论。",
+        )
+
+    # Import the repositories lazily to avoid coupling their router modules to
+    # main.py initialization while keeping the workflow endpoint read-only.
+    try:
+        from . import delivery_routes, evidence_gap_routes, knowledge_routes, retest_routes
+    except ImportError:  # pragma: no cover - supports direct uvicorn execution.
+        import delivery_routes  # type: ignore[no-redef]
+        import evidence_gap_routes  # type: ignore[no-redef]
+        import knowledge_routes  # type: ignore[no-redef]
+        import retest_routes  # type: ignore[no-redef]
+
+    optional_read_errors: list[str] = []
+    gap_count: Optional[int] = None
+    approved_fact_count: Optional[int] = None
+    approved_asset_count: Optional[int] = None
+    package_count: Optional[int] = None
+    completed_retest_count: Optional[int] = None
+    try:
+        gap_count = evidence_gap_routes.EVIDENCE_GAP_REPOSITORY.list(tenant_id, project_id).governed_gap_count
+    except Exception:  # noqa: BLE001 - partial read state is returned explicitly.
+        optional_read_errors.append("EVIDENCE_GAP_STATE_UNAVAILABLE")
+    try:
+        facts = knowledge_routes.KNOWLEDGE_REPOSITORY.list_facts(tenant_id, project_id)
+        approved_fact_count = sum(item.status == "approved" and item.eligible_for_generation for item in facts)
+        assets = knowledge_routes.KNOWLEDGE_REPOSITORY.list_governed_content(tenant_id, project_id)
+        approved_asset_count = sum(item.status == "approved" for item in assets)
+    except Exception:  # noqa: BLE001
+        optional_read_errors.append("KNOWLEDGE_STATE_UNAVAILABLE")
+    try:
+        packages = delivery_routes.DELIVERY_REPOSITORY.list_packages(tenant_id, project_id)
+        package_count = len(packages)
+    except Exception:  # noqa: BLE001
+        optional_read_errors.append("PUBLICATION_STATE_UNAVAILABLE")
+    try:
+        retest_windows = retest_routes.RETEST_REPOSITORY.list_windows(tenant_id, project_id)
+        completed_retest_count = sum(item.status in {"completed", "completed_with_limitations"} for item in retest_windows)
+    except Exception:  # noqa: BLE001
+        optional_read_errors.append("RETEST_STATE_UNAVAILABLE")
+    readiness.reason_codes.extend(optional_read_errors)
+
+    counts: dict[str, int] = {
+        "buyer_questions": len(questions),
+        "confirmed_questions": confirmed_question_count,
+        "scan_runs": len(runs),
+        "scan_tasks": len(tasks),
+        "valid_samples": valid_sample_count,
+    }
+    for key, value in {
+        "governed_gaps": gap_count,
+        "approved_facts": approved_fact_count,
+        "approved_assets": approved_asset_count,
+        "publish_packages": package_count,
+        "completed_retests": completed_retest_count,
+    }.items():
+        if value is not None:
+            counts[key] = value
+
+    step_specs = [
+        ("questions", "买家问题", confirmed_question_count, "/console/questions"),
+        ("scans", "多平台扫描", valid_sample_count, "/console/scans"),
+        ("gaps", "证据缺口", gap_count, "/console/gaps"),
+        ("facts", "可信事实", approved_fact_count, "/console/facts"),
+        ("assets", "答案资产", approved_asset_count, "/console/assets"),
+        ("publishing", "发布与复测", completed_retest_count, "/console/publishing"),
+    ]
+    step_statuses: dict[str, Literal["completed", "current", "blocked", "pending"]] = {
+        step_id: "blocked" for step_id, _label, _count, _href in step_specs
+    }
+    if confirmed_question_count == 0:
+        current_step: Literal["questions", "scans", "gaps", "facts", "assets", "publishing"] = "questions"
+        step_statuses["questions"] = "current"
+        primary_action = GrowthLoopPrimaryAction(label="确认买家问题", href="/console/questions", reason="真实扫描必须绑定已确认的问题集。")
+    elif not measurement_ready:
+        current_step = "scans"
+        step_statuses["questions"] = "completed"
+        step_statuses["scans"] = "current"
+        primary_action = GrowthLoopPrimaryAction(label="完成多平台扫描", href="/console/scans", reason=readiness.message)
+    else:
+        step_statuses["questions"] = "completed"
+        step_statuses["scans"] = "completed"
+        downstream_evidence = any((approved_fact_count or 0, approved_asset_count or 0, package_count or 0))
+        if not (gap_count or downstream_evidence):
+            current_step = "gaps"
+            step_statuses["gaps"] = "current"
+            primary_action = GrowthLoopPrimaryAction(label="核对证据缺口", href="/console/gaps", reason="基线已经形成，下一步只处理有真实样本支持的缺口。")
+        elif not approved_fact_count:
+            current_step = "facts"
+            step_statuses["gaps"] = "completed"
+            step_statuses["facts"] = "current"
+            primary_action = GrowthLoopPrimaryAction(label="补齐可信事实", href="/console/facts", reason="内容生成前必须先形成审核通过且可追溯的事实。")
+        elif not approved_asset_count:
+            current_step = "assets"
+            step_statuses.update({"gaps": "completed", "facts": "completed", "assets": "current"})
+            primary_action = GrowthLoopPrimaryAction(label="生成答案资产", href="/console/assets", reason="仅使用审核通过的事实生成可审校资产。")
+        else:
+            current_step = "publishing"
+            step_statuses.update({"gaps": "completed", "facts": "completed", "assets": "completed"})
+            step_statuses["publishing"] = "completed" if completed_retest_count else "current"
+            primary_action = GrowthLoopPrimaryAction(
+                label="查看发布与复测" if package_count else "创建发布包",
+                href="/console/publishing",
+                reason="发布快照和 T+7/T+14/T+30 复测共同形成可审计交付证据。",
+            )
+
+    summaries = {
+        "questions": f"已确认 {confirmed_question_count} / {len(questions)} 个问题",
+        "scans": f"有效样本 {valid_sample_count} / 门槛 {required_sample_count}",
+        "gaps": "状态暂时不可用" if gap_count is None else f"{gap_count} 个证据缺口",
+        "facts": "状态暂时不可用" if approved_fact_count is None else f"{approved_fact_count} 条可用于生成的事实",
+        "assets": "状态暂时不可用" if approved_asset_count is None else f"{approved_asset_count} 个已审核资产",
+        "publishing": "状态暂时不可用" if completed_retest_count is None else f"{package_count or 0} 个发布包，{completed_retest_count} 个已完成复测窗口",
+    }
+    return GrowthLoopData(
+        project_id=project_id,
+        current_step=current_step,
+        steps=[
+            GrowthLoopStep(
+                step_id=step_id,  # type: ignore[arg-type]
+                label=label,
+                status=step_statuses[step_id],
+                object_count=object_count,
+                summary=summaries[step_id],
+                href=href,
+            )
+            for step_id, label, object_count, href in step_specs
+        ],
+        conclusion_readiness=readiness,
+        primary_action=primary_action,
+        counts=counts,
+        measured_at=(latest_run.finished_at or latest_run.updated_at) if latest_run else None,
+    )
+
+
+@app.get(f"{API_PREFIX}/projects/{{project_id}}/growth-loop", response_model=GrowthLoopResponse)
+def get_growth_loop(
+    project_id: ProjectIdPath,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> GrowthLoopResponse:
+    return GrowthLoopResponse(data=build_growth_loop_data(tenant_id, project_id), meta=build_meta(trace_id))
 
 
 try:

@@ -28,6 +28,37 @@ export type ConsoleOverview = {
   message: string;
 };
 
+export type GrowthLoopStep = {
+  step_id: "questions" | "scans" | "gaps" | "facts" | "assets" | "publishing";
+  label: string;
+  status: "completed" | "current" | "blocked" | "pending";
+  object_count: number | null;
+  summary: string;
+  href: string;
+};
+
+export type GrowthLoop = {
+  contract_version: "airank.growth-loop.v1";
+  project_id: string;
+  current_step: GrowthLoopStep["step_id"];
+  steps: GrowthLoopStep[];
+  conclusion_readiness: {
+    state: "ready" | "collecting" | "blocked";
+    data_status: ConsoleOverview["dataStatus"];
+    valid_sample_count: number;
+    required_sample_count: number;
+    reason_codes: string[];
+    message: string;
+  };
+  primary_action: {
+    label: string;
+    href: string;
+    reason: string;
+  };
+  counts: Record<string, number>;
+  measured_at: string | null;
+};
+
 export type PageAuditFinding = {
   finding_id: string;
   rule_id: string;
@@ -2290,6 +2321,7 @@ export type AuthSession = {
     username: string | null;
     nickname: string | null;
   };
+  permissions: string[];
   devOnly: boolean;
 };
 
@@ -2327,6 +2359,14 @@ type ConsoleOverviewPayload = {
     data_status: "empty" | "collecting" | "provider_evidence" | "unverified";
     message: string;
   };
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
+type GrowthLoopPayload = {
+  data: GrowthLoop;
   meta: {
     trace_id: string;
     request_id: string;
@@ -2394,6 +2434,7 @@ type AuthLoginPayload = {
       username: string | null;
       nickname: string | null;
     };
+    permissions: string[];
     dev_only: boolean;
   };
   meta: {
@@ -2408,35 +2449,6 @@ type ConsoleActionPayload = {
     trace_id: string;
     request_id: string;
   };
-};
-
-export const fallbackConsoleOverview: ConsoleOverview = {
-  project: {
-    id: "",
-    name: "尚未加载项目",
-    website: "",
-    industry: "",
-    competitors: "",
-    audience: "",
-    date: "",
-  },
-  metricCards: [],
-  dataStatus: "empty",
-  message: "控制台 API 尚未返回真实项目数据。",
-};
-
-export const fallbackAssetBundle: AssetBundle = {
-  project_id: "",
-  tenant_id: "",
-  completeness: 0,
-  recommendation: "尚未读取真实内容资产。",
-  assets: [],
-};
-
-export const fallbackReportList: ReportList = {
-  project_id: "",
-  tenant_id: "",
-  reports: [],
 };
 
 function canUseStorage() {
@@ -2458,7 +2470,7 @@ export function getStoredAuthSession(): AuthSession | null {
     if (!parsed.accessToken || !parsed.tenantId || !parsed.yudaoTenantId || !parsed.user?.userId) {
       return null;
     }
-    return parsed as AuthSession;
+    return { ...parsed, permissions: Array.isArray(parsed.permissions) ? parsed.permissions : [] } as AuthSession;
   } catch {
     return null;
   }
@@ -2488,6 +2500,7 @@ function mapAuthSession(payload: AuthLoginPayload): AuthSession {
       username: payload.data.user.username,
       nickname: payload.data.user.nickname,
     },
+    permissions: payload.data.permissions ?? [],
     devOnly: payload.data.dev_only,
   };
 }
@@ -2498,6 +2511,9 @@ const apiErrorMessagesZh: Record<string, string> = {
   AUTH_TOKEN_INVALID: "登录状态无效，请重新登录。",
   AUTH_LOGIN_FAILED: "租户编号、账号或密码不正确。",
   RETEST_COMPARE_RUN_REQUIRED: "需要至少一个已完成且口径可比的测量批次。",
+  SCAN_PROVIDER_BLOCKED: "所选平台当前未启用或未通过可用门禁，本轮尚未创建扫描任务。",
+  PROVIDER_AUTH_FAILED: "平台授权已失效，请由管理员重新授权后补测。",
+  PROVIDER_RATE_OR_QUOTA_LIMITED: "平台额度不足，本轮已暂停；已获得的其他平台样本不受影响。",
   INTEGRATION_CAPABILITY_BLOCKED: "当前依赖能力尚未就绪，请联系管理员检查配置。",
   RESOURCE_NOT_FOUND: "请求的数据不存在或已不可用。",
   RATE_LIMITED: "请求过于频繁，请稍后再试。",
@@ -2578,6 +2594,19 @@ export async function fetchConsoleOverview(signal?: AbortSignal): Promise<Consol
     dataStatus: payload.data.data_status,
     message: payload.data.message,
   };
+}
+
+export async function fetchGrowthLoop(projectId: string, signal?: AbortSignal): Promise<GrowthLoop> {
+  const response = await fetch(`/api/v1/projects/${projectId}/growth-loop`, {
+    headers: buildApiHeaders("trc_web_growth_loop"),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Growth loop request failed with ${response.status}`));
+  }
+
+  return ((await response.json()) as GrowthLoopPayload).data;
 }
 
 export async function fetchAssetBundle(projectId: string, signal?: AbortSignal): Promise<AssetBundle> {

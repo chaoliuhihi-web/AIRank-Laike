@@ -121,6 +121,36 @@ def test_active_provider_scope_excludes_disabled_or_route_blocked_providers(monk
     assert all(question.recommended_providers == ["doubao", "qianwen"] for question in questions)
 
 
+def test_scan_run_rejects_disabled_provider_before_task_creation(monkeypatch) -> None:
+    class NoWriteScanRepository:
+        def create_run(self, *_args, **_kwargs):
+            raise AssertionError("disabled provider must be rejected before creating tasks")
+
+    monkeypatch.setattr(api_main, "SCAN_REPOSITORY", NoWriteScanRepository())
+    monkeypatch.setenv("AIRANK_DATABASE_URL", "mysql+pymysql://airank:test@mysql/airank")
+    monkeypatch.setattr(api_main, "active_provider_scope", lambda _tenant_id: ["doubao", "qianwen"])
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/scan-runs",
+        headers={"tenant-id": "tenant_scope", "X-AIRank-Trace-Id": "trc_disabled_provider"},
+        json={
+            "project_id": "project_scope",
+            "run_type": "baseline",
+            "cohort_type": "blind",
+            "repetitions": 1,
+            "collector_surfaces": ["api"],
+            "provider_scope": ["doubao", "kimi"],
+            "question_scope": {"mode": "selected", "question_ids": ["question_scope"]},
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "SCAN_PROVIDER_BLOCKED"
+    assert response.json()["error"]["details"]["blocked_providers"] == ["kimi"]
+    assert response.json()["error"]["details"]["impact"] == "no_scan_tasks_created"
+
+
 def test_production_readiness_uses_persisted_l3_evidence_without_live_probe(monkeypatch) -> None:
     configure_api_provider_env(monkeypatch)
     monkeypatch.setenv("AIRANK_DATABASE_URL", "mysql+pymysql://airank:test@mysql/airank")

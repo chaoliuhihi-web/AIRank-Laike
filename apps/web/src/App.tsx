@@ -62,10 +62,14 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
-import { consoleRoutes } from "./console/routes/console-routes";
 import {
-  fallbackConsoleOverview,
-  fallbackAssetBundle,
+  activeRouteForPath,
+  audienceForPath,
+  legacyRouteRedirects,
+  routeIsAccessible,
+} from "./console/routes/console-routes";
+import { ConsoleSidebar, ConsoleWorkspaceHeader } from "./console/layout/ConsoleSidebar";
+import {
   clearAuthSession,
   compileQuestionMap,
   compileBrandGraph,
@@ -111,6 +115,7 @@ import {
   fetchEvidenceObject,
   fetchEvidenceGaps,
   fetchFactAcquisitionTasks,
+  fetchGrowthLoop,
   fetchOpportunityActions,
   fetchOpportunityActionRouting,
   fetchOpportunityActionDirectory,
@@ -151,7 +156,6 @@ import {
   fetchScanRuns,
   fetchScanTasks,
   fetchSourceRegistry,
-  fallbackReportList,
   fetchReports,
   getStoredAuthSession,
   loginToAirank,
@@ -229,6 +233,7 @@ import {
   type OpportunitySourceKind,
   type GovernedContentAsset,
   type GovernedContentCreateInput,
+  type GrowthLoop,
   type FactRevision,
   type InternalSkill,
   type KnowledgeGovernance,
@@ -320,9 +325,18 @@ const iconMap: Record<string, LucideIcon> = {
   Zap,
 };
 
-const navRoutes = consoleRoutes.filter((route) => route.id !== "gap-questions");
-const ConsoleOverviewContext = createContext<ConsoleOverview>(fallbackConsoleOverview);
-const ConsoleOverviewStatusContext = createContext<"loading" | "api" | "fallback">("loading");
+const EMPTY_CONSOLE_OVERVIEW: ConsoleOverview = {
+  project: { id: "", name: "", website: "", industry: "", competitors: "", audience: "", date: "" },
+  metricCards: [],
+  dataStatus: "empty",
+  message: "生产环境不使用固定业务数据；当前尚未读取到真实项目。",
+};
+const EMPTY_ASSET_BUNDLE: AssetBundle = { project_id: "", tenant_id: "", completeness: 0, recommendation: "", assets: [] };
+const EMPTY_REPORT_LIST: ReportList = { project_id: "", tenant_id: "", reports: [] };
+const ConsoleOverviewContext = createContext<ConsoleOverview>(EMPTY_CONSOLE_OVERVIEW);
+const ConsoleOverviewStatusContext = createContext<"loading" | "error" | "ready">("loading");
+const GrowthLoopContext = createContext<GrowthLoop | null>(null);
+const GrowthLoopStatusContext = createContext<"idle" | "loading" | "ready" | "error">("idle");
 const assetCardIcons: LucideIcon[] = [FileText, Box, UsersRound, MessageCircle, Scale, Lightbulb, Code2, Workflow];
 const governedAssetTypes: Array<{ value: GovernedContentCreateInput["assetType"]; label: string }> = [
   { value: "fact_page", label: "企业事实页" },
@@ -465,6 +479,14 @@ function useConsoleOverviewStatus() {
   return useContext(ConsoleOverviewStatusContext);
 }
 
+function useGrowthLoop() {
+  return useContext(GrowthLoopContext);
+}
+
+function useGrowthLoopStatus() {
+  return useContext(GrowthLoopStatusContext);
+}
+
 function useActionFeedback() {
   return useContext(ActionFeedbackContext);
 }
@@ -472,8 +494,10 @@ function useActionFeedback() {
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname));
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredAuthSession());
-  const [overview, setOverview] = useState<ConsoleOverview>(fallbackConsoleOverview);
-  const [overviewStatus, setOverviewStatus] = useState<"loading" | "api" | "fallback">("loading");
+  const [overview, setOverview] = useState<ConsoleOverview>(EMPTY_CONSOLE_OVERVIEW);
+  const [overviewStatus, setOverviewStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [growthLoop, setGrowthLoop] = useState<GrowthLoop | null>(null);
+  const [growthLoopStatus, setGrowthLoopStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [toast, setToast] = useState<ToastState | null>(null);
   const [actionPanel, setActionPanel] = useState<ActionPanelState | null>(null);
 
@@ -491,8 +515,8 @@ function App() {
 
   useEffect(() => {
     if (!authSession) {
-      setOverview(fallbackConsoleOverview);
-      setOverviewStatus("fallback");
+      setOverview(EMPTY_CONSOLE_OVERVIEW);
+      setOverviewStatus("error");
       return;
     }
 
@@ -501,7 +525,7 @@ function App() {
     fetchConsoleOverview(controller.signal)
       .then((nextOverview) => {
         setOverview(nextOverview);
-        setOverviewStatus("api");
+        setOverviewStatus("ready");
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
@@ -509,11 +533,33 @@ function App() {
           clearAuthSession();
           setAuthSession(null);
         }
-        setOverview(fallbackConsoleOverview);
-        setOverviewStatus("fallback");
+        setOverview(EMPTY_CONSOLE_OVERVIEW);
+        setOverviewStatus("error");
       });
     return () => controller.abort();
   }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !overview.project.id) {
+      setGrowthLoop(null);
+      setGrowthLoopStatus("idle");
+      return;
+    }
+    const controller = new AbortController();
+    setGrowthLoop(null);
+    setGrowthLoopStatus("loading");
+    fetchGrowthLoop(overview.project.id, controller.signal)
+      .then((result) => {
+        setGrowthLoop(result);
+        setGrowthLoopStatus("ready");
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setGrowthLoop(null);
+        setGrowthLoopStatus("error");
+      });
+    return () => controller.abort();
+  }, [authSession, overview.project.id]);
 
   useEffect(() => {
     if (!authSession && path !== "/login") {
@@ -522,6 +568,21 @@ function App() {
     }
     if (authSession && path === "/login") {
       navigate("/console");
+      return;
+    }
+    if (!authSession) return;
+
+    const legacyTarget = legacyRouteRedirects[path];
+    if (legacyTarget) {
+      window.history.replaceState({}, "", legacyTarget);
+      setPath(legacyTarget);
+      return;
+    }
+
+    const route = activeRouteForPath(path);
+    if (route && !routeIsAccessible(route, authSession.permissions)) {
+      window.history.replaceState({}, "", "/console");
+      setPath("/console");
     }
   }, [authSession, path]);
 
@@ -535,14 +596,14 @@ function App() {
   const handleLogout = () => {
     clearAuthSession();
     setAuthSession(null);
-    setOverview(fallbackConsoleOverview);
-    setOverviewStatus("fallback");
+    setOverview(EMPTY_CONSOLE_OVERVIEW);
+    setOverviewStatus("error");
     navigate("/login");
   };
 
   const applyBrandCheckResult = (result: BrandCheckResult) => {
     setOverview(result.overview);
-    setOverviewStatus("api");
+    setOverviewStatus("ready");
   };
 
   const showToast = (nextToast: Omit<ToastState, "id">) => {
@@ -615,7 +676,9 @@ function App() {
   return (
     <ConsoleOverviewContext.Provider value={overview}>
       <ConsoleOverviewStatusContext.Provider value={overviewStatus}>
-        <ActionFeedbackContext.Provider
+        <GrowthLoopContext.Provider value={growthLoop}>
+          <GrowthLoopStatusContext.Provider value={growthLoopStatus}>
+            <ActionFeedbackContext.Provider
           value={{
             notify,
             openPanel: openActionPanel,
@@ -625,15 +688,39 @@ function App() {
         >
           <main className="airank-console">
             <div className="airank-console-shell">
-              <Sidebar activePath={path} onNavigate={navigateWithAudit} onLogout={handleLogout} />
+              <ConsoleSidebar
+                activePath={path}
+                projectName={overview.project.name}
+                userName={authSession.user.nickname || authSession.user.username || ""}
+                permissions={authSession.permissions}
+                dataStatus={overview.dataStatus}
+                growthLoopSteps={growthLoop?.steps}
+                onNavigate={navigateWithAudit}
+                onHelp={() => openActionPanel({
+                  title: "帮助与支持",
+                  desc: audienceForPath(path) === "customer"
+                    ? "沿六步闭环推进；页面只显示当前状态、真实证据和下一步。"
+                    : "当前为内部工作区，客户不会看到任务租约、路由、队列和审核运维细节。",
+                  items: ["数据不足时不会生成品牌结论", "无权限动作会在渲染前隐藏", "需要协助时请记录项目与当前步骤"],
+                })}
+                onLogout={handleLogout}
+              />
               <section className="airank-console-main">
+                <ConsoleWorkspaceHeader
+                  activePath={path}
+                  projectName={overview.project.name}
+                  projectDate={overview.project.date}
+                  dataStatus={overview.dataStatus}
+                />
                 <ConsolePage path={path} onNavigate={navigateWithAudit} onBrandCheckComplete={applyBrandCheckResult} />
               </section>
             </div>
             {toast && <ActionToast toast={toast} onDismiss={() => setToast(null)} />}
             {actionPanel && <ActionPanel panel={actionPanel} onClose={() => setActionPanel(null)} />}
           </main>
-        </ActionFeedbackContext.Provider>
+            </ActionFeedbackContext.Provider>
+          </GrowthLoopStatusContext.Provider>
+        </GrowthLoopContext.Provider>
       </ConsoleOverviewStatusContext.Provider>
     </ConsoleOverviewContext.Provider>
   );
@@ -788,83 +875,6 @@ function normalizePath(path: string) {
   return path.replace(/\/$/, "");
 }
 
-function Sidebar({
-  activePath,
-  onNavigate,
-  onLogout,
-}: {
-  activePath: string;
-  onNavigate: (path: string) => void;
-  onLogout: () => void;
-}) {
-  const { project } = useConsoleOverview();
-  const { openPanel } = useActionFeedback();
-
-  return (
-    <aside className="airank-console-sidebar">
-      <div className="brand-lockup">
-        <div className="brand-mark">
-          <Sparkles size={25} />
-        </div>
-        <div>
-          <div className="brand-title">{project.name}</div>
-          <div className="brand-subtitle">AIRank 来客</div>
-        </div>
-      </div>
-
-      <nav className="console-nav" aria-label="AIRank 控制台">
-        {navRoutes.map((route) => {
-          const Icon = iconMap[route.icon] ?? Home;
-          const active = route.path === "/console" ? activePath === "/console" : activePath.startsWith(route.path);
-          return (
-            <button
-              key={route.id}
-              className="airank-console-nav-item"
-              data-active={active}
-              type="button"
-              onClick={() => onNavigate(route.path)}
-            >
-              <Icon size={22} strokeWidth={2.2} />
-              <span>{route.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      <div className="sidebar-footer">
-        <button
-          className="help-link"
-          type="button"
-          onClick={() =>
-            openPanel({
-              title: "帮助中心",
-              desc: "当前控制台按 AI 来客闭环组织：先体检，再确认事实和问题，补齐资产，最后发布复测并下载报告。",
-              items: ["遇到数据异常时先刷新工作台", "发布前确认事实库和 AI 收录包", "报告页会记录每一次下载回执"],
-            })
-          }
-        >
-          <HelpCircle size={22} />
-          <span>帮助中心</span>
-        </button>
-        <button className="help-link" type="button" onClick={onLogout}>
-          <LogOut size={22} />
-          <span>退出登录</span>
-        </button>
-        <div className="tenant-switcher">
-          <div className="tenant-avatar">
-            <CircleUserRound size={23} />
-          </div>
-          <div>
-            <div className="tenant-name">{project.name}</div>
-            <div className="tenant-plan">企业版</div>
-          </div>
-          <ChevronDown size={18} />
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 function ConsolePage({
   path,
   onNavigate,
@@ -874,20 +884,26 @@ function ConsolePage({
   onNavigate: (path: string) => void;
   onBrandCheckComplete: (result: BrandCheckResult) => void;
 }) {
-  if (path === "/console/checkup") return <CheckupPage onNavigate={onNavigate} />;
+  if (path === "/console/scans") return <CheckupPage onNavigate={onNavigate} />;
   if (path === "/console/facts") return <FactsPage />;
-  if (path === "/console/page-audit") return <PageAuditPage />;
-  if (path === "/console/evidence") return <EvidencePage />;
-  if (path === "/console/tasks") return <TaskCenterPage />;
+  if (path === "/console/assets/site-audit") return <PageAuditPage />;
   if (path === "/console/questions") return <QuestionsPage onNavigate={onNavigate} />;
   if (path === "/console/gaps/questions") return <GapQuestionsPage onNavigate={onNavigate} />;
   if (path === "/console/gaps") return <GapsPage onNavigate={onNavigate} />;
-  if (path === "/console/assets") return <AssetsPage onNavigate={onNavigate} />;
-  if (path === "/console/publishing") return <PublishingPage onNavigate={onNavigate} />;
-  if (path === "/console/assistant") return <AssistantPage />;
+  if (path === "/console/assets") return <CustomerAssetsPage onNavigate={onNavigate} />;
+  if (path === "/console/assets/reviews") return <CustomerAssetsPage onNavigate={onNavigate} reviewOnly />;
+  if (path.startsWith("/console/assets/") && path !== "/console/assets/site-audit") return <CustomerAssetEditorPage assetId={path.split("/")[3] || "new"} onNavigate={onNavigate} />;
+  if (path === "/console/publishing") return <CustomerPublishingPage onNavigate={onNavigate} />;
   if (path === "/console/reports") return <ReportsPage onNavigate={onNavigate} />;
-  if (path === "/console/settings") return <SettingsPage />;
-  if (path === "/console/skills") return <SkillConsolePage />;
+  if (path === "/console/settings") return <CustomerSettingsPage />;
+  if (path === "/delivery") return <DeliveryHomePage onNavigate={onNavigate} />;
+  if (path === "/delivery/tasks") return <TaskCenterPage />;
+  if (path === "/delivery/evidence" || path === "/delivery/reviews") return <EvidencePage />;
+  if (path === "/delivery/publishing") return <PublishingPage onNavigate={onNavigate} />;
+  if (path === "/admin") return <AdminHomePage onNavigate={onNavigate} />;
+  if (path === "/admin/providers") return <SettingsPage />;
+  if (path === "/admin/skills") return <SkillConsolePage />;
+  if (path === "/admin/operations") return <TaskCenterPage />;
   return <DashboardPage onNavigate={onNavigate} onBrandCheckComplete={onBrandCheckComplete} />;
 }
 
@@ -1068,10 +1084,10 @@ function BrandCheckCard({
         title: completed ? "品牌检测已完成" : "品牌检测已进入队列",
         desc: completed
           ? `${result.project.brand_name} 已处理 ${result.taskCount} 个检测任务；请在体检页核对有效、失败、阻塞和未提及样本。`
-          : `${result.project.brand_name} 已创建 ${result.taskCount} 个真实采样任务；Worker 将异步执行，请在任务中心查看进度。`,
+          : `${result.project.brand_name} 已创建 ${result.taskCount} 个真实采样任务；系统将异步执行，可在多平台扫描查看进度。`,
         tone: completed ? "success" : "warning",
       });
-      onNavigate(completed ? "/console/checkup" : "/console/tasks");
+      onNavigate("/console/scans");
     } catch (error) {
       const message = error instanceof Error ? error.message : "后端未能完成检测，请检查品牌和网址。";
       setLastError(message);
@@ -1149,57 +1165,79 @@ function DashboardPage({
 }) {
   const overview = useConsoleOverview();
   const overviewStatus = useConsoleOverviewStatus();
-  const hasEvidence = overview.dataStatus === "provider_evidence" && overview.metricCards.length > 0;
+  const growthLoop = useGrowthLoop();
+  const growthLoopStatus = useGrowthLoopStatus();
+  const hasProject = Boolean(overview.project.id);
+  const hasEvidence = growthLoop?.conclusion_readiness.state === "ready"
+    && overview.dataStatus === "provider_evidence"
+    && overview.metricCards.length > 0;
+  const nextStep = !hasProject
+    ? { title: "先建立项目并确认买家问题", desc: "只有明确本轮买家问题，才能开始真实多平台扫描。", label: "填写品牌资料", href: "/console" }
+    : growthLoop
+      ? {
+          title: `当前推进：${growthLoop.steps.find((step) => step.step_id === growthLoop.current_step)?.label ?? "增长闭环"}`,
+          desc: growthLoop.primary_action.reason,
+          label: growthLoop.primary_action.label,
+          href: growthLoop.primary_action.href,
+        }
+      : overview.dataStatus === "collecting"
+      ? { title: "真实扫描正在运行", desc: "已完成的样本可以查看，但批次封版前不生成缺口和报告结论。", label: "查看扫描进度", href: "/console/scans" }
+      : overview.dataStatus === "provider_evidence"
+        ? { title: "基线证据已经形成", desc: "下一步查看高影响且可行动的证据缺口，并下钻到真实样本。", label: "查看证据缺口", href: "/console/gaps" }
+        : { title: "先确认本轮买家问题", desc: "确认盲测、辅助测、对比测和事实核验问题后，再选择可用平台扫描。", label: "审核买家问题", href: "/console/questions" };
 
   return (
     <>
       <PageHeader
         title="工作台"
-        subtitle="老板驾驶舱：只展示可下钻到真实样本、引用和事实来源的 GEO 指标。"
-        action={<DatePill />}
+        subtitle="看清当前闭环位置、最重要结论和唯一下一步；没有真实有效样本时不展示品牌指标。"
       />
-      {overviewStatus === "fallback" && (
-        <AlertBanner
-          title="控制台 API 暂不可用"
-          desc="为避免把演示数字冒充真实结果，当前不展示本地业务指标；恢复 API 后刷新读取项目数据。"
-          action="重新加载"
-          onClick={() => window.location.reload()}
-        />
-      )}
-      <BrandCheckCard onNavigate={onNavigate} onComplete={onBrandCheckComplete} />
-      <section className="metric-grid">
-        {overview.metricCards.map((item) => (
-          <MetricCard key={item.label} item={item} />
-        ))}
-      </section>
-      {!hasEvidence && (
-        <AlertBanner
-          title={overview.dataStatus === "collecting" ? "真实采样正在执行" : "尚无可验证的品牌指标"}
-          desc={overview.message || "完成真实 Provider 采样后才会展示提及率、推荐率和排名；正常未提及回答仍计入有效分母。"}
-          action="查看体检状态"
-          onClick={() => onNavigate("/console/checkup")}
-        />
-      )}
-      <section className="dashboard-grid">
-        <div className="dashboard-main">
-          <Panel title="证据状态">
-            <DataStateCard
-              title={hasEvidence ? "真实 Provider 证据已入库" : "等待真实样本"}
-              desc={overview.message || "当前没有可展示的证据结论。"}
-              tone={hasEvidence ? "success" : "warning"}
-            />
-          </Panel>
-          <Panel title="指标口径">
-            <div className="check-list">
-              <CheckLine text="正常未提及样本" value="计入有效分母" checked />
-              <CheckLine text="失败与阻塞样本" value="单独统计" checked />
-              <CheckLine text="API / Web / App" value="分开标记" checked />
-              <CheckLine text="原始回答与引用" value="可下钻追溯" checked />
+      {overviewStatus === "loading" && <DataStateCard title="正在读取项目状态" desc="加载完成前不展示默认指标或推测结论。" tone="primary" />}
+      {overviewStatus === "error" && <AlertBanner title="项目数据暂时不可用" desc="生产环境不使用固定业务数据，因此当前不展示示例指标、资产或报告。" action="重新加载" onClick={() => window.location.reload()} />}
+      {overviewStatus === "ready" && (
+        <>
+          {hasProject && growthLoopStatus === "loading" && <DataStateCard title="正在核对闭环门禁" desc="指标、步骤和下一动作以统一后端状态为准。" tone="primary" />}
+          {hasProject && growthLoopStatus === "error" && <AlertBanner title="闭环状态暂时不可用" desc="为避免不同页面各自推测，本页已隐藏测量指标；请重新加载后再试。" action="重新加载" onClick={() => window.location.reload()} />}
+          <section className="airank-console-card dashboard-status-card" data-status={overview.dataStatus}>
+            <div>
+              <span className="dashboard-status-eyebrow">当前状态</span>
+              <h2>{nextStep.title}</h2>
+              <p>{growthLoop?.conclusion_readiness.message || overview.message || nextStep.desc}</p>
             </div>
-          </Panel>
-        </div>
-        <NextActionsRail onNavigate={onNavigate} blocked={!hasEvidence} />
-      </section>
+            <Badge tone={hasEvidence ? "success" : growthLoop?.conclusion_readiness.state === "collecting" || overview.dataStatus === "collecting" ? "primary" : "warning"}>
+              {hasEvidence ? "结论可用" : growthLoop?.conclusion_readiness.state === "collecting" || overview.dataStatus === "collecting" ? "采集中" : hasProject ? "结论受阻" : "新项目"}
+            </Badge>
+          </section>
+          <section className="growth-loop-progress" aria-label="六步增长闭环">
+            {(growthLoop?.steps ?? [
+              { step_id: "questions", label: "买家问题", status: hasProject ? "current" : "blocked", href: "/console/questions" },
+              { step_id: "scans", label: "多平台扫描", status: "blocked", href: "/console/scans" },
+              { step_id: "gaps", label: "证据缺口", status: "blocked", href: "/console/gaps" },
+              { step_id: "facts", label: "可信事实", status: "blocked", href: "/console/facts" },
+              { step_id: "assets", label: "答案资产", status: "blocked", href: "/console/assets" },
+              { step_id: "publishing", label: "发布与复测", status: "blocked", href: "/console/publishing" },
+            ]).map((step, stepIndex) => (
+              <button key={step.step_id} type="button" data-completed={step.status === "completed"} data-current={step.status === "current"} onClick={() => onNavigate(step.href)}>
+                <span>{String(stepIndex + 1).padStart(2, "0")}</span><strong>{step.label}</strong>{step.status === "completed" ? <CheckCircle2 size={16} /> : null}
+              </button>
+            ))}
+          </section>
+          {hasEvidence && <section className="metric-grid">{overview.metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
+          {!hasEvidence && hasProject && <DataStateCard title="尚无可验证的品牌指标" desc="完成真实采样后才展示提及率、推荐率和排名；正常未提及回答仍计入有效分母。" tone="warning" />}
+          {!hasProject && <BrandCheckCard onNavigate={onNavigate} onComplete={onBrandCheckComplete} />}
+          <section className="airank-console-card dashboard-primary-action">
+            <div><span>下一步</span><h2>{nextStep.title}</h2><p>{nextStep.desc}</p></div>
+            <button className="airank-console-primary-button" type="button" onClick={() => {
+              if (!hasProject) {
+                document.querySelector<HTMLInputElement>(".brand-check-form input")?.focus();
+                document.querySelector(".brand-check-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                return;
+              }
+              onNavigate(nextStep.href);
+            }}>{nextStep.label}<ArrowRight size={18} /></button>
+          </section>
+        </>
+      )}
     </>
   );
 }
@@ -1259,6 +1297,41 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function assetTypeLabel(value: string): string {
+  return {
+    fact_page: "企业事实页",
+    product_page: "产品与服务页",
+    faq: "FAQ",
+    comparison_page: "竞品比较页",
+    case_page: "案例页",
+    research_page: "数据与研究页",
+    json_ld: "JSON-LD",
+    llms_txt: "llms.txt",
+  }[value] ?? "内容页面";
+}
+
+function contentStatusLabel(value: GovernedContentAsset["status"]): string {
+  return { draft: "草稿", approved: "已通过", rejected: "已驳回", changes_requested: "需修改" }[value];
+}
+
+function publicationStatusLabel(value: PublishPackage["status"]): string {
+  return {
+    packaged: "已生成发布包",
+    queued: "等待发布",
+    publishing: "发布中",
+    delivered: "已交付",
+    failed: "发布失败",
+    outcome_unknown: "结果待核对",
+    published: "已发布",
+    superseded: "已更新替代",
+    withdrawn: "已撤回",
+  }[value];
+}
+
+function retestStatusLabel(value: RetestWindow["status"]): string {
+  return { scheduled: "待复测", running: "复测中", completed: "已完成", completed_with_limitations: "完成但有局限", failed: "复测失败" }[value];
+}
+
 function formatOverdueDuration(seconds: number): string {
   const normalized = Math.max(0, Math.floor(seconds));
   if (normalized < 60) return `${normalized} 秒`;
@@ -1296,7 +1369,7 @@ function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: s
               <button
                 className="outline-button"
                 type="button"
-                onClick={() => onNavigate(blocked ? (index === 2 ? "/console/settings" : "/console/checkup") : index === 0 ? "/console/facts" : index === 1 ? "/console/assets" : "/console/publishing")}
+                onClick={() => onNavigate(blocked ? (index === 2 ? "/console/settings" : "/console/scans") : index === 0 ? "/console/facts" : index === 1 ? "/console/assets" : "/console/publishing")}
               >
                 {item.cta}
               </button>
@@ -1304,7 +1377,7 @@ function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: s
           </article>
         ))}
       </div>
-      <button className="airank-console-primary-button rail-cta" type="button" onClick={() => onNavigate(blocked ? "/console/checkup" : "/console/assets")}>
+      <button className="airank-console-primary-button rail-cta" type="button" onClick={() => onNavigate(blocked ? "/console/scans" : "/console/assets")}>
         {blocked ? "查看阻断状态" : "继续下一步"}
         <ArrowRight size={18} />
       </button>
@@ -1314,69 +1387,103 @@ function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: s
 }
 
 function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const overview = useConsoleOverview();
+  const { project, dataStatus, metricCards, message } = useConsoleOverview();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
+  const [runs, setRuns] = useState<ScanRun[]>([]);
+  const [tasks, setTasks] = useState<ScanTask[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchProviderReadiness(controller.signal)
-      .then((data) => {
-        setReadiness(data);
-        setLoadError(null);
-      })
-      .catch((error) => {
+    const load = async () => {
+      try {
+        const [nextReadiness, nextRuns] = await Promise.all([
+          fetchProviderReadiness(controller.signal),
+          project.id ? fetchScanRuns(project.id, controller.signal) : Promise.resolve([]),
+        ]);
         if (controller.signal.aborted) return;
-        setLoadError(error instanceof Error ? error.message : "Provider 健康接口不可用");
-      });
+        setReadiness(nextReadiness);
+        setRuns(nextRuns);
+        const latest = nextRuns[0];
+        setTasks(latest ? await fetchScanTasks(latest.run_id, controller.signal) : []);
+        setLoadError(null);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setReadiness(null);
+        setRuns([]);
+        setTasks([]);
+        setLoadError(error instanceof Error ? error.message : "扫描状态暂时不可用。");
+      }
+    };
+    void load();
     return () => controller.abort();
-  }, []);
+  }, [project.id]);
+
+  const latest = runs[0] ?? null;
+  const completedCount = tasks.filter((task) => task.status === "completed").length;
+  const failedCount = tasks.filter((task) => task.status === "failed" || task.status === "skipped").length;
+  const runningCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
+  const questionCount = new Set(tasks.map((task) => task.question_id)).size;
+  const metricNumber = (key: string): number | null => {
+    const value = latest?.metrics[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const unmentionedCount = metricNumber("valid_unmentioned_count") ?? metricNumber("normal_unmentioned_count");
 
   return (
     <>
       <PageHeader
-        title="AI 收录体检"
-        subtitle="分别查看真实 Provider 健康状态和已入库采样指标；无证据时不生成品牌结论。"
-        action={<span className="step-counter">02 / 09</span>}
+        title="多平台扫描"
+        subtitle="查看每个平台是否完成真实采样、有效样本是否足够，以及哪些平台本轮未纳入。"
+        action={<span className="step-counter">02 / 06</span>}
       />
-      <ProcessSteps
-        steps={[
-          ["客户问题采样", "基于目标客户使用场景采样高价值问题"],
-          ["多 AI 平台检测", "在主流 AI 平台检测品牌可见度"],
-          ["引用来源分析", "分析 AI 引用来源与内容权威性"],
-          ["竞品压制分析", "对比竞品表现并识别压制点"],
-        ]}
-      />
-      <ProjectStrip />
+      {loadError && <DataStateCard title="扫描状态暂时不可用" desc={`${loadError} 当前不展示示例进度或推测结果。`} tone="danger" />}
+      {!loadError && !readiness && <DataStateCard title="正在读取扫描状态" desc="读取已保存的 Provider 健康与真实任务，不会因打开页面重复发起计费探测。" tone="primary" />}
+      {readiness && (
       <section className="provider-grid">
-        {(readiness?.providers ?? []).map((item) => (
-          <article className="airank-console-card provider-card" data-testid="provider-card" key={item.provider}>
-            <div className="provider-avatar">{item.label.slice(0, 1)}</div>
-            <h3>{item.label}</h3>
-            <div className="provider-metrics">
-              <Badge tone={item.status === "ready" ? "success" : "danger"}>{item.status === "ready" ? "已就绪" : "已阻断"}</Badge>
-              <span>采集模式<strong>{readiness?.mode === "api" ? "API" : readiness?.mode === "browser" ? "网页采集" : "未确认"}</strong></span>
-              <span>探测层级<strong>{item.probe_level === "l3_generation" ? "L3 真实生成" : "L2 页面交互"}</strong></span>
-              <span>生成验证<strong>{item.generation_verified ? "已通过" : "未通过"}</strong></span>
-              <span>状态来源<strong>{item.status_source === "persisted_l3_probe" ? "最近一次已存证 L3 探测" : item.status_source === "runtime_configuration" ? "运行时配置" : "本次实时探测"}</strong></span>
-              <span>探测时间<strong>{formatDateTime(item.checked_at)}</strong></span>
-              {item.model && <span>模型<strong>{item.model}</strong></span>}
-              <span>状态说明<strong>{item.reason || item.blocker_code || "探测通过"}</strong></span>
-            </div>
-          </article>
-        ))}
+        {readiness.providers.map((item) => {
+          const healthLabel = item.status === "ready" ? "已就绪" : "已阻断";
+          const providerTasks = tasks.filter((task) => task.provider === item.provider);
+          const providerCompleted = providerTasks.filter((task) => task.status === "completed").length;
+          const providerFailed = providerTasks.filter((task) => task.status === "failed" || task.status === "skipped").length;
+          const taskStatus = item.status !== "ready"
+            ? "本轮未纳入"
+            : providerTasks.some((task) => task.status === "running" || task.status === "queued")
+              ? "运行中"
+              : providerTasks.length > 0 && providerFailed > 0
+                ? "部分完成"
+                : providerTasks.length > 0
+                  ? "已完成"
+                  : "等待开始";
+          return (
+            <article className="airank-console-card provider-card scan-provider-card" data-testid="provider-card" aria-label={`${item.label} ${healthLabel}`} key={item.provider}>
+              <div className="provider-card-head"><div className="provider-avatar">{item.label.slice(0, 1)}</div><div><h3>{item.label}</h3><span>{item.model || "平台当前模型"}</span></div><Badge tone={taskStatus === "已完成" ? "success" : taskStatus === "本轮未纳入" ? "muted" : taskStatus === "部分完成" ? "warning" : "primary"}>{taskStatus}</Badge></div>
+              <div className="provider-metrics scan-provider-metrics">
+                <span>采集方式<strong>{readiness.mode === "api" ? "平台 API" : readiness.mode === "browser" ? "平台网页" : "未确认"}</strong></span>
+                <span>有效样本<strong>{providerCompleted} / {providerTasks.length || "—"}</strong></span>
+                <span>失败样本<strong>{providerFailed}</strong></span>
+                <span>证据等级<strong>{providerTasks[0]?.evidence_level === "provider_api" ? "平台 API 证据" : providerTasks[0]?.evidence_level === "consumer_web" ? "网页采集证据" : "等待样本"}</strong></span>
+                <span>最近完成<strong>{formatDateTime(providerTasks.find((task) => task.finished_at)?.finished_at || item.checked_at)}</strong></span>
+                <span>状态说明<strong>{item.status === "ready" ? "已通过平台可用门禁" : item.reason || "该平台当前不可用"}</strong></span>
+              </div>
+            </article>
+          );
+        })}
       </section>
-      {loadError && <DataStateCard title="Provider 健康接口不可用" desc={loadError} tone="danger" />}
-      {!readiness && !loadError && <DataStateCard title="正在读取 Provider 状态" desc="读取最近一次已存证的 L3 真实生成结果，不会在页面加载时重复发起计费探测。" tone="primary" />}
-      <section className="metric-grid">
-        {overview.metricCards.map((item) => <MetricCard key={item.label} item={item} />)}
+      )}
+      <section className="summary-band scan-summary-band" aria-label="当前批次概览">
+        <SummaryMetric label="问题数" value={latest ? String(questionCount) : "—"} tone="primary" />
+        <SummaryMetric label="计划样本" value={latest ? String(tasks.length) : "—"} tone="primary" />
+        <SummaryMetric label="有效样本" value={latest ? String(completedCount) : "—"} tone={completedCount > 0 ? "success" : "warning"} />
+        <SummaryMetric label="失败样本" value={latest ? String(failedCount) : "—"} tone={failedCount > 0 ? "warning" : "success"} />
+        <SummaryMetric label="未提及样本" value={unmentionedCount == null ? "—" : String(unmentionedCount)} tone="muted" />
       </section>
-      <AlertBanner
-        title={overview.dataStatus === "provider_evidence" ? "指标来自真实样本" : "当前没有可验证的诊断结论"}
-        desc={overview.message || "完成真实采样后才能生成诊断和客户报告。"}
-        action={overview.dataStatus === "provider_evidence" ? "查看客户报告" : "返回重新检测"}
-        onClick={() => onNavigate(overview.dataStatus === "provider_evidence" ? "/console/reports" : "/console")}
-      />
+      {dataStatus === "provider_evidence" && <section className="metric-grid">{metricCards.slice(0, 4).map((item) => <MetricCard key={item.label} item={item} />)}</section>}
+      <section className="airank-console-card scan-primary-action">
+        <div><span>{latest ? `当前批次 · ${latest.name || latest.run_id.slice(-8)}` : "尚无扫描批次"}</span><h2>{dataStatus === "provider_evidence" ? "本轮已有可用结果" : runningCount > 0 ? "扫描尚未封版" : "还不能生成证据缺口"}</h2><p>{message || (latest ? `有效 ${completedCount}，失败 ${failedCount}，运行中 ${runningCount}。未提及品牌的有效回答仍计入分母。` : "先确认问题集，再为通过门禁的平台创建真实采样任务。")}</p></div>
+        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(dataStatus === "provider_evidence" ? "/console/gaps" : "/console/questions")}>{dataStatus === "provider_evidence" ? "查看证据缺口" : "确认买家问题"}<ArrowRight size={18} /></button>
+      </section>
+      <details className="airank-console-card technical-details"><summary>技术详情</summary><p>Provider 可用性来自最近一次已存证 L3 探测；页面读取不会在页面加载时重复发起计费探测。批次 ID、任务 ID、会话、请求追踪和租约仅用于排错。客户指标按 API、Web、App 采集方式分开计算，不在未说明的情况下合并。</p></details>
     </>
   );
 }
@@ -1628,6 +1735,7 @@ function FactsPage() {
     factRevisionId: "",
   });
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [knowledgeLoaded, setKnowledgeLoaded] = useState(false);
   const [reviewingRevisionId, setReviewingRevisionId] = useState<string | null>(null);
   const [resolvingConflictId, setResolvingConflictId] = useState<string | null>(null);
   const [conflictNotes, setConflictNotes] = useState<Record<string, string>>({});
@@ -1667,6 +1775,7 @@ function FactsPage() {
     setSyncPolicies(nextSyncPolicies);
     setSyncRuns(nextSyncRuns);
     setBrandGraph(nextBrandGraph);
+    setKnowledgeLoaded(true);
     setSyncIntervals((current) => {
       const next = { ...current };
       nextSources.forEach((source) => {
@@ -1687,6 +1796,7 @@ function FactsPage() {
       .catch((error) => {
         if (controller.signal.aborted) return;
         setLoadError(error instanceof Error ? error.message : "事实库接口不可用");
+        setKnowledgeLoaded(true);
       });
     return () => controller.abort();
   }, [project.id, refreshKnowledge]);
@@ -1976,11 +2086,38 @@ function FactsPage() {
     }
   };
 
+  if (!project.id) {
+    return <><PageHeader title="可信事实" subtitle="建立可审核、可追溯、可安全用于内容的企业事实。" action={<span className="step-counter">04 / 06</span>} /><DataStateCard title="尚未建立品牌项目" desc="先完成品牌建档，再导入官网、产品手册或案例资料。" tone="warning" /></>;
+  }
+
+  if (!knowledgeLoaded) {
+    return <><PageHeader title="可信事实" subtitle="建立可审核、可追溯、可安全用于内容的企业事实。" action={<span className="step-counter">04 / 06</span>} /><DataStateCard title="正在读取事实与来源" desc="读取完成前不显示默认事实数量或审核结论。" tone="primary" /></>;
+  }
+
+  if (loadError) {
+    return <><PageHeader title="可信事实" subtitle="建立可审核、可追溯、可安全用于内容的企业事实。" action={<span className="step-counter">04 / 06</span>} /><DataStateCard title="事实资料暂时不可用" desc={`${loadError} 当前不会使用固定知识或示例事实补位。`} tone="danger" /></>;
+  }
+
+  if (facts.length === 0 && sources.length === 0 && !sourceEditor) {
+    return (
+      <>
+        <PageHeader title="可信事实" subtitle="建立可审核、可追溯、可安全用于内容的企业事实。" action={<span className="step-counter">04 / 06</span>} />
+        <section className="airank-console-card focused-empty-state">
+          <div className="focused-empty-icon"><BookOpen size={30} /></div>
+          <span>可信事实从官方资料开始</span>
+          <h2>还没有可信事实</h2>
+          <p>导入官网、产品手册或案例资料，系统会按原文边界提取候选事实供你确认。缺少来源时不会静默生成内容。</p>
+          <button className="airank-console-primary-button" type="button" onClick={() => openSourceEditor(null)}><CloudUpload size={18} />导入第一份官方资料</button>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
-        title="企业事实库"
-        subtitle="AI 认识你的前提，是企业事实足够清晰、可信、可公开。"
+        title="可信事实"
+        subtitle="只让已通过、未过期且无冲突的事实进入答案资产和客户报告。"
         action={
           <div className="header-actions">
             <button className="outline-button" type="button" onClick={() => openSourceEditor(null)}>导入知识来源</button>
@@ -4312,16 +4449,18 @@ function QuestionsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
     <>
       <PageHeader
-        title="买家问题地图"
-        subtitle="真正带来客户的，不是泛流量关键词，而是高意向买家问题。"
-        action={<HeaderActions primary="生成推荐缺口分析" icon={Target} onPrimary={() => onNavigate("/console/gaps")} />}
+        title="买家问题"
+        subtitle="确认本轮要用哪些真实买家问题测试品牌；盲测、辅助测、对比测和事实核验严格分开。"
+        action={<span className="step-counter">01 / 06</span>}
       />
-      <section className="opportunity-intro-card">
-        <h2>AI 来客机会地图 <Badge tone="primary">问题库升级为来客机会地图</Badge></h2>
-        <p>这里只展示项目中真实保存的买家问题及其来源、意图、阶段、目标平台和覆盖状态，不用样例问题补位。</p>
-        <ProjectStrip />
+      <section className="airank-console-card cohort-explainer">
+        <div><strong>盲测</strong><span>不主动提示品牌，观察自然推荐</span></div>
+        <div><strong>辅助测</strong><span>明确品牌后核对理解与回答</span></div>
+        <div><strong>对比测</strong><span>在同一问题中比较候选品牌</span></div>
+        <div><strong>事实核验</strong><span>核对具体事实是否准确</span></div>
       </section>
       <QuestionTable showTabs onNavigate={onNavigate} />
+      <section className="airank-console-card dashboard-primary-action"><div><span>下一步</span><h2>锁定问题集版本后开始真实扫描</h2><p>已锁定版本不会被覆盖；删除问题会归档，历史扫描仍保留原问题版本。</p></div><button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/scans")}>查看多平台扫描<ArrowRight size={18} /></button></section>
     </>
   );
 }
@@ -4367,6 +4506,13 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
   const tabs = ["全部问题", "购买", "对比", "选型", "信任", "价格", "风险", "场景", "本地", "替代"];
   const tabTypes = ["", "purchase", "compare", "select", "trust", "price", "risk", "scenario", "local", "alternative"];
   const [selectedTab, setSelectedTab] = useState(0);
+  const cohortLabels: Record<BuyerQuestion["cohort_type"], string> = { blind: "盲测", assisted: "辅助测", comparison: "对比测", fact_verification: "事实核验", unclassified: "待分类" };
+  const sourceLabels: Record<BuyerQuestion["source_kind"], string> = { provided_seed: "人工补充", template_candidate: "官网与资料生成", observed_query: "历史问题复用", imported: "导入资料" };
+  const coverageLabels: Record<BuyerQuestion["coverage_status"], string> = { unknown: "尚未判断", covered: "已有有效样本", gap: "已观察到缺口", needs_scan: "尚未扫描" };
+  const questionStatusLabels: Record<BuyerQuestion["status"], string> = { suggested: "待确认", confirmed: "已锁定", archived: "已归档" };
+  const questionTypeLabels: Record<string, string> = { purchase: "购买", compare: "对比", select: "选型", trust: "信任", price: "价格", risk: "风险", scenario: "场景", local: "本地", alternative: "替代" };
+  const intentLabels: Record<BuyerQuestion["intent_level"], string> = { high: "高意向", medium: "中意向", low: "低意向" };
+  const stageLabels: Record<BuyerQuestion["buyer_stage"], string> = { awareness: "需求了解", consideration: "比较评估", decision: "采购决策" };
 
   const loadQuestions = useCallback(async (signal?: AbortSignal) => {
     if (!project.id) return;
@@ -4550,20 +4696,20 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
         <section className="airank-console-card question-compiler-card">
           <div className="question-compiler-heading">
             <div>
-              <span className="section-kicker">Research Intent Skill · v1.2</span>
-              <h2>编译买家问题地图</h2>
-              <p>种子问题保留为 provided_seed；规则扩展只标记为 template_candidate，不冒充真实用户搜索或搜索量。</p>
+              <span className="section-kicker">问题来源与候选生成</span>
+              <h2>生成本轮买家问题</h2>
+              <p>人工输入、官网资料生成和历史问题复用会分别标记；系统不会把规则扩展冒充真实搜索量。</p>
             </div>
-            <Badge tone="primary">{compileResult?.taxonomy_version ?? "等待输入"}</Badge>
+            <Badge tone="primary">{compileResult ? "已生成新版本" : "等待输入"}</Badge>
           </div>
           <div className="question-observation-panel">
             <div className="question-observation-heading">
               <div>
-                <span className="section-kicker">M1 · 用户提供观察数据</span>
-                <h3>导入真实问题来源</h3>
-                <p>每行格式：问题 | 来源内出现次数 | 地区。系统保存内容 hash 和来源批次；次数不是搜索量，当前证据未经过独立连接器核验。</p>
+                <span className="section-kicker">已有问题资料</span>
+                <h3>导入客服、销售或站内搜索问题</h3>
+                <p>每行格式：问题 | 来源内出现次数 | 地区。次数不是搜索量，只代表该份客户资料中的记录频次。</p>
               </div>
-              <Badge tone="warning">user_provided_snapshot</Badge>
+              <Badge tone="warning">客户提供观察记录（未独立核验）</Badge>
             </div>
             <form className="question-observation-form" onSubmit={handleObservationImport}>
               <label>
@@ -4611,7 +4757,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                       <strong>{batch.source_name}</strong>
                       <small>{batch.record_count} 条可用 · 来源内频次 {batch.occurrence_count} · PII 拦截 {batch.pii_blocked_count}</small>
                     </span>
-                    <span className="question-observation-proof" title={batch.payload_sha256}>{batch.evidence_grade}<small>{batch.payload_sha256.slice(0, 10)}</small></span>
+                    <span className="question-observation-proof">来源快照已保存</span>
                   </label>
                 ))}
               </div>
@@ -4631,7 +4777,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                 生成可审核的模板候选
               </label>
               {selectedObservationBatchIds.length > 0 && <Badge tone="success">已选 {selectedObservationBatchIds.length} 个观察批次</Badge>}
-              <button className="airank-console-primary-button" type="submit" disabled={compiling}>{compiling ? "编译并去重中…" : "编译并保存候选"}</button>
+              <button className="airank-console-primary-button" type="submit" disabled={compiling}>{compiling ? "生成并去重中…" : "生成并保存候选"}</button>
             </div>
           </form>
           {compileError && <p className="question-governance-error">{compileError}</p>}
@@ -4640,8 +4786,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
               <span><strong>{compileResult.question_count}</strong> 个唯一问题</span>
               <span><strong>{compileResult.persisted_count}</strong> 个已保存候选</span>
               <span><strong>{compileResult.duplicate_count}</strong> 个重复被拦截</span>
-              <span title={compileResult.map_version_id}>版本 {compileResult.map_version_id.slice(-8)}</span>
-              {compileResult.idempotent_replay && <Badge tone="muted">幂等回放</Badge>}
+              <span>已创建不可覆盖的问题集版本</span>
             </div>
           )}
         </section>
@@ -4669,20 +4814,20 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
           {reviewError && <DataStateCard title="问题审核失败" desc={reviewError} tone="danger" />}
           <div className="airank-console-card table-card question-governance-card">
             <table className="question-table question-governance-table">
-              <thead><tr><th>问题</th><th>Cohort / 版本</th><th>意图 / 阶段</th><th>来源证据</th><th>测量状态</th><th>人工门禁</th></tr></thead>
+              <thead><tr><th>问题</th><th>测试类型</th><th>买家阶段</th><th>来源</th><th>扫描状态</th><th>确认状态</th></tr></thead>
               <tbody>
                 {visibleRows.map((row) => (
                   <tr key={row.question_id}>
-                    <td><strong>{row.question_text}</strong><Badge tone={row.intent_level === "high" ? "primary" : row.intent_level === "medium" ? "warning" : "muted"}>{row.question_type}</Badge></td>
-                    <td><Badge tone={row.cohort_type === "blind" ? "success" : row.cohort_type === "comparison" ? "warning" : "primary"}>{row.cohort_type}</Badge><small title={row.question_version_id ?? undefined}>{row.question_version_id ? `v · ${row.question_version_id.slice(-8)}` : row.taxonomy_version}</small></td>
-                    <td><span className={`intent ${row.intent_level === "high" ? "high" : "mid"}`}>{row.intent_level}</span><small>{row.buyer_stage} · {row.prompt_style}</small></td>
-                    <td><strong>{row.source_kind}</strong><small title={row.source_ref}>{row.observed_query ? "客户提供观察记录（未独立核验）" : "非真实搜索量"} · {row.source_ref}</small></td>
-                    <td><Badge tone={row.coverage_status === "covered" ? "success" : row.coverage_status === "gap" ? "danger" : "warning"}>{row.coverage_status}</Badge><small>{row.recommended_providers.join("、") || "扫描时选择 Provider"}</small></td>
+                    <td><strong>{row.question_text}</strong><Badge tone={row.intent_level === "high" ? "primary" : row.intent_level === "medium" ? "warning" : "muted"}>{questionTypeLabels[row.question_type] ?? "其他"}</Badge></td>
+                    <td><Badge tone={row.cohort_type === "blind" ? "success" : row.cohort_type === "comparison" ? "warning" : "primary"}>{cohortLabels[row.cohort_type]}</Badge><small>{row.question_version_id ? "已绑定问题版本" : "待创建版本"}</small></td>
+                    <td><span className={`intent ${row.intent_level === "high" ? "high" : "mid"}`}>{intentLabels[row.intent_level]}</span><small>{stageLabels[row.buyer_stage]}</small></td>
+                    <td><strong>{sourceLabels[row.source_kind]}</strong><small>{row.observed_query ? "客户提供的历史问题" : "不代表真实搜索量"}</small></td>
+                    <td><Badge tone={row.coverage_status === "covered" ? "success" : row.coverage_status === "gap" ? "danger" : "warning"}>{coverageLabels[row.coverage_status]}</Badge><small>{row.recommended_providers.length ? `${row.recommended_providers.length} 个目标平台` : "扫描时选择平台"}</small></td>
                     <td>
-                      <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{row.status}</Badge>
+                      <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{questionStatusLabels[row.status]}</Badge>
                       {row.status === "suggested" ? (
                         <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void confirmQuestion(row)}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
-                      ) : <small>{row.reviewed_by ? `由 ${row.reviewed_by} 确认` : "已可进入同 Cohort 测量"}</small>}
+                      ) : <small>{row.reviewed_by ? "已由项目成员确认" : "已可进入对应测试类型"}</small>}
                     </td>
                   </tr>
                 ))}
@@ -4717,35 +4862,223 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
 }
 
 function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { project, dataStatus } = useConsoleOverview();
+  const [gapList, setGapList] = useState<EvidenceGapList | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!project.id || dataStatus !== "provider_evidence") {
+      setGapList(null);
+      setLoadError(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetchEvidenceGaps(project.id, controller.signal)
+      .then((data) => {
+        setGapList(data);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setGapList(null);
+        setLoadError(error instanceof Error ? error.message : "证据缺口暂时不可用。");
+      });
+    return () => controller.abort();
+  }, [dataStatus, project.id]);
+
   return (
     <>
-      <PageHeader title="推荐缺口分析" subtitle="AI 不推荐你，不一定是你不强，而是 AI 找不到足够可信、结构化、可引用的证据。" action={<span className="step-counter">05 / 09</span>} />
-      <div className="danger-hero">
-        <AlertTriangle size={54} />
-        <div>
-          <strong>AI 不推荐你，不一定是你不强，而是 AI 找不到足够可信、结构化、可引用的证据。</strong>
-          <span>可信、结构化、可引用的证据是可干预要素，但发布后是否变化必须通过同口径复测观察。</span>
-        </div>
-      </div>
-      <Panel title="缺口判定规则">
-        <div className="check-list">
-          <CheckLine text="问题缺口" value="来自真实 BuyerQuestion.coverage_status" checked />
-          <CheckLine text="内容缺口" value="必须关联事实与 ClaimSupport" checked />
-          <CheckLine text="技术页面分" value="不等同品牌推荐率" checked />
-          <CheckLine text="干预效果" value="发布后同口径复测" checked />
-        </div>
-      </Panel>
-      <QuestionTable showTabs={false} onNavigate={onNavigate} />
-      <div className="bottom-action-band">
-        <Target size={42} />
-        <div>
-          <strong>只根据已验证缺口采取行动</strong>
-          <span>没有真实样本、引用或事实支持时，系统不会生成竞品压制数字。</span>
-        </div>
-        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate("/console/assets")}>
-          <PackageCheck size={20} />生成 AI 收录包
-        </button>
-      </div>
+      <PageHeader title="证据缺口" subtitle="只从达到质量门槛的真实样本解释为什么没有推荐或回答不准确，并给出可执行的补证动作。" action={<span className="step-counter">03 / 06</span>} />
+      {dataStatus !== "provider_evidence" && <DataStateCard title="还不能判定证据缺口" desc="当前没有达到最低门槛的有效扫描。尚未扫描的问题不会被包装成真实缺口。" tone="warning" />}
+      {loadError && <DataStateCard title="缺口数据暂时不可用" desc={`${loadError} 当前不输出确定性原因或资产建议。`} tone="danger" />}
+      {dataStatus === "provider_evidence" && !gapList && !loadError && <DataStateCard title="正在分析证据缺口" desc="系统只读取真实样本、引用和事实，不使用官网技术分替代品牌推荐率。" tone="primary" />}
+      {gapList && gapList.gaps.length === 0 && <DataStateCard title="本轮尚无已治理缺口" desc="这不代表品牌没有问题，只表示当前没有满足证据门槛、可安全采取行动的缺口。" tone="success" />}
+      {gapList && gapList.gaps.length > 0 && (
+        <section className="gap-card-grid">
+          {[...gapList.gaps].sort((left, right) => ({ high: 3, medium: 2, low: 1 }[right.severity] - { high: 3, medium: 2, low: 1 }[left.severity])).map((gap) => (
+            <article className="airank-console-card governed-gap-card" key={gap.gap_id}>
+              <div className="governed-gap-head"><Badge tone={gap.severity === "high" ? "danger" : gap.severity === "medium" ? "warning" : "muted"}>{gap.severity === "high" ? "高优先级" : gap.severity === "medium" ? "中优先级" : "低优先级"}</Badge><span>{gap.provider} · {gap.collector_surface === "api" ? "平台 API" : gap.collector_surface === "web" ? "平台网页" : gap.collector_surface}</span></div>
+              <h2>{gap.title}</h2>
+              <p>{gap.description}</p>
+              <dl className="gap-evidence-summary">
+                <div><dt>支持样本</dt><dd>{gap.valid_sample_count}</dd></div>
+                <div><dt>正常未提及</dt><dd>{gap.normal_unmentioned_count}</dd></div>
+                <div><dt>原始回答</dt><dd>{gap.answer_snapshot_ids.length}</dd></div>
+                <div><dt>引用</dt><dd>{gap.citation_ids.length}</dd></div>
+              </dl>
+              <div className="gap-recommendation"><span>建议建设</span><strong>{assetTypeLabel(gap.suggested_asset_type)}</strong></div>
+              <div className="gap-card-actions"><button className="ghost-button" type="button" onClick={() => onNavigate("/console/scans")}>查看支持样本</button><button className="outline-button" type="button" onClick={() => onNavigate("/console/facts")}>补齐可信事实<ArrowRight size={15} /></button></div>
+            </article>
+          ))}
+        </section>
+      )}
+      <section className="airank-console-card dashboard-primary-action">
+        <div><span>下一步</span><h2>{gapList?.gaps.length ? "先补高影响缺口需要的事实" : "先获得足够的真实样本"}</h2><p>缺少样本和引用时不输出因果结论；缺少已审核事实时不允许生成答案资产。</p></div>
+        <button className="airank-console-primary-button" type="button" onClick={() => onNavigate(gapList?.gaps.length ? "/console/facts" : "/console/scans")}>{gapList?.gaps.length ? "补齐可信事实" : "返回多平台扫描"}<ArrowRight size={18} /></button>
+      </section>
+    </>
+  );
+}
+
+function CustomerAssetsPage({ onNavigate, reviewOnly = false }: { onNavigate: (path: string) => void; reviewOnly?: boolean }) {
+  const { project, dataStatus } = useConsoleOverview();
+  const [assets, setAssets] = useState<GovernedContentAsset[]>([]);
+  const [facts, setFacts] = useState<FactRevision[]>([]);
+  const [gaps, setGaps] = useState<EvidenceGapList | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!project.id) {
+      setLoaded(true);
+      return;
+    }
+    const controller = new AbortController();
+    Promise.all([
+      fetchContentAssets(project.id, controller.signal),
+      fetchFacts(project.id, controller.signal),
+      dataStatus === "provider_evidence" ? fetchEvidenceGaps(project.id, controller.signal) : Promise.resolve(null),
+    ])
+      .then(([nextAssets, nextFacts, nextGaps]) => {
+        setAssets(nextAssets);
+        setFacts(nextFacts);
+        setGaps(nextGaps);
+        setLoadError(null);
+        setLoaded(true);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setAssets([]);
+        setFacts([]);
+        setGaps(null);
+        setLoadError(error instanceof Error ? error.message : "答案资产暂时不可用。");
+        setLoaded(true);
+      });
+    return () => controller.abort();
+  }, [dataStatus, project.id]);
+
+  const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
+  const visibleAssets = reviewOnly ? assets.filter((asset) => asset.status === "draft" || asset.status === "changes_requested") : assets;
+  const generationAllowed = dataStatus === "provider_evidence" && eligibleFacts.length > 0 && Boolean(gaps?.gaps.length);
+
+  return (
+    <>
+      <PageHeader
+        title={reviewOnly ? "资产审核" : "答案资产"}
+        subtitle={reviewOnly ? "只审核绑定可信事实的草稿；事实核验或风险审校未通过时不能进入发布。" : "把已确认的证据缺口转成有事实绑定的 FAQ、比较页、案例页、事实页和结构化页面。"}
+        action={<span className="step-counter">05 / 06</span>}
+      />
+      {!loaded && <DataStateCard title="正在读取答案资产" desc="加载完成前不展示示例机会或默认产能。" tone="primary" />}
+      {loadError && <DataStateCard title="答案资产暂时不可用" desc={`${loadError} 当前不会使用固定资产或进度补位。`} tone="danger" />}
+      {loaded && !loadError && !project.id && <DataStateCard title="尚未建立项目" desc="先完成品牌建档和买家问题确认。" tone="warning" />}
+      {loaded && !loadError && project.id && dataStatus !== "provider_evidence" && <DataStateCard title="真实扫描尚未形成可行动缺口" desc="扫描未完成前不生成资产机会，也不把尚未扫描的问题包装成内容建议。" tone="warning" />}
+      {loaded && !loadError && dataStatus === "provider_evidence" && eligibleFacts.length === 0 && <DataStateCard title="缺少可用于生成的可信事实" desc="至少绑定一条已通过、未过期且无冲突的事实，才能生成答案资产。" tone="warning" />}
+
+      {!reviewOnly && gaps && gaps.gaps.length > 0 && (
+        <section>
+          <div className="section-heading"><div><span>资产机会</span><h2>先解决高影响且证据明确的缺口</h2></div><Badge tone="primary">{gaps.gaps.length} 项</Badge></div>
+          <div className="asset-opportunity-grid">
+            {gaps.gaps.slice(0, 6).map((gap) => (
+              <article className="airank-console-card asset-opportunity-card" key={gap.gap_id}>
+                <div><Badge tone={gap.severity === "high" ? "danger" : "warning"}>{gap.severity === "high" ? "高影响" : "待处理"}</Badge><span>{gap.provider} · {gap.valid_sample_count} 个支持样本</span></div>
+                <h3>{gap.title}</h3><p>{gap.description}</p>
+                <dl><div><dt>建议形态</dt><dd>{assetTypeLabel(gap.suggested_asset_type)}</dd></div><div><dt>可用事实</dt><dd>{eligibleFacts.length}</dd></div></dl>
+                <button className="outline-button" type="button" disabled={!generationAllowed} onClick={() => onNavigate("/console/assets/new")}>{generationAllowed ? "创建答案资产" : "先补齐可信事实"}<ArrowRight size={15} /></button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {loaded && !loadError && (
+        <section>
+          <div className="section-heading"><div><span>{reviewOnly ? "待审核" : "内容工作台"}</span><h2>{reviewOnly ? "需要人工确认的资产" : "已创建的答案资产"}</h2></div><Badge tone={visibleAssets.length ? "primary" : "muted"}>{visibleAssets.length} 项</Badge></div>
+          {visibleAssets.length === 0 ? <DataStateCard title={reviewOnly ? "当前没有待审核资产" : "尚未创建答案资产"} desc={reviewOnly ? "所有资产都已处理，或还没有通过生成门禁的草稿。" : "从证据缺口选择机会，并绑定已通过事实后创建第一项资产。"} tone="muted" /> : (
+            <div className="content-asset-list">
+              {visibleAssets.map((asset) => (
+                <button className="airank-console-card content-asset-row" key={asset.asset_id} type="button" onClick={() => onNavigate(`/console/assets/${asset.asset_id}`)}>
+                  <div><Badge tone={asset.status === "approved" ? "success" : asset.status === "rejected" ? "danger" : "warning"}>{contentStatusLabel(asset.status)}</Badge><span>{assetTypeLabel(asset.asset_type)}</span></div>
+                  <strong>{asset.title}</strong><span>绑定 {asset.fact_revision_ids.length} 条事实 · {formatDateTime(asset.created_at)}</span><ChevronRight size={18} />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {!reviewOnly && loaded && !loadError && (
+        <section className="airank-console-card dashboard-primary-action">
+          <div><span>下一步</span><h2>{generationAllowed ? "创建一项有证据绑定的答案资产" : "先满足资产生成门禁"}</h2><p>竞品比较必须标明证据范围和更新时间；高风险声明必须人工审核。</p></div>
+          <button className="airank-console-primary-button" type="button" disabled={!generationAllowed} onClick={() => onNavigate(generationAllowed ? "/console/assets/new" : "/console/facts")}>{generationAllowed ? "进入内容工作台" : "补齐可信事实"}<ArrowRight size={18} /></button>
+        </section>
+      )}
+    </>
+  );
+}
+
+function CustomerAssetEditorPage({ assetId, onNavigate }: { assetId: string; onNavigate: (path: string) => void }) {
+  const { project } = useConsoleOverview();
+  const { notify } = useActionFeedback();
+  const [assets, setAssets] = useState<GovernedContentAsset[]>([]);
+  const [facts, setFacts] = useState<FactRevision[]>([]);
+  const [title, setTitle] = useState("");
+  const [direction, setDirection] = useState("");
+  const [assetType, setAssetType] = useState<GovernedContentCreateInput["assetType"]>("faq");
+  const [selectedFacts, setSelectedFacts] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!project.id) return;
+    const controller = new AbortController();
+    Promise.all([fetchContentAssets(project.id, controller.signal), fetchFacts(project.id, controller.signal)])
+      .then(([nextAssets, nextFacts]) => {
+        setAssets(nextAssets);
+        setFacts(nextFacts);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "内容工作台暂时不可用。");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  const existing = assetId === "new" ? null : assets.find((asset) => asset.asset_id === assetId) ?? null;
+  const eligibleFacts = facts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const actor = getStoredAuthSession()?.user.userId;
+    if (!project.id || !actor || selectedFacts.length === 0) {
+      notify({ title: "尚未满足生成门禁", desc: "必须选择至少一条已通过、未过期且无冲突的事实。", tone: "warning" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await createGovernedContent(project.id, { assetType, title: title.trim(), direction: direction.trim(), factRevisionIds: selectedFacts, createdBy: actor });
+      notify({ title: "答案资产草稿已创建", desc: "草稿已绑定事实版本；审核通过前不能发布。", tone: "success" });
+      onNavigate(`/console/assets/${created.asset_id}`);
+    } catch (error) {
+      notify({ title: "资产创建失败", desc: error instanceof Error ? error.message : "请稍后重试。", tone: "danger" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <PageHeader title="内容工作台" subtitle="左侧编辑内容目标，右侧明确绑定事实和证据；AI 草稿不能覆盖原始事实。" action={<button className="outline-button" type="button" onClick={() => onNavigate("/console/assets")}>返回资产机会</button>} />
+      {loadError && <DataStateCard title="内容工作台暂时不可用" desc={loadError} tone="danger" />}
+      {existing ? (
+        <section className="asset-editor-layout">
+          <article className="airank-console-card asset-editor-main"><div className="section-heading"><div><span>{assetTypeLabel(existing.asset_type)}</span><h2>{existing.title}</h2></div><Badge tone={existing.status === "approved" ? "success" : "warning"}>{contentStatusLabel(existing.status)}</Badge></div><div className="asset-body-preview">{existing.body_md}</div></article>
+          <aside className="airank-console-card asset-fact-panel"><h2>事实与证据引用</h2><p>该草稿绑定 {existing.fact_revision_ids.length} 条不可变事实版本。</p>{facts.filter((fact) => existing.fact_revision_ids.includes(fact.revision_id)).map((fact) => <article key={fact.revision_id}><strong>{fact.title}</strong><span>{fact.fact_text}</span><Badge tone={fact.eligible_for_generation ? "success" : "danger"}>{fact.eligible_for_generation ? "可用于生成" : "当前不可用"}</Badge></article>)}</aside>
+        </section>
+      ) : (
+        <form className="asset-editor-layout" onSubmit={submit}>
+          <article className="airank-console-card asset-editor-main"><h2>内容草稿目标</h2><label><span>资产类型</span><select value={assetType} onChange={(event) => setAssetType(event.target.value as GovernedContentCreateInput["assetType"])}>{governedAssetTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label><label><span>标题</span><input value={title} onChange={(event) => setTitle(event.target.value)} required /></label><label><span>创作方向</span><textarea value={direction} onChange={(event) => setDirection(event.target.value)} rows={9} required /></label><button className="airank-console-primary-button" type="submit" disabled={submitting || selectedFacts.length === 0}>{submitting ? "生成中…" : "生成证据绑定草稿"}</button></article>
+          <aside className="airank-console-card asset-fact-panel"><h2>选择可信事实</h2><p>至少选择一条已通过事实；缺少证据时系统返回待补证。</p>{eligibleFacts.length === 0 && <DataStateCard title="没有可用事实" desc="先到可信事实页完成审核。" tone="warning" />}{eligibleFacts.map((fact) => <label className="fact-selector" key={fact.revision_id}><input type="checkbox" checked={selectedFacts.includes(fact.revision_id)} onChange={(event) => setSelectedFacts((current) => event.target.checked ? [...current, fact.revision_id] : current.filter((id) => id !== fact.revision_id))} /><span><strong>{fact.title}</strong><small>{fact.fact_text}</small></span></label>)}</aside>
+        </form>
+      )}
     </>
   );
 }
@@ -4753,7 +5086,7 @@ function GapsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
   const { openPanel, notify } = useActionFeedback();
-  const [bundle, setBundle] = useState<AssetBundle>(fallbackAssetBundle);
+  const [bundle, setBundle] = useState<AssetBundle>(EMPTY_ASSET_BUNDLE);
   const [contentAssets, setContentAssets] = useState<GovernedContentAsset[]>([]);
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [scanRuns, setScanRuns] = useState<ScanRun[]>([]);
@@ -4870,7 +5203,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   useEffect(() => {
     if (!project.id) {
-      setBundle(fallbackAssetBundle);
+      setBundle(EMPTY_ASSET_BUNDLE);
       setScanRuns([]);
       setEvidenceGaps({ project_id: "", contract_version: "airank.evidence-gap.v2", gaps: [], governed_gap_count: 0, unverified_legacy_count: 0 });
       setFactAcquisitionTasks({ project_id: "", contract_version: "airank.fact-acquisition-task.v1", tasks: [], open_count: 0, in_review_count: 0, resolved_count: 0 });
@@ -4929,7 +5262,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
-        setBundle(fallbackAssetBundle);
+        setBundle(EMPTY_ASSET_BUNDLE);
         setContentAssets([]);
         setFacts([]);
         setScanRuns([]);
@@ -5942,6 +6275,97 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   );
 }
 
+function CustomerPublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const { project } = useConsoleOverview();
+  const { notify } = useActionFeedback();
+  const [tab, setTab] = useState<"pending" | "records" | "retest">("pending");
+  const [assets, setAssets] = useState<GovernedContentAsset[]>([]);
+  const [packages, setPackages] = useState<PublishPackage[]>([]);
+  const [windows, setWindows] = useState<RetestWindow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [publishingAssetId, setPublishingAssetId] = useState<string | null>(null);
+
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    if (!project.id) return;
+    const [nextAssets, nextPackages, nextWindows] = await Promise.all([
+      fetchContentAssets(project.id, signal),
+      fetchPublishPackages(project.id, signal),
+      fetchRetestWindows(project.id, signal),
+    ]);
+    setAssets(nextAssets);
+    setPackages(nextPackages);
+    setWindows(nextWindows);
+    setLoadError(null);
+    setLoaded(true);
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!project.id) {
+      setLoaded(true);
+      return;
+    }
+    const controller = new AbortController();
+    refresh(controller.signal).catch((error) => {
+      if (controller.signal.aborted) return;
+      setLoadError(error instanceof Error ? error.message : "发布与复测暂时不可用。");
+      setLoaded(true);
+    });
+    return () => controller.abort();
+  }, [project.id, refresh]);
+
+  const approvedAssets = assets.filter((asset) => asset.status === "approved");
+  const packageForAsset = (assetId: string) => packages.find((item) => item.asset_id === assetId && item.publication_action === "publish");
+  const createExportPackage = async (asset: GovernedContentAsset) => {
+    setPublishingAssetId(asset.asset_id);
+    try {
+      await createPublishPackage({ assetId: asset.asset_id, channel: "export" });
+      await refresh();
+      setTab("records");
+      notify({ title: "不可变发布包已生成", desc: "发布包已绑定审核后的内容快照与内容哈希；外部发布和 URL 存证仍需按渠道完成。", tone: "success" });
+    } catch (error) {
+      notify({ title: "发布包生成失败", desc: error instanceof Error ? error.message : "请稍后重试。", tone: "danger" });
+    } finally {
+      setPublishingAssetId(null);
+    }
+  };
+
+  return (
+    <>
+      <PageHeader title="发布与复测" subtitle="确认资产已审核、已形成不可变发布快照、可抓取，并按 T0、T+7、T+14、T+30 进入复测窗口。" action={<span className="step-counter">06 / 06</span>} />
+      <div className="customer-tabs" role="tablist" aria-label="发布与复测视图">
+        <button type="button" role="tab" aria-selected={tab === "pending"} data-active={tab === "pending"} onClick={() => setTab("pending")}>待发布</button>
+        <button type="button" role="tab" aria-selected={tab === "records"} data-active={tab === "records"} onClick={() => setTab("records")}>发布记录</button>
+        <button type="button" role="tab" aria-selected={tab === "retest"} data-active={tab === "retest"} onClick={() => setTab("retest")}>复测计划</button>
+      </div>
+      {!loaded && <DataStateCard title="正在读取发布状态" desc="加载完成前不展示默认发布记录或复测进度。" tone="primary" />}
+      {loadError && <DataStateCard title="发布链路暂时不可用" desc={`${loadError} 当前不会伪造发布成功或观察结果。`} tone="danger" />}
+      {loaded && !loadError && tab === "pending" && (
+        <section className="publishing-list">
+          {approvedAssets.length === 0 && <DataStateCard title="没有可发布资产" desc="只有事实检查、风险扫描和人工审核通过的资产才会进入这里。" tone="warning" />}
+          {approvedAssets.map((asset) => {
+            const existingPackage = packageForAsset(asset.asset_id);
+            return <article className="airank-console-card publishing-row" key={asset.asset_id}><div><Badge tone="success">审核通过</Badge><span>{assetTypeLabel(asset.asset_type)}</span></div><div><h2>{asset.title}</h2><p>绑定 {asset.fact_revision_ids.length} 条事实 · 内容快照将在生成发布包时冻结</p></div>{existingPackage ? <button className="outline-button" type="button" onClick={() => setTab("records")}>查看发布记录</button> : <button className="airank-console-primary-button" type="button" disabled={publishingAssetId === asset.asset_id} onClick={() => void createExportPackage(asset)}>{publishingAssetId === asset.asset_id ? "生成中…" : "生成发布包"}</button>}</article>;
+          })}
+        </section>
+      )}
+      {loaded && !loadError && tab === "records" && (
+        <section className="publishing-list">
+          {packages.length === 0 && <DataStateCard title="尚无发布记录" desc="生成第一个不可变发布包后，这里会显示渠道、状态、URL、内容哈希和时间。" tone="muted" />}
+          {packages.map((item) => <article className="airank-console-card publishing-row" key={item.package_id}><div><Badge tone={item.status === "published" || item.status === "delivered" || item.status === "packaged" ? "success" : item.status === "failed" || item.status === "outcome_unknown" ? "danger" : "warning"}>{publicationStatusLabel(item.status)}</Badge><span>{item.channel === "export" ? "导出发布包" : item.channel === "wordpress" ? "WordPress" : "通用 HTTP"}</span></div><div><h2>{assets.find((asset) => asset.asset_id === item.asset_id)?.title || "发布资产"}</h2><p>{item.published_url || "尚未登记外部发布 URL"} · {formatDateTime(item.created_at)}</p></div><details className="technical-details"><summary>快照信息</summary><code>{item.content_sha256}</code></details></article>)}
+        </section>
+      )}
+      {loaded && !loadError && tab === "retest" && (
+        <section className="retest-window-grid">
+          {windows.length === 0 && <DataStateCard title="尚未进入复测窗口" desc="完成发布 URL 与截图存证后，系统才会按同一问题集和采样口径安排 T+7、T+14、T+30。" tone="warning" />}
+          {windows.map((window) => <article className="airank-console-card retest-window-card" key={window.window_id}><span>{window.window_label}</span><Badge tone={window.status === "completed" ? "success" : window.status === "failed" ? "danger" : "warning"}>{retestStatusLabel(window.status)}</Badge><strong>{formatDateTime(window.due_at)}</strong><p>{window.compare_run_id ? `对比批次 ${window.compare_run_id.slice(-8)}` : "尚未形成对比批次"}</p></article>)}
+        </section>
+      )}
+      <section className="airank-console-card dashboard-primary-action"><div><span>审慎归因</span><h2>发布后只报告观察到的变化</h2><p>报告使用“可能相关”和低/中/高置信度，不承诺发布必然导致豆包、千问或其他平台推荐。</p></div><button className="airank-console-primary-button" type="button" onClick={() => onNavigate(windows.some((window) => window.status === "completed") ? "/console/reports" : "/console/assets")}>{windows.some((window) => window.status === "completed") ? "查看客户报告" : "返回答案资产"}<ArrowRight size={18} /></button></section>
+    </>
+  );
+}
+
 function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
   const { notify, openPanel } = useActionFeedback();
@@ -6580,36 +7004,39 @@ function AssistantPage() {
 
 function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project } = useConsoleOverview();
-  const { notify, recordAction } = useActionFeedback();
-  const [reports, setReports] = useState<ReportList>(fallbackReportList);
+  const { notify } = useActionFeedback();
+  const [reports, setReports] = useState<ReportList>(EMPTY_REPORT_LIST);
+  const [runs, setRuns] = useState<ScanRun[]>([]);
+  const [windows, setWindows] = useState<RetestWindow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project.id) {
-      setReports(fallbackReportList);
+      setReports(EMPTY_REPORT_LIST);
+      setLoaded(true);
       return;
     }
     const controller = new AbortController();
-    fetchReports(project.id, controller.signal)
-      .then(setReports)
-      .catch(() => setReports(fallbackReportList));
+    Promise.all([fetchReports(project.id, controller.signal), fetchScanRuns(project.id, controller.signal), fetchRetestWindows(project.id, controller.signal)])
+      .then(([nextReports, nextRuns, nextWindows]) => {
+        setReports(nextReports);
+        setRuns(nextRuns);
+        setWindows(nextWindows);
+        setLoadError(null);
+        setLoaded(true);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReports(EMPTY_REPORT_LIST);
+        setRuns([]);
+        setWindows([]);
+        setLoadError(error instanceof Error ? error.message : "客户报告暂时不可用。");
+        setLoaded(true);
+      });
     return () => controller.abort();
   }, [project.id]);
-
-  const generateReport = () => {
-    void recordAction({
-      actionType: "report.generate",
-      label: "生成老板报告",
-      entityType: "report",
-      entityId: "executive_report",
-      payload: { report_count: reports.reports.length },
-    });
-    notify({
-      title: "报告生成尚未开放",
-      desc: "只有完成同口径复测后，后端才会生成带证据索引与内容哈希的报告；本页面不会伪造任务成功。",
-      tone: "warning",
-    });
-  };
 
   const downloadReport = async (report: ReportItem) => {
     const reportId = report.report_id;
@@ -6635,16 +7062,21 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     }
   };
 
+  const hasBaseline = runs.some((run) => run.run_type === "baseline" && run.status === "completed");
+  const hasRetest = windows.some((window) => window.status === "completed" || window.status === "completed_with_limitations");
+  const nextDue = [...windows].filter((window) => window.status === "scheduled").sort((left, right) => left.due_at.localeCompare(right.due_at))[0];
+
   return (
     <>
       <PageHeader
-        title="报表中心"
-        subtitle="复测 AI 回答变化；导出确定性 ZIP，包含证据 manifest、HTML、PDF、Word、空白人工评分表与逐文件哈希，并用下载回执锚定整包 SHA-256。"
-        action={<HeaderActions primary="生成老板报告" icon={FileChartColumn} onPrimary={generateReport} />}
+        title="客户报告"
+        subtitle="报告只使用真实扫描、引用、事实和发布快照；复测归因使用观察到变化、可能相关和置信度。"
       />
-      {reports.reports.length === 0 && (
-        <DataStateCard title="尚无客户报告" desc="报告必须来自真实扫描或同口径复测；没有证据时不会显示趋势、增长或关键结论。" tone="warning" />
-      )}
+      {!loaded && <DataStateCard title="正在检查报告就绪状态" desc="加载完成前不显示生成动作或默认报告。" tone="primary" />}
+      {loadError && <DataStateCard title="客户报告暂时不可用" desc={`${loadError} 当前不会用固定趋势或演示结论补位。`} tone="danger" />}
+      {loaded && !loadError && !hasBaseline && <DataStateCard title="还不能生成客户报告" desc="当前没有已完成的真实基线扫描。先完成多平台扫描，报告按钮才会开放。" tone="warning" />}
+      {loaded && !loadError && hasBaseline && !hasRetest && reports.reports.length === 0 && <DataStateCard title={nextDue ? "已进入观察窗口" : "基线已完成"} desc={nextDue ? `预计在 ${formatDateTime(nextDue.due_at)} 进行 ${nextDue.window_label} 复测；到期前不生成强结论。` : "可生成基线体检报告；复测报告需完成发布存证和同口径观察窗口。"} tone="primary" />}
+      {loaded && !loadError && hasRetest && reports.reports.length === 0 && <DataStateCard title="复测已完成，报告仍在准备" desc="等待后端生成带样本索引和内容哈希的报告；页面不会伪造任务成功。" tone="warning" />}
       <section className="report-card-grid">
         {reports.reports.map((item, index) => {
           const ReportIcon = reportCardIcons[index] ?? FileChartColumn;
@@ -6657,7 +7089,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div>
               <div className="report-card-heading">
                 <h3>{item.title}</h3>
-                <Badge tone={qualityBlocked ? "danger" : "success"}>{qualityBlocked ? "quality blocked" : "evidence ready"}</Badge>
+                <Badge tone={qualityBlocked ? "danger" : "success"}>{qualityBlocked ? "质量门禁未通过" : "证据已就绪"}</Badge>
               </div>
               <p>{item.desc}</p>
               <span>{item.date}</span>
@@ -6683,6 +7115,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           );
         })}
       </section>
+      {loaded && !loadError && reports.reports.length === 0 && <section className="airank-console-card dashboard-primary-action"><div><span>下一步</span><h2>{!hasBaseline ? "先完成真实基线扫描" : !hasRetest ? "等待或完成同口径复测" : "等待证据报告生成"}</h2><p>样本不足时只显示低置信度，不生成品牌增长或强因果结论。</p></div><button className="airank-console-primary-button" type="button" onClick={() => onNavigate(!hasBaseline ? "/console/scans" : "/console/publishing")}>{!hasBaseline ? "前往多平台扫描" : "查看复测计划"}<ArrowRight size={18} /></button></section>}
     </>
   );
 }
@@ -6693,6 +7126,129 @@ type ProviderCredentialDraft = {
   confirmBillable: boolean;
   confirmRevoke: boolean;
 };
+
+function CustomerSettingsPage() {
+  const { project } = useConsoleOverview();
+  const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchProviderReadiness(controller.signal)
+      .then((nextReadiness) => {
+        setReadiness(nextReadiness);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReadiness(null);
+        setLoadError(error instanceof Error ? error.message : "平台可用摘要暂时不可用。");
+      });
+    return () => controller.abort();
+  }, []);
+
+  const readyProviders = readiness?.providers.filter((provider) => provider.status === "ready") ?? [];
+  const blockedProviders = readiness?.providers.filter((provider) => provider.status !== "ready") ?? [];
+  return (
+    <>
+      <PageHeader title="项目设置" subtitle="维护项目资料、客户成员、通知和平台授权摘要；模型路由、凭证和熔断由平台管理员负责。" />
+      <section className="settings-grid customer-settings-grid">
+        <SettingsSection
+          title="品牌与项目"
+          icon={Building2}
+          rows={[
+            ["品牌/项目", project.name || "尚未填写"],
+            ["官网", project.website || "尚未填写"],
+            ["行业", project.industry || "尚未填写"],
+            ["目标客户", project.audience || "尚未填写"],
+            ["竞品", project.competitors || "尚未填写"],
+          ]}
+          actionLabel="查看资料"
+          onAction={() => undefined}
+        />
+        <article className="airank-console-card settings-section">
+          <div className="settings-head">
+            <IconTile><UsersRound size={22} /></IconTile>
+            <div><h2>成员与通知</h2><span>客户侧权限与业务通知</span></div>
+          </div>
+          <div className="settings-row"><span>当前角色</span><strong>项目成员</strong></div>
+          <div className="settings-row"><span>扫描完成通知</span><strong>由管理员配置</strong></div>
+          <div className="settings-row"><span>报告导出权限</span><strong>按项目授权</strong></div>
+        </article>
+        <article className="airank-console-card settings-section customer-provider-summary">
+          <div className="settings-head">
+            <IconTile><Zap size={22} /></IconTile>
+            <div><h2>平台可用摘要</h2><span>这里只说明本轮能否纳入扫描，不展示 Key、模型路由或熔断细节</span></div>
+          </div>
+          {loadError && <DataStateCard title="平台摘要不可用" desc={`${loadError} 本轮不要据此创建扫描。`} tone="danger" />}
+          {!loadError && !readiness && <DataStateCard title="正在读取平台状态" desc="读取完成前不显示默认数量。" tone="primary" />}
+          {readiness && (
+            <>
+              <div className="settings-row"><span>本轮可用</span><strong>{readyProviders.length} 个平台</strong></div>
+              <div className="settings-row"><span>需要处理</span><strong>{blockedProviders.length} 个平台</strong></div>
+              <div className="provider-summary-list">
+                {readiness.providers.map((provider) => (
+                  <span key={provider.provider} data-status={provider.status}>
+                    {provider.label} · {provider.status === "ready" ? "可纳入扫描" : "本轮不纳入"}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </article>
+      </section>
+    </>
+  );
+}
+
+function DeliveryHomePage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  return (
+    <>
+      <PageHeader title="交付工作台" subtitle="处理客户主流程背后的异常、证据补录、审核和发布协调；这些运维对象不会暴露在客户导航中。" />
+      <section className="workspace-home-grid">
+        <WorkspaceEntryCard icon={ClipboardList} title="异常任务" desc="查看失败、超时和需要重试的采样任务。" action="处理异常" onClick={() => onNavigate("/delivery/tasks")} />
+        <WorkspaceEntryCard icon={FileSearch} title="证据补录" desc="补齐原始回答、截图、来源面板和引用证据。" action="进入证据补录" onClick={() => onNavigate("/delivery/evidence")} />
+        <WorkspaceEntryCard icon={BadgeCheck} title="审核队列" desc="处理事实准确性、引用支持度和内容风险审核。" action="查看待审核" onClick={() => onNavigate("/delivery/reviews")} />
+        <WorkspaceEntryCard icon={SquarePen} title="发布协调" desc="处理发布回执、失败恢复、抓取检查和复测窗口。" action="查看发布任务" onClick={() => onNavigate("/delivery/publishing")} />
+      </section>
+    </>
+  );
+}
+
+function AdminHomePage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  return (
+    <>
+      <PageHeader title="平台管理后台" subtitle="集中管理 Provider、Skill、队列、凭证、用量和系统健康；客户控制台只消费可用性摘要。" />
+      <section className="workspace-home-grid">
+        <WorkspaceEntryCard icon={Zap} title="Provider 管理" desc="管理凭证、路由、健康、额度、成本与模型迁移门禁。" action="管理 Provider" onClick={() => onNavigate("/admin/providers")} />
+        <WorkspaceEntryCard icon={Workflow} title="Skill 管理" desc="查看版本化契约、评测证据、信任门禁和晋级状态。" action="管理 Skill" onClick={() => onNavigate("/admin/skills")} />
+        <WorkspaceEntryCard icon={Activity} title="队列与审计" desc="查看任务队列、运行异常和平台审计信息。" action="查看运行状态" onClick={() => onNavigate("/admin/operations")} />
+      </section>
+    </>
+  );
+}
+
+function WorkspaceEntryCard({
+  icon: Icon,
+  title,
+  desc,
+  action,
+  onClick,
+}: {
+  icon: LucideIcon;
+  title: string;
+  desc: string;
+  action: string;
+  onClick: () => void;
+}) {
+  return (
+    <article className="airank-console-card workspace-entry-card">
+      <IconTile><Icon size={24} /></IconTile>
+      <div><h2>{title}</h2><p>{desc}</p></div>
+      <button className="outline-button" type="button" onClick={onClick}>{action}<ArrowRight size={16} /></button>
+    </article>
+  );
+}
 
 type ProviderPriceDraft = {
   routeKey: string;
@@ -7089,8 +7645,8 @@ function SettingsPage() {
   return (
     <>
       <PageHeader
-        title="设置中心"
-        subtitle="展示真实项目与 Provider 状态；租户凭证先通过 L3 真实生成验证，再加密入库、版本化轮换并记录哈希链事件。"
+        title="Provider 管理"
+        subtitle="平台管理员集中管理健康、凭证、路由、额度、成本和模型迁移；客户只看到可用性摘要。"
         action={<Badge tone="primary">audited control</Badge>}
       />
       <section className="settings-grid">
@@ -7545,8 +8101,8 @@ function SkillConsolePage() {
   return (
     <>
       <PageHeader
-        title="内部 Skill 控制台"
-        subtitle="展示版本化契约、独立评测、依赖/能力信任门禁和内容寻址晋级账本；仓库门禁通过不等于生产沙箱或外部证据齐备。"
+        title="Skill 管理"
+        subtitle="管理版本化契约、独立评测、依赖与信任门禁；仓库测试通过不等于生产能力已经就绪。"
         action={<Badge tone="warning">internal · read-only</Badge>}
       />
       {!loadError && skills.length > 0 && (
@@ -7691,7 +8247,7 @@ function SummaryMetric({ label, value, tone }: { label: string; value: string; t
     <div className="summary-metric">
       <span>{label}</span>
       <strong>{value}</strong>
-      <Badge tone={tone}>实时数据</Badge>
+      <Badge tone={value === "—" ? "muted" : tone}>{value === "—" ? "暂无数据" : "真实数据"}</Badge>
     </div>
   );
 }
