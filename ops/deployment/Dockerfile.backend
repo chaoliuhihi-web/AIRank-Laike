@@ -1,7 +1,5 @@
 FROM python:3.11.15-slim-bookworm@sha256:d29f48a31a8b408ed19272ca1e7b10ebae13b240a27e862d3d4217c528e2e0c3
 
-ARG AIRANK_BUILD_COMMIT
-
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -20,6 +18,8 @@ RUN python -m pip install --upgrade pip==26.2.1 setuptools==84.0.0 \
     && python -m playwright install --with-deps chromium \
     && chmod -R a=rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/* /tmp/requirements-prod.lock
+
+ARG AIRANK_BUILD_COMMIT
 
 COPY --chown=airank:airank apps /app/apps
 COPY --chown=airank:airank packages /app/packages
