@@ -234,29 +234,47 @@
     }
   }
 
-  function enhanceResourceTabs(){
-    const tabs = Array.from(document.querySelectorAll('body[data-page="resources"] .search-section .tabs a'));
-    if(!tabs.length) return;
-    const targets = ['articles','articles','articles','downloads','downloads','articles','learning','downloads'];
-    tabs.forEach((tab, index) => {
-      tab.href = `#${targets[index] || 'articles'}`;
-      tab.addEventListener('click', e => {
-        e.preventDefault();
-        tabs.forEach(item => item.classList.remove('is-active'));
-        tab.classList.add('is-active');
-        document.getElementById(targets[index] || 'articles')?.scrollIntoView({ behavior:'smooth', block:'start' });
+  function enhanceResearchLibrary(){
+    const host = document.querySelector('body[data-page="resources"] [data-research-library]');
+    if(!host) return;
+    const cards = Array.from(host.querySelectorAll('[data-research-card]'));
+    const filters = Array.from(document.querySelectorAll('[data-research-filter]'));
+    const form = document.querySelector('[data-research-search]');
+    const input = form?.querySelector('[data-research-query]');
+    const empty = document.querySelector('[data-research-empty]');
+    const params = new URLSearchParams(location.search);
+    let activeCategory = params.get('category') || 'all';
+
+    function applyFilters({ scroll = false } = {}){
+      const query = (input?.value || '').trim().toLocaleLowerCase('zh-CN');
+      let visible = 0;
+      cards.forEach(card => {
+        const categoryMatch = activeCategory === 'all' || card.dataset.category === activeCategory;
+        const queryMatch = !query || (card.dataset.search || card.textContent).toLocaleLowerCase('zh-CN').includes(query);
+        const show = categoryMatch && queryMatch;
+        card.hidden = !show;
+        if(show) visible += 1;
       });
+      filters.forEach(button => button.classList.toggle('is-active', button.dataset.researchFilter === activeCategory));
+      if(empty) empty.hidden = visible !== 0;
+      if(scroll) document.getElementById('research-library')?.scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+
+    const keyword = params.get('keyword');
+    if(keyword && input) input.value = keyword;
+    if(!filters.some(button => button.dataset.researchFilter === activeCategory)) activeCategory = 'all';
+    filters.forEach(button => button.addEventListener('click', () => {
+      activeCategory = button.dataset.researchFilter || 'all';
+      applyFilters({ scroll:true });
+    }));
+    input?.addEventListener('input', () => applyFilters());
+    form?.addEventListener('submit', event => {
+      event.preventDefault();
+      applyFilters({ scroll:true });
     });
-    const form = document.querySelector('body[data-page="resources"] .search-box');
-    const input = form?.querySelector('input');
-    form?.addEventListener('submit', e => {
-      e.preventDefault();
-      document.getElementById('articles')?.scrollIntoView({ behavior:'smooth', block:'start' });
-      input?.focus();
-    });
-    form?.querySelector('button')?.addEventListener('click', () => form.requestSubmit());
+    applyFilters();
   }
 
   enhanceClickableImageSections();
-  enhanceResourceTabs();
+  enhanceResearchLibrary();
 })();

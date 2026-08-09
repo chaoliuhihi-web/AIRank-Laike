@@ -5,12 +5,14 @@
   "description": "智界问道 AIRank 来客官网前端：组件化静态页面 + 局部高保真切图",
   "scripts": {
     "serve": "python3 -m http.server 8080",
+    "research:build": "node scripts/generate-research-library.mjs",
+    "check:research": "node scripts/check-research-library.mjs",
     "check": "node scripts/check-static.mjs",
     "audit": "node scripts/check-static.mjs",
     "routes": "node scripts/check-routes.mjs",
     "test:lead": "node scripts/check-lead-api.mjs",
     "deploy:check": "node scripts/check-deployment.mjs",
-    "release:check": "npm run check && npm run routes && npm run test:lead && npm run deploy:check"
+    "release:check": "npm run research:build && npm run check:research && npm run check && npm run routes && npm run test:lead && npm run deploy:check"
   },
   "dependencies": {
     "nodemailer": "9.0.5"
