@@ -287,6 +287,8 @@ WordPress/HTTP 发布使用同一 `airank.operation-guard.v1`，但 `operation_t
 
 发布后的变更使用 `POST /api/v1/publish-packages/{package_id}/mutations` 和 `airank.publisher.v2`。每次 `update` / `withdraw` 都创建新的不可变动作包和 `airank.publish-snapshot.v3`，保存目标包、原因、可信操作者、原内容 hash 和替换内容 hash；不改写历史快照。只有 `published` 的 WordPress/HTTP 包可作为目标，活动或 `outcome_unknown` 子动作阻断后续变更。WordPress 更新必须使用原成功回执中的数字 `remote_id`，不得重新按 slug 创建；撤回只 POST `status=draft`，不执行 DELETE。可信更新回执使原包进入 `superseded`、新包进入 `delivered`，新包重新登记 publication evidence 后才是 `published`；可信撤回回执使目标包和动作包进入 `withdrawn`。响应丢失时目标包保持原状态，动作包进入 `outcome_unknown`，禁止自动重发和并发创建下一动作。
 
+无法机器恢复的发布未知结果使用 `airank.publication-reconciliation.v1`。提交接口只接受 `outcome_unknown + external_started`，只允许提议“已发生”，并要求真实 URL、外部回执 ID、2xx 状态、带时区观察时间、不可变对象引用和真实字节 SHA-256。提交人与复核人必须是不同的 `airank:delivery:admin`；驳回继续保持未知，批准则在单个本地事务中追加 Operation Guard/对账事件并收口 attempt/package。人工回执必须固定 `receipt_origin=manual_reconciliation`、`external_delivery_verified=false`，不得伪装成 Publisher 原生回执；非撤回包只进入 `delivered`，之后仍需真实页面证据。系统不接受“人工证明未发生”并据此自动重放。
+
 Provider 模型迁移使用 `airank.provider-model-migration.v1`。计划创建绑定当前 route/model/configuration fingerprint 和 manifest replacement；目标验证必须引用计划创建后的真实成功 L3 request audit，并包含非空 Provider request ID。`approved` 只有在事件 hash 链和绑定审计仍有效时才具有 `release_eligible=true`；两者任一失效都不能仅凭状态字段通过发布门禁。默认 90 天发布规划窗口与 30 天执行停止窗口分开计算，批准计划不能覆盖已进入执行停止窗口的旧模型。
 
 内部 Skill 的 `/api/v1/admin/skills`、`/promotion-ledger`、`/trust-report` 和手工 eval 都要求认证上下文中的 `airank:skill:admin`，客户端自报 permission header 会被覆盖。`trust-report` 必须验证依赖声明与解析、runner 能力边界、secret 字面量、入口、权限、包根和隔离导入；手工 eval 在信任失败时返回 `409 SKILL_TRUST_BLOCKED`。仓库级信任通过不改变 Skill 的 `partial/ready` 状态，晋级仍须通过 contract/holdout/adversarial、真实外部证据和 Promotion Ledger；`native_runtime_enforcement=false` 时禁止宣称已有原生沙箱。

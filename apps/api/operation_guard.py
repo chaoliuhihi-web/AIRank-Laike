@@ -429,20 +429,69 @@ class MySQLOperationGuard:
                 raise OperationGuardError("OPERATION_IN_PROGRESS", "an operation with this idempotency key is already in progress")
             raise OperationGuardError("OPERATION_OUTCOME_UNKNOWN", "the external effect may have started; automatic replay is forbidden")
 
+    def transition_in_transaction(
+        self,
+        conn: Any,
+        operation_id: str,
+        *,
+        allowed: set[str],
+        to_state: str,
+        event_type: str,
+        actor: str,
+        trace_id: str,
+        response: Optional[Mapping[str, object]] = None,
+        error_code: Optional[str] = None,
+        external_started: Optional[bool] = None,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """Transition inside a caller-owned transaction.
+
+        Publication reconciliation uses this entrypoint so the Operation Guard,
+        attempt ledger, package lineage and two-person case are committed as one
+        local database decision. It never performs or retries the external side
+        effect.
+        """
+
+        transitioned_at = now or utc_now()
+        row = conn.execute(
+            text("SELECT * FROM airank_operation_guards WHERE id=:id FOR UPDATE"),
+            {"id": operation_id},
+        ).mappings().one()
+        current = str(row["state"])
+        if current not in allowed:
+            if current == to_state:
+                return False
+            raise OperationGuardError("OPERATION_STATE_CONFLICT", "operation state transition is invalid")
+        conn.execute(
+            text("UPDATE airank_operation_guards SET state=:state,external_effect_started=COALESCE(:external_started,external_effect_started),response_json=:response_json,error_code=:error_code,updated_at=:now,completed_at=:completed_at WHERE id=:id"),
+            {"state": to_state, "external_started": int(external_started) if external_started is not None else None, "response_json": canonical_json(response) if response is not None else None, "error_code": error_code, "now": database_datetime(transitioned_at), "completed_at": database_datetime(transitioned_at) if to_state in {"succeeded", "failed"} else None, "id": operation_id},
+        )
+        self._append_event(
+            conn,
+            row,
+            event_type,
+            current,
+            to_state,
+            actor,
+            trace_id,
+            transitioned_at,
+        )
+        return True
+
     def _transition(self, operation_id: str, *, allowed: set[str], to_state: str, event_type: str, actor: str, trace_id: str, response: Optional[Mapping[str, object]] = None, error_code: Optional[str] = None, external_started: Optional[bool] = None) -> None:
-        now = utc_now()
         with self.engine.begin() as conn:
-            row = conn.execute(text("SELECT * FROM airank_operation_guards WHERE id=:id FOR UPDATE"), {"id": operation_id}).mappings().one()
-            current = str(row["state"])
-            if current not in allowed:
-                if current == to_state:
-                    return
-                raise OperationGuardError("OPERATION_STATE_CONFLICT", "operation state transition is invalid")
-            conn.execute(
-                text("UPDATE airank_operation_guards SET state=:state,external_effect_started=COALESCE(:external_started,external_effect_started),response_json=:response_json,error_code=:error_code,updated_at=:now,completed_at=:completed_at WHERE id=:id"),
-                {"state": to_state, "external_started": int(external_started) if external_started is not None else None, "response_json": canonical_json(response) if response is not None else None, "error_code": error_code, "now": database_datetime(now), "completed_at": database_datetime(now) if to_state in {"succeeded", "failed"} else None, "id": operation_id},
+            self.transition_in_transaction(
+                conn,
+                operation_id,
+                allowed=allowed,
+                to_state=to_state,
+                event_type=event_type,
+                actor=actor,
+                trace_id=trace_id,
+                response=response,
+                error_code=error_code,
+                external_started=external_started,
             )
-            self._append_event(conn, row, event_type, current, to_state, actor, trace_id, now)
 
     def mark_external_started(self, operation_id: str, actor: str, trace_id: str) -> None:
         self._transition(operation_id, allowed={"claimed"}, to_state="external_started", event_type="external_effect_started", actor=actor, trace_id=trace_id, external_started=True)

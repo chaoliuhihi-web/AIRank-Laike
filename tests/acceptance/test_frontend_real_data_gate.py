@@ -32,10 +32,13 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
         "importQuestionObservations",
         "fetchMeasurementQuality",
         "fetchPublishPackages",
+        "fetchPublicationReconciliations",
         "fetchPublishAttempts",
         "createPublishPackage",
         "createPublishMutation",
         "recordPublicationEvidence",
+        "submitPublicationReconciliation",
+        "reviewPublicationReconciliation",
         "fetchKnowledgeSyncPolicies",
         "fetchKnowledgeSyncRuns",
         "createKnowledgeSyncPolicy",
@@ -73,6 +76,8 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "创建不可变发布包" in app_source
     assert "登记真实发布证据" in app_source
     assert "更新 / 撤回已发布内容" in app_source
+    assert "未知发布结果 · 双人证据对账" in app_source
+    assert "非原生回执" in app_source
     assert "不执行 DELETE" in app_source
     assert "客户站点凭证只允许由 Worker 安全注入" in app_source
     assert "published_url" in api_source
@@ -88,9 +93,12 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
 def test_backend_exposes_console_list_contracts() -> None:
     api_source = (ROOT / "apps" / "api" / "main.py").read_text(encoding="utf-8")
     delivery_source = (ROOT / "apps" / "api" / "delivery_routes.py").read_text(encoding="utf-8")
+    reconciliation_source = (ROOT / "apps" / "api" / "publication_reconciliation.py").read_text(encoding="utf-8")
     retest_source = (ROOT / "apps" / "api" / "retest_routes.py").read_text(encoding="utf-8")
 
     assert 'f"{API_PREFIX}/projects/{{project_id}}/buyer-questions"' in api_source
     assert '"/projects/{project_id}/publish-packages"' in delivery_source
     assert '"/publish-packages/{package_id}/mutations"' in delivery_source
+    assert '"/publish-packages/{package_id}/reconciliations"' in reconciliation_source
+    assert '"/publish-reconciliations/{case_id}/review"' in reconciliation_source
     assert '"/projects/{project_id}/retest-windows"' in retest_source

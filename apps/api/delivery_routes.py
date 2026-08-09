@@ -189,6 +189,7 @@ class PublishAttemptData(BaseModel):
     operation_state: Optional[Literal["claimed", "external_started", "succeeded", "failed"]] = None
     external_effect_started: bool = False
     reconciliation_required: bool = False
+    reconciliation_case_id: Optional[str] = None
     response_status: Optional[int] = None
     response_sha256: Optional[str] = None
     error_code: Optional[str] = None
@@ -834,6 +835,7 @@ class MySQLDeliveryRepository:
                     row["status"] == "outcome_unknown"
                     or row["operation_state"] == "external_started"
                 ),
+                reconciliation_case_id=row.get("reconciliation_case_id"),
                 response_status=row["response_status"],
                 response_sha256=row["response_sha256"],
                 error_code=row["error_code"],

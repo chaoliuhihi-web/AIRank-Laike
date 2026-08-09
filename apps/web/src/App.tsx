@@ -144,6 +144,7 @@ import {
   fetchPublishAttempts,
   fetchPublishOperation,
   fetchPublishPackages,
+  fetchPublicationReconciliations,
   fetchRetestWindows,
   fetchSkillPromotionLedger,
   fetchSkillTrustReport,
@@ -158,6 +159,7 @@ import {
   heartbeatEvidenceReviewAssignment,
   recordConsoleAction,
   recordPublicationEvidence,
+  reviewPublicationReconciliation,
   revokeProviderCredential,
   releaseEvidenceReviewAssignment,
   putEvidenceReviewerDirectoryBinding,
@@ -173,6 +175,7 @@ import {
   upsertEvidenceReviewerTeamMember,
   reviewSourceRegistryEntry,
   runBrandCheck,
+  submitPublicationReconciliation,
   runEvidenceIntegrityAudit,
   runEvidenceReviewerDirectorySync,
   storeAuthSession,
@@ -251,6 +254,7 @@ import {
   type PublishPackage,
   type PublishPackageCreateInput,
   type PublishMutationCreateInput,
+  type PublicationReconciliation,
   type ReportItem,
   type ReportList,
   type RetestWindow,
@@ -5929,6 +5933,23 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
   const [replacementAssetId, setReplacementAssetId] = useState("");
   const [mutationReason, setMutationReason] = useState("");
   const [creatingMutation, setCreatingMutation] = useState(false);
+  const [reconciliations, setReconciliations] = useState<PublicationReconciliation[]>([]);
+  const [reconciliationPackageId, setReconciliationPackageId] = useState("");
+  const [reconciliationPublishedUrl, setReconciliationPublishedUrl] = useState("");
+  const [reconciliationReceiptId, setReconciliationReceiptId] = useState("");
+  const [reconciliationResponseStatus, setReconciliationResponseStatus] = useState("200");
+  const [reconciliationEvidenceRef, setReconciliationEvidenceRef] = useState("");
+  const [reconciliationEvidenceSha, setReconciliationEvidenceSha] = useState("");
+  const [reconciliationEvidenceNote, setReconciliationEvidenceNote] = useState("");
+  const [reconciliationObservedAt, setReconciliationObservedAt] = useState(() => {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  });
+  const [submittingReconciliation, setSubmittingReconciliation] = useState(false);
+  const [reviewCaseId, setReviewCaseId] = useState("");
+  const [reviewAction, setReviewAction] = useState<"approved" | "rejected">("approved");
+  const [reconciliationReviewNote, setReconciliationReviewNote] = useState("");
+  const [reviewingReconciliation, setReviewingReconciliation] = useState(false);
 
   useEffect(() => {
     if (!project.id) return;
@@ -5938,22 +5959,30 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       fetchRetestWindows(project.id, controller.signal),
       fetchContentAssets(project.id, controller.signal),
       fetchScanRuns(project.id, controller.signal),
+      fetchPublicationReconciliations(project.id, controller.signal),
     ])
-      .then(([nextPackages, nextWindows, nextAssets, nextRuns]) => {
+      .then(([nextPackages, nextWindows, nextAssets, nextRuns, nextReconciliations]) => {
         setPackages(nextPackages);
         setWindows(nextWindows);
         setContentAssets(nextAssets);
         setScanRuns(nextRuns);
+        setReconciliations(nextReconciliations);
         const firstApprovedAsset = nextAssets.find((item) => item.status === "approved");
         const firstUnpublishedPackage = nextPackages.find((item) => ["packaged", "delivered"].includes(item.status));
         const firstPublishedExternal = nextPackages.find((item) => item.status === "published" && item.channel !== "export");
         const firstCompletedBaseline = nextRuns.find((item) => item.status === "completed" && item.run_type === "baseline");
+        const firstUnknownPackage = nextPackages.find((item) => item.status === "outcome_unknown");
+        const currentUserId = getStoredAuthSession()?.user.userId ?? "";
+        const firstReviewableCase = nextReconciliations.find((item) => item.status === "awaiting_review" && item.submitted_by !== currentUserId);
         setSelectedAssetId((current) => current || firstApprovedAsset?.asset_id || "");
         setReplacementAssetId((current) => current || firstApprovedAsset?.asset_id || "");
         setSelectedPackageId((current) => current || firstUnpublishedPackage?.package_id || "");
         setMutationTargetId((current) => current || firstPublishedExternal?.package_id || "");
         setPublishedUrl((current) => current || firstUnpublishedPackage?.published_url || "");
         setBaselineRunId((current) => current || firstCompletedBaseline?.run_id || "");
+        setReconciliationPackageId((current) => current || firstUnknownPackage?.package_id || "");
+        setReconciliationPublishedUrl((current) => current || firstUnknownPackage?.published_url || "");
+        setReviewCaseId((current) => current || firstReviewableCase?.case_id || "");
         setLoadError(null);
       })
       .catch((error) => {
@@ -5967,6 +5996,10 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
   const evidenceCandidates = packages.filter((item) => ["packaged", "delivered"].includes(item.status) && item.publication_action !== "withdraw");
   const mutationCandidates = packages.filter((item) => item.status === "published" && item.channel !== "export");
   const completedBaselines = scanRuns.filter((item) => item.status === "completed" && item.run_type === "baseline");
+  const reconciliationCandidates = packages.filter((item) => item.status === "outcome_unknown" && item.channel !== "export");
+  const currentUserId = getStoredAuthSession()?.user.userId ?? "";
+  const reviewableReconciliations = reconciliations.filter((item) => item.status === "awaiting_review" && item.submitted_by !== currentUserId);
+  const selectedReviewReconciliation = reviewableReconciliations.find((item) => item.case_id === reviewCaseId) || null;
 
   const submitPublishPackage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -6070,6 +6103,98 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
     }
   };
 
+  const submitReconciliationCase = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const evidenceSha = reconciliationEvidenceSha.trim().toLowerCase();
+    const evidenceNote = reconciliationEvidenceNote.trim();
+    const responseStatus = Number(reconciliationResponseStatus);
+    if (!reconciliationPackageId || !reconciliationPublishedUrl.trim() || !reconciliationReceiptId.trim() || !Number.isInteger(responseStatus) || responseStatus < 200 || responseStatus > 299 || !reconciliationEvidenceRef.trim() || !/^[0-9a-f]{64}$/.test(evidenceSha) || evidenceNote.length < 20 || !reconciliationObservedAt) {
+      notify({ title: "人工对账证据不完整", desc: "必须填写真实 URL、外部回执标识、实际 2xx 状态码、不可变对象引用及 SHA-256、至少 20 个字符的核对说明和观察时间。", tone: "warning" });
+      return;
+    }
+    setSubmittingReconciliation(true);
+    try {
+      const created = await submitPublicationReconciliation({
+        packageId: reconciliationPackageId,
+        publishedUrl: reconciliationPublishedUrl.trim(),
+        externalReceiptId: reconciliationReceiptId.trim(),
+        responseStatus,
+        evidenceObjectRefId: reconciliationEvidenceRef.trim(),
+        evidenceSha256: evidenceSha,
+        evidenceNote,
+        observedAt: new Date(reconciliationObservedAt).toISOString(),
+      });
+      setReconciliations((current) => [created, ...current.filter((item) => item.case_id !== created.case_id)]);
+      setReconciliationPackageId("");
+      setReconciliationPublishedUrl("");
+      setReconciliationReceiptId("");
+      setReconciliationResponseStatus("200");
+      setReconciliationEvidenceRef("");
+      setReconciliationEvidenceSha("");
+      setReconciliationEvidenceNote("");
+      notify({ title: "对账证据已提交", desc: "当前仍保持 outcome_unknown 和禁止重放；只有另一位交付管理员复核通过后才会恢复为 delivered。", tone: "success" });
+    } catch (error) {
+      notify({ title: "对账证据未提交", desc: error instanceof Error ? error.message : "人工对账接口不可用", tone: "danger" });
+    } finally {
+      setSubmittingReconciliation(false);
+    }
+  };
+
+  const submitReconciliationReview = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const note = reconciliationReviewNote.trim();
+    if (!reviewCaseId || note.length < 10) {
+      notify({ title: "复核意见不完整", desc: "请选择非本人提交的待复核案例，并填写至少 10 个字符的意见。", tone: "warning" });
+      return;
+    }
+    setReviewingReconciliation(true);
+    try {
+      if (!selectedReviewReconciliation) {
+        throw new Error("待复核案例已变化，请刷新后重新选择。");
+      }
+      const updated = await reviewPublicationReconciliation(
+        reviewCaseId,
+        reviewAction,
+        note,
+        selectedReviewReconciliation.evidence_object_ref_id,
+        selectedReviewReconciliation.evidence_sha256,
+      );
+      setReconciliations((current) => current.map((item) => item.case_id === updated.case_id ? updated : item));
+      setPackages(await fetchPublishPackages(project.id));
+      setReviewCaseId("");
+      setReconciliationReviewNote("");
+      notify({
+        title: reviewAction === "approved" ? "双人复核已应用" : "对账申请已驳回",
+        desc: reviewAction === "approved"
+          ? "发布包只恢复为 delivered/withdrawn，回执明确标记为人工证据且 external_delivery_verified=false；仍需登记真实页面证据。"
+          : "外部结果仍为未知，系统继续禁止自动重放。",
+        tone: reviewAction === "approved" ? "success" : "warning",
+      });
+    } catch (error) {
+      notify({ title: "对账复核未完成", desc: error instanceof Error ? error.message : "对账复核接口不可用", tone: "danger" });
+    } finally {
+      setReviewingReconciliation(false);
+    }
+  };
+
+  const downloadReconciliationEvidence = async () => {
+    if (!selectedReviewReconciliation) return;
+    try {
+      const blob = await fetchEvidenceObject(selectedReviewReconciliation.evidence_object_ref_id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${selectedReviewReconciliation.case_id}-${selectedReviewReconciliation.evidence_sha256.slice(0, 12)}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      notify({ title: "不可变证据已下载", desc: `请核对对象 ${selectedReviewReconciliation.evidence_object_ref_id} 与页面、回执是否一致后再提交决定。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "证据对象无法读取", desc: error instanceof Error ? error.message : "对象存储不可用", tone: "danger" });
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -6084,7 +6209,7 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       <section className="metric-grid publishing-stats">
         <MiniStat label="发布包" value={String(packages.length)} icon={CloudUpload} />
         <MiniStat label="已发布" value={String(packages.filter((item) => item.status === "published").length)} icon={BadgeCheck} />
-        <MiniStat label="待处理/失败" value={String(packages.filter((item) => ["queued", "publishing", "failed"].includes(item.status)).length)} icon={SearchCheck} />
+        <MiniStat label="待处理/失败/待对账" value={String(packages.filter((item) => ["queued", "publishing", "failed", "outcome_unknown"].includes(item.status)).length)} icon={SearchCheck} />
         <MiniStat label="复测窗口" value={String(windows.length)} icon={RotateCw} />
       </section>
       <Panel title="创建不可变发布包">
@@ -6157,6 +6282,112 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
             <button className="airank-console-primary-button" type="submit" disabled={creatingMutation || !mutationTargetId}>{creatingMutation ? "提交中…" : mutationAction === "update" ? "提交更新" : "提交撤回"}</button>
           </div>
         </form>
+      </Panel>
+      <Panel title="未知发布结果 · 双人证据对账">
+        <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitReconciliationCase(event)}>
+          <label>
+            待对账发布包
+            <select
+              value={reconciliationPackageId}
+              onChange={(event) => {
+                const packageId = event.target.value;
+                setReconciliationPackageId(packageId);
+                setReconciliationPublishedUrl(packages.find((item) => item.package_id === packageId)?.published_url || "");
+              }}
+            >
+              <option value="">请选择 outcome_unknown 发布包</option>
+              {reconciliationCandidates.map((item) => <option value={item.package_id} key={item.package_id}>{item.package_id} · {item.publication_action} · {item.channel}</option>)}
+            </select>
+            <small>只接受 Operation Guard 已记录外部副作用开始的未知结果；本流程不会重新调用客户站点。</small>
+          </label>
+          <label>
+            外部回执 / 远端 ID
+            <input required maxLength={255} value={reconciliationReceiptId} onChange={(event) => setReconciliationReceiptId(event.target.value)} placeholder="WordPress 填数字 post ID；HTTP 填渠道回执 ID" />
+            <small>WordPress 必须是数字远端 ID，供后续更新和可恢复撤回使用。</small>
+          </label>
+          <label>
+            实际 HTTP 状态码
+            <input type="number" required min={200} max={299} step={1} value={reconciliationResponseStatus} onChange={(event) => setReconciliationResponseStatus(event.target.value)} />
+            <small>必须按客户后台或渠道回执原样录入 2xx，不使用固定演示状态。</small>
+          </label>
+          <label className="content-blueprint-wide">
+            已观察到的真实 URL
+            <input type="url" required maxLength={2048} value={reconciliationPublishedUrl} onChange={(event) => setReconciliationPublishedUrl(event.target.value)} placeholder="https://customer.example/published-page" />
+          </label>
+          <label>
+            不可变证据对象引用
+            <input required maxLength={64} value={reconciliationEvidenceRef} onChange={(event) => setReconciliationEvidenceRef(event.target.value)} placeholder="object_…" />
+          </label>
+          <label>
+            证据 SHA-256
+            <input required maxLength={64} value={reconciliationEvidenceSha} onChange={(event) => setReconciliationEvidenceSha(event.target.value)} placeholder="64 位十六进制哈希" />
+          </label>
+          <label>
+            实际观察时间
+            <input type="datetime-local" required value={reconciliationObservedAt} onChange={(event) => setReconciliationObservedAt(event.target.value)} />
+          </label>
+          <label className="content-blueprint-wide">
+            核对说明
+            <textarea required minLength={20} maxLength={2000} value={reconciliationEvidenceNote} onChange={(event) => setReconciliationEvidenceNote(event.target.value)} placeholder="说明通过哪个客户后台、页面或渠道回执确认了远端副作用，以及证据对象包含什么。" />
+            <small>服务端会重新读取对象存储并校验字节哈希、项目归属和 immutable 标记。</small>
+          </label>
+          <div className="content-blueprint-actions">
+            <span>{reconciliationCandidates.length} 个未知结果待核对；提交人不能复核自己的申请。</span>
+            <button className="airank-console-primary-button" type="submit" disabled={submittingReconciliation || !reconciliationPackageId}>{submittingReconciliation ? "提交中…" : "提交证据等待复核"}</button>
+          </div>
+        </form>
+      </Panel>
+      <Panel title="独立复核 · 不执行外部重放">
+        <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitReconciliationReview(event)}>
+          <label>
+            非本人待复核案例
+            <select value={reviewCaseId} onChange={(event) => setReviewCaseId(event.target.value)}>
+              <option value="">请选择另一位管理员提交的案例</option>
+              {reviewableReconciliations.map((item) => <option value={item.case_id} key={item.case_id}>{item.case_id} · {item.package_id} · {item.submitted_by}</option>)}
+            </select>
+            <small>当前登录用户与提交人必须不同；服务端再次校验，不依赖前端隐藏。</small>
+          </label>
+          <label>
+            复核结论
+            <select value={reviewAction} onChange={(event) => setReviewAction(event.target.value as "approved" | "rejected")}>
+              <option value="approved">证据支持已发生</option>
+              <option value="rejected">证据不足，继续阻塞</option>
+            </select>
+            <small>系统不提供“确认未发生并重发”选项；通用渠道的缺席证据不足以安全重试。</small>
+          </label>
+          {selectedReviewReconciliation ? (
+            <div className="content-blueprint-wide publication-reconciliation-evidence-summary">
+              <strong>复核对象：{selectedReviewReconciliation.evidence_object_ref_id}</strong>
+              <span>SHA-256：{selectedReviewReconciliation.evidence_sha256}</span>
+              <span>观察时间：{formatDateTime(selectedReviewReconciliation.observed_at)} · 外部回执：{selectedReviewReconciliation.external_receipt_id}</span>
+              <span>真实 URL：{selectedReviewReconciliation.published_url}</span>
+              <span>提交说明：{selectedReviewReconciliation.evidence_note}</span>
+              <button className="table-action" type="button" onClick={() => void downloadReconciliationEvidence()}>下载并核对不可变证据</button>
+            </div>
+          ) : null}
+          <label className="content-blueprint-wide">
+            独立复核意见
+            <textarea required minLength={10} maxLength={2000} value={reconciliationReviewNote} onChange={(event) => setReconciliationReviewNote(event.target.value)} placeholder="记录独立核验路径、回执与截图的一致性，或驳回原因。" />
+          </label>
+          <div className="content-blueprint-actions">
+            <span>通过后只形成 two_person_manual_evidence 回执，并保持 external_delivery_verified=false。</span>
+            <button className="airank-console-primary-button" type="submit" disabled={reviewingReconciliation || !reviewCaseId}>{reviewingReconciliation ? "复核中…" : reviewAction === "approved" ? "复核通过并本地收口" : "驳回并继续阻塞"}</button>
+          </div>
+        </form>
+        {reconciliations.length > 0 ? (
+          <div className="gap-table">
+            {reconciliations.map((item) => (
+              <div className="gap-row" key={item.case_id}>
+                <IconTile tone={item.status === "applied" ? "success" : item.status === "rejected" ? "danger" : "warning"}><ShieldCheck size={21} /></IconTile>
+                <div><strong>{item.case_id}</strong><span>{item.package_id} · 提交 {item.submitted_by} · 复核 {item.reviewed_by || "待定"}</span></div>
+                <Badge tone={item.status === "applied" ? "success" : item.status === "rejected" ? "danger" : "warning"}>{item.status}</Badge>
+                <strong>{item.reconciliation_method}</strong>
+                <span>事件 {item.event_sequence} · 回执 {item.receipt_sha256 ? `${item.receipt_sha256.slice(0, 10)}…` : "待生成"}</span>
+                <Badge tone="warning">非原生回执</Badge>
+              </div>
+            ))}
+          </div>
+        ) : <DataStateCard title="尚无人工对账案例" desc="只有真实发布调用在外部副作用开始后丢失响应时，才允许提交证据。" tone="warning" />}
       </Panel>
       <Panel title="登记真实发布证据">
         <form className="content-blueprint-form publishing-action-form" onSubmit={(event) => void submitPublicationEvidence(event)}>

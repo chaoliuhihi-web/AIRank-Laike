@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publication_reconciliation_response.schema.json",
+  "title": "AIRank publication reconciliation response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {"$ref": "#/$defs/case"},
+    "meta": {"$ref": "#/$defs/meta"}
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_sequence", "event_type", "from_status", "to_status", "request_sha256", "evidence_sha256", "previous_event_sha256", "event_sha256", "actor", "trace_id", "created_at"],
+      "properties": {
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "event_type": {"type": "string", "minLength": 1},
+        "from_status": {"type": ["string", "null"]},
+        "to_status": {"enum": ["awaiting_review", "approved", "rejected", "applied"]},
+        "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "previous_event_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "event_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "case_id", "tenant_id", "project_id", "package_id", "attempt_id", "operation_id", "proposed_outcome", "status", "reconciliation_method", "external_delivery_verified", "published_url", "external_receipt_id", "response_status", "evidence_object_ref_id", "evidence_sha256", "evidence_note", "observed_at", "submitted_by", "reviewed_by", "review_note", "request_sha256", "receipt_sha256", "latest_event_sha256", "event_sequence", "submitted_at", "reviewed_at", "applied_at", "events", "idempotent_replay"],
+      "properties": {
+        "contract_version": {"const": "airank.publication-reconciliation.v1"},
+        "case_id": {"type": "string", "pattern": "^publish_recon_[0-9a-f]{16}$"},
+        "tenant_id": {"type": "string", "minLength": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "package_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "operation_id": {"type": "string", "minLength": 1},
+        "proposed_outcome": {"const": "succeeded"},
+        "status": {"enum": ["awaiting_review", "approved", "rejected", "applied"]},
+        "reconciliation_method": {"const": "two_person_manual_evidence"},
+        "external_delivery_verified": {"const": false},
+        "published_url": {"type": "string", "format": "uri"},
+        "external_receipt_id": {"type": "string", "minLength": 1, "maxLength": 255},
+        "response_status": {"type": "integer", "minimum": 200, "maximum": 299},
+        "evidence_object_ref_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_note": {"type": "string", "minLength": 20, "maxLength": 2000},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "submitted_by": {"type": "string", "minLength": 1, "maxLength": 128},
+        "reviewed_by": {"type": ["string", "null"], "maxLength": 128},
+        "review_note": {"type": ["string", "null"], "maxLength": 2000},
+        "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "latest_event_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "submitted_at": {"type": "string", "format": "date-time"},
+        "reviewed_at": {"type": ["string", "null"], "format": "date-time"},
+        "applied_at": {"type": ["string", "null"], "format": "date-time"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+        "idempotent_replay": {"type": "boolean"}
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": {"type": "string", "minLength": 1},
+        "request_id": {"type": "string", "pattern": "^req_[0-9a-f]{16}$"}
+      }
+    }
+  }
+}

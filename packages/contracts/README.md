@@ -21,6 +21,10 @@ M1 已冻结的 API schema：
 - `provider_usage_ledger_response.schema.json`
 - `publish_attempt_list_response.schema.json`
 - `publish_operation_response.schema.json`
+- `publication_reconciliation_submit_request.schema.json`
+- `publication_reconciliation_review_request.schema.json`
+- `publication_reconciliation_response.schema.json`
+- `publication_reconciliation_list_response.schema.json`
 - `auth_login_request.schema.json`
 - `auth_login_response.schema.json`
 - `console_action_request.schema.json`

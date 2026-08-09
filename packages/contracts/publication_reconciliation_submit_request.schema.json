@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publication_reconciliation_submit_request.schema.json",
+  "title": "AIRank publication reconciliation submission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proposed_outcome", "published_url", "external_receipt_id", "response_status", "evidence_object_ref_id", "evidence_sha256", "evidence_note", "observed_at", "submitted_by", "idempotency_key"],
+  "properties": {
+    "proposed_outcome": {"const": "succeeded"},
+    "published_url": {"type": "string", "format": "uri", "minLength": 1, "maxLength": 2048},
+    "external_receipt_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "response_status": {"type": "integer", "minimum": 200, "maximum": 299},
+    "evidence_object_ref_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "evidence_note": {"type": "string", "minLength": 20, "maxLength": 2000},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "submitted_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 160}
+  }
+}

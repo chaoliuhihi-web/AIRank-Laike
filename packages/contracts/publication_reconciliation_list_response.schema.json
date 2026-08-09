@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publication_reconciliation_list_response.schema.json",
+  "title": "AIRank publication reconciliation list response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {"$ref": "publication_reconciliation_response.schema.json#/$defs/case"}
+    },
+    "meta": {"$ref": "publication_reconciliation_response.schema.json#/$defs/meta"}
+  }
+}

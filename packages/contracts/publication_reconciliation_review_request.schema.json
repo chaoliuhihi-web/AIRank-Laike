@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/publication_reconciliation_review_request.schema.json",
+  "title": "AIRank publication reconciliation independent review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "reviewed_by", "review_note", "evidence_object_ref_id", "evidence_sha256", "idempotency_key"],
+  "properties": {
+    "action": {"enum": ["approved", "rejected"]},
+    "reviewed_by": {"type": "string", "minLength": 1, "maxLength": 128},
+    "review_note": {"type": "string", "minLength": 10, "maxLength": 2000},
+    "evidence_object_ref_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 160}
+  }
+}

@@ -280,6 +280,16 @@ FACT_DISCLOSURE_FORBIDDEN
 | `OPERATION_STATE_CONFLICT` | 409 | 持久化操作状态迁移不合法 |
 | `OPERATION_PREVIOUSLY_FAILED` | 409 | 原幂等操作已失败，不允许自动重复外部副作用 |
 | `OPERATION_NOT_FOUND` | 404 | 当前租户不存在该操作回执，或操作不属于 Provider 凭证域 |
+| `PUBLISH_RECONCILIATION_NOT_FOUND` | 404 | 发布未知结果对账案例不存在或不属于当前租户 |
+| `PUBLISH_RECONCILIATION_NOT_REQUIRED` | 409 | 发布包不是可对账的外部 `outcome_unknown` 状态 |
+| `PUBLISH_RECONCILIATION_ACTIVE_CASE` | 409 | 同一未知 attempt 已有待复核对账案例 |
+| `PUBLISH_RECONCILIATION_IDEMPOTENCY_CONFLICT` | 409 | 同一对账幂等键绑定了不同证据或结论 |
+| `PUBLISH_RECONCILIATION_REVIEW_CONFLICT` | 409 | 对账案例已有不同的终结复核决定 |
+| `PUBLISH_RECONCILIATION_STATE_CONFLICT` | 409 | 对账案例不处于待独立复核状态 |
+| `PUBLISH_RECONCILIATION_SECOND_PERSON_REQUIRED` | 409 | 提交人与复核人为同一认证账号 |
+| `PUBLISH_RECONCILIATION_OPERATION_INVALID` | 409 | package、attempt 与 Operation Guard 的范围或状态不一致 |
+| `PUBLISH_RECONCILIATION_EVIDENCE_INVALID` | 409 | 对账对象的租户、项目、不可变标记、SHA-256 或真实字节不匹配 |
+| `PUBLISH_RECONCILIATION_EVIDENCE_UNAVAILABLE` | 503 | 对账证据对象存储不可读取或运行时驱动不匹配 |
 | `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
 | `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
 | `PROVIDER_MODEL_MIGRATION_NOT_FOUND` | 404 | Provider 模型迁移计划不存在或不属于当前租户 |

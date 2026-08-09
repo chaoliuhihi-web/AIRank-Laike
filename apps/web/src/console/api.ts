@@ -1700,12 +1700,69 @@ export type PublishAttempt = {
   operation_state: "claimed" | "external_started" | "succeeded" | "failed" | null;
   external_effect_started: boolean;
   reconciliation_required: boolean;
+  reconciliation_case_id: string | null;
   response_status: number | null;
   response_sha256: string | null;
   error_code: string | null;
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+};
+
+export type PublicationReconciliation = {
+  contract_version: "airank.publication-reconciliation.v1";
+  case_id: string;
+  tenant_id: string;
+  project_id: string;
+  package_id: string;
+  attempt_id: string;
+  operation_id: string;
+  proposed_outcome: "succeeded";
+  status: "awaiting_review" | "approved" | "rejected" | "applied";
+  reconciliation_method: "two_person_manual_evidence";
+  external_delivery_verified: false;
+  published_url: string;
+  external_receipt_id: string;
+  response_status: number;
+  evidence_object_ref_id: string;
+  evidence_sha256: string;
+  evidence_note: string;
+  observed_at: string;
+  submitted_by: string;
+  reviewed_by: string | null;
+  review_note: string | null;
+  request_sha256: string;
+  receipt_sha256: string | null;
+  latest_event_sha256: string;
+  event_sequence: number;
+  submitted_at: string;
+  reviewed_at: string | null;
+  applied_at: string | null;
+  events: Array<{
+    event_sequence: number;
+    event_type: string;
+    from_status: string | null;
+    to_status: "awaiting_review" | "approved" | "rejected" | "applied";
+    request_sha256: string;
+    evidence_sha256: string;
+    previous_event_sha256: string | null;
+    event_sha256: string;
+    actor: string;
+    trace_id: string;
+    created_at: string;
+  }>;
+  idempotent_replay: boolean;
+};
+
+export type PublicationReconciliationSubmitInput = {
+  packageId: string;
+  publishedUrl: string;
+  externalReceiptId: string;
+  responseStatus: number;
+  evidenceObjectRefId: string;
+  evidenceSha256: string;
+  evidenceNote: string;
+  observedAt: string;
 };
 
 export type PublishOperation = {
@@ -4168,6 +4225,62 @@ export function fetchPublishAttempts(packageId: string, signal?: AbortSignal): P
 
 export function fetchPublishOperation(operationId: string, signal?: AbortSignal): Promise<PublishOperation> {
   return fetchData(`/api/v1/publish-operations/${encodeURIComponent(operationId)}`, "trc_web_publish_operation", signal);
+}
+
+export function fetchPublicationReconciliations(projectId: string, signal?: AbortSignal): Promise<PublicationReconciliation[]> {
+  return fetchData(`/api/v1/projects/${encodeURIComponent(projectId)}/publish-reconciliations`, "trc_web_publish_reconciliations", signal);
+}
+
+export async function submitPublicationReconciliation(input: PublicationReconciliationSubmitInput): Promise<PublicationReconciliation> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(`/api/v1/publish-packages/${encodeURIComponent(input.packageId)}/reconciliations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_publish_reconciliation_submit") },
+    body: JSON.stringify({
+      proposed_outcome: "succeeded",
+      published_url: input.publishedUrl,
+      external_receipt_id: input.externalReceiptId,
+      response_status: input.responseStatus,
+      evidence_object_ref_id: input.evidenceObjectRefId,
+      evidence_sha256: input.evidenceSha256,
+      evidence_note: input.evidenceNote,
+      observed_at: input.observedAt,
+      submitted_by: session?.user.userId ?? "console_operator",
+      idempotency_key: `publish-reconciliation-${input.packageId}-${randomPart}`,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Publication reconciliation request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: PublicationReconciliation }).data;
+}
+
+export async function reviewPublicationReconciliation(
+  caseId: string,
+  action: "approved" | "rejected",
+  reviewNote: string,
+  evidenceObjectRefId: string,
+  evidenceSha256: string,
+): Promise<PublicationReconciliation> {
+  const session = getStoredAuthSession();
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const response = await fetch(`/api/v1/publish-reconciliations/${encodeURIComponent(caseId)}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_publish_reconciliation_review") },
+    body: JSON.stringify({
+      action,
+      reviewed_by: session?.user.userId ?? "console_operator",
+      review_note: reviewNote,
+      evidence_object_ref_id: evidenceObjectRefId,
+      evidence_sha256: evidenceSha256,
+      idempotency_key: `publish-reconciliation-review-${caseId}-${randomPart}`,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Publication reconciliation review failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: PublicationReconciliation }).data;
 }
 
 export function fetchRetestWindows(projectId: string, signal?: AbortSignal): Promise<RetestWindow[]> {

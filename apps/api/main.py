@@ -209,6 +209,16 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "PUBLISH_OPERATION_AUDIT_INCOMPLETE": (503, "Publish operation audit could not be finalized"),
     "PUBLISH_RECEIPT_PERSIST_FAILED": (503, "Publish receipt could not be persisted"),
     "PUBLISH_RECONCILIATION_PERSIST_FAILED": (503, "Reconciled publish receipt could not be persisted"),
+    "PUBLISH_RECONCILIATION_NOT_FOUND": (404, "Publication reconciliation case was not found"),
+    "PUBLISH_RECONCILIATION_NOT_REQUIRED": (409, "Publication package does not require reconciliation"),
+    "PUBLISH_RECONCILIATION_ACTIVE_CASE": (409, "Publication attempt already has an active reconciliation case"),
+    "PUBLISH_RECONCILIATION_IDEMPOTENCY_CONFLICT": (409, "Publication reconciliation idempotency key was reused with different evidence"),
+    "PUBLISH_RECONCILIATION_REVIEW_CONFLICT": (409, "Publication reconciliation review conflicts with the recorded decision"),
+    "PUBLISH_RECONCILIATION_STATE_CONFLICT": (409, "Publication reconciliation case is not awaiting review"),
+    "PUBLISH_RECONCILIATION_SECOND_PERSON_REQUIRED": (409, "Publication reconciliation requires a distinct second reviewer"),
+    "PUBLISH_RECONCILIATION_OPERATION_INVALID": (409, "Publication reconciliation operation state or scope is invalid"),
+    "PUBLISH_RECONCILIATION_EVIDENCE_INVALID": (409, "Publication reconciliation evidence failed integrity or scope validation"),
+    "PUBLISH_RECONCILIATION_EVIDENCE_UNAVAILABLE": (503, "Publication reconciliation evidence object is unavailable"),
     "PUBLICATION_SCREENSHOT_EVIDENCE_INVALID": (409, "Publication screenshot evidence does not match the immutable object"),
     "PUBLISH_MUTATION_TARGET_INVALID": (409, "Publication mutation target is invalid"),
     "PUBLISH_MUTATION_TARGET_STATE_CONFLICT": (409, "Publication mutation target state conflicts with the request"),
@@ -6487,6 +6497,13 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from delivery_routes import router as delivery_router  # type: ignore[no-redef]
 
 app.include_router(delivery_router)
+
+try:
+    from .publication_reconciliation import router as publication_reconciliation_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from publication_reconciliation import router as publication_reconciliation_router  # type: ignore[no-redef]
+
+app.include_router(publication_reconciliation_router)
 
 try:
     from .retest_routes import router as retest_router

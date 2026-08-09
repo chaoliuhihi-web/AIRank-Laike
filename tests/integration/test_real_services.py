@@ -175,7 +175,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0045"
+EXPECTED_ALEMBIC_HEAD = "20260809_0046"
 
 
 def require_real_flag(flag: str) -> None:
@@ -241,7 +241,7 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 109
+        assert table_count == 111
         publish_columns = set(conn.execute(
             text(
                 """
@@ -252,7 +252,19 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
             )
         ).scalars().all())
         assert {"publication_action", "target_package_id", "action_reason", "requested_by"} <= publish_columns
+        publish_attempt_columns = set(conn.execute(
+            text(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'airank_publish_attempts'
+                """
+            )
+        ).scalars().all())
+        assert "reconciliation_case_id" in publish_attempt_columns
         for table_name in (
+            "airank_publish_reconciliation_cases",
+            "airank_publish_reconciliation_events",
             "airank_provider_model_migrations",
             "airank_provider_model_migration_events",
             "airank_provider_price_versions",
