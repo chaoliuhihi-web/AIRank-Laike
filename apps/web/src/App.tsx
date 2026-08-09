@@ -5367,6 +5367,7 @@ function CustomerAssetEditorPage({ assetId, onNavigate }: { assetId: string; onN
     setSubmitting(true);
     try {
       const created = await createGovernedContent(project.id, { assetType, title: title.trim(), direction: direction.trim(), factRevisionIds: selectedFacts, createdBy: actor });
+      setAssets((current) => current.some((asset) => asset.asset_id === created.asset_id) ? current : [...current, created]);
       notify({ title: "答案资产草稿已创建", desc: "草稿已绑定事实版本；审核通过前不能发布。", tone: "success" });
       onNavigate(`/console/assets/${created.asset_id}`);
     } catch (error) {
