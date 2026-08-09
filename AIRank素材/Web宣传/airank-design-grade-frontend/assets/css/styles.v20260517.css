@@ -7827,7 +7827,7 @@ body[data-page="product"] .trust-console--product:before{
   filter:blur(54px);
 }
 body[data-page="product"] .trust-console--product:after{display:none!important;content:none!important}
-body[data-page="product"] .product-hero-v2 .hero__copy>p{max-width:500px!important}
+body[data-page="product"] .product-hero-v2 .hero__copy>p{max-width:410px!important}
 body[data-page="product"] .trust-console--product .trust-console__top{
   position:absolute!important;
   top:5%!important;
