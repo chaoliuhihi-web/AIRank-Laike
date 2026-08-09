@@ -175,7 +175,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0046"
+EXPECTED_ALEMBIC_HEAD = "20260809_0047"
 
 
 def require_real_flag(flag: str) -> None:

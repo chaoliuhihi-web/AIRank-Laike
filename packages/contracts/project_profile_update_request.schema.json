@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/project_profile_update_request.schema.json",
+  "title": "AIRank Project Profile Update Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "brand_name",
+    "company_name",
+    "website_url",
+    "industry",
+    "products",
+    "selling_points",
+    "audiences",
+    "expected_updated_at",
+    "change_note"
+  ],
+  "properties": {
+    "brand_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "company_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "website_url": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "industry": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "region": { "type": ["string", "null"], "maxLength": 128 },
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "selling_points": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "audiences": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "expected_updated_at": { "type": "string", "format": "date-time" },
+    "change_note": { "type": "string", "minLength": 3, "maxLength": 500 }
+  }
+}

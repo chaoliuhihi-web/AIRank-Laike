@@ -493,6 +493,60 @@ class ProjectResponse(BaseModel):
     meta: ResponseMeta
 
 
+class ProjectProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    brand_name: str = Field(min_length=1, max_length=120)
+    company_name: str = Field(min_length=1, max_length=160)
+    website_url: str = Field(min_length=1, max_length=2048)
+    industry: str = Field(min_length=1, max_length=120)
+    region: Optional[str] = Field(default=None, max_length=128)
+    products: list[ShortText] = Field(min_length=1, max_length=20)
+    selling_points: list[ShortText] = Field(default_factory=list, max_length=20)
+    audiences: list[ShortText] = Field(min_length=1, max_length=20)
+    expected_updated_at: datetime
+    change_note: str = Field(min_length=3, max_length=500)
+
+    @field_validator("brand_name", "company_name", "website_url", "industry", "region", "change_note", mode="before")
+    @classmethod
+    def strip_profile_text(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("products", "selling_points", "audiences")
+    @classmethod
+    def normalize_profile_lists(cls, value: list[str], info: Any) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        return require_unique_values(info.field_name, normalized)
+
+
+class ProjectProfileData(BaseModel):
+    contract_version: Literal["airank.project-profile.v1"] = "airank.project-profile.v1"
+    project_id: str
+    tenant_id: str
+    brand_name: str
+    company_name: str
+    website_url: str
+    industry: str
+    region: Optional[str] = None
+    products: list[str]
+    selling_points: list[str]
+    audiences: list[str]
+    status: Literal["draft", "seeded", "needs_confirmation", "active", "archived"]
+    profile_revision: int = Field(ge=0)
+    profile_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    measurement_reset_required: bool
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectProfileResponse(BaseModel):
+    data: ProjectProfileData
+    meta: ResponseMeta
+
+
 class CompetitorCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1344,6 +1398,18 @@ class ProjectRepository(Protocol):
     def create_project(self, tenant_id: str, payload: ProjectCreateRequest) -> ProjectData:
         ...
 
+    def get_profile(self, tenant_id: str, project_id: str) -> ProjectProfileData:
+        ...
+
+    def update_profile(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: ProjectProfileUpdateRequest,
+        actor: str,
+    ) -> ProjectProfileData:
+        ...
+
     def create_competitor(
         self,
         tenant_id: str,
@@ -1433,6 +1499,34 @@ def require_unique_values(field_name: str, values: list[str]) -> list[str]:
     return values
 
 
+def project_profile_sha256(profile: Mapping[str, Any]) -> str:
+    canonical = json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256_text(canonical)
+
+
+def project_profile_hash_payload(
+    *,
+    brand_name: str,
+    company_name: str,
+    website_url: str,
+    industry: str,
+    region: Optional[str],
+    products: list[str],
+    selling_points: list[str],
+    audiences: list[str],
+) -> dict[str, Any]:
+    return {
+        "brand_name": brand_name,
+        "company_name": company_name,
+        "website_url": website_url,
+        "industry": industry,
+        "region": region,
+        "products": products,
+        "selling_points": selling_points,
+        "audiences": audiences,
+    }
+
+
 def infer_brand_name(website_url: str) -> str:
     parsed = urlparse(website_url if "://" in website_url else f"https://{website_url}")
     host = parsed.netloc or parsed.path
@@ -1445,6 +1539,7 @@ class InMemoryProjectRepository:
 
     def __init__(self) -> None:
         self._projects: dict[tuple[str, str], ProjectData] = {}
+        self._profiles: dict[tuple[str, str], ProjectProfileData] = {}
         self._competitors: dict[tuple[str, str], CompetitorData] = {}
         self._questions: dict[tuple[str, str], BuyerQuestionData] = {}
 
@@ -1488,7 +1583,83 @@ class InMemoryProjectRepository:
             updated_at=now,
         )
         self._projects[(tenant_id, project_id)] = data
+        profile_payload = project_profile_hash_payload(
+            brand_name=data.brand_name,
+            company_name=data.company_name or data.brand_name,
+            website_url=data.website_url,
+            industry=data.industry,
+            region=None,
+            products=data.products,
+            selling_points=[],
+            audiences=data.audiences,
+        )
+        self._profiles[(tenant_id, project_id)] = ProjectProfileData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            **profile_payload,
+            status=data.status,
+            profile_revision=0,
+            profile_sha256=project_profile_sha256(profile_payload),
+            measurement_reset_required=True,
+            created_at=now,
+            updated_at=now,
+        )
         return data
+
+    def get_profile(self, tenant_id: str, project_id: str) -> ProjectProfileData:
+        self._ensure_project(tenant_id, project_id)
+        return self._profiles[(tenant_id, project_id)]
+
+    def update_profile(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: ProjectProfileUpdateRequest,
+        actor: str,
+    ) -> ProjectProfileData:
+        current = self.get_profile(tenant_id, project_id)
+        if current.updated_at != payload.expected_updated_at:
+            raise StarletteHTTPException(
+                status_code=409,
+                detail={"code": "STATE_VERSION_CONFLICT", "details": {"project_id": project_id}},
+            )
+        now = utc_now()
+        profile_payload = project_profile_hash_payload(
+            brand_name=payload.brand_name,
+            company_name=payload.company_name,
+            website_url=payload.website_url,
+            industry=payload.industry,
+            region=payload.region,
+            products=payload.products,
+            selling_points=payload.selling_points,
+            audiences=payload.audiences,
+        )
+        updated = ProjectProfileData(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            **profile_payload,
+            status="active",
+            profile_revision=current.profile_revision + 1,
+            profile_sha256=project_profile_sha256(profile_payload),
+            measurement_reset_required=True,
+            updated_by=actor,
+            created_at=current.created_at,
+            updated_at=now,
+        )
+        self._profiles[(tenant_id, project_id)] = updated
+        self._projects[(tenant_id, project_id)] = self._projects[(tenant_id, project_id)].model_copy(
+            update={
+                "brand_name": updated.brand_name,
+                "company_name": updated.company_name,
+                "website_url": updated.website_url,
+                "industry": updated.industry,
+                "products": updated.products,
+                "audiences": updated.audiences,
+                "status": updated.status,
+                "updated_at": updated.updated_at,
+            }
+        )
+        return updated
 
     def create_competitor(
         self,
@@ -1666,6 +1837,225 @@ class MySQLProjectRepository:
                 },
             )
         return data
+
+    def _profile_from_row(self, conn: Any, row: Mapping[str, Any]) -> ProjectProfileData:
+        products = parse_json_value(row["products_services_json"], [])
+        selling_points = parse_json_value(row["selling_points_json"], [])
+        audiences = parse_json_value(row["target_audience_json"], [])
+        normalized_products = products if isinstance(products, list) else []
+        normalized_selling_points = selling_points if isinstance(selling_points, list) else []
+        normalized_audiences = audiences if isinstance(audiences, list) else []
+        profile_payload = project_profile_hash_payload(
+            brand_name=str(row["brand_name"] or row["name"]),
+            company_name=str(row["name"] or row["brand_name"]),
+            website_url=str(row["website_url"] or ""),
+            industry=str(row["industry"] or "unknown"),
+            region=str(row["region"]) if row["region"] else None,
+            products=[str(item) for item in normalized_products],
+            selling_points=[str(item) for item in normalized_selling_points],
+            audiences=[str(item) for item in normalized_audiences],
+        )
+        revision = conn.execute(
+            text(
+                """
+                SELECT COALESCE(MAX(revision_number), 0)
+                FROM airank_project_profile_revisions
+                WHERE tenant_id = :tenant_id AND project_id = :project_id
+                """
+            ),
+            {"tenant_id": row["tenant_id"], "project_id": row["id"]},
+        ).scalar_one()
+        latest_run_created_at = conn.execute(
+            text(
+                """
+                SELECT created_at
+                FROM airank_scan_runs
+                WHERE tenant_id = :tenant_id
+                  AND project_id = :project_id
+                  AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": row["tenant_id"], "project_id": row["id"]},
+        ).scalar_one_or_none()
+        updated_at = coerce_datetime(row["updated_at"])
+        measurement_reset_required = bool(
+            latest_run_created_at is None or coerce_datetime(latest_run_created_at) < updated_at
+        )
+        return ProjectProfileData(
+            project_id=str(row["id"]),
+            tenant_id=str(row["tenant_id"]),
+            **profile_payload,
+            status=row["status"],
+            profile_revision=int(revision or 0),
+            profile_sha256=project_profile_sha256(profile_payload),
+            measurement_reset_required=measurement_reset_required,
+            updated_by=row["updated_by"],
+            created_at=coerce_datetime(row["created_at"]),
+            updated_at=updated_at,
+        )
+
+    def get_profile(self, tenant_id: str, project_id: str) -> ProjectProfileData:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, tenant_id, brand_name, name, website_url, industry, region,
+                           products_services_json, selling_points_json, target_audience_json,
+                           status, updated_by, created_at, updated_at
+                    FROM airank_projects
+                    WHERE tenant_id = :tenant_id
+                      AND id = :project_id
+                      AND deleted_at IS NULL
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().first()
+            if row is None:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id}},
+                )
+            return self._profile_from_row(conn, row)
+
+    def update_profile(
+        self,
+        tenant_id: str,
+        project_id: str,
+        payload: ProjectProfileUpdateRequest,
+        actor: str,
+    ) -> ProjectProfileData:
+        now = utc_now().replace(tzinfo=None)
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, tenant_id, brand_name, name, website_url, industry, region,
+                           products_services_json, selling_points_json, target_audience_json,
+                           status, updated_by, created_at, updated_at
+                    FROM airank_projects
+                    WHERE tenant_id = :tenant_id
+                      AND id = :project_id
+                      AND deleted_at IS NULL
+                    FOR UPDATE
+                    """
+                ),
+                {"tenant_id": tenant_id, "project_id": project_id},
+            ).mappings().first()
+            if row is None:
+                raise StarletteHTTPException(
+                    status_code=404,
+                    detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id}},
+                )
+            current_updated_at = coerce_datetime(row["updated_at"])
+            if current_updated_at != payload.expected_updated_at.astimezone(timezone.utc):
+                raise StarletteHTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "STATE_VERSION_CONFLICT",
+                        "message": "项目资料已被其他会话更新，请刷新后重试。",
+                        "details": {"project_id": project_id, "current_updated_at": current_updated_at.isoformat()},
+                    },
+                )
+            profile_payload = project_profile_hash_payload(
+                brand_name=payload.brand_name,
+                company_name=payload.company_name,
+                website_url=payload.website_url,
+                industry=payload.industry,
+                region=payload.region,
+                products=payload.products,
+                selling_points=payload.selling_points,
+                audiences=payload.audiences,
+            )
+            new_sha256 = project_profile_sha256(profile_payload)
+            current_profile = self._profile_from_row(conn, row)
+            if new_sha256 == current_profile.profile_sha256:
+                return current_profile
+            revision_number = current_profile.profile_revision + 1
+            conn.execute(
+                text(
+                    """
+                    UPDATE airank_projects
+                    SET name = :company_name,
+                        brand_name = :brand_name,
+                        website_url = :website_url,
+                        industry = :industry,
+                        region = :region,
+                        products_services_json = :products,
+                        selling_points_json = :selling_points,
+                        target_audience_json = :audiences,
+                        updated_by = :updated_by,
+                        updated_at = :updated_at
+                    WHERE tenant_id = :tenant_id AND id = :project_id AND deleted_at IS NULL
+                    """
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "company_name": payload.company_name,
+                    "brand_name": payload.brand_name,
+                    "website_url": payload.website_url,
+                    "industry": payload.industry,
+                    "region": payload.region,
+                    "products": json.dumps(payload.products, ensure_ascii=False),
+                    "selling_points": json.dumps(payload.selling_points, ensure_ascii=False),
+                    "audiences": json.dumps(payload.audiences, ensure_ascii=False),
+                    "updated_by": actor,
+                    "updated_at": now,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO airank_project_profile_revisions (
+                      id, tenant_id, project_id, revision_number, brand_name, company_name,
+                      website_url, industry, region, products_services_json,
+                      selling_points_json, target_audience_json, change_note, changed_by,
+                      previous_profile_sha256, profile_sha256, created_at
+                    ) VALUES (
+                      :id, :tenant_id, :project_id, :revision_number, :brand_name, :company_name,
+                      :website_url, :industry, :region, :products, :selling_points, :audiences,
+                      :change_note, :changed_by, :previous_profile_sha256, :profile_sha256, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": f"project_profile_revision_{uuid4().hex[:24]}",
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "revision_number": revision_number,
+                    "brand_name": payload.brand_name,
+                    "company_name": payload.company_name,
+                    "website_url": payload.website_url,
+                    "industry": payload.industry,
+                    "region": payload.region,
+                    "products": json.dumps(payload.products, ensure_ascii=False),
+                    "selling_points": json.dumps(payload.selling_points, ensure_ascii=False),
+                    "audiences": json.dumps(payload.audiences, ensure_ascii=False),
+                    "change_note": payload.change_note,
+                    "changed_by": actor,
+                    "previous_profile_sha256": current_profile.profile_sha256,
+                    "profile_sha256": new_sha256,
+                    "created_at": now,
+                },
+            )
+            updated_row = dict(row)
+            updated_row.update(
+                {
+                    "name": payload.company_name,
+                    "brand_name": payload.brand_name,
+                    "website_url": payload.website_url,
+                    "industry": payload.industry,
+                    "region": payload.region,
+                    "products_services_json": json.dumps(payload.products, ensure_ascii=False),
+                    "selling_points_json": json.dumps(payload.selling_points, ensure_ascii=False),
+                    "target_audience_json": json.dumps(payload.audiences, ensure_ascii=False),
+                    "updated_by": actor,
+                    "updated_at": now,
+                }
+            )
+            return self._profile_from_row(conn, updated_row)
 
     def create_competitor(
         self,
@@ -5222,7 +5612,8 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
         project_row = conn.execute(
             text(
                 """
-                SELECT id, brand_name, name, website_url, industry, target_audience_json, created_at
+                SELECT id, brand_name, name, website_url, industry, target_audience_json,
+                       created_at, updated_at
                 FROM airank_projects
                 WHERE tenant_id = :tenant_id
                   AND deleted_at IS NULL
@@ -5243,11 +5634,16 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 WHERE tenant_id = :tenant_id
                   AND project_id = :project_id
                   AND deleted_at IS NULL
+                  AND created_at >= :profile_updated_at
                 ORDER BY created_at ASC
                 LIMIT 5
                 """
             ),
-            {"tenant_id": tenant_id, "project_id": project_row["id"]},
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_row["id"],
+                "profile_updated_at": project_row["updated_at"],
+            },
         ).mappings().all()
         run_row = conn.execute(
             text(
@@ -5660,7 +6056,7 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
 
 app = FastAPI(title="AIRank API", version="0.1.0")
 
-EXPECTED_SCHEMA_REVISION = "20260809_0046"
+EXPECTED_SCHEMA_REVISION = "20260809_0047"
 
 
 def build_trace_id(trace_id: Optional[str]) -> str:
@@ -6613,6 +7009,43 @@ def create_project(
     return ProjectResponse(data=PROJECT_REPOSITORY.create_project(tenant_id, payload), meta=build_meta(trace_id))
 
 
+@app.get(
+    f"{API_PREFIX}/projects/{{project_id}}",
+    response_model=ProjectProfileResponse,
+    response_model_exclude_none=True,
+)
+def get_project_profile(
+    project_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ProjectProfileResponse:
+    return ProjectProfileResponse(
+        data=PROJECT_REPOSITORY.get_profile(tenant_id, project_id),
+        meta=build_meta(trace_id),
+    )
+
+
+@app.patch(
+    f"{API_PREFIX}/projects/{{project_id}}",
+    response_model=ProjectProfileResponse,
+    response_model_exclude_none=True,
+)
+def update_project_profile(
+    project_id: str,
+    payload: ProjectProfileUpdateRequest,
+    authenticated_actor: Annotated[
+        str,
+        Header(alias="X-AIRank-User-Id", min_length=1, max_length=128),
+    ],
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+) -> ProjectProfileResponse:
+    return ProjectProfileResponse(
+        data=PROJECT_REPOSITORY.update_profile(tenant_id, project_id, payload, authenticated_actor),
+        meta=build_meta(trace_id),
+    )
+
+
 @app.post(
     f"{API_PREFIX}/projects/{{project_id}}/competitors",
     response_model=CompetitorResponse,
@@ -7027,7 +7460,10 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
     questions = PROJECT_REPOSITORY.list_buyer_questions(tenant_id, project_id)
     confirmed_question_count = sum(item.status == "confirmed" for item in questions)
     runs = SCAN_REPOSITORY.list_runs(tenant_id, project_id)
-    latest_run = runs[0] if runs else None
+    profile = PROJECT_REPOSITORY.get_profile(tenant_id, project_id)
+    current_scope_runs = [item for item in runs if item.created_at >= profile.updated_at]
+    latest_run = current_scope_runs[0] if current_scope_runs else None
+    profile_changed_without_scan = bool(runs and not current_scope_runs)
     tasks = SCAN_REPOSITORY.list_tasks(tenant_id, latest_run.run_id) if latest_run else []
     metrics = latest_run.metrics if latest_run and isinstance(latest_run.metrics, dict) else {}
     completed_task_count = sum(item.status == "completed" for item in tasks)
@@ -7056,7 +7492,7 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
     if confirmed_question_count == 0:
         reason_codes.append("BUYER_QUESTIONS_UNCONFIRMED")
     if latest_run is None:
-        reason_codes.append("SCAN_RUN_MISSING")
+        reason_codes.append("PROJECT_PROFILE_CHANGED_RESCAN_REQUIRED" if profile_changed_without_scan else "SCAN_RUN_MISSING")
     elif measurement_collecting:
         reason_codes.append("SCAN_RUN_IN_PROGRESS")
     elif latest_run.status in {"failed", "canceled"}:
@@ -7090,7 +7526,11 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
             valid_sample_count=valid_sample_count,
             required_sample_count=required_sample_count,
             reason_codes=reason_codes,
-            message="当前缺少达到门槛的真实 Provider 证据，不展示品牌指标或效果结论。",
+            message=(
+                "品牌资料已更新，历史扫描保留为旧口径证据；请按当前品牌资料重新建立基线。"
+                if profile_changed_without_scan
+                else "当前缺少达到门槛的真实 Provider 证据，不展示品牌指标或效果结论。"
+            ),
         )
 
     # Import the repositories lazily to avoid coupling their router modules to
@@ -7135,7 +7575,7 @@ def build_growth_loop_data(tenant_id: str, project_id: str) -> GrowthLoopData:
     counts: dict[str, int] = {
         "buyer_questions": len(questions),
         "confirmed_questions": confirmed_question_count,
-        "scan_runs": len(runs),
+        "scan_runs": len(current_scope_runs),
         "scan_tasks": len(tasks),
         "valid_samples": valid_sample_count,
     }

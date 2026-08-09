@@ -137,6 +137,7 @@ import {
   fetchKnowledgeSources,
   fetchPageAudit,
   fetchPageAudits,
+  fetchProjectProfile,
   fetchMeasurementQuality,
   fetchProviderReadiness,
   fetchProviderCredentials,
@@ -184,6 +185,7 @@ import {
   runEvidenceReviewerDirectorySync,
   storeAuthSession,
   updateProviderRoute,
+  updateProjectProfile,
   createProviderModelMigration,
   createProviderPriceVersion,
   validateProviderModelMigration,
@@ -254,6 +256,7 @@ import {
   type ProviderPriceVersion,
   type ProviderUsageLedger,
   type ProviderUsagePrecision,
+  type ProjectProfile,
   type QuestionMapResult,
   type QuestionObservationBatch,
   type PublishPackage,
@@ -462,6 +465,7 @@ type ActionFeedback = {
   openPanel: (panel: ActionPanelState) => void;
   closePanel: () => void;
   recordAction: (action: Omit<ConsoleActionInput, "projectId" | "sourceRoute">) => Promise<void>;
+  refreshWorkspace: () => Promise<void>;
 };
 
 const ActionFeedbackContext = createContext<ActionFeedback>({
@@ -469,6 +473,7 @@ const ActionFeedbackContext = createContext<ActionFeedback>({
   openPanel: () => undefined,
   closePanel: () => undefined,
   recordAction: async () => undefined,
+  refreshWorkspace: async () => undefined,
 });
 
 function useConsoleOverview() {
@@ -606,6 +611,28 @@ function App() {
     setOverviewStatus("ready");
   };
 
+  const refreshWorkspace = useCallback(async () => {
+    setOverviewStatus("loading");
+    setGrowthLoopStatus("loading");
+    try {
+      const nextOverview = await fetchConsoleOverview();
+      setOverview(nextOverview);
+      setOverviewStatus("ready");
+      if (nextOverview.project.id) {
+        const nextGrowthLoop = await fetchGrowthLoop(nextOverview.project.id);
+        setGrowthLoop(nextGrowthLoop);
+        setGrowthLoopStatus("ready");
+      } else {
+        setGrowthLoop(null);
+        setGrowthLoopStatus("idle");
+      }
+    } catch (error) {
+      setOverviewStatus("error");
+      setGrowthLoopStatus("error");
+      throw error;
+    }
+  }, []);
+
   const showToast = (nextToast: Omit<ToastState, "id">) => {
     const id = Date.now();
     setToast({ ...nextToast, id });
@@ -684,6 +711,7 @@ function App() {
             openPanel: openActionPanel,
             closePanel: () => setActionPanel(null),
             recordAction,
+            refreshWorkspace,
           }}
         >
           <main className="airank-console">
@@ -1297,6 +1325,15 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function scanRunsForProfile(runs: ScanRun[], profile: ProjectProfile): ScanRun[] {
+  const profileUpdatedAt = new Date(profile.updated_at).getTime();
+  if (!Number.isFinite(profileUpdatedAt)) return [];
+  return runs.filter((run) => {
+    const runCreatedAt = new Date(run.created_at).getTime();
+    return Number.isFinite(runCreatedAt) && runCreatedAt >= profileUpdatedAt;
+  });
+}
+
 function assetTypeLabel(value: string): string {
   return {
     fact_page: "企业事实页",
@@ -1397,14 +1434,16 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const [nextReadiness, nextRuns] = await Promise.all([
+        const [nextReadiness, nextRuns, profile] = await Promise.all([
           fetchProviderReadiness(controller.signal),
           project.id ? fetchScanRuns(project.id, controller.signal) : Promise.resolve([]),
+          project.id ? fetchProjectProfile(project.id, controller.signal) : Promise.resolve(null),
         ]);
         if (controller.signal.aborted) return;
         setReadiness(nextReadiness);
-        setRuns(nextRuns);
-        const latest = nextRuns[0];
+        const currentRuns = profile ? scanRunsForProfile(nextRuns, profile) : [];
+        setRuns(currentRuns);
+        const latest = currentRuns[0];
         setTasks(latest ? await fetchScanTasks(latest.run_id, controller.signal) : []);
         setLoadError(null);
       } catch (error) {
@@ -5221,6 +5260,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchContentAssets(project.id, controller.signal),
       fetchFacts(project.id, controller.signal),
       fetchScanRuns(project.id, controller.signal),
+      fetchProjectProfile(project.id, controller.signal),
       fetchEvidenceGaps(project.id, controller.signal),
       fetchFactAcquisitionTasks(project.id, controller.signal),
       fetchOpportunities(project.id, controller.signal),
@@ -5230,11 +5270,12 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       fetchOpportunityExecutionPortfolio(project.id, controller.signal),
       fetchOpportunityCapacityPortfolio(project.id, controller.signal),
     ])
-      .then(([nextBundle, nextAssets, nextFacts, nextRuns, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityDirectory, nextOpportunityPlanning, nextOpportunityCapacity]) => {
+      .then(([nextBundle, nextAssets, nextFacts, nextRuns, profile, nextGaps, nextFactTasks, nextOpportunities, nextOpportunityActions, nextOpportunityRouting, nextOpportunityDirectory, nextOpportunityPlanning, nextOpportunityCapacity]) => {
+        const currentRuns = scanRunsForProfile(nextRuns, profile);
         setBundle(nextBundle);
         setContentAssets(nextAssets);
         setFacts(nextFacts);
-        setScanRuns(nextRuns);
+        setScanRuns(currentRuns);
         setEvidenceGaps(nextGaps);
         setFactAcquisitionTasks(nextFactTasks);
         setOpportunities(nextOpportunities);
@@ -5243,7 +5284,7 @@ function AssetsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         setOpportunityDirectory(nextOpportunityDirectory);
         setOpportunityPlanning(nextOpportunityPlanning);
         setOpportunityCapacity(nextOpportunityCapacity);
-        const latestCompletedRun = nextRuns.find((run) => run.status === "completed");
+        const latestCompletedRun = currentRuns.find((run) => run.status === "completed");
         setSelectedGapRunId((current) => current || latestCompletedRun?.run_id || "");
         const eligibleIds = new Set(nextFacts.filter((fact) => fact.status === "approved" && fact.eligible_for_generation).map((fact) => fact.revision_id));
         setSelectedFactRevisionIds((current) => current.filter((revisionId) => eligibleIds.has(revisionId)));
@@ -6415,18 +6456,20 @@ function PublishingPage({ onNavigate }: { onNavigate: (path: string) => void }) 
       fetchRetestWindows(project.id, controller.signal),
       fetchContentAssets(project.id, controller.signal),
       fetchScanRuns(project.id, controller.signal),
+      fetchProjectProfile(project.id, controller.signal),
       fetchPublicationReconciliations(project.id, controller.signal),
     ])
-      .then(([nextPackages, nextWindows, nextAssets, nextRuns, nextReconciliations]) => {
+      .then(([nextPackages, nextWindows, nextAssets, nextRuns, profile, nextReconciliations]) => {
+        const currentRuns = scanRunsForProfile(nextRuns, profile);
         setPackages(nextPackages);
         setWindows(nextWindows);
         setContentAssets(nextAssets);
-        setScanRuns(nextRuns);
+        setScanRuns(currentRuns);
         setReconciliations(nextReconciliations);
         const firstApprovedAsset = nextAssets.find((item) => item.status === "approved");
         const firstUnpublishedPackage = nextPackages.find((item) => ["packaged", "delivered"].includes(item.status));
         const firstPublishedExternal = nextPackages.find((item) => item.status === "published" && item.channel !== "export");
-        const firstCompletedBaseline = nextRuns.find((item) => item.status === "completed" && item.run_type === "baseline");
+        const firstCompletedBaseline = currentRuns.find((item) => item.status === "completed" && item.run_type === "baseline");
         const firstUnknownPackage = nextPackages.find((item) => item.status === "outcome_unknown");
         const currentUserId = getStoredAuthSession()?.user.userId ?? "";
         const firstReviewableCase = nextReconciliations.find((item) => item.status === "awaiting_review" && item.submitted_by !== currentUserId);
@@ -7019,10 +7062,15 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       return;
     }
     const controller = new AbortController();
-    Promise.all([fetchReports(project.id, controller.signal), fetchScanRuns(project.id, controller.signal), fetchRetestWindows(project.id, controller.signal)])
-      .then(([nextReports, nextRuns, nextWindows]) => {
+    Promise.all([
+      fetchReports(project.id, controller.signal),
+      fetchScanRuns(project.id, controller.signal),
+      fetchProjectProfile(project.id, controller.signal),
+      fetchRetestWindows(project.id, controller.signal),
+    ])
+      .then(([nextReports, nextRuns, profile, nextWindows]) => {
         setReports(nextReports);
-        setRuns(nextRuns);
+        setRuns(scanRunsForProfile(nextRuns, profile));
         setWindows(nextWindows);
         setLoadError(null);
         setLoaded(true);
@@ -7129,8 +7177,24 @@ type ProviderCredentialDraft = {
 
 function CustomerSettingsPage() {
   const { project } = useConsoleOverview();
+  const { notify, refreshWorkspace } = useActionFeedback();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ProjectProfile | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileDraft, setProfileDraft] = useState({
+    brandName: "",
+    companyName: "",
+    websiteUrl: "",
+    industry: "",
+    region: "",
+    products: "",
+    sellingPoints: "",
+    audiences: "",
+    changeNote: "",
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -7146,6 +7210,75 @@ function CustomerSettingsPage() {
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!project.id) return;
+    const controller = new AbortController();
+    fetchProjectProfile(project.id, controller.signal)
+      .then((nextProfile) => {
+        setProfile(nextProfile);
+        setProfileDraft({
+          brandName: nextProfile.brand_name,
+          companyName: nextProfile.company_name,
+          websiteUrl: nextProfile.website_url,
+          industry: nextProfile.industry,
+          region: nextProfile.region || "",
+          products: nextProfile.products.join("\n"),
+          sellingPoints: nextProfile.selling_points.join("\n"),
+          audiences: nextProfile.audiences.join("\n"),
+          changeNote: "",
+        });
+        setProfileError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setProfile(null);
+        setProfileError(error instanceof Error ? error.message : "项目资料暂时不可用。");
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
+  const profileLines = (value: string) => Array.from(new Set(
+    value.split(/\n|，|,/).map((item) => item.trim()).filter(Boolean),
+  ));
+
+  const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!profile) return;
+    const products = profileLines(profileDraft.products);
+    const audiences = profileLines(profileDraft.audiences);
+    if (!products.length || !audiences.length) {
+      notify({ title: "项目资料不完整", desc: "产品/服务和目标客户至少各填写一项。", tone: "warning" });
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      const updated = await updateProjectProfile(project.id, {
+        brandName: profileDraft.brandName.trim(),
+        companyName: profileDraft.companyName.trim(),
+        websiteUrl: profileDraft.websiteUrl.trim(),
+        industry: profileDraft.industry.trim(),
+        region: profileDraft.region.trim() || undefined,
+        products,
+        sellingPoints: profileLines(profileDraft.sellingPoints),
+        audiences,
+        expectedUpdatedAt: profile.updated_at,
+        changeNote: profileDraft.changeNote.trim(),
+      });
+      setProfile(updated);
+      setEditingProfile(false);
+      await refreshWorkspace();
+      notify({
+        title: "品牌资料已保存",
+        desc: `已生成不可变资料版本 v${updated.profile_revision}；历史扫描保留原口径，新结论需要重新建立基线。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "品牌资料未保存", desc: error instanceof Error ? error.message : "项目资料接口不可用", tone: "danger" });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const readyProviders = readiness?.providers.filter((provider) => provider.status === "ready") ?? [];
   const blockedProviders = readiness?.providers.filter((provider) => provider.status !== "ready") ?? [];
@@ -7163,8 +7296,8 @@ function CustomerSettingsPage() {
             ["目标客户", project.audience || "尚未填写"],
             ["竞品", project.competitors || "尚未填写"],
           ]}
-          actionLabel="查看资料"
-          onAction={() => undefined}
+          actionLabel="编辑资料"
+          onAction={() => setEditingProfile(true)}
         />
         <article className="airank-console-card settings-section">
           <div className="settings-head">
@@ -7197,6 +7330,42 @@ function CustomerSettingsPage() {
           )}
         </article>
       </section>
+      {profileError && <DataStateCard title="品牌资料读取失败" desc={profileError} tone="danger" />}
+      {editingProfile && profile && (
+        <section className="airank-console-card project-profile-editor" aria-label="编辑品牌资料">
+          <div className="project-profile-editor-head">
+            <div>
+              <span>品牌事实源</span>
+              <h2>编辑品牌与项目资料</h2>
+              <p>保存会生成不可变资料版本；历史回答和指标不会被改写，新扫描使用新口径。</p>
+            </div>
+            <Badge tone={profile.measurement_reset_required ? "warning" : "success"}>
+              v{profile.profile_revision} · {profile.measurement_reset_required ? "需重建基线" : "口径已对齐"}
+            </Badge>
+          </div>
+          <form className="project-profile-form" onSubmit={submitProfile}>
+            <div className="project-profile-form-grid">
+              <label>品牌名称<input required maxLength={120} value={profileDraft.brandName} onChange={(event) => setProfileDraft((current) => ({ ...current, brandName: event.target.value }))} /></label>
+              <label>公司主体<input required maxLength={160} value={profileDraft.companyName} onChange={(event) => setProfileDraft((current) => ({ ...current, companyName: event.target.value }))} /></label>
+              <label className="profile-field-wide">品牌官网<input required maxLength={2048} value={profileDraft.websiteUrl} onChange={(event) => setProfileDraft((current) => ({ ...current, websiteUrl: event.target.value }))} /></label>
+              <label>行业<input required maxLength={120} value={profileDraft.industry} onChange={(event) => setProfileDraft((current) => ({ ...current, industry: event.target.value }))} /></label>
+              <label>服务区域<input maxLength={128} value={profileDraft.region} onChange={(event) => setProfileDraft((current) => ({ ...current, region: event.target.value }))} /></label>
+              <label>产品 / 服务（每行一项）<textarea required rows={5} value={profileDraft.products} onChange={(event) => setProfileDraft((current) => ({ ...current, products: event.target.value }))} /></label>
+              <label>核心卖点（每行一项）<textarea rows={5} value={profileDraft.sellingPoints} onChange={(event) => setProfileDraft((current) => ({ ...current, sellingPoints: event.target.value }))} /></label>
+              <label className="profile-field-wide">目标客户（每行一项）<textarea required rows={4} value={profileDraft.audiences} onChange={(event) => setProfileDraft((current) => ({ ...current, audiences: event.target.value }))} /></label>
+              <label className="profile-field-wide">本次修改说明<input required minLength={3} maxLength={500} value={profileDraft.changeNote} onChange={(event) => setProfileDraft((current) => ({ ...current, changeNote: event.target.value }))} placeholder="例如：将测试对象收敛为 Intel AIPC，并补充产品与买家范围" /></label>
+            </div>
+            <div className="project-profile-form-note">
+              <ShieldCheck size={18} />
+              <span>资料 SHA-256：{profile.profile_sha256.slice(0, 16)}… · 最近更新 {formatDateTime(profile.updated_at)}</span>
+            </div>
+            <div className="project-profile-actions">
+              <button className="outline-button" type="button" disabled={savingProfile} onClick={() => setEditingProfile(false)}>取消</button>
+              <button className="airank-console-primary-button" type="submit" disabled={savingProfile}>{savingProfile ? "正在保存…" : "保存并重建测量口径"}</button>
+            </div>
+          </form>
+        </section>
+      )}
     </>
   );
 }

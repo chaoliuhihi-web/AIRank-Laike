@@ -12,6 +12,40 @@ export type ConsoleProject = {
   date: string;
 };
 
+export type ProjectProfile = {
+  contract_version: "airank.project-profile.v1";
+  project_id: string;
+  tenant_id: string;
+  brand_name: string;
+  company_name: string;
+  website_url: string;
+  industry: string;
+  region: string | null;
+  products: string[];
+  selling_points: string[];
+  audiences: string[];
+  status: "draft" | "seeded" | "needs_confirmation" | "active" | "archived";
+  profile_revision: number;
+  profile_sha256: string;
+  measurement_reset_required: boolean;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProjectProfileUpdateInput = {
+  brandName: string;
+  companyName: string;
+  websiteUrl: string;
+  industry: string;
+  region?: string;
+  products: string[];
+  sellingPoints: string[];
+  audiences: string[];
+  expectedUpdatedAt: string;
+  changeNote: string;
+};
+
 export type ConsoleMetricCard = {
   label: string;
   value: string;
@@ -2373,6 +2407,14 @@ type GrowthLoopPayload = {
   };
 };
 
+type ProjectProfilePayload = {
+  data: ProjectProfile;
+  meta: {
+    trace_id: string;
+    request_id: string;
+  };
+};
+
 type AssetBundlePayload = {
   data: AssetBundle;
   meta: {
@@ -2607,6 +2649,40 @@ export async function fetchGrowthLoop(projectId: string, signal?: AbortSignal): 
   }
 
   return ((await response.json()) as GrowthLoopPayload).data;
+}
+
+export async function fetchProjectProfile(projectId: string, signal?: AbortSignal): Promise<ProjectProfile> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}`, {
+    headers: buildApiHeaders("trc_web_project_profile"),
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `项目资料读取失败（${response.status}）`));
+  }
+  return ((await response.json()) as ProjectProfilePayload).data;
+}
+
+export async function updateProjectProfile(projectId: string, input: ProjectProfileUpdateInput): Promise<ProjectProfile> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { ...buildApiHeaders("trc_web_project_profile_update"), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brand_name: input.brandName,
+      company_name: input.companyName,
+      website_url: input.websiteUrl,
+      industry: input.industry,
+      region: input.region || null,
+      products: input.products,
+      selling_points: input.sellingPoints,
+      audiences: input.audiences,
+      expected_updated_at: input.expectedUpdatedAt,
+      change_note: input.changeNote,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `项目资料保存失败（${response.status}）`));
+  }
+  return ((await response.json()) as ProjectProfilePayload).data;
 }
 
 export async function fetchAssetBundle(projectId: string, signal?: AbortSignal): Promise<AssetBundle> {

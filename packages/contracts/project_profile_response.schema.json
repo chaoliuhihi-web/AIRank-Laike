@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/project_profile_response.schema.json",
+  "title": "AIRank Project Profile Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "project_id",
+        "tenant_id",
+        "brand_name",
+        "company_name",
+        "website_url",
+        "industry",
+        "products",
+        "selling_points",
+        "audiences",
+        "status",
+        "profile_revision",
+        "profile_sha256",
+        "measurement_reset_required",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "contract_version": { "const": "airank.project-profile.v1" },
+        "project_id": { "type": "string", "minLength": 1 },
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "brand_name": { "type": "string", "minLength": 1 },
+        "company_name": { "type": "string", "minLength": 1 },
+        "website_url": { "type": "string", "minLength": 1 },
+        "industry": { "type": "string", "minLength": 1 },
+        "region": { "type": ["string", "null"] },
+        "products": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "selling_points": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "audiences": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["draft", "seeded", "needs_confirmation", "active", "archived"] },
+        "profile_revision": { "type": "integer", "minimum": 0 },
+        "profile_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "measurement_reset_required": { "type": "boolean" },
+        "updated_by": { "type": ["string", "null"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

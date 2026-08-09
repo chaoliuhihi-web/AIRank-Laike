@@ -421,9 +421,11 @@ class MySQLEvidenceGapRepository:
                 return self._derivation_data(conn, replay, idempotent_replay=True)
             run_exists = conn.execute(
                 text(
-                    "SELECT id FROM airank_scan_runs "
-                    "WHERE tenant_id=:tenant_id AND project_id=:project_id "
-                    "AND id=:run_id AND deleted_at IS NULL"
+                    "SELECT r.id, r.created_at, p.updated_at AS profile_updated_at "
+                    "FROM airank_scan_runs r "
+                    "JOIN airank_projects p ON p.tenant_id=r.tenant_id AND p.id=r.project_id "
+                    "WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id "
+                    "AND r.id=:run_id AND r.deleted_at IS NULL AND p.deleted_at IS NULL"
                 ),
                 {
                     "tenant_id": tenant_id,
@@ -433,6 +435,15 @@ class MySQLEvidenceGapRepository:
             ).first()
             if run_exists is None:
                 raise error(404, "SCAN_RUN_NOT_FOUND", {"run_id": payload.run_id})
+            if run_exists.created_at < run_exists.profile_updated_at:
+                raise error(
+                    409,
+                    "PROJECT_PROFILE_CHANGED_RESCAN_REQUIRED",
+                    {
+                        "run_id": payload.run_id,
+                        "impact": "historical_scan_preserved_but_not_eligible_for_current_intervention",
+                    },
+                )
 
         quality = self.quality_repository.get_quality_report(
             tenant_id, project_id, payload.run_id

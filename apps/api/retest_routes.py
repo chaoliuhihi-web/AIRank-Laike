@@ -268,6 +268,36 @@ class MySQLRetestRepository:
             baseline_run_id = window["baseline_run_id"]
             if not baseline_run_id:
                 raise _conflict("RETEST_BASELINE_REQUIRED", {"window_id": window_id})
+            profile_updated_at = conn.execute(
+                text(
+                    "SELECT updated_at FROM airank_projects "
+                    "WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL"
+                ),
+                {"tenant_id": tenant_id, "project_id": window["project_id"]},
+            ).scalar_one_or_none()
+            if profile_updated_at is None:
+                raise _conflict("PROJECT_NOT_FOUND", {"project_id": window["project_id"]})
+            for scoped_run_id in (baseline_run_id, payload.compare_run_id):
+                scoped_created_at = conn.execute(
+                    text(
+                        "SELECT created_at FROM airank_scan_runs "
+                        "WHERE tenant_id=:tenant_id AND project_id=:project_id "
+                        "AND id=:run_id AND deleted_at IS NULL"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "project_id": window["project_id"],
+                        "run_id": scoped_run_id,
+                    },
+                ).scalar_one_or_none()
+                if scoped_created_at is None or scoped_created_at < profile_updated_at:
+                    raise _conflict(
+                        "PROJECT_PROFILE_CHANGED_RESCAN_REQUIRED",
+                        {
+                            "run_id": scoped_run_id,
+                            "impact": "historical_scan_preserved_but_not_eligible_for_current_retest",
+                        },
+                    )
             baseline = self._load_run(conn, tenant_id, window["project_id"], baseline_run_id)
             compare = self._load_run(conn, tenant_id, window["project_id"], payload.compare_run_id)
             result = _comparison_data(

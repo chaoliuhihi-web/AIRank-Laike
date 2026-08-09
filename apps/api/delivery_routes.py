@@ -881,13 +881,16 @@ class MySQLDeliveryRepository:
             if row["status"] != required_status:
                 raise StarletteHTTPException(status_code=409, detail={"code": "PUBLISH_DELIVERY_RECEIPT_REQUIRED", "details": {"package_id": package_id, "status": row["status"], "required_status": required_status}})
             baseline = conn.execute(text("""
-                SELECT id FROM airank_scan_runs
-                WHERE tenant_id=:tenant_id AND project_id=:project_id
-                  AND id=:baseline_run_id AND run_type='baseline'
-                  AND status='completed' AND deleted_at IS NULL
+                SELECT r.id FROM airank_scan_runs r
+                JOIN airank_projects p
+                  ON p.tenant_id=r.tenant_id AND p.id=r.project_id AND p.deleted_at IS NULL
+                WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id
+                  AND r.id=:baseline_run_id AND r.run_type='baseline'
+                  AND r.status='completed' AND r.deleted_at IS NULL
+                  AND r.created_at >= p.updated_at
             """), {"tenant_id": tenant_id, "project_id": row["project_id"], "baseline_run_id": payload.baseline_run_id}).first()
             if baseline is None:
-                raise StarletteHTTPException(status_code=409, detail={"code": "RETEST_BASELINE_REQUIRED", "details": {"baseline_run_id": payload.baseline_run_id, "required_run_type": "baseline", "required_status": "completed"}})
+                raise StarletteHTTPException(status_code=409, detail={"code": "RETEST_BASELINE_REQUIRED", "details": {"baseline_run_id": payload.baseline_run_id, "required_run_type": "baseline", "required_status": "completed", "required_profile_scope": "current"}})
             if payload.screenshot_ref_id and payload.screenshot_sha256:
                 screenshot = conn.execute(
                     text(
