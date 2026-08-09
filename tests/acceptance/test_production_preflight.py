@@ -315,6 +315,8 @@ def test_production_deployment_bundle_is_immutable_and_has_distinct_processes() 
     assert "resources:" in compose and "memory:" in compose
     assert "USER 10001:10001" in backend
     assert "requirements-prod.lock" in backend
+    assert "ARG PIP_INDEX_URL=https://pypi.org/simple" in backend
+    assert '--index-url "${PIP_INDEX_URL}"' in backend
     assert "pip==26.2.1" in backend
     assert "setuptools==84.0.0" in backend
     assert "pip uninstall --yes pip setuptools wheel" in backend
@@ -323,6 +325,8 @@ def test_production_deployment_bundle_is_immutable_and_has_distinct_processes() 
     assert "--no-access-log" in backend
     assert "--no-access-log" in compose
     assert "npm run build" in web
+    assert "ARG NPM_REGISTRY=https://registry.npmjs.org" in web
+    assert '--registry="${NPM_REGISTRY}"' in web
     assert "npm run check:bundle" in web
     assert backend.startswith("FROM python:3.11.15-slim-bookworm@sha256:")
     assert "FROM node:22.12.0-alpine@sha256:" in web
