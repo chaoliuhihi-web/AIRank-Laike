@@ -11,7 +11,7 @@ from .source_registry import normalize_source_host
 from .review_bundle import REPORT_REVIEW_BUNDLE_VERSION, build_report_review_bundle
 
 
-REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v7"
+REPORT_EVIDENCE_PACKET_VERSION = "airank.report-evidence-packet.v8"
 QUALITY_CONTRACT_VERSION = "airank.measurement-quality.v4"
 SOURCE_GOVERNANCE_VERSION = "airank.source-governance.v1"
 EVIDENCE_INTEGRITY_POLICY_VERSION = "airank.evidence-integrity.v2"
@@ -34,6 +34,10 @@ METRIC_FORMULAS: dict[str, str] = {
 
 class ReportEvidencePacketError(ValueError):
     """The stored report cannot produce a customer-deliverable evidence packet."""
+
+
+class ReportArtifactRenderError(ReportEvidencePacketError):
+    """A validated report could not be rendered into its delivery artifacts."""
 
 
 def _validate_independent_commercial_review(
@@ -311,6 +315,7 @@ def build_report_evidence_packet(
     evidence_object_index: list[dict[str, Any]],
     source_governance: dict[str, Any],
     integrity_audit: dict[str, Any],
+    render_bundle: bool = True,
 ) -> ReportEvidencePacket:
     """Build a deterministic, immutable manifest without copying raw answer bodies."""
 
@@ -648,6 +653,14 @@ def build_report_evidence_packet(
         "schema_version": REPORT_EVIDENCE_PACKET_VERSION,
         "bundle_version": REPORT_REVIEW_BUNDLE_VERSION,
         "canonicalization": "airank.sorted-key-utf8-json.v1",
+        "rendering": {
+            "html": "airank.report-html.v1",
+            "pdf": "playwright-chromium-skia-pdf.v1",
+            "docx": "airank.ooxml-report.v1",
+            "pdf_source": "report/report.html",
+            "pdf_timestamp_source": "report.generated_at",
+            "rendered_member_integrity": "external_archive_sha256+SHA256SUMS",
+        },
         "source_record": report_record,
         "report": {
             "report_id": report_record["report_id"],
@@ -734,13 +747,20 @@ def build_report_evidence_packet(
         "packet_basis_sha256": packet_basis_sha256,
     }
     manifest_bytes = canonical_json_bytes(manifest)
-    canonical_bytes = build_report_review_bundle(manifest, manifest_bytes)
+    try:
+        canonical_bytes = (
+            build_report_review_bundle(manifest, manifest_bytes) if render_bundle else b""
+        )
+    except Exception as exc:
+        raise ReportArtifactRenderError(
+            "customer report artifact rendering failed"
+        ) from exc
     return ReportEvidencePacket(
         packet_id=packet_id,
         manifest=manifest,
         manifest_bytes=manifest_bytes,
         canonical_bytes=canonical_bytes,
-        sha256=hashlib.sha256(canonical_bytes).hexdigest(),
+        sha256=hashlib.sha256(canonical_bytes).hexdigest() if render_bundle else "",
     )
 
 

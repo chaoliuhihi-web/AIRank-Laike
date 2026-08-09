@@ -28,7 +28,8 @@
             "airank.report-evidence-packet.v4",
             "airank.report-evidence-packet.v5",
             "airank.report-evidence-packet.v6",
-            "airank.report-evidence-packet.v7"
+            "airank.report-evidence-packet.v7",
+            "airank.report-evidence-packet.v8"
           ]
         },
         "status": { "const": "ready" },

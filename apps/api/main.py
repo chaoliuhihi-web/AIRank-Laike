@@ -248,6 +248,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "ASSET_REVIEW_REQUIRED": (409, "Asset review is required"),
     "REPORT_NOT_FOUND": (404, "Report not found"),
     "REPORT_QUALITY_BLOCKED": (409, "Report did not pass the measurement quality gate"),
+    "REPORT_RENDERING_FAILED": (500, "Customer report artifacts could not be rendered"),
     "REPORT_EVIDENCE_MISSING": (500, "Report evidence is missing"),
     "REPORT_EVIDENCE_PACKET_NOT_FOUND": (404, "Report evidence packet not found"),
     "PAGE_AUDIT_URL_REQUIRED": (400, "Page audit URL is required"),

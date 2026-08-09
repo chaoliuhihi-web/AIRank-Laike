@@ -233,6 +233,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | --- | --- | --- |
 | `REPORT_NOT_FOUND` | 404 | 报告不存在 |
 | `REPORT_QUALITY_BLOCKED` | 409 | 报告未通过样本完整性、证据 hash、有效率或可比性门禁，禁止下载交付 |
+| `REPORT_RENDERING_FAILED` | 500 | 已通过证据门禁，但 HTML/PDF/Word 客户报告产物未能完整渲染；不保存残缺证据包 |
 | `REPORT_EVIDENCE_MISSING` | 500 | 报告缺少证据链 |
 | `REPORT_EVIDENCE_PACKET_NOT_FOUND` | 404 | 报告尚未生成不可变客户证据包 |
 | `OBJECT_REF_NOT_FOUND` | 404 | 对象引用不存在 |

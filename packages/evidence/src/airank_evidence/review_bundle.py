@@ -5,15 +5,20 @@ from hashlib import sha256
 from html import escape
 import io
 import json
+import re
+from datetime import datetime, timezone
 from typing import Any, Iterable
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
+from xml.sax.saxutils import escape as xml_escape
 
 
-REPORT_REVIEW_BUNDLE_VERSION = "airank.report-review-bundle.v1"
+REPORT_REVIEW_BUNDLE_VERSION = "airank.report-review-bundle.v2"
 REPORT_REVIEW_BUNDLE_MEMBERS = (
     "README.txt",
     "manifest/report-evidence.json",
     "report/report.html",
+    "report/report.pdf",
+    "report/report.docx",
     "review/scorecard.csv",
     "SHA256SUMS",
 )
@@ -122,7 +127,7 @@ def render_report_html(manifest: dict[str, Any]) -> bytes:
     table {{ width:100%; border-collapse:collapse; font-size:13px; }} th,td {{ border:1px solid #dce3ec; padding:9px 10px; text-align:left; vertical-align:top; word-break:break-word; }} th {{ background:#f8fafc; }}
     code {{ font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; word-break:break-all; }}
     @media (max-width:760px) {{ body {{ padding:0; }} main {{ border:0; border-radius:0; padding:20px; }} .grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} table {{ display:block; overflow-x:auto; white-space:nowrap; }} }}
-    @media print {{ body {{ background:#fff; padding:0; }} main {{ max-width:none; border:0; box-shadow:none; padding:0; }} .notice {{ break-inside:avoid; }} table {{ break-inside:auto; }} tr {{ break-inside:avoid; }} }}
+    @media print {{ html,body {{ background:#fff !important; }} body {{ padding:0; }} main {{ max-width:none; border:0; box-shadow:none; padding:0; }} .notice {{ break-inside:avoid; }} table {{ table-layout:fixed; font-size:9px; break-inside:auto; }} th,td {{ padding:5px 6px; overflow-wrap:anywhere; word-break:break-all; }} tr {{ break-inside:avoid; }} }}
   </style>
 </head>
 <body><main>
@@ -199,7 +204,241 @@ def render_scorecard_csv(manifest: dict[str, Any]) -> bytes:
     return output.getvalue().encode("utf-8-sig")
 
 
-def _readme(manifest: dict[str, Any]) -> bytes:
+def _report_text_lines(manifest: dict[str, Any]) -> list[tuple[str, str]]:
+    report = manifest.get("report", {})
+    counts = manifest.get("counts", {})
+    measurement = manifest.get("measurement", {})
+    baseline = measurement.get("baseline_metrics", {})
+    compare = measurement.get("compare_metrics", {})
+    deltas = measurement.get("metric_deltas", {})
+    integrity = manifest.get("evidence_integrity", {})
+    attribution = manifest.get("attribution", {})
+    sources = (manifest.get("source_governance", {}) or {}).get("entries", [])
+    samples = manifest.get("sample_index", [])
+    lines: list[tuple[str, str]] = [
+        ("title", _text(report.get("title"))),
+        ("normal", f"AIRank 可核验证据报告 · {_text(manifest.get('schema_version'))}"),
+        ("normal", f"报告 ID：{_text(report.get('report_id'))}"),
+        ("normal", f"生成时间：{_text(report.get('generated_at'))}"),
+        (
+            "notice",
+            "本报告仅描述冻结口径下观察到的结果，不证明发布动作造成变化，也不承诺任何模型将推荐某个品牌。",
+        ),
+        ("heading", "证据摘要"),
+        (
+            "normal",
+            "样本 {samples} · 引用 {citations} · 事实声明 {facts} · 证据对象 {objects}".format(
+                samples=_text(counts.get("samples", 0)),
+                citations=_text(counts.get("citations", 0)),
+                facts=_text(counts.get("fact_claims", 0)),
+                objects=_text(counts.get("evidence_objects", 0)),
+            ),
+        ),
+        ("heading", "完整性门禁"),
+        (
+            "normal",
+            "策略 {policy} · 状态 {status} · 已验证 {verified}/{entities} · 阻断 {blocked}".format(
+                policy=_text(integrity.get("policy_version")),
+                status=_text(integrity.get("status")),
+                verified=_text(integrity.get("verified_count")),
+                entities=_text(integrity.get("entity_count")),
+                blocked=_text(integrity.get("blocking_finding_count")),
+            ),
+        ),
+        ("normal", f"Integrity manifest SHA-256：{_text(integrity.get('manifest_sha256'))}"),
+        ("heading", "指标对比"),
+    ]
+    metric_names = (
+        "valid_sample_rate",
+        "mention_rate",
+        "recommendation_rate",
+        "top1_rate",
+        "top3_rate",
+        "top5_rate",
+        "stability",
+        "citation_recall_rate",
+        "citation_support",
+        "fact_accuracy",
+    )
+    metric_count = 0
+    for name in metric_names:
+        if name in baseline or name in compare or name in deltas:
+            metric_count += 1
+            lines.append(
+                (
+                    "normal",
+                    f"{name}：基线 {_text(baseline.get(name))} · 复测 {_text(compare.get(name))} · 变化 {_text(deltas.get(name))}",
+                )
+            )
+    if metric_count == 0:
+        lines.append(("normal", "没有可交付的对比指标。"))
+    lines.extend(
+        [
+            ("heading", "审慎归因"),
+            ("normal", f"置信度：{_text(attribution.get('confidence'))}"),
+            ("normal", _text(attribution.get("conclusion"))),
+            ("heading", "已知限制"),
+        ]
+    )
+    limitations = measurement.get("known_limitations", [])
+    if limitations:
+        lines.extend(("normal", _text(item)) for item in limitations)
+    else:
+        lines.append(("normal", "本证据范围内没有额外限制项；这不等于形成因果保证。"))
+    lines.append(("page_heading", "样本索引"))
+    for item in samples:
+        lines.append(
+            (
+                "normal",
+                "{run} · {provider} · {surface} · #{index} · {status} · {mention} · rank {rank} · {snapshot}".format(
+                    run=_text(item.get("run_id")),
+                    provider=_text(item.get("provider")),
+                    surface=_text(item.get("collector_surface")),
+                    index=_text(item.get("sample_index")),
+                    status=_text(item.get("sample_status")),
+                    mention=_text(item.get("mention_class")),
+                    rank=_text(item.get("brand_rank")),
+                    snapshot=_text(item.get("snapshot_id")),
+                ),
+            )
+        )
+    lines.append(("heading", "来源治理"))
+    if sources:
+        for item in sources:
+            revision = item.get("current_revision") or {}
+            lines.append(
+                (
+                    "normal",
+                    "{host} · {status} · authority {authority} · usage {usage} · citations {citations}".format(
+                        host=_text(item.get("normalized_host")),
+                        status=_text(item.get("classification_status")),
+                        authority=_text(revision.get("authority_level")),
+                        usage=_text(revision.get("usage_policy")),
+                        citations=len(item.get("citation_ids", [])),
+                    ),
+                )
+            )
+    else:
+        lines.append(("normal", "当前包没有可分类的 Citation host。"))
+    lines.extend(
+        [
+            ("heading", "校验锚点"),
+            ("normal", f"Packet ID：{_text(manifest.get('packet_id'))}"),
+            ("normal", f"Packet basis SHA-256：{_text(manifest.get('packet_basis_sha256'))}"),
+            ("normal", f"Report SHA-256：{_text(report.get('report_sha256'))}"),
+        ]
+    )
+    return lines
+
+
+def render_report_pdf(manifest: dict[str, Any]) -> bytes:
+    """Render printable HTML with the pinned Playwright Chromium and normalize time metadata."""
+
+    from playwright.sync_api import sync_playwright
+
+    html = render_report_html(manifest).decode("utf-8")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(java_script_enabled=False)
+            try:
+                page = context.new_page()
+                page.set_content(html, wait_until="load")
+                page.emulate_media(media="print")
+                payload = page.pdf(
+                    format="A4",
+                    print_background=True,
+                    prefer_css_page_size=False,
+                    margin={"top": "12mm", "right": "12mm", "bottom": "12mm", "left": "12mm"},
+                )
+            finally:
+                context.close()
+        finally:
+            browser.close()
+
+    generated_at = str((manifest.get("report") or {}).get("generated_at") or "")
+    try:
+        parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = parsed.astimezone(timezone.utc).strftime("%Y%m%d%H%M%S")
+    except ValueError:
+        timestamp = "19800101000000"
+    replacement = f"D:{timestamp}+00'00'".encode("ascii")
+    normalized, count = re.subn(
+        rb"D:\d{14}[+-]\d{2}'\d{2}'",
+        replacement,
+        payload,
+    )
+    if count != 2:
+        raise ValueError("Chromium PDF metadata contract changed")
+    return normalized
+
+
+def _docx_paragraph(style: str, text: str) -> str:
+    style_name = {
+        "title": "Title",
+        "heading": "Heading1",
+        "page_heading": "Heading1",
+        "notice": "Notice",
+    }.get(
+        style, "Normal"
+    )
+    page_break = '<w:pageBreakBefore/>' if style == "page_heading" else ""
+    return (
+        '<w:p><w:pPr><w:pStyle w:val="'
+        + style_name
+        + '"/>'
+        + page_break
+        + '</w:pPr><w:r><w:t xml:space="preserve">'
+        + xml_escape(text)
+        + "</w:t></w:r></w:p>"
+    )
+
+
+def render_report_docx(manifest: dict[str, Any]) -> bytes:
+    """Render a deterministic OOXML Word document without runtime office tooling."""
+
+    body = "".join(_docx_paragraph(style, value) for style, value in _report_text_lines(manifest))
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>"
+        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/>'
+        "</w:sectPr></w:body></w:document>"
+    ).encode("utf-8")
+    report = manifest.get("report", {})
+    created_at = str(report.get("generated_at") or "1980-01-01T00:00:00Z")
+    if created_at.endswith("+00:00"):
+        created_at = created_at[:-6] + "Z"
+    members = {
+        "[Content_Types].xml": b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>''',
+        "_rels/.rels": b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>''',
+        "word/document.xml": document,
+        "word/_rels/document.xml.rels": b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>''',
+        "word/styles.xml": b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="100" w:line="290" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/><w:color w:val="172033"/><w:sz w:val="21"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="160"/></w:pPr><w:rPr><w:b/><w:color w:val="172033"/><w:sz w:val="52"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="100"/></w:pPr><w:rPr><w:b/><w:color w:val="1F4D78"/><w:sz w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Notice"><w:name w:val="Notice"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="80" w:after="160"/></w:pPr><w:rPr><w:color w:val="9A3412"/><w:b/></w:rPr></w:style></w:styles>''',
+        "docProps/core.xml": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            f"<dc:title>{xml_escape(_text(report.get('title')))}</dc:title>"
+            '<dc:creator>AIRank</dc:creator><cp:lastModifiedBy>AIRank</cp:lastModifiedBy>'
+            f'<dcterms:created xsi:type="dcterms:W3CDTF">{xml_escape(created_at)}</dcterms:created>'
+            f'<dcterms:modified xsi:type="dcterms:W3CDTF">{xml_escape(created_at)}</dcterms:modified>'
+            f"<dc:identifier>{xml_escape(_text(report.get('report_id')))}</dc:identifier>"
+            "</cp:coreProperties>"
+        ).encode("utf-8"),
+        "docProps/app.xml": b'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>AIRank</Application><AppVersion>1.0</AppVersion></Properties>''',
+    }
+    output = io.BytesIO()
+    with ZipFile(output, mode="w", compression=ZIP_STORED, strict_timestamps=True) as archive:
+        for name, payload in members.items():
+            archive.writestr(_zip_info(name), payload)
+    return output.getvalue()
+
+
+def render_report_readme(manifest: dict[str, Any]) -> bytes:
     return (
         "AIRank customer evidence review bundle\n"
         f"bundle_version: {REPORT_REVIEW_BUNDLE_VERSION}\n"
@@ -209,6 +448,8 @@ def _readme(manifest: dict[str, Any]) -> bytes:
         "Files:\n"
         "- manifest/report-evidence.json: canonical evidence manifest; raw answer bodies are not copied.\n"
         "- report/report.html: printable, evidence-indexed customer report.\n"
+        "- report/report.pdf: deterministic A4 customer report for direct delivery.\n"
+        "- report/report.docx: deterministic OOXML customer report for governed editing.\n"
         "- review/scorecard.csv: blank human review scorecard; no score is prefilled.\n"
         "- SHA256SUMS: hashes for every file above.\n\n"
         "Verification boundary:\n"
@@ -231,9 +472,11 @@ def build_report_review_bundle(
     manifest: dict[str, Any], manifest_bytes: bytes
 ) -> bytes:
     members = {
-        "README.txt": _readme(manifest),
+        "README.txt": render_report_readme(manifest),
         "manifest/report-evidence.json": manifest_bytes,
         "report/report.html": render_report_html(manifest),
+        "report/report.pdf": render_report_pdf(manifest),
+        "report/report.docx": render_report_docx(manifest),
         "review/scorecard.csv": render_scorecard_csv(manifest),
     }
     checksum_lines = [

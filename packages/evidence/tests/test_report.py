@@ -7,9 +7,11 @@ import io
 from zipfile import ZipFile
 
 import pytest
+import airank_evidence.review_bundle as review_bundle
 
 from airank_evidence import (
     EvidenceReport,
+    ReportArtifactRenderError,
     ReportConclusion,
     ReportEvidencePacketError,
     ReportEvidencePacketVerificationError,
@@ -209,7 +211,9 @@ def publishable_report_record() -> dict:
     }
 
 
-def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fields() -> None:
+def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sample_index = [
         {
             "task_id": "task_1",
@@ -265,10 +269,21 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
             "README.txt",
             "manifest/report-evidence.json",
             "report/report.html",
+            "report/report.pdf",
+            "report/report.docx",
             "review/scorecard.csv",
             "SHA256SUMS",
         ]
         assert archive.read("manifest/report-evidence.json") == first.manifest_bytes
+        pdf_bytes = archive.read("report/report.pdf")
+        assert pdf_bytes.startswith(b"%PDF-1.4")
+        assert pdf_bytes.rstrip().endswith(b"%%EOF")
+        docx_bytes = archive.read("report/report.docx")
+        with ZipFile(io.BytesIO(docx_bytes)) as word:
+            assert "word/document.xml" in word.namelist()
+            document_xml = word.read("word/document.xml").decode("utf-8")
+            assert "T+7 GEO 复测观察报告" in document_xml
+            assert "不证明发布动作造成变化" in document_xml
         scorecard_text = archive.read("review/scorecard.csv").decode("utf-8-sig")
         scorecard_rows = list(csv.DictReader(io.StringIO(scorecard_text)))
         assert len(scorecard_rows) == 5
@@ -278,6 +293,10 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
             for field in ("score_0_to_5", "reviewer", "reviewed_at", "rationale", "decision")
         )
         assert "不证明发布动作造成了变化" in archive.read("report/report.html").decode("utf-8")
+    def browser_must_not_run(_manifest: dict) -> bytes:
+        raise AssertionError("offline verification must not launch Chromium")
+
+    monkeypatch.setattr(review_bundle, "render_report_pdf", browser_must_not_run)
     verification = verify_report_evidence_packet(
         first.canonical_bytes,
         expected_sha256=first.sha256,
@@ -306,6 +325,62 @@ def test_report_evidence_packet_is_deterministic_and_includes_customer_audit_fie
         "evidence_objects": 1,
         "known_limitations": 2,
     }
+
+
+def test_report_evidence_packet_fails_closed_when_artifact_rendering_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    citation_index = [
+        {
+            "citation_id": "cite_1",
+            "snapshot_id": "snap_1",
+            "url": "https://example.com",
+            "host": "example.com",
+        }
+    ]
+
+    def fail_pdf_render(_manifest: dict) -> bytes:
+        raise RuntimeError("browser unavailable; must not escape to the API")
+
+    monkeypatch.setattr(review_bundle, "render_report_pdf", fail_pdf_render)
+    with pytest.raises(
+        ReportArtifactRenderError,
+        match="customer report artifact rendering failed",
+    ):
+        build_report_evidence_packet(
+            report_record=publishable_report_record(),
+            sample_index=[
+                {
+                    "task_id": "task_1",
+                    "run_id": "scan_baseline",
+                    "snapshot_id": "snap_1",
+                    "sample_status": "valid",
+                    "mention_class": "not_mentioned",
+                    "answer_sha256": "3" * 64,
+                    "raw_response_sha256": "5" * 64,
+                    "evidence_snapshot_id": "evidence_1",
+                    "collector_surface": "web",
+                },
+                {
+                    "task_id": "task_2",
+                    "run_id": "scan_compare",
+                    "snapshot_id": "snap_2",
+                    "sample_status": "valid",
+                    "mention_class": "recommended",
+                    "answer_sha256": "6" * 64,
+                    "raw_response_sha256": "7" * 64,
+                    "evidence_snapshot_id": "evidence_2",
+                    "collector_surface": "web",
+                },
+            ],
+            citation_index=citation_index,
+            fact_accuracy_index=[],
+            evidence_object_index=[
+                {"object_ref_id": "object_1", "sha256": "4" * 64, "byte_size": 123}
+            ],
+            source_governance=source_governance_for(citation_index),
+            integrity_audit=passed_integrity(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -579,7 +654,7 @@ def test_report_evidence_packet_binds_effective_source_governance_hashes() -> No
     )
 
     summary = packet.manifest["source_governance"]["summary"]
-    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v7"
+    assert packet.manifest["schema_version"] == "airank.report-evidence-packet.v8"
     assert summary["source_host_count"] == 1
     assert summary["authority_coverage_rate"] == 1.0
     assert summary["authority_summary_eligible"] is True

@@ -1403,16 +1403,23 @@ def test_real_mysql_brand_check_defaults_to_durable_worker_dispatch(
                     """
                     SELECT
                       (SELECT COUNT(*) FROM airank_async_jobs
+                       WHERE tenant_id=:tenant_id AND job_type='scan.provider') AS persisted_jobs,
+                      (SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.scan_task_id')))
+                       FROM airank_async_jobs
+                       WHERE tenant_id=:tenant_id AND job_type='scan.provider') AS persisted_tasks,
+                      (SELECT COUNT(*) FROM airank_async_jobs
                        WHERE tenant_id=:tenant_id AND job_type='scan.provider'
-                         AND status='queued') AS queued_jobs,
-                      (SELECT COUNT(*) FROM airank_answer_snapshots
-                       WHERE tenant_id=:tenant_id) AS snapshot_count
+                         AND status NOT IN ('queued', 'running', 'succeeded', 'failed')) AS invalid_statuses
                     """
                 ),
                 {"tenant_id": tenant_id},
             ).mappings().one()
-        assert counts["queued_jobs"] == len(result.tasks)
-        assert counts["snapshot_count"] == 0
+        # A long-running Worker may claim or finish a job before this query. The
+        # durable-dispatch gate therefore verifies the persisted task mapping and
+        # legal state machine instead of racing on the transient `queued` state.
+        assert counts["persisted_jobs"] == len(result.tasks)
+        assert counts["persisted_tasks"] == len(result.tasks)
+        assert counts["invalid_statuses"] == 0
     finally:
         cleanup_tenant(engine, tenant_id)
 
@@ -2866,7 +2873,7 @@ def test_real_mysql_report_evidence_packet_round_trip(tmp_path: Path) -> None:
         with ZipFile(io.BytesIO(manifest_bytes)) as archive:
             manifest = json.loads(archive.read("manifest/report-evidence.json"))
             assert "score_0_to_5" in archive.read("review/scorecard.csv").decode("utf-8-sig")
-        assert manifest["schema_version"] == "airank.report-evidence-packet.v7"
+        assert manifest["schema_version"] == "airank.report-evidence-packet.v8"
         assert manifest["evidence_integrity"]["status"] == "passed"
         assert manifest["counts"]["samples"] == 6
         assert manifest["counts"]["citations"] == 6

@@ -618,7 +618,7 @@ export type ReportEvidencePacket = {
   report_id: string;
   tenant_id: string;
   project_id: string;
-  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4" | "airank.report-evidence-packet.v5" | "airank.report-evidence-packet.v6" | "airank.report-evidence-packet.v7";
+  schema_version: "airank.report-evidence-packet.v1" | "airank.report-evidence-packet.v2" | "airank.report-evidence-packet.v3" | "airank.report-evidence-packet.v4" | "airank.report-evidence-packet.v5" | "airank.report-evidence-packet.v6" | "airank.report-evidence-packet.v7" | "airank.report-evidence-packet.v8";
   status: "ready";
   object_ref_id: string;
   integrity_audit_id: string | null;
@@ -4600,7 +4600,7 @@ export async function recordDownloadReceipt(packet: ReportEvidencePacket): Promi
 
 export async function createReportEvidencePacket(reportId: string): Promise<ReportEvidencePacket> {
   const headers = buildApiHeaders("trc_web_report_packet");
-  headers["Idempotency-Key"] = `report-packet-${reportId}-v7-${crypto.randomUUID()}`;
+  headers["Idempotency-Key"] = `report-packet-${reportId}-v8-${crypto.randomUUID()}`;
   const response = await fetch(`/api/v1/reports/${reportId}/evidence-packets`, {
     method: "POST",
     headers,

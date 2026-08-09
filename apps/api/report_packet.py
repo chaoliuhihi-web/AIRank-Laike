@@ -15,6 +15,7 @@ from airank_evidence import (
     ObjectStorageError,
     REPORT_EVIDENCE_PACKET_VERSION,
     SOURCE_GOVERNANCE_VERSION,
+    ReportArtifactRenderError,
     ReportEvidencePacketError,
     build_object_storage_from_env,
     build_report_evidence_packet,
@@ -61,6 +62,7 @@ class ReportEvidencePacketData(BaseModel):
         "airank.report-evidence-packet.v5",
         "airank.report-evidence-packet.v6",
         "airank.report-evidence-packet.v7",
+        "airank.report-evidence-packet.v8",
     ]
     status: Literal["ready"]
     object_ref_id: str
@@ -238,6 +240,7 @@ class MySQLReportEvidencePacketRepository:
             )
         except ReportEvidencePacketError as exc:
             message = str(exc)
+            render_failure = isinstance(exc, ReportArtifactRenderError)
             quality_failure = any(
                 marker in message
                 for marker in ("not generated", "quality contract", "not publishable")
@@ -245,7 +248,13 @@ class MySQLReportEvidencePacketRepository:
             raise StarletteHTTPException(
                 status_code=409 if quality_failure else 500,
                 detail={
-                    "code": "REPORT_QUALITY_BLOCKED" if quality_failure else "REPORT_EVIDENCE_MISSING",
+                    "code": (
+                        "REPORT_QUALITY_BLOCKED"
+                        if quality_failure
+                        else "REPORT_RENDERING_FAILED"
+                        if render_failure
+                        else "REPORT_EVIDENCE_MISSING"
+                    ),
                     "details": {"report_id": report_id, "reason": message},
                 },
             ) from exc

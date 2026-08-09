@@ -191,6 +191,7 @@
             "ASSET_REVIEW_REQUIRED",
             "REPORT_NOT_FOUND",
             "REPORT_QUALITY_BLOCKED",
+            "REPORT_RENDERING_FAILED",
             "SKILL_NOT_FOUND",
             "SKILL_TRUST_BLOCKED",
             "REPORT_EVIDENCE_MISSING",

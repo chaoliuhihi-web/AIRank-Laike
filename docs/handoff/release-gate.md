@@ -86,7 +86,7 @@ python3 scripts/release_readiness.py \
 | AI 收录包生成 | acceptance test | 可生成企业事实页、FAQ、案例页等资产 |
 | 发布包记录 | DB/test | 有 publish package 和 object ref |
 | 报告 JSON | report fixture | 包含 score、缺口、建议、证据索引 |
-| 证据包 | `airank.report-evidence-packet.v7` | v4 测量质量门禁 + `airank.evidence-integrity.v2` 源证据与派生状态重建；确定性 ZIP 内含 canonical manifest、可打印 HTML、空白评分表、README、SHA256SUMS，最终 production 双人审核与 packet 级 download receipt；离线校验必须使用 API/回执整包 hash，历史 v1–v6 只读兼容，PDF/Word/数字签名仍 partial |
+| 证据包 | `airank.report-evidence-packet.v8` | v4 测量质量门禁 + `airank.evidence-integrity.v2` 源证据与派生状态重建；确定性 ZIP 内含 canonical manifest、可打印 HTML、固定 Chromium A4 PDF、确定性 OOXML Word、空白评分表、README、SHA256SUMS，最终 production 双人审核与 packet 级 download receipt；离线校验必须使用 API/回执整包 hash，历史 v1–v7 只读兼容；数字签名与独立公开托管验证页仍 partial |
 | 报告追溯 | review | 关键结论可回溯到 snapshot/citation/FactAtom |
 
 ## Gate 7：Xinghe/yudao adapter

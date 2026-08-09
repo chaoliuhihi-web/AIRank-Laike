@@ -39,6 +39,7 @@ from .report import (
     METRIC_FORMULAS,
     REPORT_EVIDENCE_PACKET_VERSION,
     SOURCE_GOVERNANCE_VERSION,
+    ReportArtifactRenderError,
     ReportConclusion,
     ReportEvidencePacket,
     ReportEvidencePacketError,
@@ -55,7 +56,10 @@ from .report_verifier import (
 from .review_bundle import (
     REPORT_REVIEW_BUNDLE_MEMBERS,
     REPORT_REVIEW_BUNDLE_VERSION,
+    render_report_docx,
     render_report_html,
+    render_report_pdf,
+    render_report_readme,
     render_scorecard_csv,
 )
 from .snapshot import AnswerSnapshot, SourceCitation
@@ -97,6 +101,7 @@ __all__ = [
     "METRIC_FORMULAS",
     "REPORT_EVIDENCE_PACKET_VERSION",
     "SOURCE_GOVERNANCE_VERSION",
+    "ReportArtifactRenderError",
     "ReportConclusion",
     "ReportEvidencePacket",
     "ReportEvidencePacketError",
@@ -125,6 +130,9 @@ __all__ = [
     "normalize_source_host",
     "provision_object_storage_readiness",
     "render_report_html",
+    "render_report_pdf",
+    "render_report_readme",
+    "render_report_docx",
     "render_scorecard_csv",
     "verify_report_evidence_packet",
     "verify_object_storage_readiness",

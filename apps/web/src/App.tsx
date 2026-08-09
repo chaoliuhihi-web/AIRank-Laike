@@ -6588,8 +6588,8 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
         ? `${packet.summary.source_authority_resolved_count}/${packet.summary.source_host_count} 个来源已具备有效权威结论${packet.summary.source_authority_summary_eligible ? "" : "（覆盖不完整，不生成整体权威性结论）"}`
         : "当前证据包没有可分类的 Citation 域名";
       notify({
-        title: "可核验证据 ZIP 已下载",
-        desc: `${packet.summary.sample_count} 个样本、${packet.summary.citation_count} 条引用；${sourceGovernance}；内含 canonical manifest、可打印 HTML、空白评分表和 SHA256SUMS。整包 SHA-256 ${packet.content_sha256.slice(0, 12)}…，下载回执已记录。`,
+        title: "多格式客户报告包已下载",
+        desc: `${packet.summary.sample_count} 个样本、${packet.summary.citation_count} 条引用；${sourceGovernance}；内含 canonical manifest、HTML、PDF、Word、空白评分表和 SHA256SUMS。整包 SHA-256 ${packet.content_sha256.slice(0, 12)}…，下载回执已记录。`,
         tone: "success",
       });
     } catch (error) {
@@ -6607,7 +6607,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     <>
       <PageHeader
         title="报表中心"
-        subtitle="复测 AI 回答变化；导出确定性 ZIP，包含证据 manifest、可打印 HTML、空白人工评分表与逐文件哈希，并用下载回执锚定整包 SHA-256。"
+        subtitle="复测 AI 回答变化；导出确定性 ZIP，包含证据 manifest、HTML、PDF、Word、空白人工评分表与逐文件哈希，并用下载回执锚定整包 SHA-256。"
         action={<HeaderActions primary="生成老板报告" icon={FileChartColumn} onPrimary={generateReport} />}
       />
       {reports.reports.length === 0 && (
@@ -6643,7 +6643,7 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
               ) : (
                 <>
                   <Download size={15} />
-                  导出可核验 ZIP
+                  导出客户报告包
                 </>
               )}
             </button>

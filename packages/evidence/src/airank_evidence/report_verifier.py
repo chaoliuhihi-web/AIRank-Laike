@@ -14,7 +14,14 @@ from .report import (
     build_report_evidence_packet,
     canonical_json_bytes,
 )
-from .review_bundle import REPORT_REVIEW_BUNDLE_MEMBERS, REPORT_REVIEW_BUNDLE_VERSION
+from .review_bundle import (
+    REPORT_REVIEW_BUNDLE_MEMBERS,
+    REPORT_REVIEW_BUNDLE_VERSION,
+    render_report_docx,
+    render_report_html,
+    render_report_readme,
+    render_scorecard_csv,
+)
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -163,6 +170,7 @@ def verify_report_evidence_packet(
                 if key not in {"summary", "known_limitations"}
             },
             integrity_audit=dict(manifest.get("evidence_integrity") or {}),
+            render_bundle=False,
         )
     except (ReportEvidencePacketError, TypeError, ValueError) as exc:
         raise ReportEvidencePacketVerificationError(
@@ -170,8 +178,26 @@ def verify_report_evidence_packet(
         ) from exc
     if rebuilt.manifest_bytes != manifest_bytes:
         raise ReportEvidencePacketVerificationError("manifest does not match deterministic rebuild")
-    if rebuilt.canonical_bytes != archive_bytes:
-        raise ReportEvidencePacketVerificationError("archive does not match deterministic rebuild")
+    deterministic_members = {
+        "README.txt": render_report_readme(manifest),
+        "report/report.html": render_report_html(manifest),
+        "report/report.docx": render_report_docx(manifest),
+        "review/scorecard.csv": render_scorecard_csv(manifest),
+    }
+    for name, expected_payload in deterministic_members.items():
+        if members[name] != expected_payload:
+            raise ReportEvidencePacketVerificationError(
+                f"rendered member does not match deterministic rebuild: {name}"
+            )
+    pdf_payload = members["report/report.pdf"]
+    if (
+        len(pdf_payload) < 1024
+        or not pdf_payload.startswith(b"%PDF-1.4")
+        or not pdf_payload.rstrip().endswith(b"%%EOF")
+        or b"/JavaScript" in pdf_payload
+        or b"/JS " in pdf_payload
+    ):
+        raise ReportEvidencePacketVerificationError("PDF report artifact is invalid or unsafe")
 
     return ReportEvidencePacketVerification(
         status="verified",

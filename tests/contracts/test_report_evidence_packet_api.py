@@ -559,7 +559,7 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     assert created.idempotent_replay is False
     assert replay.idempotent_replay is True
     assert latest.packet_id == created.packet_id
-    assert created.schema_version == "airank.report-evidence-packet.v7"
+    assert created.schema_version == "airank.report-evidence-packet.v8"
     assert created.content_type == "application/zip"
     assert created.summary.sample_count == 6
     assert created.summary.citation_count == 1
@@ -583,6 +583,8 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
             "README.txt",
             "manifest/report-evidence.json",
             "report/report.html",
+            "report/report.pdf",
+            "report/report.docx",
             "review/scorecard.csv",
             "SHA256SUMS",
         ]
@@ -606,7 +608,7 @@ def test_mysql_report_packet_is_content_addressed_audited_and_idempotent(tmp_pat
     assert json.loads(verified.stdout)["status"] == "verified"
     assert manifest["sample_index"][0]["mention_class"] == "not_mentioned"
     assert manifest["counts"]["samples"] == 6
-    assert manifest["schema_version"] == "airank.report-evidence-packet.v7"
+    assert manifest["schema_version"] == "airank.report-evidence-packet.v8"
     assert manifest["source_record"]["report_id"] == "report_real"
     assert manifest["evidence_integrity"]["status"] == "passed"
     assert created.integrity_audit_id
@@ -902,7 +904,7 @@ def test_mysql_report_packet_creates_new_immutable_version_when_source_governanc
                 """
                 SELECT COUNT(*) FROM airank_report_evidence_packets
                 WHERE tenant_id='tenant_report' AND report_id='report_real'
-                      AND schema_version='airank.report-evidence-packet.v7'
+                      AND schema_version='airank.report-evidence-packet.v8'
                 """
             )
         ).scalar_one()
