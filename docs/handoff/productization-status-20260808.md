@@ -133,10 +133,12 @@
 
 122. GEORank 的 BYOK 与 TokHub 的版本化 AEAD keyring 已改造成 AIRank 自有 `airank.provider-credential-vault.v1`。Alembic `20260809_0040` 新增租户/Provider/route 级凭证密文和追加事件，真实库为 103 张 AIRank 表；AES-256-GCM 使用随机 12-byte nonce，AAD 绑定 tenant/provider/route/credential/version，HMAC 指纹使用独立 key domain，并能在 fingerprint key-id 轮换期间继续拒绝相同 Provider 密钥。保存前必须确认并完成一次可能计费的 L3 真实生成；轮换在同一事务擦除旧密文/nonce，撤销保留审计墓碑但擦除当前密文且禁止环境凭证回退。Gateway 允许被撤销单路失败关闭后使用独立备用路由，请求审计只保存 credential source/id/version。权限、伪造 actor、422 明文回显、篡改、跨租户、跨 key-id、schema、前端构建和真实 MySQL v1→v2→revoke 四段 hash 链均通过，测试行已清零。设置页只在组件内存短暂持有输入，显示掩码、key id、L3 模型/host/request-id presence 和限制；本地重启后四平台仍如实标为 `environment_legacy`。生产 KMS/HSM、自动重加密、真实四平台租户轮换和本轮 Browser 视觉 E2E 未完成，能力保持 `partial`。
 
+123. TokHub 的 reason/idempotency/audit 已进一步改造成 AIRank 自有持久 Operation Guard，并先落在可能计费、涉及密钥的 Provider 凭证 upsert/revoke。Alembic `20260809_0041` 新增操作状态与追加事件两张表，真实库升级为 105 张 AIRank 表；只保存幂等键 SHA-256、请求 hash、状态和安全响应，不保存原 key 或明文凭证。相同请求成功重放只返回原结果，跨 fingerprint key-id 轮换仍稳定，不再执行第二次 L3；同 key 不同载荷、原调用失败后的重试和并发副作用未知均失败关闭。真实 MySQL 已验证三次操作各自 `claimed→external_started→succeeded` 的三段 hash 链、原始 key/secret 零落库和测试数据清零。完整默认回归为 `561 passed, 37 skipped`；严格门禁在双远端提交 `5e7da04` 上通过 242 contract、99 acceptance、37 real integration、Node 24 构建、离线 SQL 和真实 Alembic，最终仍因 dev auth、本地对象存储、生产 Yudao/可选星河服务保持 `BLOCKED / COMMERCIAL NO-GO`。Operation Guard 尚未覆盖全部高风险写接口，未知结果仍需人工对账，因此能力为 `partial`。
+
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `556 passed, 37 skipped`；真实 MySQL、生产 Yudao、客户 Webhook 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。显式真实数据库参数下当前 integration 为 `37 passed, 2 skipped`。
+- `python3 -m pytest -q`：当前全仓为 `561 passed, 37 skipped`；真实 MySQL、生产 Yudao、客户 Webhook 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。显式真实数据库参数下当前 integration 为 `37 passed, 2 skipped`。
 - 严格门禁已对功能提交 `7cd8c1a` 执行：211 个契约、6 个 crawler-lite、85 个验收、15 个 Scheduler、41 个 Worker、16 个评分、48 个证据、23 个安全出站、26 个 Provider Gateway、10 个 Xinghe adapter、7/7 引用基准、30/30 核心 Skill、Node 24 Web 构建、真实 MySQL `30 passed, 2 skipped`、离线 SQL 与真实 Alembic `20260809_0034` 全部通过。报告仍为 `BLOCKED`，并明确保留生产对象存储、真实 Yudao、可选星河服务与 Consumer Browser L3 `0/4` 外部门禁。
 - `python3 scripts/evaluate_core_skills.py`：11 Skill / 33 cases / 33 passed / 0 promotion eligible / 11 retained partial。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
@@ -153,8 +155,8 @@
 - 前序三平台 API 重复门禁：千问、豆包、DeepSeek 各 3 次独立会话全部成功，9/9 原始响应 hash、trace 与请求审计齐全；v4 质量报告 `publishable=true` 且无 blocked check。全部回答均未提及测试品牌并正确计入有效分母；该批次已被后续四平台 12/12 门禁覆盖，但仍作为不可变历史证据保留。
 - 持久 Worker 浏览器复验：隔离租户的一条千问 API 任务先显示 `queued`，Worker 执行后页面自动刷新为 `completed`；真实模型 `qwen3.6-plus`、Provider request ID、Answer/EvidenceSnapshot、回答/原始响应 hash 和成功请求审计全部关联。该回答正常未提及 AIRank，正确计入有效分母；v3 同时因只有 1 次独立采样阻断交付。桌面视觉验收图 `/tmp/airank-durable-worker-quality-blocked-top.png`，浏览器无 warning/error。
 - 引用来源页浏览器复验：真实抓取 `https://example.com/`，持久化原始页面与可见文本对象、双 hash、连接 IP 和 `0–142` 精确边界；页面内容不支持目标断言，因此人工标记“证据不足”，可交付支持率为 `0%`。这证明系统同时接受真实负结论且不制造正向营销结果；验收数据和临时对象均已清理。
-- MySQL：Alembic `20260809_0040`；103 张 AIRank 表校验通过；新增租户 Provider 凭证密文、单调序号/前序 hash 事件和请求审计 credential 引用，并继续覆盖治理图谱、容量排程、机会行动、事实补证、审核路由、证据完整性、来源同步、Publisher、页面审计和扫描 attempt。
-- 本地真实 MySQL integration：Python 3.11 严格门禁 `37 passed, 2 skipped`（生产 Yudao 与独立 S3 开关按环境跳过）。新增随机测试凭证 v1→v2→撤销、旧密文/nonce scrub、四段连续事件、内存解析和环境回退阻断；凭证明文未进入凭证/事件行，验收租户在 finally 清理为 0。真实 `airank_laike` 已升级至 `0040`。
+- MySQL：Alembic `20260809_0041`；105 张 AIRank 表校验通过；除租户 Provider 凭证密文和 credential 引用外，新增持久操作状态与前序 hash 事件，并继续覆盖治理图谱、容量排程、机会行动、事实补证、审核路由、证据完整性、来源同步、Publisher、页面审计和扫描 attempt。
+- 本地真实 MySQL integration：Python 3.11 严格门禁 `37 passed, 2 skipped`（生产 Yudao 与独立 S3 开关按环境跳过）。随机测试凭证 v1→v2→撤销、旧密文/nonce scrub、四段凭证事件、三段操作事件、成功重放不重复 L3、内存解析和环境回退阻断均通过；凭证明文与原始幂等键未进入操作/凭证/事件行，验收租户在 finally 清理为 0。真实 `airank_laike` 已升级至 `0041`。
 - 页面干预真实 MySQL 验收：通用 FAQ 蓝图继续通过来源→事实→批准→审核→`airank.publish-snapshot.v2`；专用比较使用 2 主体×10 维度生成 20 条 Claim/Support，专用解释使用七类角色/12 条事实/1400+ 证据字符生成 12 条 Claim/Support，两者均通过内容审校和不可变导出。所有测试租户都在 finally 清理，避免把验收事实冒充客户数据。
 - 专用内容真实 HTTP/MySQL 验收：独立 3.11 API 进程和隔离租户通过登录、项目、32 个来源/主体事实、逐事实审核、Comparison/Explainer 创建、内容审校与 export 发布包；客户端伪造的创建人/审核人均被认证会话 `http-qa` 覆盖。结果为 Comparison 10 段/20 Claim/20 Support、Explainer 7 段/12 Claim/12 Support，两个发布包均为 `packaged`；验收后 62 张租户表合计 0 行残留。
 - 发布中心真实浏览器/MySQL 验收：隔离租户从已批准内容点击创建 export 不可变包，绑定真实 URL、不可变截图对象及 SHA-256、已完成 baseline 后变为 `published`，并持久化 4 个 scheduled 观察窗口；快照创建人与证据登记人均由可信会话 `browser-publish-qa` 覆盖。API 对单边截图字段返回 422，对 hash 不匹配返回 `409 PUBLICATION_SCREENSHOT_EVIDENCE_INVALID`；1024px 桌面及移动窄视口均无页面级横向溢出，console `0 error / 0 warning`，隔离租户数据随后精确清理为 0。
@@ -163,7 +165,7 @@
 - 公开来源自动同步浏览器验收：真实登录后在事实库导入客户授权的 `https://example.com/`，启用每天检查；首次 Worker 保存原始 HTML/可见正文双对象和运行元数据，页面显示 `changed`、当前 v2、旧 v1 stale、证据 hash；随后点击“立即检查”，第二次显示 `unchanged` 且版本仍为 v2。1024px 桌面端无页面级横向溢出，console `0 error / 0 warning`；8 条审计、2 个 run/job、2 个来源修订和 4 个对象引用随后精确清理为 0，两个内容文件移入隔离临时目录。
 - Provider 路由控制浏览器复验：本机私密运行时注入后设置页读取 4 条 enabled manifest，模型分别为千问 `qwen3.6-plus`、豆包 `doubao-seed-2-0-lite-260215`、Kimi `kimi-k3`、DeepSeek `deepseek-v3.2`；凭证不进入页面、源码、Git 或文档。该复验只证明本地运行时路由已配置，不替代生产密钥轮换、Provider L3 持续探测、Consumer Web/App 或 DeepSeek 型号迁移门禁。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 最新严格上线门禁使用干净且已同步双远端的功能提交 `1acab04`：工作树、GitHub/Gitee `main`、diff、运行产物、Python 3.11.15、Node 24.14.0、238 个 contract、6 个 crawler-lite、98 个 acceptance、20 个 scheduler、45 个独立 Worker、16 个 score、48 个 evidence、23 个 outbound security、32 个 Provider Gateway、10 个 Xinghe adapter、7/7 原生引用 benchmark、11 个核心 Skill 33/33、Web production build、真实 MySQL `37 passed, 2 skipped`、离线 SQL 与真实 Alembic `0040` 全部 `PASS`。显式 `required`/`yudao` 认证配置也通过。总状态仍为 `BLOCKED`：生产对象存储和真实 Yudao permission endpoint 未配置；Provider vault 缺生产 KMS/HSM、自动重加密和真实四平台租户轮换；外部 Xinghe 能力仍为 `dev_only`；Consumer Browser L3 保持最近一次有效的 `0/4`，未用 API 或 L2 交互替代；生产目录、客户 Webhook、Publisher 回执和时间窗口证据仍缺。
+- 最新严格上线门禁使用干净且已同步双远端的提交 `5e7da04`：工作树、GitHub/Gitee `main`、diff、运行产物、Python 3.11.15、Node 24.14.0、242 个 contract、6 个 crawler-lite、99 个 acceptance、20 个 scheduler、45 个独立 Worker、16 个 score、48 个 evidence、23 个 outbound security、32 个 Provider Gateway、10 个 Xinghe adapter、7/7 原生引用 benchmark、11 个核心 Skill 33/33、Web production build、真实 MySQL `37 passed, 2 skipped`、离线 SQL 与真实 Alembic `0041` 全部 `PASS`。总状态仍为 `BLOCKED`：当前运行时仍是 disabled/dev 认证与本地对象存储，生产 Yudao permission endpoint 未配置；Provider vault 缺生产 KMS/HSM、自动重加密和真实四平台租户轮换；Operation Guard 尚未覆盖全部高风险写接口；外部 Xinghe 能力仍为 `dev_only`；Consumer Browser L3 保持最近一次有效的 `0/4`，未用 API 或 L2 交互替代；生产目录、客户 Webhook、Publisher 回执和时间窗口证据仍缺。
 
 ## 下一实施顺序
 
