@@ -1396,3 +1396,12 @@ Decision:
 ### Decision
 
 - The measurement identity boundary is now versioned and evidence-governed, preventing alias drift and mutable competitor data from rewriting historical samples. This engineering slice is complete, but AIRank remains commercial `NO-GO` until all external production and customer-evidence gates pass.
+
+## 2026-08-09 tenant Provider Credential Vault gate
+
+- Feature commit `1acab04` adapts GEORank BYOK and TokHub keyring patterns into AIRank-owned `airank.provider-credential-vault.v1`; no upstream business code or UI was copied.
+- Alembic `20260809_0040` adds tenant/provider/route credential envelopes and append-only events. AES-256-GCM uses random nonces and scope/version AAD; HMAC fingerprints use separate versioned material. Rotation and revocation scrub ciphertext and nonce, while request audits retain only credential source/id/version.
+- Credential writes require trusted `airank:provider:admin`, optimistic version, reason, explicit billable confirmation and a successful L3 generation probe. Validation errors, API responses, logs, audit metadata and MySQL tests do not expose plaintext. Revoked tenant routes fail closed without environment fallback; an independent route may still fail over.
+- Real MySQL verifies v1 activation → v1 rotated-out → v2 activation → v2 revoke as event sequences 1–4 with linked hashes. Both credential rows have empty ciphertext/nonce after final revoke, and all random test rows are cleaned. The database is at `20260809_0040` with 103 AIRank tables.
+- On clean, GitHub/Gitee-synchronized feature commit `1acab04`, the strict gate passes 238 contract, 6 crawler-lite, 98 acceptance, 20 Scheduler, 45 Worker, 16 score, 48 evidence, 23 outbound-security, 32 Provider Gateway and 10 Xinghe adapter tests; citation benchmark is 7/7, Skills are 33/33, Web build passes, real integration is `37 passed, 2 skipped`, and offline/real Alembic pass.
+- Final status remains `BLOCKED`: production HTTPS S3/MinIO and real Yudao permission endpoints are absent; the vault still needs KMS/HSM, automated re-encryption and a real production four-provider tenant rotation; optional Xinghe integrations are `dev_only`; Consumer Browser L3 remains the last valid 0/4 and was not rerun or replaced with API/L2 evidence.
