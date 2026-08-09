@@ -92,9 +92,21 @@ def test_single_node_yudao_proxy_is_internal_tls_only() -> None:
     text = (ROOT / "ops" / "deployment" / "yudao-proxy.conf").read_text()
 
     assert "listen 8443 ssl" in text
-    assert "proxy_pass http://host.docker.internal:48082" in text
+    assert "proxy_pass http://host.docker.internal:48084" in text
     assert "ssl_protocols TLSv1.2 TLSv1.3" in text
     assert "listen 80" not in text
+
+    relay = (
+        ROOT
+        / "ops"
+        / "deployment"
+        / "airank-yudao-loopback-relay.service"
+    ).read_text()
+    assert "bind=172.17.0.1" in relay
+    assert "TCP4:127.0.0.1:48082" in relay
+    assert "User=nobody" in relay
+    assert "NoNewPrivileges=true" in relay
+    assert "0.0.0.0" not in relay
 
 
 def test_single_node_environment_template_fails_closed() -> None:
