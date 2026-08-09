@@ -165,6 +165,7 @@
             "REPORT_NOT_FOUND",
             "REPORT_QUALITY_BLOCKED",
             "SKILL_NOT_FOUND",
+            "SKILL_TRUST_BLOCKED",
             "REPORT_EVIDENCE_MISSING",
             "REPORT_EVIDENCE_PACKET_NOT_FOUND",
             "OBJECT_REF_NOT_FOUND",

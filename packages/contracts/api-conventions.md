@@ -278,6 +278,8 @@ POST /api/v1/projects/{project_id}/opportunity-execution-schedules
 Provider 凭证写入额外使用持久 `Operation Guard`：服务端只保存幂等键 SHA-256，副作用开始前写入状态；成功请求可返回原结果，载荷冲突拒绝，执行中请求不并发重放。若副作用已经开始但没有可信终态，返回 `OPERATION_OUTCOME_UNKNOWN`，必须刷新凭证状态并人工核对，不能用自动重试冒险重复 L3 计费调用。
 管理员可只读查询 `/api/v1/admin/provider-credential-operations` 及单条详情，下钻状态、请求 hash 和追加事件链；该查询按租户隔离且不暴露幂等键原值或秘密载荷。未知结果只提供对账证据，不提供“强制成功”按钮。
 
+内部 Skill 的 `/api/v1/admin/skills`、`/promotion-ledger`、`/trust-report` 和手工 eval 都要求认证上下文中的 `airank:skill:admin`，客户端自报 permission header 会被覆盖。`trust-report` 必须验证依赖声明与解析、runner 能力边界、secret 字面量、入口、权限、包根和隔离导入；手工 eval 在信任失败时返回 `409 SKILL_TRUST_BLOCKED`。仓库级信任通过不改变 Skill 的 `partial/ready` 状态，晋级仍须通过 contract/holdout/adversarial、真实外部证据和 Promotion Ledger；`native_runtime_enforcement=false` 时禁止宣称已有原生沙箱。
+
 ## 状态码
 
 | HTTP | 用途 |

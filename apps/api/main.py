@@ -25,7 +25,14 @@ from airank_domain.measurement import PromptCohortType, sha256_text, stable_prom
 from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
 from airank_provider_gateway import PROVIDER_MANIFESTS, ProviderGatewayError
 from airank_score import QUALITY_CONTRACT_VERSION
-from airank_skills import build_promotion_ledger, evaluate_registry, load_default_registry, run_skill
+from airank_skills import (
+    build_promotion_ledger,
+    build_trust_report,
+    evaluate_registry,
+    load_default_registry,
+    run_skill,
+    trust_allows_skill,
+)
 
 try:
     from .provider_scan import (
@@ -231,6 +238,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "SOURCE_REGISTRY_ENTRY_NOT_FOUND": (404, "Citation source registry entry not found"),
     "SOURCE_CLASSIFICATION_VERSION_CONFLICT": (409, "Citation source classification version conflict"),
     "SKILL_NOT_FOUND": (404, "Skill not found"),
+    "SKILL_TRUST_BLOCKED": (409, "Skill trust gate blocked execution"),
     "OBJECT_REF_NOT_FOUND": (404, "Object reference not found"),
     "EVIDENCE_OBJECT_UNAVAILABLE": (503, "Evidence object is unavailable"),
     "EVIDENCE_INTEGRITY_FAILED": (409, "Evidence object integrity verification failed"),
@@ -755,6 +763,15 @@ class ConsoleActionRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class SkillTrustSummaryData(BaseModel):
+    decision: Literal["allow_local_execution", "block_execution"]
+    execution_allowed: bool
+    policy_sha256: str
+    implementation_sha256: str
+    observed_capabilities: dict[str, list[str]]
+    checks: list[dict[str, Any]]
+
+
 class SkillManifestData(BaseModel):
     skill_id: str
     version: str
@@ -763,6 +780,8 @@ class SkillManifestData(BaseModel):
     output_schema: dict[str, Any]
     dependencies: list[str]
     provider_requirements: list[str]
+    trust_policy: dict[str, Any]
+    trust: SkillTrustSummaryData
     evidence_level: list[str]
     fact_policy: dict[str, Any]
     failure_policy: dict[str, Any]
@@ -814,6 +833,11 @@ class SkillEvalResponse(BaseModel):
 
 
 class SkillPromotionLedgerResponse(BaseModel):
+    data: dict[str, Any]
+    meta: ResponseMeta
+
+
+class SkillTrustReportResponse(BaseModel):
     data: dict[str, Any]
     meta: ResponseMeta
 
@@ -6031,6 +6055,8 @@ def get_skill_registry(
     require_skill_admin(permissions)
     registry = load_default_registry()
     evaluations = {report.skill_id: report for report in evaluate_registry(registry)}
+    trust_report = build_trust_report(registry)
+    trust_audits = {audit["skill_id"]: audit for audit in trust_report["skills"]}
     return SkillRegistryResponse(
         data=SkillRegistryData(
             skills=[
@@ -6042,6 +6068,8 @@ def get_skill_registry(
                     output_schema=dict(manifest.output_schema),
                     dependencies=list(manifest.dependencies),
                     provider_requirements=list(manifest.provider_requirements),
+                    trust_policy=dict(manifest.trust_policy),
+                    trust=SkillTrustSummaryData(**trust_audits[manifest.skill_id]),
                     evidence_level=list(manifest.evidence_level),
                     fact_policy=dict(manifest.fact_policy),
                     failure_policy=dict(manifest.failure_policy),
@@ -6070,6 +6098,15 @@ def get_skill_promotion_ledger(
     return SkillPromotionLedgerResponse(data=build_promotion_ledger(), meta=build_meta(trace_id))
 
 
+@app.get(f"{API_PREFIX}/admin/skills/trust-report", response_model=SkillTrustReportResponse)
+def get_skill_trust_report(
+    trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER),
+    permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> SkillTrustReportResponse:
+    require_skill_admin(permissions)
+    return SkillTrustReportResponse(data=build_trust_report(), meta=build_meta(trace_id))
+
+
 @app.post(f"{API_PREFIX}/admin/skills/{{skill_id}}/eval", response_model=SkillEvalResponse)
 def evaluate_skill(
     skill_id: str,
@@ -6086,6 +6123,22 @@ def evaluate_skill(
             status_code=404,
             detail={"code": "SKILL_NOT_FOUND", "details": {"skill_id": skill_id}},
         ) from exc
+    trust_allowed, trust_audit = trust_allows_skill(skill_id, registry)
+    if not trust_allowed:
+        raise StarletteHTTPException(
+            status_code=409,
+            detail={
+                "code": "SKILL_TRUST_BLOCKED",
+                "details": {
+                    "skill_id": skill_id,
+                    "failed_checks": [
+                        item["check_id"]
+                        for item in trust_audit.checks
+                        if item["status"] == "failed"
+                    ],
+                },
+            },
+        )
     try:
         Draft202012Validator(manifest.input_schema).validate(payload.input)
     except JsonSchemaValidationError as exc:

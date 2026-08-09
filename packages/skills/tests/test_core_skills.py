@@ -52,6 +52,9 @@ def test_registry_contains_versioned_core_skills_with_complete_contracts() -> No
         assert manifest.version == expected_version
         assert manifest.fact_policy
         assert manifest.failure_policy
+        assert manifest.trust_policy["runtime_mode"] == "deterministic_in_process"
+        assert manifest.trust_policy["required_permissions"] == ["airank:skill:admin"]
+        assert manifest.trust_policy["install_policy"]["allow_repository_imports"] is False
         assert manifest.quality_rubric
         assert manifest.eval_cases
         assert manifest.promotion_policy["required_suites"] == ["contract", "holdout", "adversarial"]
@@ -516,10 +519,14 @@ def test_promotion_ledger_is_content_addressed_and_retains_unproven_skills() -> 
 
     assert set(ledger["source_sha256"]) == {
         "registry",
+        "registry_schema",
         "eval_corpus",
         "promotion_evidence",
         "implementation",
         "evaluation_engine",
+        "trust_engine",
     }
     assert all(len(value) == 64 for value in ledger["source_sha256"].values())
+    assert len(ledger["trust_report_sha256"]) == 64
+    assert ledger["native_runtime_enforcement"] is False
     assert {item["decision"] for item in ledger["skills"]} == {"retain_partial"}

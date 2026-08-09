@@ -21,6 +21,7 @@ class SkillManifest:
     output_schema: Mapping[str, Any]
     dependencies: tuple[str, ...]
     provider_requirements: tuple[str, ...]
+    trust_policy: Mapping[str, Any]
     evidence_level: tuple[str, ...]
     fact_policy: Mapping[str, Any]
     failure_policy: Mapping[str, Any]
@@ -50,6 +51,7 @@ class SkillManifest:
             output_schema=payload["output_schema"],
             dependencies=tuple(payload["dependencies"]),
             provider_requirements=tuple(payload["provider_requirements"]),
+            trust_policy=payload["trust_policy"],
             evidence_level=tuple(payload["evidence_level"]),
             fact_policy=payload["fact_policy"],
             failure_policy=payload["failure_policy"],

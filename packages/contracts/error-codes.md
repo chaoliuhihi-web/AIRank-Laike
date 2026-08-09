@@ -229,6 +229,7 @@ FACT_DISCLOSURE_FORBIDDEN
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `SKILL_NOT_FOUND` | 404 | 内部 Skill 未注册 |
+| `SKILL_TRUST_BLOCKED` | 409 | 内部 Skill 未通过依赖、能力、权限或安装信任门禁，禁止执行 |
 
 ## 外部能力
 

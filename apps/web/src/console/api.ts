@@ -1847,6 +1847,27 @@ export type InternalSkill = {
   category: "measurement" | "research" | "knowledge" | "intervention" | "governance" | "delivery";
   dependencies: string[];
   provider_requirements: string[];
+  trust_policy: {
+    runtime_mode: "deterministic_in_process";
+    network_access: { mode: "deny" | "gateway_only"; capabilities: string[] };
+    secret_access: { mode: "deny" | "reference_only"; references: string[] };
+    filesystem_access: { mode: "deny" | "content_addressed_store_only"; write_scopes: string[] };
+    required_permissions: string[];
+    dependency_refs: Array<{ dependency: string; kind: "python_module" | "python_symbol" | "skill_contract"; target: string }>;
+    install_policy: {
+      internal_package_roots: string[];
+      external_python_dependencies: string[];
+      allow_repository_imports: false;
+    };
+  };
+  trust: {
+    decision: "allow_local_execution" | "block_execution";
+    execution_allowed: boolean;
+    policy_sha256: string;
+    implementation_sha256: string;
+    observed_capabilities: Record<string, string[]>;
+    checks: Array<{ check_id: string; status: "passed" | "failed"; details: Record<string, unknown> }>;
+  };
   evidence_level: string[];
   quality_rubric: Array<Record<string, unknown>>;
   promotion_policy: {
@@ -1872,6 +1893,8 @@ export type InternalSkill = {
 export type SkillPromotionLedger = {
   ledger_version: string;
   source_sha256: Record<string, string>;
+  trust_report_sha256: string;
+  native_runtime_enforcement: boolean;
   skills: Array<{
     skill_id: string;
     version: string;
@@ -1879,6 +1902,30 @@ export type SkillPromotionLedger = {
     evaluation_sha256: string;
     promotion_blockers: string[];
   }>;
+};
+
+export type SkillTrustReport = {
+  contract_version: "airank.skill-trust-report.v1";
+  status: "passed" | "failed";
+  claim_level: "repository_gate_only";
+  native_runtime_enforcement: false;
+  limitations: string[];
+  summary: {
+    skill_count: number;
+    execution_allowed_count: number;
+    blocked_count: number;
+    install_simulation_status: "passed" | "failed" | "not_run";
+  };
+  installation: {
+    status: "passed" | "failed" | "not_run";
+    isolated_from_repository_imports: boolean;
+    skill_count: number;
+    package_file_count: number;
+    package_manifest_sha256: string | null;
+    failure: string | null;
+  };
+  source_sha256: Record<string, string>;
+  report_sha256: string;
 };
 
 export type ScanRunSummary = {
@@ -4016,6 +4063,10 @@ export async function fetchInternalSkills(signal?: AbortSignal): Promise<Interna
 
 export function fetchSkillPromotionLedger(signal?: AbortSignal): Promise<SkillPromotionLedger> {
   return fetchData("/api/v1/admin/skills/promotion-ledger", "trc_web_skill_ledger", signal);
+}
+
+export function fetchSkillTrustReport(signal?: AbortSignal): Promise<SkillTrustReport> {
+  return fetchData("/api/v1/admin/skills/trust-report", "trc_web_skill_trust", signal);
 }
 
 export async function runBrandCheck(input: BrandCheckInput): Promise<BrandCheckResult> {

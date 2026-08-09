@@ -90,6 +90,7 @@ M1 已冻结的 API schema：
 - `evidence_review_assignment_response.schema.json`
 - `evidence_review_escalation_response.schema.json`
 - `evidence_review_routing_response.schema.json`
+- `skill_trust_report_response.schema.json`
 
 双人证据复核契约同时服务引用支持与事实准确性：第一审核、第二审核和第三人裁决账号必须互不相同；待终结任务对其他审核人隐藏既有标签与依据。`production` 任务只有双人一致或完成裁决后才能进入商业指标，`benchmark` 任务只计算一致率与 Cohen's kappa。actor-specific inbox 只返回当前账号可执行任务，采用不透明 seek cursor，每页最多 50 条并优先争议裁决；它不承担全项目质量统计。assignment 契约保存持久领取、租约、SLA、心跳、释放和过期状态，但不向其他审核人暴露领取者身份。review routing 契约按项目保存审核团队、角色成员、并发上限与 secondary/adjudicator 路由：没有任何路由时显式兼容 `unrestricted_legacy`，一旦配置则只有有效团队成员可以领取；手工成员不得冒充 Yudao 已同步。团队可按角色绑定 Yudao 部门；同步只落库审核身份所需字段、响应 hash 和变更计数，服务凭证不进入契约、数据库或前端。SLA escalation 先证明逾期事件及路由快照已进入持久 Outbox；只有 HTTPS Webhook Consumer 得到 2xx 并保存不可变渠道回执后，`external_delivery_verified` 才能为 `true`。pending、失败、无渠道配置或仅有 Outbox 状态不得写成已通知。当前商业门禁仍要求真实 Yudao/客户 Webhook E2E，以及至少 20 个已完成双人样本且 kappa 不低于 0.80。
 
@@ -100,6 +101,8 @@ M1 已冻结的 API schema：
 容量日历和排程分别使用 `airank.opportunity-capacity-calendar.v1` 与 `airank.opportunity-capacity-schedule.v1`。当前日历只接受管理员明确提交的 IANA 时区、ISO 工作日、每周可用工时、依据和日期例外，并固定 `capacity_source=manual`、`external_calendar_verified=false`；同内容重放不升级版本，变更进入带前序 hash 的事件链。90 天排程冻结行动、计划、成员、日历、例外和依赖版本/hash，逐日分配人工计划工时，识别同一成员跨行动容量冲突并输出 0–30、31–60、61–90 三个窗口。排程不会自动移动任务，也不生成增长、推荐或商业效果预测；历史排程不可覆盖，只能以新来源清单生成新快照。
 
 品牌实体图谱使用 `airank.brand-graph.v1` 与 `airank.brand-graph-compiler.v1`。实体、别名和有方向关系必须绑定当前有效、无冲突、已审核 FactRevision 及 KnowledgeSource 证据清单 hash；任何更新都生成新版本和前序 hash 事件。编译器按 NFKC/case/空白/标点规范化名称，跨实体冲突名称退出测量词典，目标品牌缺失或歧义时失败关闭。每次 ScanRun 在创建任务前冻结不可变图谱 snapshot/hash，Worker 只读取该快照，不读取之后变化的项目、竞品或别名。历史项目字段只允许形成明确的 `legacy_unverified` 快照，禁止导出公开 JSON-LD，也不能冒充已治理实体证据。
+
+内部 Skill 使用 `airank.skill-trust-report.v1`。每个 manifest 必须声明可解析依赖、网络/secret/文件权限、管理员权限和隔离安装包根；门禁对 runner 及本地 helper 调用闭包执行静态能力检查，并在只复制已声明内部包的临时目录中完成导入模拟。任一依赖、入口、能力或安装检查失败会阻断管理员 eval，并进入 Promotion Ledger blocker。报告固定 `claim_level=repository_gate_only` 与 `native_runtime_enforcement=false`：它不冒充 OS 沙箱、生产 Worker 原生权限强制或外部 Provider 证据。
 
 后续领域 schema：
 

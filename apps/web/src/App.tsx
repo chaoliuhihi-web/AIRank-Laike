@@ -141,6 +141,7 @@ import {
   fetchPublishPackages,
   fetchRetestWindows,
   fetchSkillPromotionLedger,
+  fetchSkillTrustReport,
   fetchScanRuns,
   fetchScanTasks,
   fetchSourceRegistry,
@@ -242,6 +243,7 @@ import {
   type ScanRun,
   type ScanTask,
   type SkillPromotionLedger,
+  type SkillTrustReport,
   type SourceRegistryEntry,
 } from "./console/api";
 import type { Tone } from "./console/data";
@@ -6829,20 +6831,23 @@ function SettingsPage() {
 function SkillConsolePage() {
   const [skills, setSkills] = useState<InternalSkill[]>([]);
   const [ledger, setLedger] = useState<SkillPromotionLedger | null>(null);
+  const [trustReport, setTrustReport] = useState<SkillTrustReport | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([fetchInternalSkills(controller.signal), fetchSkillPromotionLedger(controller.signal)])
-      .then(([nextSkills, nextLedger]) => {
+    Promise.all([fetchInternalSkills(controller.signal), fetchSkillPromotionLedger(controller.signal), fetchSkillTrustReport(controller.signal)])
+      .then(([nextSkills, nextLedger, nextTrustReport]) => {
         setSkills(nextSkills);
         setLedger(nextLedger);
+        setTrustReport(nextTrustReport);
         setLoadError(null);
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
         setSkills([]);
         setLedger(null);
+        setTrustReport(null);
         setLoadError(error instanceof Error ? error.message : "Skill 控制台接口不可用");
       });
     return () => controller.abort();
@@ -6850,18 +6855,20 @@ function SkillConsolePage() {
 
   const locallyPassed = skills.filter((skill) => skill.evaluation.local_eval_status === "passed").length;
   const promotionEligible = skills.filter((skill) => skill.evaluation.promotion_eligible).length;
+  const trustAllowed = skills.filter((skill) => skill.trust.execution_allowed).length;
   const retainedPartial = ledger?.skills.filter((item) => item.decision === "retain_partial").length ?? 0;
 
   return (
     <>
       <PageHeader
         title="内部 Skill 控制台"
-        subtitle="展示版本化契约、独立评测和内容寻址晋级账本；本地用例通过不等于生产证据齐备。"
+        subtitle="展示版本化契约、独立评测、依赖/能力信任门禁和内容寻址晋级账本；仓库门禁通过不等于生产沙箱或外部证据齐备。"
         action={<Badge tone="warning">internal · read-only</Badge>}
       />
       <section className="summary-band evidence-summary">
         <SummaryMetric label="核心 Skill" value={String(skills.length)} tone="primary" />
         <SummaryMetric label="本地评测通过" value={String(locallyPassed)} tone={locallyPassed === skills.length && skills.length > 0 ? "success" : "warning"} />
+        <SummaryMetric label="本地信任放行" value={String(trustAllowed)} tone={trustAllowed === skills.length && skills.length > 0 ? "success" : "danger"} />
         <SummaryMetric label="可晋级 ready" value={String(promotionEligible)} tone={promotionEligible > 0 ? "success" : "warning"} />
         <SummaryMetric label="保留 partial" value={String(retainedPartial)} tone="warning" />
       </section>
@@ -6870,13 +6877,14 @@ function SkillConsolePage() {
       {skills.length > 0 && (
         <div className="airank-console-card table-card skill-table-wrap">
           <table className="question-table skill-table">
-            <thead><tr><th>Skill / 版本</th><th>类别</th><th>Manifest</th><th>评测</th><th>套件</th><th>晋级</th><th>证据阻断</th></tr></thead>
+            <thead><tr><th>Skill / 版本</th><th>类别</th><th>Manifest</th><th>信任门禁</th><th>评测</th><th>套件</th><th>晋级</th><th>证据阻断</th></tr></thead>
             <tbody>
               {skills.map((skill) => (
                 <tr key={skill.skill_id}>
                   <td><strong>{skill.skill_id}</strong><small>v{skill.version} · {skill.evaluation.evaluation_sha256.slice(0, 12)}…</small></td>
                   <td>{skill.category}</td>
                   <td><Badge tone={skill.status === "ready" ? "success" : "warning"}>{skill.status}</Badge></td>
+                  <td><Badge tone={skill.trust.execution_allowed ? "success" : "danger"}>{skill.trust.execution_allowed ? "local allow" : "blocked"}</Badge><small>{skill.trust.policy_sha256.slice(0, 12)}…</small></td>
                   <td><Badge tone={skill.evaluation.local_eval_status === "passed" ? "success" : "danger"}>{skill.evaluation.passed_cases}/{skill.evaluation.total_cases} {skill.evaluation.local_eval_status}</Badge></td>
                   <td><small>{skill.evaluation.executed_suites.join(" · ")}</small></td>
                   <td><Badge tone={skill.evaluation.promotion_eligible ? "success" : "warning"}>{skill.evaluation.promotion_eligible ? "eligible" : "blocked"}</Badge></td>
@@ -6887,6 +6895,19 @@ function SkillConsolePage() {
           </table>
         </div>
       )}
+      {trustReport && (
+        <Panel title="Skill Trust Gate">
+          <dl className="evidence-metadata">
+            <div><dt>门禁状态</dt><dd>{trustReport.status}</dd></div>
+            <div><dt>隔离安装模拟</dt><dd>{trustReport.installation.status} · {trustReport.installation.skill_count}/{trustReport.summary.skill_count}</dd></div>
+            <div><dt>声明边界</dt><dd>{trustReport.claim_level}</dd></div>
+            <div><dt>原生运行时强制</dt><dd>{trustReport.native_runtime_enforcement ? "verified" : "未验证"}</dd></div>
+            <div><dt>Package SHA-256</dt><dd>{trustReport.installation.package_manifest_sha256 ?? "未生成"}</dd></div>
+            <div><dt>Report SHA-256</dt><dd>{trustReport.report_sha256}</dd></div>
+          </dl>
+          <p className="settings-note">当前只证明 AIRank 仓库内依赖、网络、secret、文件写入、子进程、权限声明和隔离导入门禁；不把它表述为 OS 级沙箱或生产 Worker 原生权限强制。</p>
+        </Panel>
+      )}
       {ledger && (
         <Panel title="Promotion Evidence Ledger">
           <dl className="evidence-metadata">
@@ -6894,6 +6915,7 @@ function SkillConsolePage() {
             <div><dt>Registry SHA-256</dt><dd>{ledger.source_sha256.registry}</dd></div>
             <div><dt>Eval Corpus SHA-256</dt><dd>{ledger.source_sha256.eval_corpus}</dd></div>
             <div><dt>Implementation SHA-256</dt><dd>{ledger.source_sha256.implementation}</dd></div>
+            <div><dt>Trust Report SHA-256</dt><dd>{ledger.trust_report_sha256}</dd></div>
           </dl>
         </Panel>
       )}

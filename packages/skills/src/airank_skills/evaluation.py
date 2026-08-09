@@ -248,6 +248,7 @@ def evaluate_manifest(
     *,
     external_cases: tuple[Mapping[str, Any], ...] | None = None,
     verified_evidence: Mapping[str, set[str]] | None = None,
+    trust_blockers: tuple[str, ...] = (),
 ) -> SkillEvaluationReport:
     cases = [dict(case, suite="contract") for case in manifest.eval_cases]
     cases.extend(
@@ -299,6 +300,7 @@ def evaluate_manifest(
     for evidence_type in policy.get("required_evidence", []):
         if evidence_type not in available_evidence:
             blockers.append(f"missing_promotion_evidence:{evidence_type}")
+    blockers.extend(trust_blockers)
 
     digest_payload = [result.to_dict() for result in case_results]
     return SkillEvaluationReport(
@@ -322,28 +324,52 @@ def evaluate_registry(registry: SkillRegistry | None = None) -> tuple[SkillEvalu
     selected_registry = registry or load_default_registry()
     external_cases = load_external_eval_cases()
     verified_evidence = load_verified_promotion_evidence()
+    from .trust import build_trust_report
+
+    trust_report = build_trust_report(selected_registry)
+    trust_audits = {item["skill_id"]: item for item in trust_report["skills"]}
     return tuple(
         evaluate_manifest(
             manifest,
             external_cases=external_cases,
             verified_evidence=verified_evidence,
+            trust_blockers=tuple(
+                [
+                    f"skill_trust_check:{item['check_id']}"
+                    for item in trust_audits[manifest.skill_id]["checks"]
+                    if item["status"] == "failed"
+                ]
+                + (
+                    []
+                    if trust_report["installation"]["status"] == "passed"
+                    else [f"skill_trust_installation:{trust_report['installation']['status']}"]
+                )
+            ),
         )
         for manifest in selected_registry.list()
     )
 
 
 def build_promotion_ledger(registry: SkillRegistry | None = None) -> dict[str, Any]:
-    reports = evaluate_registry(registry)
+    selected_registry = registry or load_default_registry()
+    reports = evaluate_registry(selected_registry)
+    from .trust import build_trust_report
+
+    trust_report = build_trust_report(selected_registry)
     source_files = {
         "registry": PACKAGE_ROOT / "registry.json",
+        "registry_schema": PACKAGE_ROOT / "registry.schema.json",
         "eval_corpus": PACKAGE_ROOT / "evals" / "core_eval_cases.json",
         "promotion_evidence": PACKAGE_ROOT / "promotion-evidence.json",
         "implementation": Path(__file__).with_name("core.py"),
         "evaluation_engine": Path(__file__),
+        "trust_engine": Path(__file__).with_name("trust.py"),
     }
     return {
-        "ledger_version": "1.0.0",
+        "ledger_version": "1.1.0",
         "source_sha256": {name: file_sha256(path) for name, path in source_files.items()},
+        "trust_report_sha256": trust_report["report_sha256"],
+        "native_runtime_enforcement": trust_report["native_runtime_enforcement"],
         "skills": [
             {
                 **report.to_dict(include_cases=False),

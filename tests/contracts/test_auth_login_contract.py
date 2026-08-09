@@ -209,6 +209,17 @@ def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monk
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
 
+    forbidden_trust = client.get(
+        "/api/v1/admin/skills/trust-report",
+        headers={
+            "tenant-id": "tenant_skill_admin",
+            "Authorization": f"Bearer {token}",
+            "X-AIRank-Permissions": "airank:skill:admin",
+        },
+    )
+    assert forbidden_trust.status_code == 403
+    assert forbidden_trust.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
+
     monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:skill:admin")
     admin_token = client.post(
         "/api/v1/auth/login",
@@ -221,6 +232,12 @@ def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monk
 
     assert allowed.status_code == 200
     assert len(allowed.json()["data"]["skills"]) == 11
+    allowed_trust = client.get(
+        "/api/v1/admin/skills/trust-report",
+        headers={"tenant-id": "tenant_skill_admin", "Authorization": f"Bearer {admin_token}"},
+    )
+    assert allowed_trust.status_code == 200
+    assert allowed_trust.json()["data"]["status"] == "passed"
 
 
 def test_provider_route_admin_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:
