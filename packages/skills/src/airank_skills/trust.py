@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -348,11 +349,30 @@ def _iter_package_files(package_roots: Iterable[str]) -> Iterable[tuple[Path, Pa
         yield source, source.relative_to(REPOSITORY_ROOT)
 
 
+def external_dependency_paths(dependency_names: Iterable[str]) -> tuple[str, ...]:
+    paths: set[str] = set()
+    for dependency_name in sorted(set(dependency_names)):
+        spec = importlib.util.find_spec(dependency_name)
+        if spec is None:
+            continue
+        if spec.submodule_search_locations:
+            for location in spec.submodule_search_locations:
+                paths.add(str(Path(location).resolve().parent))
+        elif spec.origin:
+            paths.add(str(Path(spec.origin).resolve().parent))
+    return tuple(sorted(paths))
+
+
 def simulate_isolated_install(registry: SkillRegistry) -> dict[str, Any]:
     package_roots = {
         str(root)
         for manifest in registry.list()
         for root in manifest.trust_policy.get("install_policy", {}).get("internal_package_roots", ())
+    }
+    external_dependencies = {
+        str(dependency)
+        for manifest in registry.list()
+        for dependency in manifest.trust_policy.get("install_policy", {}).get("external_python_dependencies", ())
     }
     copied_hashes: dict[str, str] = {}
     with tempfile.TemporaryDirectory(prefix="airank-skill-install-") as temp_value:
@@ -366,12 +386,28 @@ def simulate_isolated_install(registry: SkillRegistry) -> dict[str, Any]:
         package_paths = [str(temp_root / "packages" / "skills" / "src")]
         for root_name in sorted(package_roots - {"airank_skills"}):
             package_paths.append(str(temp_root / "packages" / root_name.removeprefix("airank_").replace("_", "-") / "src"))
+        package_paths.extend(external_dependency_paths(external_dependencies))
+        blocked_roots = [
+            str(REPOSITORY_ROOT),
+            str(REPOSITORY_ROOT / "apps"),
+            str(REPOSITORY_ROOT / "packages"),
+        ]
         probe = """
 import importlib
 import json
+from pathlib import Path
 import sys
 paths = json.loads(sys.argv[1])
-sys.path[:] = paths + [path for path in sys.path if 'AIRank-productization' not in path]
+blocked_roots = [Path(value).resolve() for value in json.loads(sys.argv[2])]
+def repository_source(path):
+    try:
+        candidate = Path(path or '.').resolve()
+    except OSError:
+        return True
+    if candidate == blocked_roots[0]:
+        return True
+    return any(root == candidate or root in candidate.parents for root in blocked_roots[1:])
+sys.path[:] = paths + [path for path in sys.path if not repository_source(path)]
 from airank_skills import load_default_registry
 registry = load_default_registry()
 resolved = []
@@ -395,7 +431,7 @@ print(json.dumps({'skill_count': len(resolved), 'skills': sorted(resolved)}))
 """
         environment = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
         result = subprocess.run(
-            [sys.executable, "-c", probe, json.dumps(package_paths)],
+            [sys.executable, "-S", "-c", probe, json.dumps(package_paths), json.dumps(blocked_roots)],
             cwd=temp_root,
             env=environment,
             capture_output=True,

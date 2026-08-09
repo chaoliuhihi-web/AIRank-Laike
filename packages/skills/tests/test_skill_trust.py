@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from airank_skills import build_trust_report, load_default_registry
-from airank_skills.trust import audit_manifest, inspect_runner_capabilities, trust_allows_skill
+from airank_skills.trust import (
+    audit_manifest,
+    external_dependency_paths,
+    inspect_runner_capabilities,
+    trust_allows_skill,
+)
 
 
 def test_every_core_skill_passes_repository_trust_and_isolated_install_gate() -> None:
@@ -92,3 +97,10 @@ def test_trust_allows_registered_skill_without_promoting_manifest() -> None:
     assert allowed is True
     assert audit.decision == "allow_local_execution"
     assert load_default_registry().get("measurement.answer-parser").status == "partial"
+
+
+def test_isolated_install_declares_runtime_path_for_external_dependencies() -> None:
+    paths = external_dependency_paths(["jsonschema"])
+
+    assert paths
+    assert all("AIRank-productization/packages" not in path for path in paths)
