@@ -104,7 +104,7 @@ def test_single_node_yudao_proxy_is_internal_tls_only() -> None:
     ).read_text()
     assert "bind=172.17.0.1" in relay
     assert "TCP4:127.0.0.1:48082" in relay
-    assert "User=nobody" in relay
+    assert "DynamicUser=true" in relay
     assert "NoNewPrivileges=true" in relay
     assert "0.0.0.0" not in relay
 
