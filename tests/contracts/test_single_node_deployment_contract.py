@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,18 @@ class MissingBucketError(RuntimeError):
     }
 
 
+class MissingObjectError(RuntimeError):
+    response = {
+        "Error": {"Code": "NoSuchKey"},
+        "ResponseMetadata": {"HTTPStatusCode": 404},
+    }
+
+
 class FakeS3Client:
     def __init__(self) -> None:
         self.created = False
         self.versioning: dict[str, str] = {}
+        self.objects: dict[str, dict[str, object]] = {}
 
     def head_bucket(self, *, Bucket: str) -> None:
         del Bucket
@@ -62,6 +71,35 @@ class FakeS3Client:
     def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:
         del Bucket
         return self.versioning
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket
+        if Key not in self.objects:
+            raise MissingObjectError()
+        return self.objects[Key]
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str,
+        Metadata: dict[str, str],
+    ) -> None:
+        del Bucket, ContentType
+        payload = bytes(Body)
+        self.objects[Key] = {
+            "Body": payload,
+            "ContentLength": len(payload),
+            "Metadata": Metadata,
+        }
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, BytesIO]:
+        del Bucket
+        if Key not in self.objects:
+            raise MissingObjectError()
+        return {"Body": BytesIO(bytes(self.objects[Key]["Body"]))}
 
 
 def test_single_node_compose_keeps_state_on_the_data_disk() -> None:

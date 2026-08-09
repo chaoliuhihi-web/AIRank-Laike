@@ -87,11 +87,20 @@ def run(
     while True:
         try:
             client = client_factory(env)
-            return 0, provision_bucket(
+            record = provision_bucket(
                 client,
                 bucket=bucket,
                 region=str(env.get("AIRANK_S3_REGION") or "us-east-1").strip(),
             )
+            from airank_evidence import (
+                S3CompatibleObjectStorage,
+                provision_object_storage_readiness,
+            )
+
+            provision_object_storage_readiness(
+                S3CompatibleObjectStorage(client=client, bucket=bucket)
+            )
+            return 0, record
         except Exception:
             if time.monotonic() >= deadline:
                 return 1, {"status": "blocked", "reason_code": "OBJECT_STORAGE_BOOTSTRAP_FAILED"}
