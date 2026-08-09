@@ -68,6 +68,7 @@ def test_console_pages_use_real_api_or_explicit_capability_state() -> None:
     assert "次数不是搜索量" in app_source
     assert "客户提供观察记录（未独立核验）" in app_source
     assert "来源内出现次数必须是" in app_source
+    assert 'metricNumber("not_mentioned_count")' in app_source
     assert "质量阻断" in app_source
     assert 'item.status === "quality_blocked"' in app_source
     assert "技术可提取性分不等于品牌推荐率" in app_source

@@ -1485,7 +1485,9 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     const value = latest?.metrics[key];
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   };
-  const unmentionedCount = metricNumber("valid_unmentioned_count") ?? metricNumber("normal_unmentioned_count");
+  const unmentionedCount = metricNumber("not_mentioned_count")
+    ?? metricNumber("valid_unmentioned_count")
+    ?? metricNumber("normal_unmentioned_count");
 
   useEffect(() => {
     if (!project.id || !latest || (latest.status !== "queued" && latest.status !== "running")) return;
