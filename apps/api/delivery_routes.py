@@ -887,7 +887,12 @@ class MySQLDeliveryRepository:
                 WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id
                   AND r.id=:baseline_run_id AND r.run_type='baseline'
                   AND r.status='completed' AND r.deleted_at IS NULL
-                  AND r.created_at >= p.updated_at
+                  AND r.created_at >= COALESCE(
+                    (SELECT MAX(pr.created_at)
+                     FROM airank_project_profile_revisions pr
+                     WHERE pr.tenant_id=p.tenant_id AND pr.project_id=p.id),
+                    p.updated_at
+                  )
             """), {"tenant_id": tenant_id, "project_id": row["project_id"], "baseline_run_id": payload.baseline_run_id}).first()
             if baseline is None:
                 raise StarletteHTTPException(status_code=409, detail={"code": "RETEST_BASELINE_REQUIRED", "details": {"baseline_run_id": payload.baseline_run_id, "required_run_type": "baseline", "required_status": "completed", "required_profile_scope": "current"}})

@@ -421,7 +421,10 @@ class MySQLEvidenceGapRepository:
                 return self._derivation_data(conn, replay, idempotent_replay=True)
             run_exists = conn.execute(
                 text(
-                    "SELECT r.id, r.created_at, p.updated_at AS profile_updated_at "
+                    "SELECT r.id, r.created_at, COALESCE("
+                    "(SELECT MAX(pr.created_at) FROM airank_project_profile_revisions pr "
+                    " WHERE pr.tenant_id=p.tenant_id AND pr.project_id=p.id), "
+                    "p.updated_at) AS profile_updated_at "
                     "FROM airank_scan_runs r "
                     "JOIN airank_projects p ON p.tenant_id=r.tenant_id AND p.id=r.project_id "
                     "WHERE r.tenant_id=:tenant_id AND r.project_id=:project_id "

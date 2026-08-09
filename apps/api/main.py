@@ -1857,16 +1857,18 @@ class MySQLProjectRepository:
             selling_points=[str(item) for item in normalized_selling_points],
             audiences=[str(item) for item in normalized_audiences],
         )
-        revision = conn.execute(
+        latest_revision = conn.execute(
             text(
                 """
-                SELECT COALESCE(MAX(revision_number), 0)
+                SELECT revision_number, profile_sha256, created_at
                 FROM airank_project_profile_revisions
                 WHERE tenant_id = :tenant_id AND project_id = :project_id
+                ORDER BY revision_number DESC
+                LIMIT 1
                 """
             ),
             {"tenant_id": row["tenant_id"], "project_id": row["id"]},
-        ).scalar_one()
+        ).mappings().first()
         latest_run_created_at = conn.execute(
             text(
                 """
@@ -1881,21 +1883,24 @@ class MySQLProjectRepository:
             ),
             {"tenant_id": row["tenant_id"], "project_id": row["id"]},
         ).scalar_one_or_none()
-        updated_at = coerce_datetime(row["updated_at"])
+        profile_updated_at = coerce_datetime(
+            latest_revision["created_at"] if latest_revision is not None else row["updated_at"]
+        )
         measurement_reset_required = bool(
-            latest_run_created_at is None or coerce_datetime(latest_run_created_at) < updated_at
+            latest_run_created_at is None
+            or coerce_datetime(latest_run_created_at) < profile_updated_at
         )
         return ProjectProfileData(
             project_id=str(row["id"]),
             tenant_id=str(row["tenant_id"]),
             **profile_payload,
             status=row["status"],
-            profile_revision=int(revision or 0),
+            profile_revision=int(latest_revision["revision_number"] if latest_revision is not None else 0),
             profile_sha256=project_profile_sha256(profile_payload),
             measurement_reset_required=measurement_reset_required,
             updated_by=row["updated_by"],
             created_at=coerce_datetime(row["created_at"]),
-            updated_at=updated_at,
+            updated_at=profile_updated_at,
         )
 
     def get_profile(self, tenant_id: str, project_id: str) -> ProjectProfileData:
@@ -1950,7 +1955,8 @@ class MySQLProjectRepository:
                     status_code=404,
                     detail={"code": "PROJECT_NOT_FOUND", "details": {"project_id": project_id}},
                 )
-            current_updated_at = coerce_datetime(row["updated_at"])
+            current_profile = self._profile_from_row(conn, row)
+            current_updated_at = current_profile.updated_at
             if current_updated_at != payload.expected_updated_at.astimezone(timezone.utc):
                 raise StarletteHTTPException(
                     status_code=409,
@@ -1971,7 +1977,6 @@ class MySQLProjectRepository:
                 audiences=payload.audiences,
             )
             new_sha256 = project_profile_sha256(profile_payload)
-            current_profile = self._profile_from_row(conn, row)
             if new_sha256 == current_profile.profile_sha256:
                 return current_profile
             revision_number = current_profile.profile_revision + 1
@@ -4161,16 +4166,6 @@ def finalize_mysql_scan_run_if_terminal(
             },
         )
         if run_status == "completed":
-            conn.execute(
-                text(
-                    """
-                    UPDATE airank_projects
-                    SET status = 'active', updated_at = :now
-                    WHERE tenant_id = :tenant_id AND id = :project_id
-                    """
-                ),
-                {"tenant_id": tenant_id, "project_id": project.project_id, "now": finished_at},
-            )
             insert_mysql_brand_assets(conn, tenant_id, project, competitors, questions, run, metrics, finished_at)
 
         return {
@@ -5619,12 +5614,18 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
         project_row = conn.execute(
             text(
                 """
-                SELECT id, brand_name, name, website_url, industry, target_audience_json,
-                       created_at, updated_at
-                FROM airank_projects
-                WHERE tenant_id = :tenant_id
-                  AND deleted_at IS NULL
-                ORDER BY created_at DESC, id DESC
+                SELECT p.id, p.brand_name, p.name, p.website_url, p.industry,
+                       p.target_audience_json, p.created_at, p.updated_at,
+                       COALESCE(
+                         (SELECT MAX(pr.created_at)
+                          FROM airank_project_profile_revisions pr
+                          WHERE pr.tenant_id = p.tenant_id AND pr.project_id = p.id),
+                         p.updated_at
+                       ) AS profile_updated_at
+                FROM airank_projects p
+                WHERE p.tenant_id = :tenant_id
+                  AND p.deleted_at IS NULL
+                ORDER BY p.created_at DESC, p.id DESC
                 LIMIT 1
                 """
             ),
@@ -5649,7 +5650,7 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
             {
                 "tenant_id": tenant_id,
                 "project_id": project_row["id"],
-                "profile_updated_at": project_row["updated_at"],
+                "profile_updated_at": project_row["profile_updated_at"],
             },
         ).mappings().all()
         run_row = conn.execute(
@@ -5660,11 +5661,16 @@ def build_mysql_console_overview(tenant_id: str) -> Optional[ConsoleOverview]:
                 WHERE tenant_id = :tenant_id
                   AND project_id = :project_id
                   AND deleted_at IS NULL
+                  AND created_at >= :profile_updated_at
                 ORDER BY COALESCE(finished_at, updated_at, created_at) DESC, id DESC
                 LIMIT 1
                 """
             ),
-            {"tenant_id": tenant_id, "project_id": project_row["id"]},
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_row["id"],
+                "profile_updated_at": project_row["profile_updated_at"],
+            },
         ).mappings().first()
 
     metrics = parse_json_value(run_row["metrics_json"], {}) if run_row else {}

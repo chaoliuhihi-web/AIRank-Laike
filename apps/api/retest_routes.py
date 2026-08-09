@@ -270,8 +270,11 @@ class MySQLRetestRepository:
                 raise _conflict("RETEST_BASELINE_REQUIRED", {"window_id": window_id})
             profile_updated_at = conn.execute(
                 text(
-                    "SELECT updated_at FROM airank_projects "
-                    "WHERE tenant_id=:tenant_id AND id=:project_id AND deleted_at IS NULL"
+                    "SELECT COALESCE("
+                    "(SELECT MAX(pr.created_at) FROM airank_project_profile_revisions pr "
+                    " WHERE pr.tenant_id=p.tenant_id AND pr.project_id=p.id), "
+                    "p.updated_at) FROM airank_projects p "
+                    "WHERE p.tenant_id=:tenant_id AND p.id=:project_id AND p.deleted_at IS NULL"
                 ),
                 {"tenant_id": tenant_id, "project_id": window["project_id"]},
             ).scalar_one_or_none()
