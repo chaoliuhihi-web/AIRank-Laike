@@ -362,33 +362,42 @@ def validate_production_environment(
     checks.append("database_transport")
     _validate_object_storage(source, blockers)
     checks.append("immutable_object_storage")
-    _validate_auth(source, blockers)
-    checks.append("authentication_authority")
     _validate_single_node(source, blockers)
     checks.append("single_node_boundary")
-
-    _, encryption_keys = _key_map(
-        source,
-        active_name="AIRANK_CREDENTIAL_ACTIVE_ENCRYPTION_KEY_ID",
-        mapping_name="AIRANK_CREDENTIAL_ENCRYPTION_KEYS",
-        blockers=blockers,
-    )
-    _, fingerprint_keys = _key_map(
-        source,
-        active_name="AIRANK_CREDENTIAL_ACTIVE_FINGERPRINT_KEY_ID",
-        mapping_name="AIRANK_CREDENTIAL_FINGERPRINT_KEYS",
-        blockers=blockers,
-    )
-    if set(encryption_keys.values()) & set(fingerprint_keys.values()):
-        blockers.append("encryption and fingerprint keyrings must use distinct key material")
-    checks.append("provider_credential_keyrings")
-
-    _validate_provider_runtime(source, blockers, warnings)
-    checks.append("provider_execution")
     _validate_public_surface(source, blockers)
     checks.append("public_surface")
-    _validate_optional_integrations(source, blockers)
-    checks.append("external_integrations")
+
+    # Schema migration consumes only deployment identity, database transport,
+    # storage boundaries, and a verified backup receipt. Requiring API auth,
+    # Provider credentials, or optional integrations here couples a reversible
+    # database operation to unrelated application launch gates. Every process
+    # that serves or executes customer work still validates the full runtime.
+    if role != "migration":
+        _validate_auth(source, blockers)
+        checks.append("authentication_authority")
+
+        _, encryption_keys = _key_map(
+            source,
+            active_name="AIRANK_CREDENTIAL_ACTIVE_ENCRYPTION_KEY_ID",
+            mapping_name="AIRANK_CREDENTIAL_ENCRYPTION_KEYS",
+            blockers=blockers,
+        )
+        _, fingerprint_keys = _key_map(
+            source,
+            active_name="AIRANK_CREDENTIAL_ACTIVE_FINGERPRINT_KEY_ID",
+            mapping_name="AIRANK_CREDENTIAL_FINGERPRINT_KEYS",
+            blockers=blockers,
+        )
+        if set(encryption_keys.values()) & set(fingerprint_keys.values()):
+            blockers.append(
+                "encryption and fingerprint keyrings must use distinct key material"
+            )
+        checks.append("provider_credential_keyrings")
+
+        _validate_provider_runtime(source, blockers, warnings)
+        checks.append("provider_execution")
+        _validate_optional_integrations(source, blockers)
+        checks.append("external_integrations")
 
     if role == "release":
         release_tenant_id = _clean(source, "AIRANK_RELEASE_TENANT_ID")

@@ -287,6 +287,44 @@ def test_migration_requires_a_verified_backup_receipt() -> None:
     assert ready.ready is True
 
 
+def test_migration_does_not_require_unconsumed_application_secrets() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_DATABASE_BACKUP_RECEIPT": "verified-backup-sha256-abc12345",
+            "YUDAO_BEARER_TOKEN": "",
+            "AIRANK_COMPROMISED_CREDENTIALS_ROTATED": "false",
+        }
+    )
+    for name in (
+        "AIRANK_CREDENTIAL_ACTIVE_ENCRYPTION_KEY_ID",
+        "AIRANK_CREDENTIAL_ENCRYPTION_KEYS",
+        "AIRANK_CREDENTIAL_ACTIVE_FINGERPRINT_KEY_ID",
+        "AIRANK_CREDENTIAL_FINGERPRINT_KEYS",
+        "QIANWEN_API_KEY",
+        "DOUBAO_API_KEY",
+        "KIMI_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
+        env.pop(name, None)
+
+    migration = production_preflight.validate_production_environment(
+        env, role="migration"
+    )
+    api = production_preflight.validate_production_environment(env, role="api")
+
+    assert migration.ready is True
+    assert "authentication_authority" not in migration.checks
+    assert "provider_credential_keyrings" not in migration.checks
+    assert "provider_execution" not in migration.checks
+    assert "external_integrations" not in migration.checks
+    assert api.ready is False
+    detail = "\n".join(api.blockers)
+    assert "YUDAO_BEARER_TOKEN" in detail
+    assert "exposed credential was rotated" in detail
+    assert "must be a non-empty JSON object" in detail
+
+
 def test_preflight_public_record_never_contains_secret_values() -> None:
     env = production_env()
     result = production_preflight.validate_production_environment(env, role="api")
