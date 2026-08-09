@@ -1,8 +1,8 @@
 # AIRank Current Release Readiness
 
-Generated: 2026-08-09T09:58:57+08:00
+Generated: 2026-08-09T10:29:45+08:00
 
-Verified feature commit: `f94b07d`
+Verified feature commit: `80a36a7`
 
 Result: `BLOCKED / COMMERCIAL NO-GO`
 
@@ -13,12 +13,12 @@ This is the concise current release record. The executable source of truth is `s
 | Gate | Result |
 | --- | --- |
 | Clean worktree and diff check | PASS |
-| GitHub `main` and feature branch at `f94b07d` | PASS |
-| Gitee `main` and feature branch at `f94b07d` | PASS |
+| GitHub `main` and feature branch contain `80a36a7` | PASS |
+| Gitee `main` and feature branch contain `80a36a7` | PASS |
 | Python / Node runtime | PASS: Python 3.11.15 / Node 24.14.0 |
-| Contract tests | PASS: 244 |
+| Contract tests | PASS: 246 |
 | Crawler-lite tests | PASS: 6 |
-| Acceptance tests | PASS: 100 |
+| Acceptance tests | PASS: 101 |
 | Scheduler tests | PASS: 20 |
 | Standalone Worker tests | PASS: 45 |
 | Score tests | PASS: 16 |
@@ -27,15 +27,18 @@ This is the concise current release record. The executable source of truth is `s
 | Provider Gateway tests | PASS: 32 |
 | Provider-native citation benchmark | PASS: 7/7 |
 | Core Skill evaluation | PASS: 33/33 across 11 Skills |
+| Skill Trust Gate | PASS: 11/11 local execution allowed; isolated install passed; native enforcement false |
 | Xinghe adapter tests | PASS: 10 |
 | Web production build | PASS |
 | Real MySQL integration | PASS: 37 passed, 2 explicitly skipped |
 | Alembic offline SQL and real MySQL head | PASS: `20260809_0041`, 105 AIRank tables |
 | Required/Yudao authentication configuration | BLOCKED: local dev auth; production requires enforcement and Yudao |
 
-The wider default regression separately passed `564 passed, 37 skipped`. Skips are explicit environment-dependent gates and are not counted as production evidence.
+The wider default regression separately passed `573 passed, 37 skipped`. Skips are explicit environment-dependent gates and are not counted as production evidence.
 
 The Provider Vault now uses the persistent `20260809_0041` Operation Guard for upsert/revoke. The gate covers encrypted storage, AAD/tamper, independent HMAC domain, cross-key-id replay, RBAC/spoofing, successful replay without a second L3 call, conflicting payload rejection, failed-call replay suppression, concurrent outcome-unknown handling, append-only operation/credential hash chains and real MySQL cleanup. A tenant-scoped read-only admin list/detail now shows reconciliation count, replay status and event hashes without exposing raw secrets, raw idempotency keys or secret payloads. API/Worker/Scheduler were restarted on the new code; health, dev login, Vault portfolio and operation list return HTTP 200, recent logs contain no error markers, and the four local Provider routes remain honestly labeled `environment_legacy` rather than silently converted to tenant Vault credentials.
+
+`airank.skill-trust-report.v1` now audits every internal Skill's dependency references, entrypoint, network/secret/filesystem/subprocess/dynamic-code boundary, admin permission and package roots. The isolated install probe copies only declared AIRank packages and explicitly declared Python dependencies. Real API verification exposed and fixed an initial long-running-runtime failure where repository-local virtualenv `site-packages` was incorrectly removed; after the fix, CLI and authenticated HTTP both report 11/11 local execution allowed and isolated installation passed. Promotion Ledger `1.1.0` binds the trust engine/report hash. All Skills remain `partial`, and the report permanently exposes `claim_level=repository_gate_only` plus `native_runtime_enforcement=false` until a production worker or external installer provides real native enforcement evidence.
 
 ## Active blockers
 
@@ -44,6 +47,7 @@ The Provider Vault now uses the persistent `20260809_0041` Operation Guard for u
 - `YUDAO_PERMISSION_INFO_URL` / `YUDAO_BASE_URL` is not configured, so real Yudao authentication and tenant/user probes are blocked.
 - The Provider vault master key is process-secret-store backed, not cloud KMS/HSM; automatic re-encryption and full-tenant rotation orchestration are not implemented. No real production four-platform credential has completed vault save→rotate→revoke/recover acceptance.
 - Operation Guard currently protects Provider credential writes only. Other high-risk admin writes still require staged migration; `OPERATION_OUTCOME_UNKNOWN` has read-only evidence down-drill but still requires a human decision and is intentionally not auto-retried or force-resolved.
+- Skill Trust Gate is a repository/source/import gate, not an OS sandbox. Production Worker native permission enforcement and an external installer/runtime probe are not implemented, so local `allow` cannot promote a Skill to `ready`.
 - Optional Xinghe Crawler, KB, content, workflow and Hermes endpoints are unconfigured and remain `dev_only` behind AIRank-owned contracts/adapters.
 - Consumer Browser L3 was deliberately not rerun or accepted from this engineering gate. The latest valid generation result remains 0/4; login/human-verification blockers cannot be replaced by Provider API success or L2 page interaction.
 - Kimi's exposed acceptance credential must be rotated before production. DeepSeek `deepseek-v3.2` requires a model-migration gate before its planned retirement.
@@ -51,4 +55,4 @@ The Provider Vault now uses the persistent `20260809_0041` Operation Guard for u
 
 ## Decision
 
-The `20260809_0041` Provider credential Operation Guard slice is engineering-complete and dual-remote synchronized at its verified commit, but AIRank is not authorized to claim production or commercial readiness. Re-run the executable gate in the real production environment after the blockers above are cleared.
+The internal Skill Trust Gate slice is engineering-complete and dual-remote synchronized at its verified commit, while the Provider Operation Guard remains intact. AIRank is not authorized to claim production or commercial readiness. Re-run the executable gate in the real production environment after the blockers above are cleared.

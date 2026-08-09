@@ -135,12 +135,15 @@
 
 123. TokHub 的 reason/idempotency/audit 已进一步改造成 AIRank 自有持久 Operation Guard，并先落在可能计费、涉及密钥的 Provider 凭证 upsert/revoke。Alembic `20260809_0041` 新增操作状态与追加事件两张表，真实库升级为 105 张 AIRank 表；只保存幂等键 SHA-256、请求 hash、状态和安全响应，不保存原 key 或明文凭证。相同请求成功重放只返回原结果，跨 fingerprint key-id 轮换仍稳定，不再执行第二次 L3；同 key 不同载荷、原调用失败后的重试和并发副作用未知均失败关闭。管理员设置页新增租户隔离的只读对账列表/详情，展示待对账计数、重放状态和事件 hash 链，没有“强制成功”入口。真实 MySQL 已验证三次操作各自 `claimed→external_started→succeeded` 的三段 hash 链、未知状态、跨租户阻断、原始 key/secret 零落库和测试数据清零。完整默认回归为 `564 passed, 37 skipped`；严格门禁在双远端提交 `f94b07d` 上通过 244 contract、100 acceptance、37 real integration、Node 24 构建、离线 SQL 和真实 Alembic，最终仍因 dev auth、本地对象存储、生产 Yudao/可选星河服务保持 `BLOCKED / COMMERCIAL NO-GO`。Operation Guard 尚未覆盖全部高风险写接口，未知结果仍需人工决策，因此能力为 `partial`。
 
+124. `yao-meta-skill` 的 trust/permission/package/install 方法已改造成 AIRank 自有 `airank.skill-trust-report.v1`，没有复制上游脚本。11 个 manifest 新增依赖引用、网络/secret/文件/权限和安装包声明；Trust Engine 静态检查 runner/helper 闭包，识别别名网络导入、`os.environ`、文件写、子进程、动态代码和 secret 字面量，并验证依赖/entrypoint。隔离安装只复制声明的 AIRank 包和显式第三方依赖；真实 HTTP 验收曾发现仓库内 `.runtime` site-packages 被误排除，修复后 CLI 与长驻 API 均为 11/11 allow、install passed。管理员 eval 失败关闭为 `SKILL_TRUST_BLOCKED`，Promotion Ledger `1.1.0` 绑定 registry/schema、trust engine/report hash；控制台显示 local allow、安装与 native 边界。完整默认回归为 `573 passed, 37 skipped`；严格门禁在双远端提交 `80a36a7` 上通过 246 contract、101 acceptance、独立 Skill Trust Gate、37 real integration、Node 24 构建和 Alembic。`native_runtime_enforcement=false`，生产 Worker/外部安装器原生强制仍缺，11 个 Skill 仍为 `partial`、0 个可晋级。
+
 ## 验收证据
 
 - `python3 scripts/verify_absorption_matrix.py`：`status=pass`，13 sources / 67 rows / 21 GEO skills。
-- `python3 -m pytest -q`：当前全仓为 `564 passed, 37 skipped`；真实 MySQL、生产 Yudao、客户 Webhook 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。显式真实数据库参数下当前 integration 为 `37 passed, 2 skipped`。
+- `python3 -m pytest -q`：当前全仓为 `573 passed, 37 skipped`；真实 MySQL、生产 Yudao、客户 Webhook 与对象存储用例在普通套件中按环境开关跳过，跳过项不计为通过。显式真实数据库参数下当前 integration 为 `37 passed, 2 skipped`。
 - 严格门禁已对功能提交 `7cd8c1a` 执行：211 个契约、6 个 crawler-lite、85 个验收、15 个 Scheduler、41 个 Worker、16 个评分、48 个证据、23 个安全出站、26 个 Provider Gateway、10 个 Xinghe adapter、7/7 引用基准、30/30 核心 Skill、Node 24 Web 构建、真实 MySQL `30 passed, 2 skipped`、离线 SQL 与真实 Alembic `20260809_0034` 全部通过。报告仍为 `BLOCKED`，并明确保留生产对象存储、真实 Yudao、可选星河服务与 Consumer Browser L3 `0/4` 外部门禁。
 - `python3 scripts/evaluate_core_skills.py`：11 Skill / 33 cases / 33 passed / 0 promotion eligible / 11 retained partial。
+- `python3 scripts/audit_skill_trust.py`：11 Skill / 11 local allow / 0 blocked / isolated install passed；`claim_level=repository_gate_only`、`native_runtime_enforcement=false`。
 - 使用工作区绑定的 Node `24.14.0` 直接执行 TypeScript 与 Vite production build：通过，无运行时版本告警。
 - `cd apps/web && npm audit --audit-level=high`：0 个已知 npm 漏洞。
 - 浏览器：`/login -> /console` 登录通过；13 个控制台路由在 1491×1055 桌面和 390×844 移动端共 26 项检查全部通过，无横向溢出、认证丢失或显式接口失败。证据中心已下钻到一条真实豆包样本，原始回答、双 SHA-256、EvidenceSnapshot、session、证据等级和真实 request ID 均可见；该次较早浏览器批次的任务中心保留了 Kimi 未安全注入时的 3 条失败，后续 12/12 API 批次由数据库与 API 门禁重新验收，不篡改这段历史证据。
@@ -165,7 +168,7 @@
 - 公开来源自动同步浏览器验收：真实登录后在事实库导入客户授权的 `https://example.com/`，启用每天检查；首次 Worker 保存原始 HTML/可见正文双对象和运行元数据，页面显示 `changed`、当前 v2、旧 v1 stale、证据 hash；随后点击“立即检查”，第二次显示 `unchanged` 且版本仍为 v2。1024px 桌面端无页面级横向溢出，console `0 error / 0 warning`；8 条审计、2 个 run/job、2 个来源修订和 4 个对象引用随后精确清理为 0，两个内容文件移入隔离临时目录。
 - Provider 路由控制浏览器复验：本机私密运行时注入后设置页读取 4 条 enabled manifest，模型分别为千问 `qwen3.6-plus`、豆包 `doubao-seed-2-0-lite-260215`、Kimi `kimi-k3`、DeepSeek `deepseek-v3.2`；凭证不进入页面、源码、Git 或文档。该复验只证明本地运行时路由已配置，不替代生产密钥轮换、Provider L3 持续探测、Consumer Web/App 或 DeepSeek 型号迁移门禁。
 - 真实 MinIO integration：`1 passed`；S3 兼容层执行唯一对象写入、逐字节读取、HEAD 元数据核验和删除，探测对象为 0，临时测试桶已清理。该结果证明本地 MinIO 路径可用，不替代生产 HTTPS 对象存储验收。
-- 最新严格上线门禁使用干净且已同步双远端的提交 `f94b07d`：工作树、GitHub/Gitee `main`、diff、运行产物、Python 3.11.15、Node 24.14.0、244 个 contract、6 个 crawler-lite、100 个 acceptance、20 个 scheduler、45 个独立 Worker、16 个 score、48 个 evidence、23 个 outbound security、32 个 Provider Gateway、10 个 Xinghe adapter、7/7 原生引用 benchmark、11 个核心 Skill 33/33、Web production build、真实 MySQL `37 passed, 2 skipped`、离线 SQL 与真实 Alembic `0041` 全部 `PASS`。总状态仍为 `BLOCKED`：当前运行时仍是 disabled/dev 认证与本地对象存储，生产 Yudao permission endpoint 未配置；Provider vault 缺生产 KMS/HSM、自动重加密和真实四平台租户轮换；Operation Guard 尚未覆盖全部高风险写接口；外部 Xinghe 能力仍为 `dev_only`；Consumer Browser L3 保持最近一次有效的 `0/4`，未用 API 或 L2 交互替代；生产目录、客户 Webhook、Publisher 回执和时间窗口证据仍缺。
+- 最新严格上线门禁使用干净且已同步双远端的提交 `80a36a7`：工作树、GitHub/Gitee `main`、diff、运行产物、Python 3.11.15、Node 24.14.0、246 个 contract、6 个 crawler-lite、101 个 acceptance、20 个 scheduler、45 个独立 Worker、16 个 score、48 个 evidence、23 个 outbound security、32 个 Provider Gateway、10 个 Xinghe adapter、7/7 原生引用 benchmark、11 个核心 Skill 33/33、独立 Skill Trust Gate 11/11 与隔离安装、Web production build、真实 MySQL `37 passed, 2 skipped`、离线 SQL 与真实 Alembic `0041` 全部 `PASS`。总状态仍为 `BLOCKED`：当前运行时仍是 disabled/dev 认证与本地对象存储，生产 Yudao permission endpoint 未配置；Provider vault 缺生产 KMS/HSM、自动重加密和真实四平台租户轮换；Operation Guard 尚未覆盖全部高风险写接口；Skill trust 缺生产原生权限强制；外部 Xinghe 能力仍为 `dev_only`；Consumer Browser L3 保持最近一次有效的 `0/4`，未用 API 或 L2 交互替代；生产目录、客户 Webhook、Publisher 回执和时间窗口证据仍缺。
 
 ## 下一实施顺序
 
