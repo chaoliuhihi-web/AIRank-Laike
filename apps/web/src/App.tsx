@@ -134,6 +134,8 @@ import {
   fetchMeasurementQuality,
   fetchProviderReadiness,
   fetchProviderCredentials,
+  fetchProviderCredentialOperation,
+  fetchProviderCredentialOperations,
   fetchProviderRoutes,
   fetchPublishAttempts,
   fetchPublishPackages,
@@ -226,6 +228,8 @@ import {
   type MeasurementQualityReport,
   type ProviderReadiness,
   type ProviderCredentialPortfolio,
+  type ProviderCredentialOperation,
+  type ProviderCredentialOperationList,
   type ProviderCredentialStatus,
   type ProviderRouteStatus,
   type QuestionMapResult,
@@ -6337,7 +6341,9 @@ function SettingsPage() {
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [providerRoutes, setProviderRoutes] = useState<ProviderRouteStatus[]>([]);
   const [credentialPortfolio, setCredentialPortfolio] = useState<ProviderCredentialPortfolio | null>(null);
+  const [credentialOperations, setCredentialOperations] = useState<ProviderCredentialOperationList | null>(null);
   const [credentialLoadError, setCredentialLoadError] = useState<string | null>(null);
+  const [credentialOperationLoadError, setCredentialOperationLoadError] = useState<string | null>(null);
   const [credentialDrafts, setCredentialDrafts] = useState<Record<string, ProviderCredentialDraft>>({});
   const [updatingCredential, setUpdatingCredential] = useState<string | null>(null);
   const [routeLoadError, setRouteLoadError] = useState<string | null>(null);
@@ -6388,13 +6394,26 @@ function SettingsPage() {
     }
   }, []);
 
+  const loadProviderCredentialOperations = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const operations = await fetchProviderCredentialOperations(signal);
+      setCredentialOperations(operations);
+      setCredentialOperationLoadError(null);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setCredentialOperations(null);
+      setCredentialOperationLoadError(error instanceof Error ? error.message : "Provider 凭证操作对账接口不可用");
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
     void loadProviderRoutes(controller.signal);
     void loadProviderCredentials(controller.signal);
+    void loadProviderCredentialOperations(controller.signal);
     return () => controller.abort();
-  }, [loadProviderCredentials, loadProviderRoutes]);
+  }, [loadProviderCredentialOperations, loadProviderCredentials, loadProviderRoutes]);
 
   const applyProviderRoute = async (route: ProviderRouteStatus) => {
     const key = `${route.provider}/${route.route_id}`;
@@ -6451,7 +6470,7 @@ function SettingsPage() {
         confirmBillable: true,
       });
       setCredentialDrafts((current) => ({ ...current, [key]: emptyProviderCredentialDraft() }));
-      await loadProviderCredentials();
+      await Promise.all([loadProviderCredentials(), loadProviderCredentialOperations()]);
       notify({
         title: "凭证已验证并激活",
         desc: `${updated.label} · ${updated.route_id} 已通过 L3 验证并以 v${updated.credential_version} 加密保存。操作回执：${updated.operation_id ?? "未返回"}。`,
@@ -6480,12 +6499,35 @@ function SettingsPage() {
     try {
       const updated = await revokeProviderCredential(credential, reason);
       setCredentialDrafts((current) => ({ ...current, [key]: emptyProviderCredentialDraft() }));
-      await loadProviderCredentials();
+      await Promise.all([loadProviderCredentials(), loadProviderCredentialOperations()]);
       notify({ title: "凭证已撤销", desc: `${credential.label} · ${credential.route_id} 的密文已擦除并停止使用。操作回执：${updated.operation_id ?? "未返回"}。`, tone: "success" });
     } catch (error) {
       notify({ title: "凭证撤销失败", desc: error instanceof Error ? error.message : "请刷新版本后重试。", tone: "danger" });
     } finally {
       setUpdatingCredential(null);
+    }
+  };
+
+  const showCredentialOperation = async (operation: ProviderCredentialOperation) => {
+    try {
+      const detail = await fetchProviderCredentialOperation(operation.operation_id);
+      openPanel({
+        title: `凭证操作对账 · ${detail.state}`,
+        desc: detail.reconciliation_required
+          ? "外部副作用可能已开始但没有可信终态。请刷新当前凭证状态、核对请求审计后再使用新幂等键，系统不会自动重试。"
+          : "该回执只展示服务端持久操作状态和哈希链，不包含凭证明文或原始幂等键。",
+        items: [
+          `操作回执：${detail.operation_id}`,
+          `动作：${detail.operation_type}`,
+          `路由：${detail.provider} / ${detail.route_id}`,
+          `请求 SHA-256：${detail.request_sha256}`,
+          `重放状态：${detail.replay_status}`,
+          `结果凭证：${detail.response_credential_id ?? "无"}${detail.response_credential_version == null ? "" : ` / v${detail.response_credential_version}`}`,
+          ...detail.events.map((event) => `#${event.event_sequence} ${event.event_type} · ${event.to_state} · ${event.event_sha256}`),
+        ],
+      });
+    } catch (error) {
+      notify({ title: "操作回执读取失败", desc: error instanceof Error ? error.message : "请稍后重试。", tone: "danger" });
     }
   };
 
@@ -6664,6 +6706,47 @@ function SettingsPage() {
             })}
           </div>
         )}
+        <div className="provider-credential-operations" data-testid="provider-credential-operations">
+          <div className="provider-route-control-head">
+            <div>
+              <h3>凭证操作对账</h3>
+              <p>只读展示持久操作回执与状态链。未知结果必须人工核对，系统不会自动重复 L3 或密钥写入。</p>
+            </div>
+            <Badge tone={(credentialOperations?.reconciliation_required_count ?? 0) > 0 ? "danger" : "success"}>
+              待对账 {credentialOperations?.reconciliation_required_count ?? 0}
+            </Badge>
+          </div>
+          {credentialOperationLoadError && <DataStateCard title="操作对账不可用" desc={credentialOperationLoadError} tone="danger" />}
+          {!credentialOperationLoadError && credentialOperations?.operations.length === 0 && (
+            <DataStateCard title="暂无凭证操作回执" desc="系统不会生成演示操作记录。完成真实激活、轮换或撤销后才会出现。" tone="warning" />
+          )}
+          {(credentialOperations?.reconciliation_required_count ?? 0) > 0 && (
+            <DataStateCard title="存在结果未知操作" desc="先刷新凭证当前状态并下钻事件链；核对 Provider 请求审计后，才可使用新的幂等键发起明确操作。" tone="danger" />
+          )}
+          {credentialOperations && credentialOperations.operations.length > 0 && (
+            <div className="table-shell">
+              <table>
+                <thead>
+                  <tr><th>操作 / 路由</th><th>状态</th><th>安全结果</th><th>时间</th><th>证据</th></tr>
+                </thead>
+                <tbody>
+                  {credentialOperations.operations.map((operation) => {
+                    const tone: Tone = operation.reconciliation_required || operation.state === "failed" ? "danger" : operation.state === "succeeded" ? "success" : "warning";
+                    return (
+                      <tr key={operation.operation_id}>
+                        <td><strong>{operation.operation_type.endsWith("upsert") ? "激活 / 轮换" : "撤销"}</strong><small>{operation.provider} · {operation.route_id}</small></td>
+                        <td><Badge tone={tone}>{operation.state}</Badge><small>{operation.replay_status}</small></td>
+                        <td><span>{operation.response_credential_id ?? "无终态凭证"}</span><small>{operation.response_credential_version == null ? operation.error_code ?? "等待终态" : `v${operation.response_credential_version} · ${operation.response_status}`}</small></td>
+                        <td><span>{formatDateTime(operation.created_at)}</span><small>{operation.created_by}</small></td>
+                        <td><button className="outline-button" type="button" onClick={() => void showCredentialOperation(operation)}>下钻事件链</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
       <section className="airank-console-card provider-route-control" data-testid="provider-route-control">
         <div className="provider-route-control-head">

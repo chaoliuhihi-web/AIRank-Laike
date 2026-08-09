@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -8,7 +8,7 @@ from threading import Lock
 from typing import Any, Mapping, Optional, Protocol
 from uuid import uuid4
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 
 
 CONTRACT_VERSION = "airank.operation-guard.v1"
@@ -20,6 +20,10 @@ def utc_now() -> datetime:
 
 def database_datetime(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def utc_datetime(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def canonical_json(value: object) -> str:
@@ -54,6 +58,40 @@ class OperationClaim:
     response: Optional[dict[str, object]] = None
 
 
+@dataclass(frozen=True)
+class OperationAuditEvent:
+    event_sequence: int
+    event_type: str
+    from_state: Optional[str]
+    to_state: str
+    request_sha256: str
+    previous_event_sha256: Optional[str]
+    event_sha256: str
+    actor: str
+    trace_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class OperationAuditRecord:
+    operation_id: str
+    tenant_id: str
+    operation_type: str
+    resource_key: str
+    request_sha256: str
+    request_key_id: Optional[str]
+    state: str
+    external_effect_started: bool
+    response: Optional[dict[str, object]]
+    error_code: Optional[str]
+    created_by: str
+    trace_id: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime]
+    events: tuple[OperationAuditEvent, ...] = ()
+
+
 @dataclass
 class _OperationRecord:
     operation_id: str
@@ -74,6 +112,7 @@ class _OperationRecord:
     completed_at: Optional[datetime] = None
     latest_event_sha256: Optional[str] = None
     event_sequence: int = 0
+    events: list[OperationAuditEvent] = field(default_factory=list)
 
 
 class OperationGuard(Protocol):
@@ -110,6 +149,17 @@ class OperationGuard(Protocol):
 
     def fail(self, operation_id: str, error_code: str, actor: str, trace_id: str) -> None: ...
 
+    def list_audits(
+        self,
+        tenant_id: str,
+        *,
+        operation_types: tuple[str, ...],
+        state: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[OperationAuditRecord]: ...
+
+    def get_audit(self, tenant_id: str, operation_id: str) -> Optional[OperationAuditRecord]: ...
+
 
 class InMemoryOperationGuard:
     def __init__(self) -> None:
@@ -138,6 +188,7 @@ class InMemoryOperationGuard:
 
     def _event(self, record: _OperationRecord, event_type: str, from_state: Optional[str], to_state: str, actor: str, trace_id: str, now: datetime) -> None:
         record.event_sequence += 1
+        previous = record.latest_event_sha256
         record.latest_event_sha256 = canonical_sha256(
             {
                 "contract_version": CONTRACT_VERSION,
@@ -147,11 +198,46 @@ class InMemoryOperationGuard:
                 "from_state": from_state,
                 "to_state": to_state,
                 "request_sha256": record.request_sha256,
-                "previous_event_sha256": record.latest_event_sha256,
+                "previous_event_sha256": previous,
                 "actor": actor,
                 "trace_id": trace_id,
                 "created_at": now.isoformat(),
             }
+        )
+        record.events.append(
+            OperationAuditEvent(
+                event_sequence=record.event_sequence,
+                event_type=event_type,
+                from_state=from_state,
+                to_state=to_state,
+                request_sha256=record.request_sha256,
+                previous_event_sha256=previous,
+                event_sha256=record.latest_event_sha256,
+                actor=actor,
+                trace_id=trace_id,
+                created_at=now,
+            )
+        )
+
+    @staticmethod
+    def _audit(record: _OperationRecord, *, include_events: bool) -> OperationAuditRecord:
+        return OperationAuditRecord(
+            operation_id=record.operation_id,
+            tenant_id=record.tenant_id,
+            operation_type=record.operation_type,
+            resource_key=record.resource_key,
+            request_sha256=record.request_sha256,
+            request_key_id=record.request_key_id,
+            state=record.state,
+            external_effect_started=record.external_effect_started,
+            response=dict(record.response) if record.response is not None else None,
+            error_code=record.error_code,
+            created_by=record.created_by,
+            trace_id=record.trace_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            completed_at=record.completed_at,
+            events=tuple(record.events) if include_events else (),
         )
 
     @staticmethod
@@ -241,6 +327,26 @@ class InMemoryOperationGuard:
             record.error_code = error_code
             record.updated_at = now
             record.completed_at = now
+
+    def list_audits(self, tenant_id: str, *, operation_types: tuple[str, ...], state: Optional[str] = None, limit: int = 50) -> list[OperationAuditRecord]:
+        allowed = set(operation_types)
+        with self._lock:
+            records = [
+                record
+                for record in self._by_id.values()
+                if record.tenant_id == tenant_id
+                and record.operation_type in allowed
+                and (state is None or record.state == state)
+            ]
+            records.sort(key=lambda item: (item.created_at, item.operation_id), reverse=True)
+            return [self._audit(record, include_events=False) for record in records[:limit]]
+
+    def get_audit(self, tenant_id: str, operation_id: str) -> Optional[OperationAuditRecord]:
+        with self._lock:
+            record = self._by_id.get(operation_id)
+            if record is None or record.tenant_id != tenant_id:
+                return None
+            return self._audit(record, include_events=True)
 
 
 class MySQLOperationGuard:
@@ -346,3 +452,81 @@ class MySQLOperationGuard:
 
     def fail(self, operation_id: str, error_code: str, actor: str, trace_id: str) -> None:
         self._transition(operation_id, allowed={"claimed", "external_started"}, to_state="failed", event_type="operation_failed", actor=actor, trace_id=trace_id, error_code=error_code)
+
+    @staticmethod
+    def _audit_record(row: Mapping[str, Any], events: tuple[OperationAuditEvent, ...] = ()) -> OperationAuditRecord:
+        response = row["response_json"]
+        if isinstance(response, str):
+            response = json.loads(response)
+        return OperationAuditRecord(
+            operation_id=str(row["id"]),
+            tenant_id=str(row["tenant_id"]),
+            operation_type=str(row["operation_type"]),
+            resource_key=str(row["resource_key"]),
+            request_sha256=str(row["request_sha256"]),
+            request_key_id=str(row["request_key_id"]) if row["request_key_id"] else None,
+            state=str(row["state"]),
+            external_effect_started=bool(row["external_effect_started"]),
+            response=dict(response) if response is not None else None,
+            error_code=str(row["error_code"]) if row["error_code"] else None,
+            created_by=str(row["created_by"]),
+            trace_id=str(row["trace_id"]),
+            created_at=utc_datetime(row["created_at"]),
+            updated_at=utc_datetime(row["updated_at"]),
+            completed_at=utc_datetime(row["completed_at"]) if row["completed_at"] else None,
+            events=events,
+        )
+
+    def list_audits(self, tenant_id: str, *, operation_types: tuple[str, ...], state: Optional[str] = None, limit: int = 50) -> list[OperationAuditRecord]:
+        if not operation_types:
+            return []
+        clauses = ["tenant_id=:tenant_id", "operation_type IN :operation_types"]
+        parameters: dict[str, object] = {
+            "tenant_id": tenant_id,
+            "operation_types": operation_types,
+            "limit": max(1, min(int(limit), 100)),
+        }
+        if state is not None:
+            clauses.append("state=:state")
+            parameters["state"] = state
+        statement = text(
+            "SELECT * FROM airank_operation_guards WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at DESC,id DESC LIMIT :limit"
+        ).bindparams(bindparam("operation_types", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(statement, parameters).mappings().all()
+        return [self._audit_record(row) for row in rows]
+
+    def get_audit(self, tenant_id: str, operation_id: str) -> Optional[OperationAuditRecord]:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT * FROM airank_operation_guards WHERE tenant_id=:tenant_id AND id=:operation_id"),
+                {"tenant_id": tenant_id, "operation_id": operation_id},
+            ).mappings().first()
+            if row is None:
+                return None
+            event_rows = conn.execute(
+                text(
+                    "SELECT * FROM airank_operation_guard_events "
+                    "WHERE tenant_id=:tenant_id AND operation_id=:operation_id "
+                    "ORDER BY event_sequence"
+                ),
+                {"tenant_id": tenant_id, "operation_id": operation_id},
+            ).mappings().all()
+        events = tuple(
+            OperationAuditEvent(
+                event_sequence=int(event["event_sequence"]),
+                event_type=str(event["event_type"]),
+                from_state=str(event["from_state"]) if event["from_state"] else None,
+                to_state=str(event["to_state"]),
+                request_sha256=str(event["request_sha256"]),
+                previous_event_sha256=str(event["previous_event_sha256"]) if event["previous_event_sha256"] else None,
+                event_sha256=str(event["event_sha256"]),
+                actor=str(event["actor"]),
+                trace_id=str(event["trace_id"]),
+                created_at=utc_datetime(event["created_at"]),
+            )
+            for event in event_rows
+        )
+        return self._audit_record(row, events)

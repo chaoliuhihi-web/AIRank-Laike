@@ -43,6 +43,15 @@ AIRANK_PROVIDER_ADMIN_PERMISSION=airank:provider:admin
 
 `airank_operation_guards` 在 L3 调用前先从 `claimed` 进入 `external_started`。如果调用开始后进程中断、响应丢失或状态无法可信收口，后续重放返回 `OPERATION_OUTCOME_UNKNOWN`。此时先刷新凭证列表、检查 Provider 请求审计和操作事件链，再由管理员使用全新幂等键发起明确的新操作；禁止客户端自动重试未知结果。
 
+管理员可通过设置中心“凭证操作对账”或以下只读接口核对，不允许直接篡改终态：
+
+```text
+GET /api/v1/admin/provider-credential-operations?state=external_started&limit=25
+GET /api/v1/admin/provider-credential-operations/{operation_id}
+```
+
+列表返回 `reconciliation_required_count`，详情返回从 claim 到当前状态的事件序号、前序/当前 hash、actor 与 trace。接口不返回原始幂等键、请求载荷、凭证明文、密文或 nonce。跨租户读取返回 404；只有 `airank:provider:admin` 可访问。
+
 ## 撤销与恢复
 
 撤销需要当前版本、理由、显式确认和独立的 `Idempotency-Key`。成功后当前记录保留审计墓碑，但 `ciphertext`、`nonce` 和掩码被擦除；运行时返回 `PROVIDER_CREDENTIAL_REVOKED`，不会使用同一路由的环境凭证。

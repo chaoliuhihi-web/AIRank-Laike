@@ -9,7 +9,7 @@ from threading import Lock
 from typing import Any, Literal, Mapping, Optional, Protocol
 from uuid import uuid4
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -18,6 +18,7 @@ try:
     from .operation_guard import (
         InMemoryOperationGuard,
         MySQLOperationGuard,
+        OperationAuditRecord,
         OperationGuard,
         OperationGuardError,
     )
@@ -25,6 +26,7 @@ except ImportError:  # pragma: no cover - direct module execution compatibility
     from operation_guard import (  # type: ignore[no-redef]
         InMemoryOperationGuard,
         MySQLOperationGuard,
+        OperationAuditRecord,
         OperationGuard,
         OperationGuardError,
     )
@@ -46,6 +48,11 @@ from airank_provider_gateway import (
 router = APIRouter(prefix="/api/v1", tags=["provider-credentials"])
 CONTRACT_VERSION = "airank.provider-credential-vault.v1"
 KEYRING_CONTRACT_VERSION = "airank.provider-credential-keyring.v1"
+OPERATION_CONTRACT_VERSION = "airank.operation-guard.v1"
+PROVIDER_CREDENTIAL_OPERATION_TYPES = (
+    "provider_credential.upsert",
+    "provider_credential.revoke",
+)
 
 
 def utc_now() -> datetime:
@@ -182,6 +189,64 @@ class ProviderCredentialResponse(BaseModel):
 
 class ProviderCredentialPortfolioResponse(BaseModel):
     data: ProviderCredentialPortfolioData
+    meta: dict[str, str]
+
+
+class OperationGuardEventData(BaseModel):
+    event_sequence: int
+    event_type: str
+    from_state: Optional[str] = None
+    to_state: str
+    request_sha256: str
+    previous_event_sha256: Optional[str] = None
+    event_sha256: str
+    actor: str
+    trace_id: str
+    created_at: datetime
+
+
+class ProviderCredentialOperationData(BaseModel):
+    contract_version: Literal["airank.operation-guard.v1"] = OPERATION_CONTRACT_VERSION
+    operation_id: str
+    operation_type: Literal["provider_credential.upsert", "provider_credential.revoke"]
+    provider: str
+    route_id: str
+    state: Literal["claimed", "external_started", "succeeded", "failed"]
+    external_effect_started: bool
+    request_sha256: str
+    request_key_id: Optional[str] = None
+    error_code: Optional[str] = None
+    created_by: str
+    trace_id: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    reconciliation_required: bool
+    replay_status: Literal[
+        "available",
+        "in_progress",
+        "forbidden_unknown",
+        "forbidden_failed",
+    ]
+    response_credential_id: Optional[str] = None
+    response_credential_version: Optional[int] = None
+    response_status: Optional[str] = None
+    events: list[OperationGuardEventData] = Field(default_factory=list)
+
+
+class ProviderCredentialOperationListData(BaseModel):
+    contract_version: Literal["airank.operation-guard.v1"] = OPERATION_CONTRACT_VERSION
+    operations: list[ProviderCredentialOperationData]
+    reconciliation_required_count: int
+
+
+class ProviderCredentialOperationResponse(BaseModel):
+    data: ProviderCredentialOperationData
+    meta: dict[str, str]
+
+
+class ProviderCredentialOperationListResponse(BaseModel):
+    data: ProviderCredentialOperationListData
     meta: dict[str, str]
 
 
@@ -324,6 +389,14 @@ class ProviderCredentialVault(Protocol):
         idempotency_key: str,
     ) -> ProviderCredentialData: ...
 
+    def list_operations(
+        self, tenant_id: str, *, state: Optional[str] = None, limit: int = 50
+    ) -> ProviderCredentialOperationListData: ...
+
+    def get_operation(
+        self, tenant_id: str, operation_id: str
+    ) -> Optional[ProviderCredentialOperationData]: ...
+
     def resolve_settings(
         self,
         provider: str,
@@ -363,6 +436,68 @@ def _replayed_credential(claim_response: Optional[dict[str, object]], operation_
         )
     return ProviderCredentialData.model_validate(claim_response).model_copy(
         update={"operation_id": operation_id, "idempotent_replay": True}
+    )
+
+
+def _operation_data(record: OperationAuditRecord) -> ProviderCredentialOperationData:
+    provider, separator, route_id = record.resource_key.partition("/")
+    if not separator or not provider or not route_id:
+        raise CredentialVaultError(
+            "OPERATION_STATE_CONFLICT",
+            "provider credential operation resource is invalid",
+        )
+    replay_status = {
+        "succeeded": "available",
+        "claimed": "in_progress",
+        "external_started": "forbidden_unknown",
+        "failed": "forbidden_failed",
+    }.get(record.state)
+    if replay_status is None:
+        raise CredentialVaultError(
+            "OPERATION_STATE_CONFLICT",
+            "provider credential operation state is invalid",
+        )
+    response = record.response or {}
+    response_version = response.get("credential_version")
+    return ProviderCredentialOperationData(
+        operation_id=record.operation_id,
+        operation_type=record.operation_type,  # type: ignore[arg-type]
+        provider=provider,
+        route_id=route_id,
+        state=record.state,  # type: ignore[arg-type]
+        external_effect_started=record.external_effect_started,
+        request_sha256=record.request_sha256,
+        request_key_id=record.request_key_id,
+        error_code=record.error_code,
+        created_by=record.created_by,
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        completed_at=record.completed_at,
+        reconciliation_required=record.state == "external_started",
+        replay_status=replay_status,  # type: ignore[arg-type]
+        response_credential_id=(
+            str(response["credential_id"]) if response.get("credential_id") else None
+        ),
+        response_credential_version=(
+            int(response_version) if response_version is not None else None
+        ),
+        response_status=str(response["status"]) if response.get("status") else None,
+        events=[
+            OperationGuardEventData(
+                event_sequence=event.event_sequence,
+                event_type=event.event_type,
+                from_state=event.from_state,
+                to_state=event.to_state,
+                request_sha256=event.request_sha256,
+                previous_event_sha256=event.previous_event_sha256,
+                event_sha256=event.event_sha256,
+                actor=event.actor,
+                trace_id=event.trace_id,
+                created_at=event.created_at,
+            )
+            for event in record.events
+        ],
     )
 
 
@@ -448,6 +583,27 @@ class InMemoryProviderCredentialVault:
             credentials=records,
             known_limitations=([] if self.keyring is not None else ["credential_keyring_unavailable"]),
         )
+
+    def list_operations(self, tenant_id: str, *, state: Optional[str] = None, limit: int = 50) -> ProviderCredentialOperationListData:
+        records = self.operation_guard.list_audits(
+            tenant_id,
+            operation_types=PROVIDER_CREDENTIAL_OPERATION_TYPES,
+            state=state,
+            limit=limit,
+        )
+        operations = [_operation_data(record) for record in records]
+        return ProviderCredentialOperationListData(
+            operations=operations,
+            reconciliation_required_count=sum(
+                1 for operation in operations if operation.reconciliation_required
+            ),
+        )
+
+    def get_operation(self, tenant_id: str, operation_id: str) -> Optional[ProviderCredentialOperationData]:
+        record = self.operation_guard.get_audit(tenant_id, operation_id)
+        if record is None or record.operation_type not in PROVIDER_CREDENTIAL_OPERATION_TYPES:
+            return None
+        return _operation_data(record)
 
     def upsert(self, tenant_id: str, provider: str, route_id: str, payload: CredentialUpsertRequest, actor: str, trace_id: str, idempotency_key: str) -> ProviderCredentialData:
         if self.keyring is None:
@@ -1033,7 +1189,7 @@ def get_provider_credential_vault() -> ProviderCredentialVault:
 
 
 def raise_vault_error(exc: CredentialVaultError) -> None:
-    if exc.code in {"PROVIDER_NOT_SUPPORTED", "PROVIDER_ROUTE_NOT_FOUND", "CREDENTIAL_NOT_FOUND"}:
+    if exc.code in {"PROVIDER_NOT_SUPPORTED", "PROVIDER_ROUTE_NOT_FOUND", "CREDENTIAL_NOT_FOUND", "OPERATION_NOT_FOUND"}:
         status = 404
     elif exc.code in {
         "STATE_VERSION_CONFLICT",
@@ -1072,6 +1228,47 @@ def list_provider_credentials(tenant_id: str = Header(default="tenant_demo", ali
     except CredentialVaultError as exc:
         raise_vault_error(exc)
     return ProviderCredentialPortfolioResponse(data=data, meta=response_meta(trace_id))
+
+
+@router.get(
+    "/admin/provider-credential-operations",
+    response_model=ProviderCredentialOperationListResponse,
+)
+def list_provider_credential_operations(
+    state: Optional[Literal["claimed", "external_started", "succeeded", "failed"]] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias="X-AIRank-Trace-Id"),
+    permission_header: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> ProviderCredentialOperationListResponse:
+    require_provider_admin(permission_header)
+    try:
+        data = get_provider_credential_vault().list_operations(
+            tenant_id, state=state, limit=limit
+        )
+    except CredentialVaultError as exc:
+        raise_vault_error(exc)
+    return ProviderCredentialOperationListResponse(data=data, meta=response_meta(trace_id))
+
+
+@router.get(
+    "/admin/provider-credential-operations/{operation_id}",
+    response_model=ProviderCredentialOperationResponse,
+)
+def get_provider_credential_operation(
+    operation_id: str,
+    tenant_id: str = Header(default="tenant_demo", alias="tenant-id"),
+    trace_id: Optional[str] = Header(default=None, alias="X-AIRank-Trace-Id"),
+    permission_header: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
+) -> ProviderCredentialOperationResponse:
+    require_provider_admin(permission_header)
+    try:
+        data = get_provider_credential_vault().get_operation(tenant_id, operation_id)
+        if data is None:
+            raise CredentialVaultError("OPERATION_NOT_FOUND", "operation was not found")
+    except CredentialVaultError as exc:
+        raise_vault_error(exc)
+    return ProviderCredentialOperationResponse(data=data, meta=response_meta(trace_id))
 
 
 @router.put("/admin/provider-credentials/{provider}/{route_id}", response_model=ProviderCredentialResponse)

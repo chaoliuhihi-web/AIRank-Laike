@@ -268,6 +268,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "OPERATION_OUTCOME_UNKNOWN": (409, "Operation outcome requires manual reconciliation"),
     "OPERATION_STATE_CONFLICT": (409, "Operation state transition is invalid"),
     "OPERATION_PREVIOUSLY_FAILED": (409, "Operation previously failed and cannot be replayed"),
+    "OPERATION_NOT_FOUND": (404, "Operation was not found"),
     "YUDAO_MODEL_RESOLVE_FAILED": (502, "Yudao model resolution failed"),
     "XINGHE_CRAWLER_FAILED": (502, "Xinghe crawler failed"),
     "XINGHE_KB_FAILED": (502, "Xinghe KB failed"),

@@ -63,3 +63,19 @@ def test_provider_credential_operation_guard_is_persistent_and_never_stores_raw_
     assert "idempotent_replay" in response_schema
     assert '"Idempotency-Key"' in api_client
     assert "providerCredentialIdempotencyKey" in api_client
+
+
+def test_operation_reconciliation_contract_is_read_only_tenant_admin_evidence() -> None:
+    implementation = read("apps/api/provider_credentials.py")
+    detail_schema = read("packages/contracts/provider_credential_operation_response.schema.json")
+    list_schema = read("packages/contracts/provider_credential_operation_list_response.schema.json")
+    console = read("apps/web/src/App.tsx")
+
+    assert '"/admin/provider-credential-operations"' in implementation
+    assert '"/admin/provider-credential-operations/{operation_id}"' in implementation
+    assert "require_provider_admin(permission_header)" in implementation
+    assert "reconciliation_required" in detail_schema
+    assert "forbidden_unknown" in detail_schema
+    assert "idempotency_key_sha256" not in detail_schema
+    assert "idempotency_key_sha256" not in list_schema
+    assert "凭证操作对账" in console

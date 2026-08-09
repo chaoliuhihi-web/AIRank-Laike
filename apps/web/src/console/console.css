@@ -5269,6 +5269,27 @@ button:disabled {
   color: var(--console-danger);
 }
 
+.provider-credential-operations {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--console-border);
+}
+
+.provider-credential-operations h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.provider-credential-operations td > small,
+.provider-credential-operations td > span {
+  display: block;
+  margin-top: 4px;
+}
+
+.provider-credential-operations td > small {
+  color: var(--console-text-muted);
+}
+
 .provider-route-control-head {
   display: flex;
   align-items: flex-start;

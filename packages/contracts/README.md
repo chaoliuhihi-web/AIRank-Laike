@@ -13,6 +13,8 @@ M1 已冻结的 API schema：
 - `provider_credential_revoke_request.schema.json`
 - `provider_credential_response.schema.json`
 - `provider_credential_portfolio_response.schema.json`
+- `provider_credential_operation_response.schema.json`
+- `provider_credential_operation_list_response.schema.json`
 - `auth_login_request.schema.json`
 - `auth_login_response.schema.json`
 - `console_action_request.schema.json`

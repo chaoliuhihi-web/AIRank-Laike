@@ -24,8 +24,11 @@ def load_schema(name: str) -> dict:
 
 def validate_schema(name: str, payload: object) -> None:
     response_schema = load_schema("provider_credential_response.schema.json")
-    registry = Registry().with_resource(
-        response_schema["$id"], Resource.from_contents(response_schema)
+    operation_schema = load_schema("provider_credential_operation_response.schema.json")
+    registry = (
+        Registry()
+        .with_resource(response_schema["$id"], Resource.from_contents(response_schema))
+        .with_resource(operation_schema["$id"], Resource.from_contents(operation_schema))
     )
     contract = load_schema(name)
     Draft202012Validator.check_schema(contract)
@@ -228,6 +231,15 @@ def test_vault_request_contracts_and_required_auth_are_strict(monkeypatch) -> No
     )
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
+    forbidden_operations = client.get(
+        "/api/v1/admin/provider-credential-operations",
+        headers={
+            "tenant-id": "tenant_vault",
+            "Authorization": f"Bearer {ordinary_token}",
+        },
+    )
+    assert forbidden_operations.status_code == 403
+    assert forbidden_operations.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
 
     monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:admin")
     admin_token = client.post(
@@ -253,6 +265,15 @@ def test_vault_request_contracts_and_required_auth_are_strict(monkeypatch) -> No
     assert allowed.status_code == 200
     assert allowed.json()["data"]["created_by"] == "provider-admin"
     assert secret not in json.dumps(allowed.json(), ensure_ascii=False)
+    allowed_operations = client.get(
+        "/api/v1/admin/provider-credential-operations",
+        headers={
+            "tenant-id": "tenant_vault",
+            "Authorization": f"Bearer {admin_token}",
+        },
+    )
+    assert allowed_operations.status_code == 200
+    assert len(allowed_operations.json()["data"]["operations"]) == 1
 
 
 def test_vault_rejects_unchanged_secret_after_real_verification() -> None:
@@ -424,3 +445,73 @@ def test_provider_credential_writes_require_idempotency_header(monkeypatch) -> N
         },
     )
     assert response.status_code == 422
+
+
+def test_operation_audit_list_and_detail_are_tenant_scoped_and_schema_valid(monkeypatch) -> None:
+    repository = vault(CountingCredential())
+    created = repository.upsert(
+        "tenant_vault",
+        "qianwen",
+        "qianwen:default",
+        request("sk-operation-audit-private-value", 0),
+        "audit-admin",
+        "trc_operation_audit",
+        "operation-audit-upsert-key",
+    )
+    monkeypatch.setattr(provider_credentials, "get_provider_credential_vault", lambda: repository)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
+    client = TestClient(api_main.app)
+
+    listed = client.get(
+        "/api/v1/admin/provider-credential-operations",
+        headers={"tenant-id": "tenant_vault"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"]["reconciliation_required_count"] == 0
+    assert len(listed.json()["data"]["operations"]) == 1
+    assert listed.json()["data"]["operations"][0]["events"] == []
+    validate_schema("provider_credential_operation_list_response.schema.json", listed.json())
+
+    detail = client.get(
+        f"/api/v1/admin/provider-credential-operations/{created.operation_id}",
+        headers={"tenant-id": "tenant_vault"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["data"]["replay_status"] == "available"
+    assert detail.json()["data"]["response_credential_id"] == created.credential_id
+    assert [event["event_sequence"] for event in detail.json()["data"]["events"]] == [1, 2, 3]
+    validate_schema("provider_credential_operation_response.schema.json", detail.json())
+
+    cross_tenant = client.get(
+        f"/api/v1/admin/provider-credential-operations/{created.operation_id}",
+        headers={"tenant-id": "tenant_other"},
+    )
+    assert cross_tenant.status_code == 404
+    assert cross_tenant.json()["error"]["code"] == "OPERATION_NOT_FOUND"
+
+
+def test_operation_audit_marks_external_started_as_reconciliation_required() -> None:
+    repository = vault()
+    guard = repository.operation_guard
+    claim = guard.claim(
+        tenant_id="tenant_vault",
+        operation_type="provider_credential.upsert",
+        resource_key="qianwen/qianwen:default",
+        idempotency_key="unknown-outcome-operation-key",
+        request_sha256="a" * 64,
+        request_key_id="fp-v1",
+        actor="audit-admin",
+        trace_id="trc_unknown",
+    )
+    guard.mark_external_started(claim.operation_id, "audit-admin", "trc_unknown")
+
+    listed = repository.list_operations("tenant_vault", state="external_started")
+    assert listed.reconciliation_required_count == 1
+    assert listed.operations[0].reconciliation_required is True
+    assert listed.operations[0].replay_status == "forbidden_unknown"
+    detail = repository.get_operation("tenant_vault", claim.operation_id)
+    assert detail is not None
+    assert [event.event_type for event in detail.events] == [
+        "operation_claimed",
+        "external_effect_started",
+    ]

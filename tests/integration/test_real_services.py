@@ -516,6 +516,31 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
             "integration-credential-revoke-2",
         )
 
+        unknown_claim = repository.operation_guard.claim(
+            tenant_id=tenant_id,
+            operation_type="provider_credential.upsert",
+            resource_key="qianwen/qianwen:default",
+            idempotency_key="integration-credential-unknown-outcome",
+            request_sha256="c" * 64,
+            request_key_id="fp-it-v1",
+            actor="integration-admin",
+            trace_id="trc_credential_unknown",
+        )
+        repository.operation_guard.mark_external_started(
+            unknown_claim.operation_id,
+            "integration-admin",
+            "trc_credential_unknown",
+        )
+        unknown_operations = repository.list_operations(
+            tenant_id, state="external_started"
+        )
+        assert unknown_operations.reconciliation_required_count == 1
+        assert unknown_operations.operations[0].operation_id == unknown_claim.operation_id
+        unknown_detail = repository.get_operation(tenant_id, unknown_claim.operation_id)
+        assert unknown_detail is not None
+        assert [event.event_sequence for event in unknown_detail.events] == [1, 2]
+        assert repository.get_operation("tenant_other", unknown_claim.operation_id) is None
+
         with engine.connect() as conn:
             credentials = conn.execute(
                 text(
@@ -562,17 +587,24 @@ def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() 
         assert "integration-credential-upsert-1" not in serialized_rows
         assert "integration-credential-upsert-2" not in serialized_rows
         assert "integration-credential-revoke-2" not in serialized_rows
+        assert "integration-credential-unknown-outcome" not in serialized_rows
         assert [row["event_sequence"] for row in events] == [1, 2, 3, 4]
         assert events[0]["previous_event_sha256"] is None
         for previous, current in zip(events, events[1:]):
             assert current["previous_event_sha256"] == previous["event_sha256"]
-        assert len(operations) == 3
-        assert all(row["state"] == "succeeded" for row in operations)
+        assert len(operations) == 4
+        assert sorted(row["state"] for row in operations) == [
+            "external_started",
+            "succeeded",
+            "succeeded",
+            "succeeded",
+        ]
         for operation in operations:
             chain = [
                 row for row in operation_events if row["operation_id"] == operation["id"]
             ]
-            assert [row["event_sequence"] for row in chain] == [1, 2, 3]
+            expected_sequence = [1, 2] if operation["state"] == "external_started" else [1, 2, 3]
+            assert [row["event_sequence"] for row in chain] == expected_sequence
             assert chain[0]["previous_event_sha256"] is None
             for previous, current in zip(chain, chain[1:]):
                 assert current["previous_event_sha256"] == previous["event_sha256"]

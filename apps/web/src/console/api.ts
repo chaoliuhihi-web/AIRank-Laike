@@ -1798,6 +1798,49 @@ export type ProviderCredentialPortfolio = {
   known_limitations: string[];
 };
 
+export type ProviderCredentialOperationEvent = {
+  event_sequence: number;
+  event_type: string;
+  from_state: string | null;
+  to_state: "claimed" | "external_started" | "succeeded" | "failed";
+  request_sha256: string;
+  previous_event_sha256: string | null;
+  event_sha256: string;
+  actor: string;
+  trace_id: string;
+  created_at: string;
+};
+
+export type ProviderCredentialOperation = {
+  contract_version: "airank.operation-guard.v1";
+  operation_id: string;
+  operation_type: "provider_credential.upsert" | "provider_credential.revoke";
+  provider: "doubao" | "qianwen" | "kimi" | "deepseek";
+  route_id: string;
+  state: "claimed" | "external_started" | "succeeded" | "failed";
+  external_effect_started: boolean;
+  request_sha256: string;
+  request_key_id: string | null;
+  error_code: string | null;
+  created_by: string;
+  trace_id: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  reconciliation_required: boolean;
+  replay_status: "available" | "in_progress" | "forbidden_unknown" | "forbidden_failed";
+  response_credential_id: string | null;
+  response_credential_version: number | null;
+  response_status: string | null;
+  events: ProviderCredentialOperationEvent[];
+};
+
+export type ProviderCredentialOperationList = {
+  contract_version: "airank.operation-guard.v1";
+  operations: ProviderCredentialOperation[];
+  reconciliation_required_count: number;
+};
+
 export type InternalSkill = {
   skill_id: string;
   version: string;
@@ -3883,6 +3926,25 @@ export function fetchProviderCredentials(signal?: AbortSignal): Promise<Provider
   return fetchData(
     "/api/v1/admin/provider-credentials",
     "trc_web_provider_credentials",
+    signal,
+  );
+}
+
+export function fetchProviderCredentialOperations(signal?: AbortSignal): Promise<ProviderCredentialOperationList> {
+  return fetchData(
+    "/api/v1/admin/provider-credential-operations?limit=25",
+    "trc_web_provider_credential_operations",
+    signal,
+  );
+}
+
+export function fetchProviderCredentialOperation(
+  operationId: string,
+  signal?: AbortSignal,
+): Promise<ProviderCredentialOperation> {
+  return fetchData(
+    `/api/v1/admin/provider-credential-operations/${encodeURIComponent(operationId)}`,
+    "trc_web_provider_credential_operation_detail",
     signal,
   );
 }
