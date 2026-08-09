@@ -412,6 +412,8 @@ def call_api_provider_for_brand_rank(
             "answer_sha256": sha256_text(parsed["answer_text"]),
             "answer_parse_mode": parsed["parse_mode"],
             "model_name": api_result.model,
+            "search_configured": api_result.request_contract.get("request_kind")
+            in {"chat_completions_search", "responses_web_search"},
             "search_requested": api_result.web_search_requested,
             "search_used": api_result.web_search_used,
             "search_evidence": api_result.search_evidence,

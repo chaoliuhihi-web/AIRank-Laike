@@ -263,6 +263,7 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
                 endpoint_host="dashscope.example.com",
                 configuration_fingerprint="a" * 64,
                 route_id="qianwen-primary",
+                request_contract={"request_kind": "responses_web_search"},
                 search_evidence="airank.provider-search-evidence.v1:explicit_tool_call",
                 citation_parser_version="airank.provider-native-citation.v2",
             )
@@ -287,6 +288,7 @@ def test_api_provider_scan_preserves_provider_evidence(monkeypatch: pytest.Monke
     assert result.native_citations[0]["source_path"] == "/output/0/action/sources/0"
     assert result.native_citations[0]["source_id"] == "source_a"
     assert result.raw_metadata["evidence_level"] == "provider_api_with_web_search"
+    assert result.raw_metadata["search_configured"] is True
     assert result.raw_metadata["search_requested"] is True
     assert result.raw_metadata["search_used"] is True
     assert result.raw_metadata["provider_raw_response"] == {"id": "request_real_1"}

@@ -437,6 +437,14 @@ class MySQLRetestRepository:
                 row.get("provider_request_metadata_json"), {}
             )
             if isinstance(provider_request_metadata, dict):
+                request_contract = provider_request_metadata.get("request_contract")
+                if isinstance(request_contract, dict):
+                    row["search_configured"] = request_contract.get("request_kind") in {
+                        "chat_completions_search",
+                        "responses_web_search",
+                    }
+                elif isinstance(provider_request_metadata.get("search_configured"), bool):
+                    row["search_configured"] = provider_request_metadata.get("search_configured")
                 row["search_requested"] = provider_request_metadata.get("search_requested")
                 row["search_used"] = provider_request_metadata.get("search_used")
             citation_bundle = citation_bundles.get(snapshot_id)
@@ -463,6 +471,9 @@ class MySQLRetestRepository:
 
 
 def _configured_search_enabled(row: dict[str, Any]) -> bool | None:
+    configured = row.get("search_configured")
+    if isinstance(configured, bool):
+        return configured
     requested = row.get("search_requested")
     if isinstance(requested, bool):
         return requested

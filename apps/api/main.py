@@ -4857,10 +4857,10 @@ def complete_mysql_real_brand_scan(
                     "mention_class": result.mention_class,
                     "target_entity_mentions_json": json.dumps(result.target_entity_mentions, ensure_ascii=False),
                     "model_name": result.raw_metadata.get("model_name"),
-                    # ``search_enabled`` is the immutable request configuration.
-                    # Whether the provider actually invoked search is an outcome
-                    # and remains separately preserved in the request audit.
-                    "search_enabled": result.raw_metadata.get("search_requested"),
+                    # ``search_enabled`` is the planned route configuration.
+                    # Fallback execution and actual tool use remain separate
+                    # immutable outcomes in the Provider request audit.
+                    "search_enabled": result.raw_metadata.get("search_configured"),
                     "competitor_mentions_json": json.dumps(result.competitor_mentions, ensure_ascii=False),
                     "sentiment": result.sentiment,
                     "confidence": result.confidence,
@@ -4998,6 +4998,7 @@ def complete_mysql_real_brand_scan(
                         "metadata_json": json.dumps(
                             {
                                 "search_requested": result.raw_metadata.get("search_requested"),
+                                "search_configured": result.raw_metadata.get("search_configured"),
                                 "search_used": result.raw_metadata.get("search_used"),
                                 "search_evidence": result.raw_metadata.get("search_evidence"),
                                 "citation_parser_version": result.raw_metadata.get("citation_parser_version"),

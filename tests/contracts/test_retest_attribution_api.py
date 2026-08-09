@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_quality_groups_on_search_request_configuration_not_provider_tool_outcome() -> None:
     assert retest_routes._configured_search_enabled(
-        {"search_requested": True, "search_used": None, "search_enabled": None}
+        {"search_configured": True, "search_requested": False, "search_used": False, "search_enabled": None}
     ) is True
     assert retest_routes._configured_search_enabled(
         {"search_requested": True, "search_used": False, "search_enabled": False}
