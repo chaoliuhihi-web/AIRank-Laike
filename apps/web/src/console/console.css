@@ -4292,6 +4292,12 @@ button:disabled {
   opacity: 0.6;
 }
 
+.question-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .question-archive-button {
   border-color: #e4c2bd;
   background: #fff7f5;

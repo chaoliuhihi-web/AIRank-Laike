@@ -1604,7 +1604,7 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
                 <span>有效样本<strong>{providerCompleted} / {providerTasks.length || "—"}</strong></span>
                 <span>失败样本<strong>{providerFailed}</strong></span>
                 <span>证据等级<strong>{providerTasks[0]?.evidence_level === "provider_api" ? "平台 API 证据" : providerTasks[0]?.evidence_level === "consumer_web" ? "网页采集证据" : "等待样本"}</strong></span>
-                <span>最近完成<strong>{formatDateTime(providerTasks.find((task) => task.finished_at)?.finished_at || item.checked_at)}</strong></span>
+                <span>最近样本<strong>{formatDateTime(providerTasks.find((task) => task.finished_at)?.finished_at)}</strong></span>
                 <span>状态说明<strong>{item.status === "ready" ? "已通过平台可用门禁" : item.reason || "该平台当前不可用"}</strong></span>
               </div>
             </article>
@@ -4972,7 +4972,10 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                     <td>
                       <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{questionStatusLabels[row.status]}</Badge>
                       {row.status === "suggested" ? (
-                        <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "confirmed")}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
+                        <div className="question-review-actions">
+                          <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "confirmed")}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
+                          <button className="question-review-button question-archive-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "archived")}>不采用</button>
+                        </div>
                       ) : row.status === "confirmed" ? (
                         <button className="question-review-button question-archive-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "archived")}>{reviewingQuestionId === row.question_id ? "提交中…" : "归档并移出后续扫描"}</button>
                       ) : <small>已移出后续扫描，历史扫描与问题版本继续保留</small>}
