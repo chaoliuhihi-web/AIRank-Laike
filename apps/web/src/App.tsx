@@ -1354,17 +1354,20 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div className="provider-avatar">{item.label.slice(0, 1)}</div>
             <h3>{item.label}</h3>
             <div className="provider-metrics">
-              <Badge tone={item.status === "ready" ? "success" : "danger"}>{item.status}</Badge>
-              <span>采集模式<strong>{readiness?.mode ?? "unknown"}</strong></span>
+              <Badge tone={item.status === "ready" ? "success" : "danger"}>{item.status === "ready" ? "已就绪" : "已阻断"}</Badge>
+              <span>采集模式<strong>{readiness?.mode === "api" ? "API" : readiness?.mode === "browser" ? "网页采集" : "未确认"}</strong></span>
               <span>探测层级<strong>{item.probe_level === "l3_generation" ? "L3 真实生成" : "L2 页面交互"}</strong></span>
               <span>生成验证<strong>{item.generation_verified ? "已通过" : "未通过"}</strong></span>
+              <span>状态来源<strong>{item.status_source === "persisted_l3_probe" ? "最近一次已存证 L3 探测" : item.status_source === "runtime_configuration" ? "运行时配置" : "本次实时探测"}</strong></span>
+              <span>探测时间<strong>{formatDateTime(item.checked_at)}</strong></span>
+              {item.model && <span>模型<strong>{item.model}</strong></span>}
               <span>状态说明<strong>{item.reason || item.blocker_code || "探测通过"}</strong></span>
             </div>
           </article>
         ))}
       </section>
       {loadError && <DataStateCard title="Provider 健康接口不可用" desc={loadError} tone="danger" />}
-      {!readiness && !loadError && <DataStateCard title="正在读取 Provider 状态" desc="等待真实探测结果。" tone="primary" />}
+      {!readiness && !loadError && <DataStateCard title="正在读取 Provider 状态" desc="读取最近一次已存证的 L3 真实生成结果，不会在页面加载时重复发起计费探测。" tone="primary" />}
       <section className="metric-grid">
         {overview.metricCards.map((item) => <MetricCard key={item.label} item={item} />)}
       </section>
@@ -6692,7 +6695,9 @@ function SettingsPage() {
   const { project } = overview;
   const { notify, openPanel } = useActionFeedback();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
+  const [readinessLoadError, setReadinessLoadError] = useState<string | null>(null);
   const [providerRoutes, setProviderRoutes] = useState<ProviderRouteStatus[]>([]);
+  const [providerRoutesLoaded, setProviderRoutesLoaded] = useState(false);
   const [credentialPortfolio, setCredentialPortfolio] = useState<ProviderCredentialPortfolio | null>(null);
   const [credentialOperations, setCredentialOperations] = useState<ProviderCredentialOperationList | null>(null);
   const [credentialLoadError, setCredentialLoadError] = useState<string | null>(null);
@@ -6710,6 +6715,7 @@ function SettingsPage() {
   const [usageCostFilter, setUsageCostFilter] = useState<ProviderUsagePrecision | "all">("all");
   const [usageLedgerError, setUsageLedgerError] = useState<string | null>(null);
   const [providerPrices, setProviderPrices] = useState<ProviderPriceVersion[]>([]);
+  const [providerPricesLoaded, setProviderPricesLoaded] = useState(false);
   const [providerPriceError, setProviderPriceError] = useState<string | null>(null);
   const [creatingPrice, setCreatingPrice] = useState(false);
   const [priceDraft, setPriceDraft] = useState<ProviderPriceDraft>({
@@ -6744,6 +6750,8 @@ function SettingsPage() {
       if (signal?.aborted) return;
       setProviderRoutes([]);
       setRouteLoadError(error instanceof Error ? error.message : "Provider 路由控制接口不可用");
+    } finally {
+      if (!signal?.aborted) setProviderRoutesLoaded(true);
     }
   }, []);
 
@@ -6809,12 +6817,23 @@ function SettingsPage() {
       if (signal?.aborted) return;
       setProviderPrices([]);
       setProviderPriceError(error instanceof Error ? error.message : "Provider 价格目录不可用");
+    } finally {
+      if (!signal?.aborted) setProviderPricesLoaded(true);
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
+    fetchProviderReadiness(controller.signal)
+      .then((data) => {
+        setReadiness(data);
+        setReadinessLoadError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setReadiness(null);
+        setReadinessLoadError(error instanceof Error ? error.message : "Provider 健康状态不可用");
+      });
     void loadProviderRoutes(controller.signal);
     void loadProviderMigrations(controller.signal);
     void loadProviderCredentials(controller.signal);
@@ -7087,7 +7106,9 @@ function SettingsPage() {
               items: ["L1 网络", "L2 鉴权与模型", "L3 真实生成", "API/Web/App 分开标记"],
             })
           }
-          rows={(readiness?.providers ?? []).map((item) => [item.label, `${item.status}${item.reason ? ` · ${item.reason}` : ""}`] as [string, string])}
+          rows={readiness
+            ? readiness.providers.map((item) => [item.label, `${item.status === "ready" ? "已就绪" : "已阻断"}${item.reason ? ` · ${item.reason}` : ""}`] as [string, string])
+            : [["状态", readinessLoadError ?? "正在读取最近一次已存证探测"]]}
         />
         <SettingsSection
           title="能力状态"
@@ -7108,8 +7129,8 @@ function SettingsPage() {
             <h2>Provider 凭证保险库</h2>
             <p>页面永不回显明文。租户凭证覆盖对应运行时路由；撤销后立即擦除密文并对该路由失败关闭。</p>
           </div>
-          <Badge tone={credentialPortfolio?.keyring_status === "ready" ? "success" : "danger"}>
-            keyring {credentialPortfolio?.keyring_status ?? "unavailable"}
+          <Badge tone={credentialLoadError ? "warning" : credentialPortfolio?.keyring_status === "ready" ? "success" : credentialPortfolio ? "danger" : "primary"}>
+            {credentialLoadError ? "无权限或不可用" : credentialPortfolio ? (credentialPortfolio.keyring_status === "ready" ? "密钥环就绪" : "密钥环已阻断") : "正在读取"}
           </Badge>
         </div>
         {credentialLoadError && <DataStateCard title="凭证保险库不可用" desc={credentialLoadError} tone="danger" />}
@@ -7226,8 +7247,8 @@ function SettingsPage() {
               <h3>凭证操作对账</h3>
               <p>只读展示持久操作回执与状态链。未知结果必须人工核对，系统不会自动重复 L3 或密钥写入。</p>
             </div>
-            <Badge tone={(credentialOperations?.reconciliation_required_count ?? 0) > 0 ? "danger" : "success"}>
-              待对账 {credentialOperations?.reconciliation_required_count ?? 0}
+            <Badge tone={credentialOperationLoadError ? "warning" : credentialOperations === null ? "primary" : credentialOperations.reconciliation_required_count > 0 ? "danger" : "success"}>
+              {credentialOperationLoadError ? "无权限或不可用" : credentialOperations === null ? "正在读取" : `待对账 ${credentialOperations.reconciliation_required_count}`}
             </Badge>
           </div>
           {credentialOperationLoadError && <DataStateCard title="操作对账不可用" desc={credentialOperationLoadError} tone="danger" />}
@@ -7336,7 +7357,7 @@ function SettingsPage() {
             <h2>Provider 价格版本</h2>
             <p>只接受带来源和生效时间的追加版本，不内置可能过期的演示价格。按目录计算的成本永远是 estimated。</p>
           </div>
-          <Badge tone={providerPriceError ? "danger" : "primary"}>{providerPriceError ? "blocked" : `${providerPrices.length} versions`}</Badge>
+          <Badge tone={providerPriceError ? "warning" : "primary"}>{providerPriceError ? "无权限或不可用" : providerPricesLoaded ? `${providerPrices.length} 个版本` : "正在读取"}</Badge>
         </div>
         {providerPriceError && <DataStateCard title="价格目录不可用" desc={providerPriceError} tone="danger" />}
         <div className="provider-credential-form">
@@ -7367,11 +7388,11 @@ function SettingsPage() {
             <h2>Provider 路由控制</h2>
             <p>显示运行时已配置路由和 24 小时真实调用指标。这里是平台全局控制面，不是租户级设置；写操作要求独立的平台管理员权限、显式确认、理由和版本校验，服务端禁止停用最后一路。</p>
           </div>
-          <Badge tone={routeLoadError ? "danger" : "success"}>{routeLoadError ? "blocked" : `${providerRoutes.length} routes`}</Badge>
+          <Badge tone={routeLoadError ? "warning" : providerRoutesLoaded ? "success" : "primary"}>{routeLoadError ? "无权限或不可用" : providerRoutesLoaded ? `${providerRoutes.length} 条路由` : "正在读取"}</Badge>
         </div>
         {routeLoadError && <DataStateCard title="路由控制不可用" desc={routeLoadError} tone="danger" />}
         {migrationLoadError && <DataStateCard title="模型迁移治理不可用" desc={migrationLoadError} tone="danger" />}
-        {!routeLoadError && providerRoutes.length === 0 && <DataStateCard title="没有运行时路由" desc="没有已配置凭证时不生成演示路由，也不允许在页面录入密钥。" tone="warning" />}
+        {!routeLoadError && providerRoutesLoaded && providerRoutes.length === 0 && <DataStateCard title="没有运行时路由" desc="没有已配置凭证时不生成演示路由，也不允许在页面录入密钥。" tone="warning" />}
         {providerRoutes.length > 0 && (
           <div className="provider-route-table-wrap">
             <table className="question-table provider-route-table">
@@ -7503,15 +7524,18 @@ function SkillConsolePage() {
         subtitle="展示版本化契约、独立评测、依赖/能力信任门禁和内容寻址晋级账本；仓库门禁通过不等于生产沙箱或外部证据齐备。"
         action={<Badge tone="warning">internal · read-only</Badge>}
       />
-      <section className="summary-band evidence-summary">
-        <SummaryMetric label="核心 Skill" value={String(skills.length)} tone="primary" />
-        <SummaryMetric label="本地评测通过" value={String(locallyPassed)} tone={locallyPassed === skills.length && skills.length > 0 ? "success" : "warning"} />
-        <SummaryMetric label="本地信任放行" value={String(trustAllowed)} tone={trustAllowed === skills.length && skills.length > 0 ? "success" : "danger"} />
-        <SummaryMetric label="可晋级 ready" value={String(promotionEligible)} tone={promotionEligible > 0 ? "success" : "warning"} />
-        <SummaryMetric label="保留 partial" value={String(retainedPartial)} tone="warning" />
-      </section>
+      {!loadError && skills.length > 0 && (
+        <section className="summary-band evidence-summary">
+          <SummaryMetric label="核心 Skill" value={String(skills.length)} tone="primary" />
+          <SummaryMetric label="本地评测通过" value={String(locallyPassed)} tone={locallyPassed === skills.length ? "success" : "warning"} />
+          <SummaryMetric label="本地信任放行" value={String(trustAllowed)} tone={trustAllowed === skills.length ? "success" : "danger"} />
+          <SummaryMetric label="可晋级 ready" value={String(promotionEligible)} tone={promotionEligible > 0 ? "success" : "warning"} />
+          <SummaryMetric label="保留 partial" value={String(retainedPartial)} tone="warning" />
+        </section>
+      )}
       {loadError && <DataStateCard title="Skill 状态读取失败" desc={loadError} tone="danger" />}
-      {!loadError && skills.length === 0 && <DataStateCard title="尚无已注册 Skill" desc="系统不会用演示 Skill 或固定评测结果补位。" tone="warning" />}
+      {!loadError && skills.length === 0 && ledger === null && trustReport === null && <DataStateCard title="正在读取 Skill 状态" desc="加载完成前不展示默认数量或晋级结论。" tone="primary" />}
+      {!loadError && skills.length === 0 && (ledger !== null || trustReport !== null) && <DataStateCard title="尚无已注册 Skill" desc="系统不会用演示 Skill 或固定评测结果补位。" tone="warning" />}
       {skills.length > 0 && (
         <div className="airank-console-card table-card skill-table-wrap">
           <table className="question-table skill-table">

@@ -1820,6 +1820,10 @@ export type ProviderReadiness = {
     generation_verified: boolean;
     blocker_code?: string;
     reason?: string;
+    checked_at?: string | null;
+    status_source?: "live_probe" | "persisted_l3_probe" | "runtime_configuration";
+    stale?: boolean;
+    model?: string | null;
   }>;
 };
 
@@ -2488,12 +2492,33 @@ function mapAuthSession(payload: AuthLoginPayload): AuthSession {
   };
 }
 
+const apiErrorMessagesZh: Record<string, string> = {
+  AUTH_PERMISSION_FORBIDDEN: "当前账号缺少此功能权限。",
+  AUTH_TOKEN_MISSING: "登录状态已失效，请重新登录。",
+  AUTH_TOKEN_INVALID: "登录状态无效，请重新登录。",
+  AUTH_LOGIN_FAILED: "租户编号、账号或密码不正确。",
+  RETEST_COMPARE_RUN_REQUIRED: "需要至少一个已完成且口径可比的测量批次。",
+  INTEGRATION_CAPABILITY_BLOCKED: "当前依赖能力尚未就绪，请联系管理员检查配置。",
+  RESOURCE_NOT_FOUND: "请求的数据不存在或已不可用。",
+  RATE_LIMITED: "请求过于频繁，请稍后再试。",
+  INTERNAL_ERROR: "系统暂时不可用，请稍后重试。",
+};
+
+function localizeApiError(message: string | undefined, code: string | undefined, fallback: string): string {
+  if (code && apiErrorMessagesZh[code]) return apiErrorMessagesZh[code];
+  if (message && /[\u3400-\u9fff]/.test(message)) return message;
+  const status = fallback.match(/\b(?:with|HTTP)\s+(\d{3})\b/)?.[1];
+  if (code) return `请求未完成（错误代码：${code}）。`;
+  if (status) return `请求未完成（HTTP ${status}），请稍后重试。`;
+  return "请求未完成，请稍后重试。";
+}
+
 async function readErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
     const payload = (await response.json()) as { error?: { message?: string; code?: string } };
-    return payload.error?.message || payload.error?.code || fallback;
+    return localizeApiError(payload.error?.message, payload.error?.code, fallback);
   } catch {
-    return fallback;
+    return localizeApiError(undefined, undefined, fallback);
   }
 }
 

@@ -32,7 +32,7 @@ from airank_evidence import (
     build_object_storage_from_env,
     verify_object_storage_readiness,
 )
-from airank_provider_gateway import PROVIDER_MANIFESTS, ProviderGatewayError
+from airank_provider_gateway import PROVIDER_MANIFESTS, ProviderGatewayError, ProviderSettings
 from airank_score import QUALITY_CONTRACT_VERSION
 from airank_skills import (
     build_promotion_ledger,
@@ -121,7 +121,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "AUTH_LOGIN_FAILED": (401, "Login credentials are invalid"),
     "AUTH_YUDAO_UNAVAILABLE": (503, "Yudao authentication is unavailable"),
     "AUTH_TENANT_DIRECTORY_UNAVAILABLE": (503, "Tenant directory is unavailable"),
-    "AUTH_PERMISSION_FORBIDDEN": (403, "Required permission is missing"),
+    "AUTH_PERMISSION_FORBIDDEN": (403, "当前账号缺少此功能权限"),
     "TENANT_MISMATCH": (403, "Tenant does not match the token"),
     "TENANT_FORBIDDEN": (403, "Tenant access is forbidden"),
     "PROJECT_NOT_FOUND": (404, "Project not found"),
@@ -241,7 +241,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "PUBLISH_DELIVERY_RECEIPT_REQUIRED": (409, "External publication requires a successful delivery receipt"),
     "RETEST_WINDOW_NOT_FOUND": (404, "Retest observation window not found"),
     "RETEST_BASELINE_REQUIRED": (409, "A completed baseline run is required"),
-    "RETEST_COMPARE_RUN_REQUIRED": (409, "A completed comparable scan run is required"),
+    "RETEST_COMPARE_RUN_REQUIRED": (409, "需要至少一个已完成且口径可比的测量批次"),
     "FACT_SOURCE_REQUIRED": (400, "Fact source is required"),
     "FACT_DISCLOSURE_FORBIDDEN": (403, "Fact disclosure is forbidden"),
     "ASSET_NOT_FOUND": (404, "Asset not found"),
@@ -1064,6 +1064,10 @@ class ProviderReadinessItem(BaseModel):
     ] = None
     reason: Optional[str] = None
     screenshot_path: Optional[str] = None
+    checked_at: Optional[datetime] = None
+    status_source: Literal["live_probe", "persisted_l3_probe", "runtime_configuration"] = "live_probe"
+    stale: bool = False
+    model: Optional[str] = None
 
 
 class ProviderReadinessData(BaseModel):
@@ -3049,6 +3053,56 @@ def minimum_scan_success_count(provider_scope: list[Provider], question_count: i
     return min(task_count, max(1, provider_minimum * question_multiplier))
 
 
+def environment_enabled_provider_scope() -> list[Provider]:
+    """Return providers with a valid, enabled runtime configuration in stable product order."""
+
+    active: list[Provider] = []
+    for provider in DEFAULT_PROVIDER_SCOPE:
+        manifest = PROVIDER_MANIFESTS[provider]
+        try:
+            settings = ProviderSettings.from_env(manifest)
+        except ProviderGatewayError:
+            continue
+        if settings.configured and not settings.disabled:
+            active.append(provider)
+    return active
+
+
+def active_provider_scope(tenant_id: str) -> list[Provider]:
+    """Resolve the provider scope used for new paid scan tasks.
+
+    In-memory development keeps the explicit four-provider failure contract. A
+    database-backed deployment only queues configured routes that are enabled by
+    the operational control plane, so disabled providers remain visible in health
+    governance but do not create misleading scan failures.
+    """
+
+    if not os.getenv("AIRANK_DATABASE_URL") or provider_execution_mode() == "browser":
+        return list(DEFAULT_PROVIDER_SCOPE)
+
+    configured = set(environment_enabled_provider_scope())
+    if not configured:
+        return []
+    operations = build_provider_route_operations()
+    route_statuses = operations.list_route_status(
+        PROVIDER_MANIFESTS.values(), tenant_id=tenant_id
+    )
+    enabled = {
+        str(item["provider"])
+        for item in route_statuses
+        if bool(item["configured"]) and bool(item["enabled"])
+    }
+    return [provider for provider in DEFAULT_PROVIDER_SCOPE if provider in configured and provider in enabled]
+
+
+def provider_probe_stale_seconds() -> int:
+    raw_value = str(os.getenv("AIRANK_PROVIDER_PROBE_STALE_SECONDS") or "86400").strip()
+    try:
+        return max(300, min(int(raw_value), 604800))
+    except ValueError:
+        return 86400
+
+
 def build_provider_readiness_items(provider_scope: list[Provider]) -> list[ProviderReadinessItem]:
     items: list[ProviderReadinessItem] = []
     for provider in provider_scope:
@@ -3084,9 +3138,126 @@ def build_provider_readiness_items(provider_scope: list[Provider]) -> list[Provi
                 blocker_code=result.blocker_code,  # type: ignore[arg-type]
                 reason=result.reason,
                 screenshot_path=result.screenshot_path,
+                status_source="live_probe",
             )
         )
     return items
+
+
+def build_persisted_provider_readiness_items(provider_scope: list[Provider]) -> list[ProviderReadinessItem]:
+    """Build an instant, evidence-backed health snapshot from persisted L3 probes."""
+
+    operations = build_provider_route_operations()
+    probes = operations.latest_probe_results(provider_scope)
+    now = datetime.now(timezone.utc)
+    stale_after = provider_probe_stale_seconds()
+    blocker_by_state = {
+        "unconfigured": "provider_not_configured",
+        "disabled": "provider_disabled",
+        "network_failed": "network_error",
+        "auth_failed": "provider_auth_failed",
+        "model_failed": "provider_model_failed",
+        "generation_failed": "provider_generation_failed",
+        "circuit_open": "provider_circuit_open",
+        "degraded": "provider_generation_failed",
+    }
+    reason_by_state = {
+        "unconfigured": "Provider 尚未配置",
+        "disabled": "Provider 已停用",
+        "network_failed": "最近一次 L3 探测网络失败",
+        "auth_failed": "最近一次 L3 探测鉴权失败",
+        "model_failed": "最近一次 L3 探测模型不可用",
+        "generation_failed": "最近一次 L3 真实生成失败",
+        "circuit_open": "Provider 熔断器已打开",
+        "degraded": "Provider 当前处于降级状态",
+    }
+    items: list[ProviderReadinessItem] = []
+    for provider in provider_scope:
+        manifest = PROVIDER_MANIFESTS[provider]
+        settings = ProviderSettings.from_env(manifest)
+        if settings.disabled or not settings.configured:
+            blocker_code = "provider_disabled" if settings.disabled else "provider_not_configured"
+            items.append(
+                ProviderReadinessItem(
+                    provider=provider,
+                    label=manifest.label,
+                    status="blocked",
+                    url=f"https://{settings.endpoint_host}" if settings.endpoint_host else "",
+                    profile_dir="",
+                    headless=True,
+                    probe_level="l3_generation",
+                    generation_verified=False,
+                    blocker_code=blocker_code,
+                    reason="Provider 已停用" if settings.disabled else "Provider 尚未完成有效配置",
+                    status_source="runtime_configuration",
+                    model=settings.model,
+                )
+            )
+            continue
+
+        record = probes.get(provider)
+        if record is None:
+            items.append(
+                ProviderReadinessItem(
+                    provider=provider,
+                    label=manifest.label,
+                    status="blocked",
+                    url=f"https://{settings.endpoint_host}",
+                    profile_dir="",
+                    headless=True,
+                    probe_level="l3_generation",
+                    generation_verified=False,
+                    blocker_code="unknown_blocked",
+                    reason="尚无 L3 真实生成探测记录",
+                    status_source="runtime_configuration",
+                    model=settings.model,
+                )
+            )
+            continue
+
+        checked_at = record["checked_at"]
+        if not isinstance(checked_at, datetime):
+            checked_at = datetime.fromisoformat(str(checked_at))
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=timezone.utc)
+        else:
+            checked_at = checked_at.astimezone(timezone.utc)
+        stale = (now - checked_at).total_seconds() > stale_after
+        state = str(record["health_state"])
+        healthy = state == "healthy" and not stale
+        reason = "最近一次 L3 真实生成探测通过"
+        blocker_code: Optional[str] = None
+        if stale:
+            reason = f"L3 探测已超过 {stale_after // 3600} 小时，请重新验证"
+            blocker_code = "unknown_blocked"
+        elif not healthy:
+            reason = reason_by_state.get(state, "最近一次 L3 探测未通过")
+            blocker_code = blocker_by_state.get(state, "unknown_blocked")
+        items.append(
+            ProviderReadinessItem(
+                provider=provider,
+                label=manifest.label,
+                status="ready" if healthy else "blocked",
+                url=f"https://{settings.endpoint_host}",
+                profile_dir="",
+                headless=True,
+                probe_level="l3_generation",
+                generation_verified=healthy,
+                blocker_code=blocker_code,  # type: ignore[arg-type]
+                reason=reason,
+                checked_at=checked_at,
+                status_source="persisted_l3_probe",
+                stale=stale,
+                model=str(record.get("model_name") or settings.model),
+            )
+        )
+    return items
+
+
+def build_provider_readiness_snapshot(provider_scope: list[Provider]) -> list[ProviderReadinessItem]:
+    if os.getenv("AIRANK_DATABASE_URL") and provider_execution_mode() == "api":
+        return build_persisted_provider_readiness_items(provider_scope)
+    return build_provider_readiness_items(provider_scope)
 
 
 def build_provider_route_operations() -> MySQLProviderOperations:
@@ -3131,12 +3302,15 @@ def raise_provider_usage_error(exc: ProviderGatewayError) -> None:
     ) from exc
 
 
-def assert_browser_provider_ready_for_brand_check(existing_project_id: Optional[str] = None) -> None:
+def assert_browser_provider_ready_for_brand_check(
+    provider_scope: list[Provider],
+    existing_project_id: Optional[str] = None,
+) -> None:
     if not os.getenv("AIRANK_DATABASE_URL") or provider_execution_mode() != "browser":
         return
 
-    items = build_provider_readiness_items(DEFAULT_PROVIDER_SCOPE)
-    minimum_success_count = minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE)
+    items = build_provider_readiness_items(provider_scope)
+    minimum_success_count = minimum_provider_success_count(provider_scope)
     ready_count = sum(1 for item in items if item.status == "ready")
     if ready_count >= minimum_success_count:
         return
@@ -3171,9 +3345,15 @@ def build_competitor_payloads(brand_name: str, competitor_hints: list[str]) -> l
     ]
 
 
-def build_question_payloads(brand_name: str, industry: str, buyer_questions: list[str]) -> list[BuyerQuestionCreateRequest]:
+def build_question_payloads(
+    brand_name: str,
+    industry: str,
+    buyer_questions: list[str],
+    provider_scope: Optional[list[Provider]] = None,
+) -> list[BuyerQuestionCreateRequest]:
     questions = buyer_questions or build_default_brand_questions(brand_name, industry)
     question_types = ["purchase", "scenario", "compare"]
+    recommended_providers = provider_scope if provider_scope is not None else DEFAULT_PROVIDER_SCOPE
     return [
         BuyerQuestionCreateRequest(
             question_text=question,
@@ -3181,7 +3361,7 @@ def build_question_payloads(brand_name: str, industry: str, buyer_questions: lis
             intent_level="high",
             buyer_stage="consideration",
             source_reason=f"{brand_name} 品牌检测自动生成的高意向买家问题",
-            recommended_providers=DEFAULT_PROVIDER_SCOPE,
+            recommended_providers=recommended_providers,
             status="confirmed",
             source="manual",
         )
@@ -5323,7 +5503,21 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
         if completed_run_id:
             return build_brand_check_data_from_existing_project(tenant_id, existing_project, completed_run_id)
 
-    assert_browser_provider_ready_for_brand_check(existing_project.project_id if existing_project else None)
+    provider_scope = active_provider_scope(tenant_id)
+    if not provider_scope:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={
+                "code": "INTEGRATION_CAPABILITY_BLOCKED",
+                "message": "当前没有已配置且启用的 Provider，不能创建真实 GEO 检测任务。",
+                "details": {"capability": "brand_check_provider_scope"},
+            },
+        )
+
+    assert_browser_provider_ready_for_brand_check(
+        provider_scope,
+        existing_project.project_id if existing_project else None,
+    )
 
     project = existing_project or PROJECT_REPOSITORY.create_project(
         tenant_id,
@@ -5351,7 +5545,12 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
     if not questions:
         questions = [
             PROJECT_REPOSITORY.create_buyer_question(tenant_id, project.project_id, question_payload)
-            for question_payload in build_question_payloads(payload.brand_name, industry, payload.buyer_questions)
+            for question_payload in build_question_payloads(
+                payload.brand_name,
+                industry,
+                payload.buyer_questions,
+                provider_scope,
+            )
         ]
     scan_run = SCAN_REPOSITORY.create_run(
         tenant_id,
@@ -5360,7 +5559,7 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
             name=f"{payload.brand_name} 多 AI 平台基线检测",
             run_type="baseline",
             collector_surfaces=["api"] if provider_execution_mode() == "api" else ["web"],
-            provider_scope=DEFAULT_PROVIDER_SCOPE,
+            provider_scope=provider_scope,
             question_scope=QuestionScope(mode="selected", question_ids=[question.question_id for question in questions]),
         ),
     )
@@ -6123,7 +6322,7 @@ def get_provider_readiness(trace_id: Optional[str] = Header(default=None, alias=
         data=ProviderReadinessData(
             mode=provider_execution_mode(),  # type: ignore[arg-type]
             minimum_success_count=minimum_provider_success_count(DEFAULT_PROVIDER_SCOPE),
-            providers=build_provider_readiness_items(DEFAULT_PROVIDER_SCOPE),
+            providers=build_provider_readiness_snapshot(DEFAULT_PROVIDER_SCOPE),
         ),
         meta=build_meta(trace_id),
     )

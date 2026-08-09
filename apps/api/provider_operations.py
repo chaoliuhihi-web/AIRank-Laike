@@ -741,6 +741,36 @@ class MySQLProviderOperations:
                 },
             )
 
+    def latest_probe_results(
+        self,
+        providers: Iterable[str],
+        *,
+        probe_level: str = "l3_generation",
+    ) -> dict[str, dict[str, object]]:
+        """Return the latest persisted probe for each provider without running a billable probe."""
+
+        records: dict[str, dict[str, object]] = {}
+        with self.engine.connect() as conn:
+            for provider in providers:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT provider_key, probe_level, health_state, model_name,
+                               endpoint_host, request_id_present, duration_ms,
+                               error_code, message, checked_at
+                        FROM airank_provider_probe_runs
+                        WHERE provider_key = :provider_key
+                          AND probe_level = :probe_level
+                        ORDER BY checked_at DESC, created_at DESC, id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"provider_key": provider, "probe_level": probe_level},
+                ).mappings().first()
+                if row is not None:
+                    records[provider] = dict(row)
+        return records
+
     def allow(self, provider: str, configuration_fingerprint: str = "") -> bool:
         now = utc_now_naive()
         fingerprint = self._fingerprint(configuration_fingerprint)

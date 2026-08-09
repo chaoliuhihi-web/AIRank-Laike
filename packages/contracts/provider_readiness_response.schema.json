@@ -37,7 +37,11 @@
                 "enum": ["login_required", "captcha_required", "prompt_input_missing", "timeout", "network_error", "unknown_blocked", "provider_not_configured", "provider_disabled", "provider_auth_failed", "provider_model_failed", "provider_generation_failed", "provider_circuit_open"]
               },
               "reason": { "type": "string" },
-              "screenshot_path": { "type": "string" }
+              "screenshot_path": { "type": "string" },
+              "checked_at": { "type": "string", "format": "date-time" },
+              "status_source": { "type": "string", "enum": ["live_probe", "persisted_l3_probe", "runtime_configuration"] },
+              "stale": { "type": "boolean" },
+              "model": { "type": "string" }
             }
           }
         }
