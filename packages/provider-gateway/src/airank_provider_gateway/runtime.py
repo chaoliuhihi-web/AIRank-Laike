@@ -40,6 +40,9 @@ class ProviderSettings:
     request_kind: str
     allowed_endpoint_hosts: tuple[str, ...]
     allow_custom_endpoint: bool
+    credential_source: str = "environment"
+    credential_id: str | None = None
+    credential_version: int | None = None
 
     @classmethod
     def from_env(
@@ -136,6 +139,9 @@ class ProviderSettings:
             "temperature": self.temperature,
             "reasoning_effort": self.reasoning_effort,
             "request_kind": self.request_kind,
+            "credential_source": self.credential_source,
+            "credential_id": self.credential_id,
+            "credential_version": self.credential_version,
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

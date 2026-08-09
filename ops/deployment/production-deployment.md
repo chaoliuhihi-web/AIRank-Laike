@@ -351,6 +351,8 @@ XINGHE_CAPABILITY_MODE=adapter
 
 真实生产密钥只允许放在部署平台、CI/CD Secret、systemd EnvironmentFile 或容器 secret 中，不允许提交到 Git。
 
+租户级 Provider 凭证还必须配置独立的 AES-GCM/HMAC keyring，并按 add → activate → rotate rows → remove 的顺序轮换；直接移除仍被活动记录引用的 key id 会使路由失败关闭。完整步骤见 [Provider Credential Vault 运维手册](../../docs/operations/provider-credential-vault.md)。
+
 ## 11. 发布和回滚
 
 发布前记录当前 commit：

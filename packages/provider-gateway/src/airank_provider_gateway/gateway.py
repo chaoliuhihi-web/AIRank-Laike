@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import random
 import os
@@ -180,6 +180,18 @@ class ProviderRoutePolicyContract(Protocol):
         ...
 
 
+class ProviderCredentialResolverContract(Protocol):
+    def resolve_settings(
+        self,
+        provider: str,
+        route_id: str,
+        settings: ProviderSettings,
+        *,
+        context: ProviderRequestContext,
+    ) -> ProviderSettings:
+        ...
+
+
 class NoopProviderRoutePolicy:
     def apply_routes(
         self,
@@ -286,6 +298,7 @@ class ProviderGateway:
         quota_ledger: QuotaLedgerContract | None = None,
         capacity_ledger: ProviderCapacityLedgerContract | None = None,
         route_policy: ProviderRoutePolicyContract | None = None,
+        credential_resolver: ProviderCredentialResolverContract | None = None,
         audit_sink: Callable[[Mapping[str, Any]], None] | None = None,
         probe_sink: Callable[[ProbeResult], None] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -298,6 +311,7 @@ class ProviderGateway:
         self.quota = quota_ledger or InMemoryQuotaLedger()
         self.capacity = capacity_ledger or NoopProviderCapacityLedger()
         self.route_policy = route_policy or NoopProviderRoutePolicy()
+        self.credential_resolver = credential_resolver
         self.audit_sink = audit_sink
         self.probe_sink = probe_sink
         self.sleep = sleep
@@ -334,7 +348,31 @@ class ProviderGateway:
         request_context: ProviderRequestContext | None = None,
     ) -> ProviderResult:
         manifest = self._manifest(provider)
+        normalized_context = request_context or ProviderRequestContext()
         routes = self._routes(manifest)
+        if self.credential_resolver is not None:
+            resolved_routes: list[ResolvedProviderRoute] = []
+            resolution_errors: list[ProviderGatewayError] = []
+            for route in routes:
+                try:
+                    resolved_routes.append(
+                        replace(
+                            route,
+                            settings=self.credential_resolver.resolve_settings(
+                                manifest.provider,
+                                route.route_id,
+                                route.settings,
+                                context=normalized_context,
+                            ),
+                        )
+                    )
+                except ProviderGatewayError as exc:
+                    routed_error = self._route_error(manifest, route, exc)
+                    resolution_errors.append(routed_error)
+                    self._audit_error(manifest.provider, route, routed_error)
+            if not resolved_routes:
+                raise resolution_errors[0]
+            routes = tuple(resolved_routes)
         last_error: ProviderGatewayError | None = None
         for index, route in enumerate(routes):
             try:
@@ -701,7 +739,7 @@ class ProviderGateway:
             if settings.request_kind == "responses_web_search"
             else manifest.max_tokens_field
         )
-        return {
+        contract: dict[str, Any] = {
             "request_kind": settings.request_kind,
             "citation_parser_version": NATIVE_CITATION_PARSER_VERSION,
             "search_evidence_version": SEARCH_EVIDENCE_VERSION,
@@ -710,6 +748,15 @@ class ProviderGateway:
             "temperature": settings.temperature,
             "reasoning_effort": settings.reasoning_effort,
         }
+        if settings.credential_source != "environment" or settings.credential_id is not None:
+            contract.update(
+                {
+                    "credential_source": settings.credential_source,
+                    "credential_id": settings.credential_id,
+                    "credential_version": settings.credential_version,
+                }
+            )
+        return contract
 
     @staticmethod
     def _evidence_grade(manifest: ProviderManifest, search_used: bool | None) -> str:
@@ -748,6 +795,8 @@ class ProviderGateway:
         fingerprint = route.settings.configuration_fingerprint(
             manifest.provider, route.route_id
         )
+        request_contract = dict(ProviderGateway._request_contract(manifest, route.settings))
+        request_contract.update(dict(error.request_contract or {}))
         return ProviderGatewayError(
             manifest.provider,
             error.code,
@@ -764,7 +813,7 @@ class ProviderGateway:
             duration_ms=error.duration_ms,
             attempt_count=error.attempt_count,
             usage=error.usage,
-            request_contract=ProviderGateway._request_contract(manifest, route.settings),
+            request_contract=request_contract,
         )
 
     def _audit(self, result: ProviderResult, outcome: str) -> None:

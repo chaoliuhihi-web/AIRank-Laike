@@ -231,6 +231,11 @@ def get_api_gateway() -> ProviderGateway:
                 from provider_operations import MySQLProviderOperations  # type: ignore[no-redef]
 
             _API_PROVIDER_OPERATIONS = MySQLProviderOperations(database_url)
+            try:
+                from .provider_credentials import build_provider_credential_vault
+            except ImportError:  # pragma: no cover - supports direct module execution.
+                from provider_credentials import build_provider_credential_vault  # type: ignore[no-redef]
+            credential_vault = build_provider_credential_vault(database_url)
             _API_GATEWAY = ProviderGateway(
                 max_attempts=max_attempts,
                 timeout_seconds=timeout_seconds,
@@ -238,6 +243,7 @@ def get_api_gateway() -> ProviderGateway:
                 quota_ledger=_API_PROVIDER_OPERATIONS,
                 capacity_ledger=_API_PROVIDER_OPERATIONS,
                 route_policy=_API_PROVIDER_OPERATIONS,
+                credential_resolver=credential_vault,
                 probe_sink=_API_PROVIDER_OPERATIONS.record_probe,
             )
             _API_PROVIDER_OPERATIONS.sync_manifests(_API_GATEWAY.manifests())
@@ -298,6 +304,9 @@ def call_api_provider_for_brand_rank(
             "PROVIDER_DISABLED",
             "PROVIDER_MODEL_EXPIRED",
             "PROVIDER_MODEL_MIGRATION_REQUIRED",
+            "PROVIDER_CREDENTIAL_REVOKED",
+            "PROVIDER_CREDENTIAL_KEY_UNAVAILABLE",
+            "CREDENTIAL_DECRYPTION_FAILED",
         }:
             raise ProviderUnavailable(provider, exc.message) from exc
         settings = gateway.settings(provider)

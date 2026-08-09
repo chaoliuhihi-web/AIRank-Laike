@@ -1752,6 +1752,50 @@ export type ProviderRouteControlInput = {
   reason: string;
 };
 
+export type ProviderCredentialVerification = {
+  status: "verified";
+  probe_level: "l3_generation";
+  model: string;
+  endpoint_host: string;
+  request_id_present: boolean;
+  provider_request_id_sha256: string | null;
+  duration_ms: number;
+  evidence_grade: string;
+  verified_at: string;
+};
+
+export type ProviderCredentialStatus = {
+  contract_version: "airank.provider-credential-vault.v1";
+  provider: "doubao" | "qianwen" | "kimi" | "deepseek";
+  label: string;
+  route_id: string;
+  source: "vault_active" | "vault_revoked" | "vault_key_unavailable" | "environment_legacy" | "unconfigured";
+  status: "active" | "revoked" | "unconfigured" | "blocked";
+  configured: boolean;
+  credential_id: string | null;
+  credential_version: number;
+  secret_mask: string | null;
+  fingerprint_prefix: string | null;
+  encryption_key_id: string | null;
+  fingerprint_key_id: string | null;
+  algorithm: "aes-256-gcm" | null;
+  verification: ProviderCredentialVerification | null;
+  rotated_from_id: string | null;
+  created_by: string | null;
+  activated_at: string | null;
+  revoked_at: string | null;
+  latest_event_sha256: string | null;
+  known_limitations: string[];
+};
+
+export type ProviderCredentialPortfolio = {
+  contract_version: "airank.provider-credential-vault.v1";
+  keyring_contract_version: "airank.provider-credential-keyring.v1";
+  keyring_status: "ready" | "blocked";
+  credentials: ProviderCredentialStatus[];
+  known_limitations: string[];
+};
+
 export type InternalSkill = {
   skill_id: string;
   version: string;
@@ -3831,6 +3875,68 @@ export async function updateProviderRoute(
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, `Provider route update failed with ${response.status}`));
   }
+}
+
+export function fetchProviderCredentials(signal?: AbortSignal): Promise<ProviderCredentialPortfolio> {
+  return fetchData(
+    "/api/v1/admin/provider-credentials",
+    "trc_web_provider_credentials",
+    signal,
+  );
+}
+
+export async function upsertProviderCredential(
+  credential: Pick<ProviderCredentialStatus, "provider" | "route_id" | "credential_version">,
+  input: { secret: string; reason: string; confirmBillable: true },
+): Promise<ProviderCredentialStatus> {
+  const response = await fetch(
+    `/api/v1/admin/provider-credentials/${encodeURIComponent(credential.provider)}/${encodeURIComponent(credential.route_id)}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildApiHeaders("trc_web_provider_credential_upsert"),
+      },
+      body: JSON.stringify({
+        secret: input.secret,
+        expected_version: credential.credential_version,
+        reason: input.reason,
+        confirm_billable: input.confirmBillable,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Provider credential update failed with ${response.status}`),
+    );
+  }
+  return ((await response.json()) as { data: ProviderCredentialStatus }).data;
+}
+
+export async function revokeProviderCredential(
+  credential: Pick<ProviderCredentialStatus, "provider" | "route_id" | "credential_version">,
+  reason: string,
+): Promise<ProviderCredentialStatus> {
+  const response = await fetch(
+    `/api/v1/admin/provider-credentials/${encodeURIComponent(credential.provider)}/${encodeURIComponent(credential.route_id)}/revoke`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildApiHeaders("trc_web_provider_credential_revoke"),
+      },
+      body: JSON.stringify({
+        expected_version: credential.credential_version,
+        reason,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await readErrorMessage(response, `Provider credential revoke failed with ${response.status}`),
+    );
+  }
+  return ((await response.json()) as { data: ProviderCredentialStatus }).data;
 }
 
 export async function fetchInternalSkills(signal?: AbortSignal): Promise<InternalSkill[]> {

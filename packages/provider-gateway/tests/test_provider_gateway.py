@@ -76,6 +76,96 @@ def test_alias_and_manifest_configuration_never_expose_plaintext_key() -> None:
     assert len(settings.configuration_fingerprint("qianwen")) == 64
 
 
+def test_tenant_vault_credential_is_used_in_memory_and_only_referenced_in_audit() -> None:
+    class TenantCredentialResolver:
+        def resolve_settings(self, provider, route_id, settings, *, context):
+            assert provider == "qianwen"
+            assert route_id == "qianwen:default"
+            assert context.tenant_id == "tenant_vault"
+            return replace(
+                settings,
+                api_key="tenant-vault-secret",
+                credential_source="tenant_vault",
+                credential_id="provider_credential_1",
+                credential_version=3,
+            )
+
+    transport = FakeTransport(
+        [
+            HttpResponse(
+                status=200,
+                headers={"x-request-id": "req_vault_1"},
+                data={"choices": [{"message": {"content": "OK"}}]},
+            )
+        ]
+    )
+    audits: list[Mapping[str, Any]] = []
+    result = ProviderGateway(
+        env=qianwen_env(),
+        transport=transport,
+        credential_resolver=TenantCredentialResolver(),
+        audit_sink=audits.append,
+    ).generate(
+        "qianwen",
+        "测试",
+        request_context=ProviderRequestContext(tenant_id="tenant_vault"),
+    )
+
+    assert transport.calls[0]["headers"]["Authorization"] == "Bearer tenant-vault-secret"
+    assert result.request_contract["credential_source"] == "tenant_vault"
+    assert result.request_contract["credential_id"] == "provider_credential_1"
+    assert result.request_contract["credential_version"] == 3
+    serialized_audit = str(audits)
+    assert "tenant-vault-secret" not in serialized_audit
+    assert "secret-never-returned" not in serialized_audit
+
+
+def test_credential_resolution_failure_blocks_only_its_route_and_allows_failover() -> None:
+    class PrimaryRevokedResolver:
+        def resolve_settings(self, provider, route_id, settings, *, context):
+            if route_id == "primary":
+                raise ProviderGatewayError(
+                    provider,
+                    "PROVIDER_CREDENTIAL_REVOKED",
+                    "tenant provider credential is revoked",
+                )
+            return settings
+
+    env = qianwen_env()
+    env.update(
+        {
+            "QIANWEN_PRIMARY_KEY": "primary-environment-secret",
+            "QIANWEN_SECONDARY_KEY": "secondary-environment-secret",
+            "QIANWEN_ROUTES_JSON": """[
+              {"route_id":"primary","priority":100,"endpoint":"https://primary.example.test/v1/chat/completions","model":"qwen-primary","key_env":"QIANWEN_PRIMARY_KEY"},
+              {"route_id":"secondary","priority":50,"endpoint":"https://secondary.example.test/v1/chat/completions","model":"qwen-secondary","key_env":"QIANWEN_SECONDARY_KEY"}
+            ]""",
+        }
+    )
+    transport = FakeTransport(
+        [
+            HttpResponse(
+                status=200,
+                headers={},
+                data={"id": "req_secondary", "choices": [{"message": {"content": "OK"}}]},
+            )
+        ]
+    )
+    audits: list[Mapping[str, Any]] = []
+
+    result = ProviderGateway(
+        env=env,
+        transport=transport,
+        credential_resolver=PrimaryRevokedResolver(),
+        audit_sink=audits.append,
+    ).generate("qianwen", "测试", request_context=ProviderRequestContext(tenant_id="tenant_vault"))
+
+    assert result.route_id == "secondary"
+    assert len(transport.calls) == 1
+    assert [audit["outcome"] for audit in audits] == ["failed", "success"]
+    assert audits[0]["error_code"] == "PROVIDER_CREDENTIAL_REVOKED"
+
+
 def test_unapproved_custom_endpoint_is_not_treated_as_configured() -> None:
     env = qianwen_env()
     env.pop("AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS")

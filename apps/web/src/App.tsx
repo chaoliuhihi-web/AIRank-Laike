@@ -133,6 +133,7 @@ import {
   fetchPageAudits,
   fetchMeasurementQuality,
   fetchProviderReadiness,
+  fetchProviderCredentials,
   fetchProviderRoutes,
   fetchPublishAttempts,
   fetchPublishPackages,
@@ -149,6 +150,7 @@ import {
   heartbeatEvidenceReviewAssignment,
   recordConsoleAction,
   recordPublicationEvidence,
+  revokeProviderCredential,
   releaseEvidenceReviewAssignment,
   putEvidenceReviewerDirectoryBinding,
   putEvidenceReviewerRoute,
@@ -167,6 +169,7 @@ import {
   runEvidenceReviewerDirectorySync,
   storeAuthSession,
   updateProviderRoute,
+  upsertProviderCredential,
   updateKnowledgeSyncPolicy,
   upsertOpportunityActionMember,
   putOpportunityActionRoute,
@@ -222,6 +225,8 @@ import {
   type KnowledgeSource,
   type MeasurementQualityReport,
   type ProviderReadiness,
+  type ProviderCredentialPortfolio,
+  type ProviderCredentialStatus,
   type ProviderRouteStatus,
   type QuestionMapResult,
   type QuestionObservationBatch,
@@ -6311,12 +6316,30 @@ function ReportsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   );
 }
 
+type ProviderCredentialDraft = {
+  secret: string;
+  reason: string;
+  confirmBillable: boolean;
+  confirmRevoke: boolean;
+};
+
+const emptyProviderCredentialDraft = (): ProviderCredentialDraft => ({
+  secret: "",
+  reason: "",
+  confirmBillable: false,
+  confirmRevoke: false,
+});
+
 function SettingsPage() {
   const overview = useConsoleOverview();
   const { project } = overview;
   const { notify, openPanel } = useActionFeedback();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [providerRoutes, setProviderRoutes] = useState<ProviderRouteStatus[]>([]);
+  const [credentialPortfolio, setCredentialPortfolio] = useState<ProviderCredentialPortfolio | null>(null);
+  const [credentialLoadError, setCredentialLoadError] = useState<string | null>(null);
+  const [credentialDrafts, setCredentialDrafts] = useState<Record<string, ProviderCredentialDraft>>({});
+  const [updatingCredential, setUpdatingCredential] = useState<string | null>(null);
   const [routeLoadError, setRouteLoadError] = useState<string | null>(null);
   const [updatingRoute, setUpdatingRoute] = useState<string | null>(null);
   const [routeDrafts, setRouteDrafts] = useState<Record<string, { enabled: boolean; priority: string; reason: string }>>({});
@@ -6345,12 +6368,33 @@ function SettingsPage() {
     }
   }, []);
 
+  const loadProviderCredentials = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const portfolio = await fetchProviderCredentials(signal);
+      setCredentialPortfolio(portfolio);
+      setCredentialLoadError(null);
+      setCredentialDrafts((current) => {
+        const next = { ...current };
+        portfolio.credentials.forEach((credential) => {
+          const key = `${credential.provider}/${credential.route_id}`;
+          if (!next[key]) next[key] = emptyProviderCredentialDraft();
+        });
+        return next;
+      });
+    } catch (error) {
+      if (signal?.aborted) return;
+      setCredentialPortfolio(null);
+      setCredentialLoadError(error instanceof Error ? error.message : "Provider 凭证接口不可用");
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     fetchProviderReadiness(controller.signal).then(setReadiness).catch(() => setReadiness(null));
     void loadProviderRoutes(controller.signal);
+    void loadProviderCredentials(controller.signal);
     return () => controller.abort();
-  }, [loadProviderRoutes]);
+  }, [loadProviderCredentials, loadProviderRoutes]);
 
   const applyProviderRoute = async (route: ProviderRouteStatus) => {
     const key = `${route.provider}/${route.route_id}`;
@@ -6382,11 +6426,74 @@ function SettingsPage() {
     }
   };
 
+  const saveProviderCredential = async (credential: ProviderCredentialStatus) => {
+    const key = `${credential.provider}/${credential.route_id}`;
+    const draft = credentialDrafts[key] ?? emptyProviderCredentialDraft();
+    const secret = draft.secret.trim();
+    const reason = draft.reason.trim();
+    if (secret.length < 8 || /\s/.test(secret)) {
+      notify({ title: "凭证格式无效", desc: "请输入至少 8 个字符且不含空白的 Provider 凭证。", tone: "warning" });
+      return;
+    }
+    if (reason.length < 3) {
+      notify({ title: "需要变更理由", desc: "理由会写入不可变凭证事件，至少填写 3 个字符。", tone: "warning" });
+      return;
+    }
+    if (!draft.confirmBillable) {
+      notify({ title: "需要确认真实验证", desc: "保存前会发起一次可能计费的 L3 真实生成请求。", tone: "warning" });
+      return;
+    }
+    setUpdatingCredential(key);
+    try {
+      const updated = await upsertProviderCredential(credential, {
+        secret,
+        reason,
+        confirmBillable: true,
+      });
+      setCredentialDrafts((current) => ({ ...current, [key]: emptyProviderCredentialDraft() }));
+      await loadProviderCredentials();
+      notify({
+        title: "凭证已验证并激活",
+        desc: `${updated.label} · ${updated.route_id} 已通过 L3 验证并以 v${updated.credential_version} 加密保存。`,
+        tone: "success",
+      });
+    } catch (error) {
+      notify({ title: "凭证更新失败", desc: error instanceof Error ? error.message : "请刷新版本后重试。", tone: "danger" });
+    } finally {
+      setUpdatingCredential(null);
+    }
+  };
+
+  const revokeCredential = async (credential: ProviderCredentialStatus) => {
+    const key = `${credential.provider}/${credential.route_id}`;
+    const draft = credentialDrafts[key] ?? emptyProviderCredentialDraft();
+    const reason = draft.reason.trim();
+    if (reason.length < 3) {
+      notify({ title: "需要撤销理由", desc: "请填写至少 3 个字符，撤销会写入不可变审计事件。", tone: "warning" });
+      return;
+    }
+    if (!draft.confirmRevoke) {
+      notify({ title: "需要确认撤销", desc: "撤销会擦除密文并立即阻断该租户路由，且不会回退环境凭证。", tone: "warning" });
+      return;
+    }
+    setUpdatingCredential(key);
+    try {
+      await revokeProviderCredential(credential, reason);
+      setCredentialDrafts((current) => ({ ...current, [key]: emptyProviderCredentialDraft() }));
+      await loadProviderCredentials();
+      notify({ title: "凭证已撤销", desc: `${credential.label} · ${credential.route_id} 的密文已擦除并停止使用。`, tone: "success" });
+    } catch (error) {
+      notify({ title: "凭证撤销失败", desc: error instanceof Error ? error.message : "请刷新版本后重试。", tone: "danger" });
+    } finally {
+      setUpdatingCredential(null);
+    }
+  };
+
   return (
     <>
       <PageHeader
         title="设置中心"
-        subtitle="展示真实项目与 Provider 状态；路由启停和优先级通过审计控制面热更新，密钥仍只从安全运行时注入。"
+        subtitle="展示真实项目与 Provider 状态；租户凭证先通过 L3 真实生成验证，再加密入库、版本化轮换并记录哈希链事件。"
         action={<Badge tone="primary">audited control</Badge>}
       />
       <section className="settings-grid">
@@ -6438,6 +6545,125 @@ function SettingsPage() {
           }
           rows={[["事实与证据", "partial"], ["导出发布包", "ready"], ["WordPress / HTTP", "partial"], ["AI 来客助手", "disabled"], ["商业上线", "blocked"]]}
         />
+      </section>
+      <section className="airank-console-card provider-credential-vault" data-testid="provider-credential-vault">
+        <div className="provider-route-control-head">
+          <div>
+            <h2>Provider 凭证保险库</h2>
+            <p>页面永不回显明文。租户凭证覆盖对应运行时路由；撤销后立即擦除密文并对该路由失败关闭。</p>
+          </div>
+          <Badge tone={credentialPortfolio?.keyring_status === "ready" ? "success" : "danger"}>
+            keyring {credentialPortfolio?.keyring_status ?? "unavailable"}
+          </Badge>
+        </div>
+        {credentialLoadError && <DataStateCard title="凭证保险库不可用" desc={credentialLoadError} tone="danger" />}
+        {!credentialLoadError && credentialPortfolio?.keyring_status === "blocked" && (
+          <DataStateCard
+            title="主密钥环未配置"
+            desc="当前只能识别环境变量中的 legacy 凭证，不能在页面保存。请由部署密钥管理器注入独立的 AES-GCM 与 HMAC 32 字节密钥。"
+            tone="danger"
+          />
+        )}
+        {!credentialLoadError && credentialPortfolio && credentialPortfolio.credentials.length === 0 && (
+          <DataStateCard title="没有 Provider 路由" desc="系统不会生成演示凭证或伪造验证状态。" tone="warning" />
+        )}
+        {credentialPortfolio && credentialPortfolio.credentials.length > 0 && (
+          <div className="provider-credential-grid">
+            {credentialPortfolio.credentials.map((credential) => {
+              const key = `${credential.provider}/${credential.route_id}`;
+              const draft = credentialDrafts[key] ?? emptyProviderCredentialDraft();
+              const isVaultActive = credential.source === "vault_active" && credential.status === "active";
+              const keyringReady = credentialPortfolio.keyring_status === "ready";
+              const busy = updatingCredential === key;
+              const statusTone: Tone = credential.status === "active" ? "success" : credential.status === "revoked" || credential.status === "blocked" ? "danger" : "warning";
+              return (
+                <article className="provider-credential-card" key={key}>
+                  <header>
+                    <div>
+                      <strong>{credential.label}</strong>
+                      <small>{credential.route_id}</small>
+                    </div>
+                    <Badge tone={statusTone}>{credential.source}</Badge>
+                  </header>
+                  <dl className="provider-credential-meta">
+                    <div><dt>版本 / 掩码</dt><dd>v{credential.credential_version} · {credential.secret_mask ?? "无"}</dd></div>
+                    <div><dt>加密</dt><dd>{credential.algorithm ?? "未入库"} · {credential.encryption_key_id ?? "无 key id"}</dd></div>
+                    <div><dt>指纹</dt><dd>{credential.fingerprint_prefix ? `${credential.fingerprint_prefix}…` : "无"}</dd></div>
+                    <div><dt>激活时间</dt><dd>{formatDateTime(credential.activated_at)}</dd></div>
+                  </dl>
+                  {credential.verification ? (
+                    <div className="provider-credential-verification">
+                      <Badge tone="success">L3 verified</Badge>
+                      <span>{credential.verification.model} · {credential.verification.endpoint_host}</span>
+                      <small>{credential.verification.duration_ms} ms · {credential.verification.evidence_grade} · request-id {credential.verification.request_id_present ? "present" : "missing"}</small>
+                    </div>
+                  ) : (
+                    <div className="provider-credential-verification is-unverified">
+                      <Badge tone="warning">未做租户 L3 验证</Badge>
+                      <small>环境变量可用不等于已进入租户保险库。</small>
+                    </div>
+                  )}
+                  {credential.known_limitations.length > 0 && (
+                    <small className="provider-credential-limitations">限制：{credential.known_limitations.join("；")}</small>
+                  )}
+                  <div className="provider-credential-form">
+                    <label>
+                      <span>{isVaultActive ? "新凭证（轮换）" : "新凭证"}</span>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={draft.secret}
+                        disabled={!keyringReady || busy}
+                        placeholder="仅在本次提交的内存中暂存"
+                        onChange={(event) => setCredentialDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), secret: event.target.value } }))}
+                      />
+                    </label>
+                    <label>
+                      <span>变更 / 撤销理由</span>
+                      <input
+                        value={draft.reason}
+                        maxLength={500}
+                        disabled={!keyringReady || busy}
+                        placeholder="必填，进入审计事件"
+                        onChange={(event) => setCredentialDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), reason: event.target.value } }))}
+                      />
+                    </label>
+                    <label className="provider-credential-check">
+                      <input
+                        type="checkbox"
+                        checked={draft.confirmBillable}
+                        disabled={!keyringReady || busy}
+                        onChange={(event) => setCredentialDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), confirmBillable: event.target.checked } }))}
+                      />
+                      <span>确认保存前执行一次可能计费的 L3 真实生成</span>
+                    </label>
+                    {isVaultActive && (
+                      <label className="provider-credential-check is-danger">
+                        <input
+                          type="checkbox"
+                          checked={draft.confirmRevoke}
+                          disabled={busy}
+                          onChange={(event) => setCredentialDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? draft), confirmRevoke: event.target.checked } }))}
+                        />
+                        <span>确认撤销后立即中断该租户路由</span>
+                      </label>
+                    )}
+                    <div className="provider-credential-actions">
+                      <button className="primary-button" type="button" disabled={!keyringReady || busy} onClick={() => void saveProviderCredential(credential)}>
+                        {busy ? "处理中…" : isVaultActive ? "验证并轮换" : "验证并激活"}
+                      </button>
+                      {isVaultActive && (
+                        <button className="outline-button danger-outline" type="button" disabled={busy} onClick={() => void revokeCredential(credential)}>
+                          撤销并擦除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
       <section className="airank-console-card provider-route-control" data-testid="provider-route-control">
         <div className="provider-route-control-head">

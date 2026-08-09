@@ -237,6 +237,25 @@ FACT_DISCLOSURE_FORBIDDEN
 | `INTEGRATION_CAPABILITY_BLOCKED` | 503 | 外部能力 blocked |
 | `INTEGRATION_CAPABILITY_DISABLED` | 503 | 外部能力 disabled |
 | `PROVIDER_ROUTE_NOT_FOUND` | 404 | 指定 Provider 或运行时已配置路由不存在 |
+| `PROVIDER_NOT_SUPPORTED` | 404 | Provider 不在 AIRank 受控 manifest 中 |
+| `PROVIDER_CREDENTIAL_REVOKED` | 503 | 当前租户已吊销该 Provider 路由凭证，禁止回退到全局环境密钥 |
+| `PROVIDER_CREDENTIAL_KEY_UNAVAILABLE` | 503 | 当前租户存在加密凭证，但对应运行时解密密钥不可用 |
+| `CREDENTIAL_KEYRING_UNAVAILABLE` | 503 | 未配置版本化凭证加密与指纹 keyring，禁止写入 BYOK |
+| `CREDENTIAL_KEYRING_CONFIG_INVALID` | 503 | 凭证 keyring 不是有效非空 JSON 对象 |
+| `CREDENTIAL_KEY_ID_INVALID` | 503 | 凭证 key ID 不符合稳定标识约束 |
+| `CREDENTIAL_KEY_MATERIAL_INVALID` | 503 | key material 不是合法 base64 编码的 32 字节随机值 |
+| `CREDENTIAL_KEY_MATERIAL_DUPLICATE` | 503 | 同一安全域重复使用了相同 key material |
+| `CREDENTIAL_KEY_DOMAIN_REUSE` | 503 | 加密与 HMAC 指纹域复用了同一 key material |
+| `CREDENTIAL_ENCRYPTION_KEY_UNAVAILABLE` | 503 | 密文引用的历史加密 key 已不可用 |
+| `CREDENTIAL_FINGERPRINT_KEY_UNAVAILABLE` | 503 | 当前 HMAC 指纹 key 不可用 |
+| `CREDENTIAL_ALGORITHM_UNSUPPORTED` | 503 | 密文算法不是 AIRank 支持的版本 |
+| `CREDENTIAL_DECRYPTION_FAILED` | 503 | 密文、nonce、AAD 或 key 不匹配，认证解密失败 |
+| `CREDENTIAL_CONTEXT_INVALID` | 500 | 凭证加密上下文缺少租户、Provider、路由或版本 |
+| `CREDENTIAL_SECRET_INVALID` | 422 | 明文凭证为空、过短、过长或包含空白字符 |
+| `CREDENTIAL_PROVIDER_VERIFICATION_FAILED` | 422 | 新凭证未通过对应路由的真实 L3 最小生成验证，不入库 |
+| `CREDENTIAL_NOT_FOUND` | 404 | 当前租户路由不存在 Vault 凭证或吊销目标不存在 |
+| `CREDENTIAL_UNCHANGED` | 409 | 新凭证与当前 HMAC 指纹一致，拒绝伪造轮换 |
+| `CREDENTIAL_ALREADY_REVOKED` | 409 | 凭证已吊销且密文已 scrub，不能重复吊销 |
 | `PROVIDER_ROUTE_CONTROL_INVALID` | 422 | Provider 路由控制参数、操作者或变更理由无效 |
 | `PROVIDER_ROUTE_CONTROL_CONFLICT` | 409 | Provider 路由控制版本已变化，需要刷新后重试 |
 | `PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN` | 409 | 禁止停用 Provider 最后一条已配置路由 |

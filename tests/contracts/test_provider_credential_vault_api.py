@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
+
+from airank_provider_gateway import CredentialKeyring, ProviderGatewayError, ProviderRequestContext, ProviderSettings
+from apps.api import main as api_main
+from apps.api import provider_credentials
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CONTRACTS = ROOT / "packages" / "contracts"
+
+
+def load_schema(name: str) -> dict:
+    return json.loads((CONTRACTS / name).read_text(encoding="utf-8"))
+
+
+def validate_schema(name: str, payload: object) -> None:
+    response_schema = load_schema("provider_credential_response.schema.json")
+    registry = Registry().with_resource(
+        response_schema["$id"], Resource.from_contents(response_schema)
+    )
+    contract = load_schema(name)
+    Draft202012Validator.check_schema(contract)
+    Draft202012Validator(
+        contract,
+        registry=registry,
+        format_checker=FormatChecker(),
+    ).validate(payload)
+
+
+class VerifiedCredential:
+    def verify(self, *, tenant_id: str, provider: str, route_id: str, secret: str):
+        assert tenant_id == "tenant_vault"
+        assert provider == "qianwen"
+        assert route_id == "qianwen:default"
+        assert secret.startswith("sk-")
+        return {
+            "status": "verified",
+            "probe_level": "l3_generation",
+            "model": "qwen3.6-plus",
+            "endpoint_host": "dashscope.aliyuncs.com",
+            "request_id_present": True,
+            "provider_request_id_sha256": "a" * 64,
+            "duration_ms": 12,
+            "evidence_grade": "provider_api_search_unverified",
+            "verified_at": "2026-08-09T01:00:00+00:00",
+        }
+
+
+def vault():
+    environment = {
+        "QIANWEN_API_KEY": "environment-fallback-secret",
+        "QIANWEN_API_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "QIANWEN_MODEL": "qwen3.6-plus",
+    }
+    keyring = CredentialKeyring(
+        active_encryption_key_id="enc-v1",
+        encryption_keys={"enc-v1": b"e" * 32},
+        active_fingerprint_key_id="fp-v1",
+        fingerprint_keys={"fp-v1": b"f" * 32},
+    )
+    return provider_credentials.InMemoryProviderCredentialVault(
+        keyring, verifier=VerifiedCredential(), env=environment
+    )
+
+
+def request(secret: str, expected_version: int):
+    return provider_credentials.CredentialUpsertRequest(
+        secret=secret,
+        expected_version=expected_version,
+        reason="scheduled credential rotation",
+        confirm_billable=True,
+    )
+
+
+def settings() -> ProviderSettings:
+    return ProviderSettings(
+        endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        api_key="environment-fallback-secret",
+        model="qwen3.6-plus",
+        disabled=False,
+        max_tokens=128,
+        temperature=0.2,
+        reasoning_effort=None,
+        request_kind="chat_completions_search",
+        allowed_endpoint_hosts=("dashscope.aliyuncs.com",),
+        allow_custom_endpoint=False,
+    )
+
+
+def test_vault_rotation_scrubs_old_ciphertext_and_revoke_blocks_env_fallback() -> None:
+    repository = vault()
+    first = repository.upsert(
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-first-private-value", 0), "admin_1", "trc_1"
+    )
+    assert first.source == "vault_active"
+    assert first.secret_mask != "sk-first-private-value"
+    resolved = repository.resolve_settings(
+        "qianwen",
+        "qianwen:default",
+        settings(),
+        context=ProviderRequestContext(tenant_id="tenant_vault"),
+    )
+    assert resolved.api_key == "sk-first-private-value"
+    assert resolved.credential_source == "tenant_vault"
+    assert resolved.credential_version == 1
+
+    second = repository.upsert(
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-second-private-value", 1), "admin_1", "trc_2"
+    )
+    history = repository._records[("tenant_vault", "qianwen", "qianwen:default")]
+    assert second.credential_version == 2
+    assert history[0].envelope.ciphertext == ""
+    assert history[0].envelope.nonce == ""
+    assert history[0].envelope.secret_mask == "rotated"
+
+    revoked = repository.revoke(
+        "tenant_vault",
+        "qianwen",
+        "qianwen:default",
+        provider_credentials.CredentialRevokeRequest(expected_version=2, reason="credential compromised"),
+        "admin_2",
+        "trc_3",
+    )
+    assert revoked.source == "vault_revoked"
+    assert history[1].envelope.ciphertext == ""
+    with pytest.raises(ProviderGatewayError) as captured:
+        repository.resolve_settings(
+            "qianwen",
+            "qianwen:default",
+            settings(),
+            context=ProviderRequestContext(tenant_id="tenant_vault"),
+        )
+    assert captured.value.code == "PROVIDER_CREDENTIAL_REVOKED"
+    assert captured.value.request_contract == {
+        "credential_source": "tenant_vault",
+        "credential_id": second.credential_id,
+        "credential_version": 2,
+    }
+
+    replacement = repository.upsert(
+        "tenant_vault",
+        "qianwen",
+        "qianwen:default",
+        request("sk-third-private-value", 2),
+        "admin_3",
+        "trc_4",
+    )
+    assert replacement.credential_version == 3
+    assert history[1].status == "revoked"
+    assert history[1].envelope.secret_mask == "deleted"
+
+
+def test_vault_api_never_returns_plaintext_and_uses_trusted_actor(monkeypatch) -> None:
+    repository = vault()
+    monkeypatch.setattr(provider_credentials, "get_provider_credential_vault", lambda: repository)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
+    client = TestClient(api_main.app)
+    secret = "sk-api-private-value"
+    response = client.put(
+        "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
+        headers={"tenant-id": "tenant_vault", "X-AIRank-User-Id": "spoofed-actor"},
+        json={"secret": secret, "expected_version": 0, "reason": "initial tenant BYOK", "confirm_billable": True},
+    )
+    assert response.status_code == 200
+    serialized = json.dumps(response.json(), ensure_ascii=False)
+    assert secret not in serialized
+    assert "secret_ciphertext" not in serialized
+    assert response.json()["data"]["source"] == "vault_active"
+    validate_schema("provider_credential_response.schema.json", response.json())
+
+    portfolio = client.get(
+        "/api/v1/admin/provider-credentials", headers={"tenant-id": "tenant_vault"}
+    )
+    assert portfolio.status_code == 200
+    assert secret not in json.dumps(portfolio.json(), ensure_ascii=False)
+    validate_schema("provider_credential_portfolio_response.schema.json", portfolio.json())
+
+
+def test_vault_request_contracts_and_required_auth_are_strict(monkeypatch) -> None:
+    for name, payload in (
+        (
+            "provider_credential_upsert_request.schema.json",
+            {
+                "secret": "sk-private-credential",
+                "expected_version": 0,
+                "reason": "initial tenant credential",
+                "confirm_billable": True,
+            },
+        ),
+        (
+            "provider_credential_revoke_request.schema.json",
+            {"expected_version": 1, "reason": "credential compromised"},
+        ),
+    ):
+        validate_schema(name, payload)
+
+    repository = vault()
+    monkeypatch.setattr(provider_credentials, "get_provider_credential_vault", lambda: repository)
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_vault")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "console:read")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    ordinary_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "ordinary-user", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    forbidden = client.get(
+        "/api/v1/admin/provider-credentials",
+        headers={
+            "tenant-id": "tenant_vault",
+            "Authorization": f"Bearer {ordinary_token}",
+            "X-AIRank-Permissions": "airank:provider:admin",
+        },
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
+
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:admin")
+    admin_token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "provider-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+    secret = "sk-admin-private-value"
+    allowed = client.put(
+        "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
+        headers={
+            "tenant-id": "tenant_vault",
+            "Authorization": f"Bearer {admin_token}",
+            "X-AIRank-User-Id": "spoofed-actor",
+        },
+        json={
+            "secret": secret,
+            "expected_version": 0,
+            "reason": "initial tenant credential",
+            "confirm_billable": True,
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["data"]["created_by"] == "provider-admin"
+    assert secret not in json.dumps(allowed.json(), ensure_ascii=False)
+
+
+def test_vault_rejects_unchanged_secret_after_real_verification() -> None:
+    repository = vault()
+    repository.upsert(
+        "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 0), "admin", "trc_1"
+    )
+    with pytest.raises(provider_credentials.CredentialVaultError) as captured:
+        repository.upsert(
+            "tenant_vault", "qianwen", "qianwen:default", request("sk-same-private-value", 1), "admin", "trc_2"
+        )
+    assert captured.value.code == "CREDENTIAL_UNCHANGED"
+
+    repository.keyring = CredentialKeyring(
+        active_encryption_key_id="enc-v2",
+        encryption_keys={"enc-v1": b"e" * 32, "enc-v2": b"n" * 32},
+        active_fingerprint_key_id="fp-v2",
+        fingerprint_keys={"fp-v1": b"f" * 32, "fp-v2": b"g" * 32},
+    )
+    with pytest.raises(provider_credentials.CredentialVaultError) as rotated_key_error:
+        repository.upsert(
+            "tenant_vault",
+            "qianwen",
+            "qianwen:default",
+            request("sk-same-private-value", 1),
+            "admin",
+            "trc_3",
+        )
+    assert rotated_key_error.value.code == "CREDENTIAL_UNCHANGED"
+
+
+def test_invalid_secret_validation_never_echoes_plaintext(monkeypatch) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "disabled")
+    marker = "LEAKME"
+    response = TestClient(api_main.app).put(
+        "/api/v1/admin/provider-credentials/qianwen/qianwen:default",
+        headers={"tenant-id": "tenant_vault"},
+        json={
+            "secret": marker,
+            "expected_version": 0,
+            "reason": "invalid secret validation",
+            "confirm_billable": True,
+        },
+    )
+    assert response.status_code == 422
+    assert marker not in response.text

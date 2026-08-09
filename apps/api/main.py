@@ -239,10 +239,29 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "INTEGRATION_CAPABILITY_BLOCKED": (503, "Integration capability is blocked"),
     "INTEGRATION_CAPABILITY_DISABLED": (503, "Integration capability is disabled"),
     "PROVIDER_ROUTE_NOT_FOUND": (404, "Provider route not found"),
+    "PROVIDER_NOT_SUPPORTED": (404, "Provider is not supported"),
     "PROVIDER_ROUTE_CONTROL_INVALID": (422, "Provider route control is invalid"),
     "PROVIDER_ROUTE_CONTROL_CONFLICT": (409, "Provider route control version conflict"),
     "PROVIDER_LAST_ROUTE_DISABLE_FORBIDDEN": (409, "The last configured provider route cannot be disabled"),
     "PROVIDER_ROUTES_DISABLED_BY_CONTROL": (503, "All provider routes are disabled by control policy"),
+    "PROVIDER_CREDENTIAL_REVOKED": (503, "Tenant Provider credential is revoked"),
+    "PROVIDER_CREDENTIAL_KEY_UNAVAILABLE": (503, "Tenant Provider credential key is unavailable"),
+    "CREDENTIAL_KEYRING_UNAVAILABLE": (503, "Credential keyring is unavailable"),
+    "CREDENTIAL_KEYRING_CONFIG_INVALID": (503, "Credential keyring configuration is invalid"),
+    "CREDENTIAL_KEY_ID_INVALID": (503, "Credential key identifier is invalid"),
+    "CREDENTIAL_KEY_MATERIAL_INVALID": (503, "Credential key material is invalid"),
+    "CREDENTIAL_KEY_MATERIAL_DUPLICATE": (503, "Credential key material is duplicated"),
+    "CREDENTIAL_KEY_DOMAIN_REUSE": (503, "Credential key material is reused across security domains"),
+    "CREDENTIAL_ENCRYPTION_KEY_UNAVAILABLE": (503, "Credential encryption key is unavailable"),
+    "CREDENTIAL_FINGERPRINT_KEY_UNAVAILABLE": (503, "Credential fingerprint key is unavailable"),
+    "CREDENTIAL_ALGORITHM_UNSUPPORTED": (503, "Credential encryption algorithm is unsupported"),
+    "CREDENTIAL_DECRYPTION_FAILED": (503, "Credential authenticated decryption failed"),
+    "CREDENTIAL_CONTEXT_INVALID": (500, "Credential encryption context is invalid"),
+    "CREDENTIAL_SECRET_INVALID": (422, "Credential secret is invalid"),
+    "CREDENTIAL_PROVIDER_VERIFICATION_FAILED": (422, "Provider credential did not pass L3 generation verification"),
+    "CREDENTIAL_NOT_FOUND": (404, "Provider credential was not found"),
+    "CREDENTIAL_UNCHANGED": (409, "Provider credential is unchanged"),
+    "CREDENTIAL_ALREADY_REVOKED": (409, "Provider credential is already revoked"),
     "YUDAO_MODEL_RESOLVE_FAILED": (502, "Yudao model resolution failed"),
     "XINGHE_CRAWLER_FAILED": (502, "Xinghe crawler failed"),
     "XINGHE_KB_FAILED": (502, "Xinghe KB failed"),
@@ -4008,18 +4027,23 @@ def complete_mysql_real_brand_scan(
                 },
             )
             if result.raw_metadata.get("capture_mode") == "provider_api":
+                request_contract = result.raw_metadata.get("request_contract")
+                if not isinstance(request_contract, dict):
+                    request_contract = {}
                 conn.execute(
                     text(
                         """
                         INSERT INTO airank_provider_request_audits (
                           id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
                           provider_key, route_id, model_name, endpoint_host, configuration_fingerprint,
+                          credential_source, credential_id, credential_version,
                           provider_request_id, prompt_sha256, outcome, evidence_grade,
                           attempt_count, duration_ms, requested_at, completed_at, metadata_json
                         )
                         VALUES (
                           :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
                           :provider_key, :route_id, :model_name, :endpoint_host, :configuration_fingerprint,
+                          :credential_source, :credential_id, :credential_version,
                           :provider_request_id, :prompt_sha256, 'success', :evidence_grade,
                           :attempt_count, :duration_ms, :requested_at, :completed_at, :metadata_json
                         )
@@ -4037,6 +4061,9 @@ def complete_mysql_real_brand_scan(
                         "model_name": result.raw_metadata["model_name"],
                         "endpoint_host": result.raw_metadata["endpoint_host"],
                         "configuration_fingerprint": result.raw_metadata["configuration_fingerprint"],
+                        "credential_source": request_contract.get("credential_source"),
+                        "credential_id": request_contract.get("credential_id"),
+                        "credential_version": request_contract.get("credential_version"),
                         "provider_request_id": result.external_trace_id,
                         "prompt_sha256": result.raw_metadata["prompt_sha256"],
                         "evidence_grade": result.raw_metadata.get("evidence_level"),
@@ -4419,6 +4446,9 @@ def complete_mysql_real_brand_scan(
                     provider_metadata.get("prompt_sha256"),
                 )
                 if all(required_audit_values):
+                    request_contract = provider_metadata.get("request_contract")
+                    if not isinstance(request_contract, dict):
+                        request_contract = {}
                     failure_provider_audit_id = f"provider_audit_{uuid4().hex[:12]}"
                     conn.execute(
                         text(
@@ -4426,12 +4456,14 @@ def complete_mysql_real_brand_scan(
                             INSERT INTO airank_provider_request_audits (
                               id, tenant_id, project_id, run_id, task_id, answer_snapshot_id,
                               provider_key, route_id, model_name, endpoint_host, configuration_fingerprint,
+                              credential_source, credential_id, credential_version,
                               provider_request_id, prompt_sha256, outcome, attempt_count, duration_ms,
                               error_code, provider_error_code, requested_at, completed_at, metadata_json
                             )
                             VALUES (
                               :id, :tenant_id, :project_id, :run_id, :task_id, :answer_snapshot_id,
                               :provider_key, :route_id, :model_name, :endpoint_host, :configuration_fingerprint,
+                              :credential_source, :credential_id, :credential_version,
                               :provider_request_id, :prompt_sha256, 'failed', :attempt_count, :duration_ms,
                               :error_code, :provider_error_code, :requested_at, :completed_at, :metadata_json
                             )
@@ -4449,6 +4481,9 @@ def complete_mysql_real_brand_scan(
                             "model_name": provider_metadata["model_name"],
                             "endpoint_host": provider_metadata["endpoint_host"],
                             "configuration_fingerprint": provider_metadata["configuration_fingerprint"],
+                            "credential_source": request_contract.get("credential_source"),
+                            "credential_id": request_contract.get("credential_id"),
+                            "credential_version": request_contract.get("credential_version"),
                             "provider_request_id": provider_metadata.get("provider_request_id"),
                             "prompt_sha256": provider_metadata["prompt_sha256"],
                             "attempt_count": int(provider_metadata.get("attempt_count") or 1),
@@ -6250,3 +6285,10 @@ except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:
     from brand_graph_routes import router as brand_graph_router  # type: ignore[no-redef]
 
 app.include_router(brand_graph_router)
+
+try:
+    from .provider_credentials import router as provider_credential_router
+except ImportError:  # pragma: no cover - supports `cd apps/api && uvicorn main:app`.
+    from provider_credentials import router as provider_credential_router  # type: ignore[no-redef]
+
+app.include_router(provider_credential_router)

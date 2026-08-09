@@ -58,6 +58,11 @@ from apps.api.knowledge_routes import (
     derive_knowledge_governance,
 )
 from apps.api.provider_operations import MySQLProviderOperations
+from apps.api.provider_credentials import (
+    CredentialRevokeRequest,
+    CredentialUpsertRequest,
+    MySQLProviderCredentialVault,
+)
 from apps.api.evidence_routes import MySQLEvidenceRepository
 from apps.api.evidence_gap_routes import DeriveEvidenceGapsRequest, MySQLEvidenceGapRepository
 from apps.api.fact_acquisition_routes import (
@@ -109,6 +114,7 @@ from airank_evidence import FilesystemObjectStorage, canonical_json_sha256
 from airank_domain.measurement import sha256_text
 from airank_score.quality import build_measurement_quality_report
 from airank_provider_gateway import (
+    CredentialKeyring,
     HealthState,
     ImplementationStatus,
     PROVIDER_MANIFESTS,
@@ -119,6 +125,7 @@ from airank_provider_gateway import (
     ProviderGatewayError,
     ProviderManifest,
     ProviderRequestContext,
+    ProviderSettings,
     resolve_provider_routes,
 )
 from airank_outbound_security import OutboundResponse
@@ -159,7 +166,7 @@ from airank_xinghe_adapter import (  # noqa: E402
 
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4"
-EXPECTED_ALEMBIC_HEAD = "20260809_0039"
+EXPECTED_ALEMBIC_HEAD = "20260809_0040"
 
 
 def require_real_flag(flag: str) -> None:
@@ -225,8 +232,10 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 """
             )
         ).scalar_one()
-        assert table_count == 101
+        assert table_count == 103
         for table_name in (
+            "airank_provider_credentials",
+            "airank_provider_credential_events",
             "airank_evidence_review_teams",
             "airank_evidence_review_team_members",
             "airank_evidence_review_routes",
@@ -269,6 +278,26 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 WHERE table_schema=DATABASE()
                   AND table_name='airank_report_evidence_packets'
                   AND column_name='integrity_audit_id'
+                """
+            )
+        ).scalar_one() == 1
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_request_audits'
+                  AND column_name IN ('credential_source', 'credential_id', 'credential_version')
+                """
+            )
+        ).scalar_one() == 3
+        assert conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema=DATABASE()
+                  AND table_name='airank_provider_credential_events'
+                  AND column_name='event_sequence'
                 """
             )
         ).scalar_one() == 1
@@ -358,6 +387,156 @@ def test_real_mysql_alembic_head_and_schema_contract() -> None:
                 {"table_name": table_name, "column_name": column_name},
             ).scalar_one()
             assert url_length == 2048
+
+
+class _VerifiedCredentialProbe:
+    def verify(self, *, tenant_id: str, provider: str, route_id: str, secret: str) -> dict[str, object]:
+        assert tenant_id.startswith("tenant_credential_it_")
+        assert provider == "qianwen"
+        assert route_id == "qianwen:default"
+        assert secret.startswith("sk-")
+        return {
+            "status": "verified",
+            "probe_level": "l3_generation",
+            "model": "qwen-integration",
+            "endpoint_host": "dashscope.example.test",
+            "request_id_present": True,
+            "provider_request_id_sha256": "b" * 64,
+            "duration_ms": 9,
+            "evidence_grade": "provider_api_search_unverified",
+            "verified_at": "2026-08-09T01:00:00+00:00",
+        }
+
+
+def test_real_mysql_provider_credential_rotation_chain_and_fail_closed_revoke() -> None:
+    require_real_flag("AIRANK_RUN_REAL_MYSQL")
+    tenant_id = f"tenant_credential_it_{uuid4().hex[:10]}"
+    engine = create_engine(database_url(), pool_pre_ping=True)
+    environment = {
+        "QIANWEN_API_KEY": "environment-fallback-secret",
+        "QIANWEN_API_URL": "https://dashscope.example.test/v1/chat/completions",
+        "QIANWEN_MODEL": "qwen-integration",
+        "AIRANK_ALLOW_CUSTOM_PROVIDER_ENDPOINTS": "true",
+    }
+    keyring = CredentialKeyring(
+        active_encryption_key_id="enc-it-v1",
+        encryption_keys={"enc-it-v1": b"e" * 32},
+        active_fingerprint_key_id="fp-it-v1",
+        fingerprint_keys={"fp-it-v1": b"f" * 32},
+    )
+    repository = MySQLProviderCredentialVault(
+        database_url(),
+        keyring,
+        verifier=_VerifiedCredentialProbe(),
+        env=environment,
+    )
+    first_secret = "sk-real-mysql-first-secret"
+    second_secret = "sk-real-mysql-second-secret"
+
+    try:
+        first = repository.upsert(
+            tenant_id,
+            "qianwen",
+            "qianwen:default",
+            CredentialUpsertRequest(
+                secret=first_secret,
+                expected_version=0,
+                reason="initial integration credential",
+                confirm_billable=True,
+            ),
+            "integration-admin",
+            "trc_credential_1",
+        )
+        second = repository.upsert(
+            tenant_id,
+            "qianwen",
+            "qianwen:default",
+            CredentialUpsertRequest(
+                secret=second_secret,
+                expected_version=1,
+                reason="scheduled integration rotation",
+                confirm_billable=True,
+            ),
+            "integration-admin",
+            "trc_credential_2",
+        )
+        assert first.credential_version == 1
+        assert second.credential_version == 2
+
+        resolved = repository.resolve_settings(
+            "qianwen",
+            "qianwen:default",
+            ProviderSettings(
+                endpoint=environment["QIANWEN_API_URL"],
+                api_key=environment["QIANWEN_API_KEY"],
+                model=environment["QIANWEN_MODEL"],
+                disabled=False,
+                max_tokens=32,
+                temperature=0.2,
+                reasoning_effort=None,
+                request_kind="chat_completions_search",
+                allowed_endpoint_hosts=("dashscope.example.test",),
+                allow_custom_endpoint=True,
+            ),
+            context=ProviderRequestContext(tenant_id=tenant_id),
+        )
+        assert resolved.api_key == second_secret
+        assert resolved.credential_source == "tenant_vault"
+        assert resolved.credential_id == second.credential_id
+
+        repository.revoke(
+            tenant_id,
+            "qianwen",
+            "qianwen:default",
+            CredentialRevokeRequest(expected_version=2, reason="integration revoke verification"),
+            "integration-admin",
+            "trc_credential_3",
+        )
+
+        with engine.connect() as conn:
+            credentials = conn.execute(
+                text(
+                    "SELECT * FROM airank_provider_credentials "
+                    "WHERE tenant_id=:tenant_id ORDER BY credential_version"
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().all()
+            events = conn.execute(
+                text(
+                    "SELECT * FROM airank_provider_credential_events "
+                    "WHERE tenant_id=:tenant_id ORDER BY event_sequence"
+                ),
+                {"tenant_id": tenant_id},
+            ).mappings().all()
+
+        assert [(row["status"], row["is_current"]) for row in credentials] == [
+            ("rotated", 0),
+            ("revoked", 1),
+        ]
+        assert all(row["secret_ciphertext"] == "" for row in credentials)
+        assert all(row["secret_nonce"] == "" for row in credentials)
+        serialized_rows = json.dumps(
+            [dict(row) for row in [*credentials, *events]],
+            ensure_ascii=False,
+            default=str,
+        )
+        assert first_secret not in serialized_rows
+        assert second_secret not in serialized_rows
+        assert [row["event_sequence"] for row in events] == [1, 2, 3, 4]
+        assert events[0]["previous_event_sha256"] is None
+        for previous, current in zip(events, events[1:]):
+            assert current["previous_event_sha256"] == previous["event_sha256"]
+
+        with pytest.raises(ProviderGatewayError) as revoked_error:
+            repository.resolve_settings(
+                "qianwen",
+                "qianwen:default",
+                resolved,
+                context=ProviderRequestContext(tenant_id=tenant_id),
+            )
+        assert revoked_error.value.code == "PROVIDER_CREDENTIAL_REVOKED"
+    finally:
+        cleanup_tenant(engine, tenant_id)
 
 
 def test_real_s3_compatible_object_storage_probe() -> None:

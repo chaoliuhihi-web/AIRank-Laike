@@ -13,11 +13,13 @@ from .gateway import (
     ProviderGateway,
     ProviderLimiter,
     ProviderRequestContext,
+    ProviderCredentialResolverContract,
     ProviderRoutePolicyContract,
     QuotaLedgerContract,
     QuotaReservation,
 )
 from .manifests import PROVIDER_ALIASES, PROVIDER_MANIFESTS, canonical_provider, get_manifest
+from .credentials import CredentialEnvelope, CredentialKeyring, CredentialVaultError, mask_secret
 from .models import (
     HealthState,
     ImplementationStatus,
@@ -56,10 +58,15 @@ __all__ = [
     "ProviderGatewayError",
     "ProviderLimiter",
     "ProviderRequestContext",
+    "ProviderCredentialResolverContract",
     "ProviderRoutePolicyContract",
     "ProviderManifest",
     "ProviderResult",
     "ProviderSettings",
+    "CredentialEnvelope",
+    "CredentialKeyring",
+    "CredentialVaultError",
+    "mask_secret",
     "ProviderTransport",
     "ProviderUsage",
     "QuotaLedgerContract",
