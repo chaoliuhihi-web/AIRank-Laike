@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!ops/deployment/env.*.example
 
 .runtime/
 **/.runtime/

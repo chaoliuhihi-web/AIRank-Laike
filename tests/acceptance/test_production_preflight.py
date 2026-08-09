@@ -150,6 +150,80 @@ def test_preflight_blocks_local_fallbacks_sunset_model_and_unrotated_secrets() -
     assert "DEFAULT_TENANT_ID must be unset" in detail
 
 
+def test_preflight_accepts_explicit_single_node_database_with_verified_tls() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_SINGLE_NODE_MODE": "true",
+            "AIRANK_DATA_ROOT": "/home/www1/airank/data",
+            "AIRANK_SECRET_ROOT": "/home/www1/airank/secrets",
+            "AIRANK_BACKEND_IMAGE": "sha256:" + "1" * 64,
+            "AIRANK_WEB_IMAGE": "sha256:" + "2" * 64,
+            "AIRANK_MYSQL_IMAGE": "mysql@sha256:" + "3" * 64,
+            "AIRANK_MINIO_IMAGE": "minio/minio@sha256:" + "4" * 64,
+            "AIRANK_NGINX_IMAGE": "sha256:" + "5" * 64,
+            "AIRANK_DATABASE_URL": (
+                "mysql+pymysql://airank:strong-secret@airank-db:3306/airank_laike"
+                "?charset=utf8mb4&ssl_ca=/run/secrets/airank-internal-ca.pem"
+                "&ssl_verify_cert=true&ssl_verify_identity=true"
+            ),
+            "AIRANK_OBJECT_STORAGE_DRIVER": "minio",
+            "AIRANK_S3_ENDPOINT_URL": "https://airank-objects:9000",
+            "YUDAO_BASE_URL": "https://airank-yudao:8443",
+            "YUDAO_PERMISSION_INFO_URL": (
+                "https://airank-yudao:8443/admin-api/system/auth/get-permission-info"
+            ),
+            "YUDAO_MODEL_RESOLVE_URL": (
+                "https://airank-yudao:8443/admin-api/ai/model/resolve"
+            ),
+        }
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is True
+    assert result.blockers == ()
+
+
+def test_single_node_mode_does_not_waive_database_boundary_or_tls_checks() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_SINGLE_NODE_MODE": "true",
+            "AIRANK_DATABASE_URL": (
+                "mysql+pymysql://airank:strong-secret@mysql:3306/airank_laike"
+            ),
+        }
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is False
+    detail = "\n".join(result.blockers)
+    assert "dedicated TLS hostname airank-db" in detail
+    assert "ssl_verify_identity=true" in detail
+
+
+def test_single_node_mode_requires_data_disk_and_immutable_images() -> None:
+    env = production_env()
+    env.update(
+        {
+            "AIRANK_SINGLE_NODE_MODE": "true",
+            "AIRANK_DATA_ROOT": "/var/lib/airank",
+            "AIRANK_SECRET_ROOT": "/var/lib/airank",
+            "AIRANK_BACKEND_IMAGE": "airank-backend:latest",
+        }
+    )
+
+    result = production_preflight.validate_production_environment(env, role="api")
+
+    assert result.ready is False
+    detail = "\n".join(result.blockers)
+    assert "AIRANK_BACKEND_IMAGE must use an immutable sha256" in detail
+    assert "AIRANK_DATA_ROOT must be a normalized absolute path on the data disk" in detail
+    assert "AIRANK_DATA_ROOT and AIRANK_SECRET_ROOT must be different" in detail
+
+
 def test_preflight_rejects_key_reuse_across_cryptographic_domains() -> None:
     env = production_env()
     env["AIRANK_CREDENTIAL_FINGERPRINT_KEYS"] = env[

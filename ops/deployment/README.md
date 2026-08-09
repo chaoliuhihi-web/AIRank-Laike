@@ -9,6 +9,8 @@
 - `ops/deployment/env.production.example`
 - `ops/deployment/Dockerfile.backend`
 - `ops/deployment/Dockerfile.web`
+- `ops/deployment/compose.single-node.production.yml`
+- `ops/deployment/single-node-production.md`
 
 生产配置在任何服务启动前由 `scripts/production_preflight.py` 失败关闭；
 `/api/v1/health` 是存活探针，`/api/v1/ready` 才是部署就绪探针。

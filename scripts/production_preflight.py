@@ -37,6 +37,9 @@ PROVIDER_NAMES = ("qianwen", "doubao", "kimi", "deepseek")
 KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+IMMUTABLE_IMAGE_RE = re.compile(
+    r"^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*@)?sha256:[0-9a-f]{64}$"
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,7 @@ def _key_map(
 def _validate_database(source: Mapping[str, str], blockers: list[str]) -> None:
     value = _clean(source, "AIRANK_DATABASE_URL")
     parsed = urlparse(value)
+    single_node = _enabled(source, "AIRANK_SINGLE_NODE_MODE")
     if parsed.scheme != "mysql+pymysql" or not parsed.hostname or not parsed.path.strip("/"):
         blockers.append("AIRANK_DATABASE_URL must be a complete mysql+pymysql URL")
         return
@@ -135,8 +139,15 @@ def _validate_database(source: Mapping[str, str], blockers: list[str]) -> None:
         blockers.append("AIRANK_DATABASE_URL must use the final production database host")
     if not parsed.username or not parsed.password or _is_placeholder(parsed.password):
         blockers.append("AIRANK_DATABASE_URL must use a non-placeholder deployment credential")
-    if parsed.hostname in {"127.0.0.1", "localhost", "mysql", "db"}:
+    bundled_hosts = {"127.0.0.1", "localhost", "mysql", "db", "airank-db"}
+    if parsed.hostname in bundled_hosts and not (
+        single_node and parsed.hostname == "airank-db"
+    ):
         blockers.append("AIRANK_DATABASE_URL must not target a local or bundled development database")
+    if single_node and parsed.hostname != "airank-db":
+        blockers.append(
+            "AIRANK_SINGLE_NODE_MODE requires the dedicated TLS hostname airank-db"
+        )
     query = {key: values[-1].lower() for key, values in parse_qs(parsed.query).items() if values}
     tls_enabled = query.get("ssl", "") in TRUE_VALUES or bool(query.get("ssl_ca"))
     verify_cert = query.get("ssl_verify_cert", "") in TRUE_VALUES
@@ -211,6 +222,33 @@ def _validate_auth(source: Mapping[str, str], blockers: list[str]) -> None:
         blockers.append("AIRANK_PROVIDER_PLATFORM_ADMIN_PERMISSION must be configured")
     if tenant_provider_permission and tenant_provider_permission == platform_provider_permission:
         blockers.append("tenant and platform Provider permissions must be different")
+
+
+def _validate_single_node(source: Mapping[str, str], blockers: list[str]) -> None:
+    if not _enabled(source, "AIRANK_SINGLE_NODE_MODE"):
+        return
+    for name in (
+        "AIRANK_BACKEND_IMAGE",
+        "AIRANK_WEB_IMAGE",
+        "AIRANK_MYSQL_IMAGE",
+        "AIRANK_MINIO_IMAGE",
+        "AIRANK_NGINX_IMAGE",
+    ):
+        if not IMMUTABLE_IMAGE_RE.fullmatch(_clean(source, name)):
+            blockers.append(f"{name} must use an immutable sha256 image reference")
+    for name in ("AIRANK_DATA_ROOT", "AIRANK_SECRET_ROOT"):
+        value = _clean(source, name)
+        normalized = os.path.normpath(value)
+        if not value.startswith("/home/www1/") or normalized != value:
+            blockers.append(f"{name} must be a normalized absolute path on the data disk")
+    if _clean(source, "AIRANK_DATA_ROOT") == _clean(source, "AIRANK_SECRET_ROOT"):
+        blockers.append("AIRANK_DATA_ROOT and AIRANK_SECRET_ROOT must be different")
+    if _clean(source, "AIRANK_OBJECT_STORAGE_DRIVER").lower() != "minio":
+        blockers.append("AIRANK_SINGLE_NODE_MODE requires the dedicated MinIO driver")
+    if urlparse(_clean(source, "AIRANK_S3_ENDPOINT_URL")).hostname != "airank-objects":
+        blockers.append("AIRANK_SINGLE_NODE_MODE requires the TLS hostname airank-objects")
+    if urlparse(_clean(source, "YUDAO_BASE_URL")).hostname != "airank-yudao":
+        blockers.append("AIRANK_SINGLE_NODE_MODE requires the TLS hostname airank-yudao")
 
 
 def _validate_provider_runtime(
@@ -323,6 +361,8 @@ def validate_production_environment(
     checks.append("immutable_object_storage")
     _validate_auth(source, blockers)
     checks.append("authentication_authority")
+    _validate_single_node(source, blockers)
+    checks.append("single_node_boundary")
 
     _, encryption_keys = _key_map(
         source,
