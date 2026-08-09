@@ -32,6 +32,7 @@ x-backend: &backend
     - ${AIRANK_SECRET_ROOT:?set AIRANK_SECRET_ROOT}/pki/ca.pem:/run/secrets/airank-internal-ca.pem:ro
   environment:
     AWS_CA_BUNDLE: /run/secrets/airank-internal-ca.pem
+    SSL_CERT_FILE: /run/secrets/airank-internal-ca.pem
 
 services:
   mysql:

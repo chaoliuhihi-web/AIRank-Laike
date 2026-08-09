@@ -83,6 +83,8 @@ def test_single_node_compose_keeps_state_on_the_data_disk() -> None:
     assert "subnet: 172.30.40.0/24" in text
     assert "gateway: 172.30.40.1" in text
     assert "egress:" in text
+    assert "AWS_CA_BUNDLE: /run/secrets/airank-internal-ca.pem" in text
+    assert "SSL_CERT_FILE: /run/secrets/airank-internal-ca.pem" in text
 
     bootstrap = (ROOT / "ops" / "deployment" / "mysql" / "airank-init.sh").read_text()
     assert "eval " not in bootstrap
