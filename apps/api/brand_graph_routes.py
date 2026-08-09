@@ -371,6 +371,16 @@ def _snapshot_data(row: Mapping[str, Any]) -> BrandGraphSnapshotData:
     )
 
 
+def _brand_graph_fact_semantic_reasons(row: Mapping[str, Any]) -> list[str]:
+    """Keep measurement entities bound to explicit identity evidence."""
+    reasons: list[str] = []
+    if str(row.get("fact_type") or "") != "brand_identity":
+        reasons.append("fact_type_not_brand_identity")
+    if str(row.get("subject_type") or "general") == "general" or not row.get("subject_ref_id"):
+        reasons.append("fact_subject_not_entity_bound")
+    return reasons
+
+
 def _eligible_fact_evidence(
     conn: Any,
     tenant_id: str,
@@ -385,7 +395,8 @@ def _eligible_fact_evidence(
             SELECT r.id, r.fact_atom_id, r.revision_number, r.content_sha256,
                    r.status AS revision_status, r.source_ids_json,
                    r.valid_from AS revision_valid_from, r.valid_until AS revision_valid_until,
-                   f.current_revision_id, f.status AS fact_status, f.disclosure,
+                   f.current_revision_id, f.status AS fact_status, f.fact_type,
+                   f.subject_type, f.subject_ref_id, f.disclosure,
                    f.risk_level, f.valid_until AS fact_valid_until,
                    (SELECT COUNT(*) FROM airank_fact_conflicts c
                     WHERE c.tenant_id=r.tenant_id AND c.project_id=r.project_id
@@ -402,6 +413,7 @@ def _eligible_fact_evidence(
         raise error(404, "FACT_REVISION_NOT_FOUND", {"revision_id": revision_id})
 
     reasons: list[str] = []
+    reasons.extend(_brand_graph_fact_semantic_reasons(row))
     if row["revision_status"] != "approved" or row["fact_status"] != "confirmed":
         reasons.append("fact_revision_not_approved")
     if row["current_revision_id"] != revision_id:
@@ -465,6 +477,9 @@ def _eligible_fact_evidence(
         "fact_atom_id": str(row["fact_atom_id"]),
         "revision_number": int(row["revision_number"]),
         "fact_revision_sha256": str(row["content_sha256"]),
+        "fact_type": str(row["fact_type"]),
+        "subject_type": str(row["subject_type"]),
+        "subject_ref_id": str(row["subject_ref_id"]),
         "disclosure": disclosure,
         "risk_level": str(row["risk_level"]),
         "sources": [

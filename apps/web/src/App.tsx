@@ -1902,6 +1902,9 @@ function FactsPage() {
   const [factEditor, setFactEditor] = useState<{
     title: string;
     factText: string;
+    factType: string;
+    subjectType: FactRevision["subject_type"];
+    subjectRefId: string;
     sourceId: string;
     riskLevel: "low" | "medium" | "high" | "restricted";
     disclosure: "public" | "redacted" | "internal" | "forbidden" | "pending_approval";
@@ -1976,6 +1979,7 @@ function FactsPage() {
   const pending = facts.filter((item) => item.status === "proposed").length;
   const eligible = facts.filter((item) => item.eligible_for_generation).length;
   const eligibleFactRevisions = facts.filter((item) => item.status === "approved" && item.eligible_for_generation);
+  const eligibleIdentityFactRevisions = eligibleFactRevisions.filter((item) => item.fact_type === "brand_identity" && item.subject_type !== "general" && item.subject_ref_id);
 
   const reviewRevision = async (revision: FactRevision, action: "approved" | "rejected") => {
     const actor = getStoredAuthSession()?.user.userId;
@@ -2102,6 +2106,9 @@ function FactsPage() {
     setFactEditor({
       title: "",
       factText: "",
+      factType: "product_service",
+      subjectType: "general",
+      subjectRefId: "",
       sourceId: firstActiveSource.source_id,
       riskLevel: "medium",
       disclosure: "public",
@@ -2111,8 +2118,8 @@ function FactsPage() {
   const submitFactProposal = async (event: FormEvent) => {
     event.preventDefault();
     if (!project.id || !factEditor) return;
-    if (!factEditor.title.trim() || !factEditor.factText.trim() || !factEditor.sourceId) {
-      notify({ title: "候选事实不完整", desc: "事实标题、原文事实和来源都必须填写。", tone: "warning" });
+    if (!factEditor.title.trim() || !factEditor.factText.trim() || !factEditor.sourceId || (factEditor.subjectType !== "general" && !factEditor.subjectRefId.trim()) || (factEditor.factType === "brand_identity" && factEditor.subjectType === "general")) {
+      notify({ title: "候选事实不完整", desc: "事实标题、原文事实和来源都必须填写；品牌身份事实还必须选择并填写明确主体。", tone: "warning" });
       return;
     }
     setSavingFact(true);
@@ -2120,6 +2127,9 @@ function FactsPage() {
       const proposed = await proposeFact(project.id, {
         title: factEditor.title.trim(),
         factText: factEditor.factText.trim(),
+        factType: factEditor.factType,
+        subjectType: factEditor.subjectType,
+        subjectRefId: factEditor.subjectRefId.trim(),
         sourceIds: [factEditor.sourceId],
         riskLevel: factEditor.riskLevel,
         disclosure: factEditor.disclosure,
@@ -2340,7 +2350,7 @@ function FactsPage() {
             <strong>把品牌、公司、产品、竞品和别名编译成不可变测量词表</strong>
             <span>每条记录必须绑定当前已批准 FactRevision；歧义词会被排除，公开 JSON-LD 与内部测量词表分开。</span>
           </div>
-          <button className="airank-console-primary-button" type="button" disabled={brandGraphAction !== null || eligibleFactRevisions.length === 0} onClick={() => void compileCurrentBrandGraph()}>
+          <button className="airank-console-primary-button" type="button" disabled={brandGraphAction !== null || !brandGraph || brandGraph.entities.length === 0} onClick={() => void compileCurrentBrandGraph()}>
             {brandGraphAction === "compile" ? "编译中…" : "编译不可变快照"}
           </button>
         </div>
@@ -2375,8 +2385,8 @@ function FactsPage() {
             </div>
           </>
         )}
-        {eligibleFactRevisions.length === 0 ? (
-          <DataStateCard title="没有可绑定的审核事实" desc="先完成来源导入、事实审核、冲突与有效期门禁，再登记实体；项目名称本身不等于已证实身份。" tone="warning" />
+        {eligibleIdentityFactRevisions.length === 0 ? (
+          <DataStateCard title="没有可绑定的审核身份事实" desc="实体、别名和关系只接受已批准、绑定明确主体的 brand_identity 事实；普通产品参数不会污染测量词表。" tone="warning" />
         ) : (
           <div className="brand-graph-forms">
             <form onSubmit={submitBrandEntity}>
@@ -2393,7 +2403,7 @@ function FactsPage() {
               <input type="url" value={entityDraft.websiteUrl} onChange={(event) => setEntityDraft({ ...entityDraft, websiteUrl: event.target.value })} placeholder="官网 URL（可选）" />
               <select value={entityDraft.factRevisionId} onChange={(event) => setEntityDraft({ ...entityDraft, factRevisionId: event.target.value })} required>
                 <option value="">选择身份事实证据</option>
-                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+                {eligibleIdentityFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
               </select>
               <select value={entityDraft.usageScope} onChange={(event) => setEntityDraft({ ...entityDraft, usageScope: event.target.value as typeof entityDraft.usageScope })}>
                 <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
@@ -2412,7 +2422,7 @@ function FactsPage() {
               </select>
               <select value={aliasDraft.factRevisionId} onChange={(event) => setAliasDraft({ ...aliasDraft, factRevisionId: event.target.value })} required>
                 <option value="">选择别名事实证据</option>
-                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+                {eligibleIdentityFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
               </select>
               <select value={aliasDraft.usageScope} onChange={(event) => setAliasDraft({ ...aliasDraft, usageScope: event.target.value as typeof aliasDraft.usageScope })}>
                 <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
@@ -2434,7 +2444,7 @@ function FactsPage() {
               </select>
               <select value={relationDraft.factRevisionId} onChange={(event) => setRelationDraft({ ...relationDraft, factRevisionId: event.target.value })} required>
                 <option value="">选择关系事实证据</option>
-                {eligibleFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
+                {eligibleIdentityFactRevisions.map((fact) => <option value={fact.revision_id} key={fact.revision_id}>{fact.title} · v{fact.revision_number}</option>)}
               </select>
               <select value={relationDraft.usageScope} onChange={(event) => setRelationDraft({ ...relationDraft, usageScope: event.target.value as typeof relationDraft.usageScope })}>
                 <option value="measurement_only">仅测量使用</option><option value="public_and_measurement">公开与测量</option>
@@ -2505,6 +2515,24 @@ function FactsPage() {
                 {sources.filter((source) => source.status === "active").map((source) => <option value={source.source_id} key={source.source_id}>{source.title} · v{source.revision_number}</option>)}
               </select>
             </label>
+            <label>
+              <span>事实用途</span>
+              <select value={factEditor.factType} onChange={(event) => setFactEditor({ ...factEditor, factType: event.target.value, subjectType: event.target.value === "brand_identity" && factEditor.subjectType === "general" ? "brand" : factEditor.subjectType })}>
+                <option value="product_service">产品与服务</option><option value="brand_identity">品牌身份、别名或关系</option><option value="qualification">资质</option><option value="customer_case">客户案例</option><option value="pricing">价格</option><option value="faq">常见问题</option><option value="competitor_diff">竞品差异</option><option value="industry_solution">行业方案</option><option value="channel">渠道</option>
+              </select>
+            </label>
+            <label>
+              <span>事实主体</span>
+              <select value={factEditor.subjectType} onChange={(event) => setFactEditor({ ...factEditor, subjectType: event.target.value as FactRevision["subject_type"], subjectRefId: event.target.value === "general" ? "" : factEditor.subjectRefId })}>
+                <option value="general">通用事实</option><option value="brand">品牌</option><option value="company">公司</option><option value="product">产品</option><option value="competitor">竞品</option><option value="solution_type">方案类型</option>
+              </select>
+            </label>
+            {factEditor.subjectType !== "general" && (
+              <label>
+                <span>主体标识</span>
+                <input value={factEditor.subjectRefId} onChange={(event) => setFactEditor({ ...factEditor, subjectRefId: event.target.value })} placeholder="例如：Intel Core Ultra" />
+              </label>
+            )}
             <label>
               <span>风险等级</span>
               <select value={factEditor.riskLevel} onChange={(event) => setFactEditor({ ...factEditor, riskLevel: event.target.value as typeof factEditor.riskLevel })}>

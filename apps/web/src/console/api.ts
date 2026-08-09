@@ -3369,6 +3369,9 @@ export async function proposeFact(
   input: {
     title: string;
     factText: string;
+    factType: string;
+    subjectType: FactRevision["subject_type"];
+    subjectRefId: string;
     sourceIds: string[];
     riskLevel: "low" | "medium" | "high" | "restricted";
     disclosure: "public" | "redacted" | "internal" | "forbidden" | "pending_approval";
@@ -3381,8 +3384,9 @@ export async function proposeFact(
     headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_fact_proposal") },
     body: JSON.stringify({
       title: input.title,
-      fact_type: "brand_claim",
-      subject_type: "general",
+      fact_type: input.factType,
+      subject_type: input.subjectType,
+      subject_ref_id: input.subjectType === "general" ? null : input.subjectRefId,
       fact_text: input.factText,
       source_ids: input.sourceIds,
       risk_level: input.riskLevel,

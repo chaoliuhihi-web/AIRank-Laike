@@ -12,6 +12,7 @@ from apps.api.brand_graph_routes import (
     BrandAliasWriteRequest,
     BrandEntityWriteRequest,
     MySQLBrandGraphRepository,
+    _brand_graph_fact_semantic_reasons,
     normalize_entity_name,
 )
 from apps.api.main import app
@@ -50,7 +51,8 @@ def create_repository() -> MySQLBrandGraphRepository:
         """
         CREATE TABLE airank_fact_atoms (
           id TEXT PRIMARY KEY, tenant_id TEXT, project_id TEXT, current_revision_id TEXT,
-          status TEXT, disclosure TEXT, risk_level TEXT, valid_until DATETIME, deleted_at DATETIME
+          status TEXT, fact_type TEXT, subject_type TEXT, subject_ref_id TEXT,
+          disclosure TEXT, risk_level TEXT, valid_until DATETIME, deleted_at DATETIME
         )
         """,
         """
@@ -150,10 +152,10 @@ def create_repository() -> MySQLBrandGraphRepository:
         conn.execute(text("""
             INSERT INTO airank_fact_atoms (
               id, tenant_id, project_id, current_revision_id, status,
-              disclosure, risk_level
+              fact_type, subject_type, subject_ref_id, disclosure, risk_level
             ) VALUES
-              ('fact_target', 'tenant_graph', 'project_graph', 'revision_target', 'confirmed', 'public', 'low'),
-              ('fact_competitor', 'tenant_graph', 'project_graph', 'revision_competitor', 'confirmed', 'public', 'low')
+              ('fact_target', 'tenant_graph', 'project_graph', 'revision_target', 'confirmed', 'brand_identity', 'brand', 'AIRank', 'public', 'low'),
+              ('fact_competitor', 'tenant_graph', 'project_graph', 'revision_competitor', 'confirmed', 'brand_identity', 'competitor', '竞品科技', 'public', 'low')
         """))
         conn.execute(text("""
             INSERT INTO airank_fact_revisions (
@@ -180,6 +182,18 @@ def entity_payload(*, role: str, name: str, revision_id: str) -> BrandEntityWrit
 def test_entity_name_normalization_is_nfkc_case_and_space_insensitive() -> None:
     assert normalize_entity_name(" ＡＩ Rank ") == "airank"
     assert normalize_entity_name("星 河-科技") == "星河科技"
+
+
+def test_brand_graph_rejects_generic_or_non_identity_fact_semantics() -> None:
+    assert _brand_graph_fact_semantic_reasons(
+        {"fact_type": "product_service", "subject_type": "product", "subject_ref_id": "intel_core_ultra"}
+    ) == ["fact_type_not_brand_identity"]
+    assert _brand_graph_fact_semantic_reasons(
+        {"fact_type": "brand_identity", "subject_type": "general", "subject_ref_id": None}
+    ) == ["fact_subject_not_entity_bound"]
+    assert _brand_graph_fact_semantic_reasons(
+        {"fact_type": "brand_identity", "subject_type": "brand", "subject_ref_id": "airank"}
+    ) == []
 
 
 def test_graph_compiler_excludes_ambiguous_aliases_and_keeps_evidence() -> None:
