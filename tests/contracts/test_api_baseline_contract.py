@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import re
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
@@ -45,6 +49,127 @@ def test_health_returns_enveloped_contract() -> None:
     assert body["meta"]["trace_id"] == "trc_test_health"
     assert body["data"]["status"] == "ok"
     validate_response("health_response.schema.json", body)
+    assert response.headers["X-AIRank-Trace-Id"] == "trc_test_health"
+
+
+def test_request_logging_sanitizes_trace_ids_and_never_logs_credentials(
+    caplog,
+) -> None:
+    client = TestClient(app)
+
+    with caplog.at_level(logging.INFO, logger="airank.api.request"):
+        response = client.get(
+            "/api/v1/health",
+            headers={
+                "X-AIRank-Trace-Id": "../../unsafe trace",
+                "Authorization": "Bearer must-never-appear-in-logs",
+            },
+        )
+
+    trace_id = response.headers["X-AIRank-Trace-Id"]
+    assert re.fullmatch(r"trc_[0-9a-f]{16}", trace_id)
+    assert response.json()["meta"]["trace_id"] == trace_id
+    record = json.loads(caplog.records[-1].message)
+    assert record["event"] == "api_request_completed"
+    assert record["operation"] == "GET /api/v1/health"
+    assert record["trace_id"] == trace_id
+    assert "must-never-appear-in-logs" not in caplog.text
+    assert "unsafe trace" not in caplog.text
+
+
+def test_request_logging_records_unhandled_failure_without_exception_text(caplog) -> None:
+    isolated_app = FastAPI()
+    isolated_app.middleware("http")(api_main.emit_structured_request_log)
+
+    @isolated_app.get("/boom")
+    def boom() -> None:
+        raise RuntimeError("must-never-appear-in-logs")
+
+    with caplog.at_level(logging.ERROR, logger="airank.api.request"):
+        response = TestClient(isolated_app, raise_server_exceptions=False).get(
+            "/boom", headers={"X-AIRank-Trace-Id": "trc_failure_test"}
+        )
+
+    assert response.status_code == 500
+    record = json.loads(caplog.records[-1].message)
+    assert record["event"] == "api_request_failed"
+    assert record["status_code"] == 500
+    assert record["error_type"] == "RuntimeError"
+    assert "must-never-appear-in-logs" not in caplog.text
+
+
+def test_readiness_is_public_and_returns_503_when_dependencies_are_blocked(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setattr(
+        api_main,
+        "build_runtime_readiness",
+        lambda: api_main.ReadinessStatus(
+            status="blocked",
+            service="airank-api",
+            api_version="v1",
+            expected_schema_revision=api_main.EXPECTED_SCHEMA_REVISION,
+            components=[
+                api_main.ReadinessComponent(
+                    name=name,
+                    status="blocked",
+                    reason_code="DEPENDENCY_BLOCKED",
+                )
+                for name in (
+                    "production_configuration",
+                    "database_connectivity",
+                    "schema_revision",
+                    "object_storage_connectivity",
+                )
+            ],
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/ready", headers={"X-AIRank-Trace-Id": "trc_test_ready_blocked"}
+    )
+
+    assert response.status_code == 503
+    assert response.json()["data"]["status"] == "blocked"
+    validate_response("readiness_response.schema.json", response.json())
+
+
+def test_readiness_returns_200_only_when_every_component_is_ready(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_main,
+        "build_runtime_readiness",
+        lambda: api_main.ReadinessStatus(
+            status="ready",
+            service="airank-api",
+            api_version="v1",
+            expected_schema_revision=api_main.EXPECTED_SCHEMA_REVISION,
+            components=[
+                api_main.ReadinessComponent(name=name, status="ready")
+                for name in (
+                    "production_configuration",
+                    "database_connectivity",
+                    "schema_revision",
+                    "object_storage_connectivity",
+                )
+            ],
+        ),
+    )
+
+    response = TestClient(app).get("/api/v1/ready")
+
+    assert response.status_code == 200
+    validate_response("readiness_response.schema.json", response.json())
+
+
+def test_runtime_expected_schema_revision_tracks_the_only_alembic_head() -> None:
+    config = Config(str(ROOT / "apps/api/alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "apps/api/alembic"))
+
+    heads = ScriptDirectory.from_config(config).get_heads()
+
+    assert heads == [api_main.EXPECTED_SCHEMA_REVISION]
 
 
 def test_version_returns_enveloped_contract() -> None:

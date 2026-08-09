@@ -44,6 +44,20 @@ jobs:
           test -f packages/contracts/api-conventions.md
           test -f packages/contracts/error-codes.md
           test -f ops/deployment/mysql-bootstrap.sql
+          test -f ops/deployment/compose.production.yml
+          test -f ops/deployment/Dockerfile.backend
+          test -f ops/deployment/Dockerfile.web
+          test -f ops/deployment/env.production.example
+          test -f apps/api/requirements-prod.lock
+          test -f scripts/probe_object_storage.py
+          test -f scripts/check_tenant_binding.py
+
+      - name: Validate production deployment bundle
+        run: |
+          python scripts/production_preflight.py --help
+          AIRANK_BACKEND_IMAGE=example.invalid/airank-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          AIRANK_WEB_IMAGE=example.invalid/airank-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+          docker compose -f ops/deployment/compose.production.yml config --quiet
 
       - name: Check terminology drift
         run: |
@@ -73,6 +87,68 @@ jobs:
       - name: Run contract tests
         run: python -m pytest tests/contracts
 
+  backend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+
+      - name: Install backend test dependencies
+        run: python -m pip install -r apps/api/requirements-dev.txt
+
+      - name: Run complete non-external backend suite
+        run: python -m pytest -q
+
+      - name: Run deterministic quality gates
+        run: |
+          python scripts/evaluate_provider_citations.py
+          python scripts/evaluate_core_skills.py
+          python scripts/audit_skill_trust.py
+
+  mysql-integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root-test-password
+          MYSQL_DATABASE: airank_laike
+          MYSQL_USER: airank
+          MYSQL_PASSWORD: airank-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      AIRANK_DATABASE_URL: mysql+pymysql://airank:airank-test-password@127.0.0.1:3306/airank_laike?charset=utf8mb4
+      AIRANK_RUN_REAL_MYSQL: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+
+      - name: Install backend test dependencies
+        run: python -m pip install -r apps/api/requirements-dev.txt
+
+      - name: Apply the complete schema
+        working-directory: apps/api
+        run: python -m alembic upgrade head
+
+      - name: Run real MySQL integration suite
+        run: python -m pytest tests/integration -q
+
   web-build:
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +167,61 @@ jobs:
       - name: Build web
         working-directory: apps/web
         run: npm run build
+
+      - name: Enforce release bundle budget
+        working-directory: apps/web
+        run: npm run check:bundle
+
+      - name: Audit production web dependencies
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
+
+  production-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build production backend image
+        run: >-
+          docker build
+          --build-arg AIRANK_BUILD_COMMIT=${{ github.sha }}
+          --file ops/deployment/Dockerfile.backend
+          --tag airank-backend:ci .
+
+      - name: Build production web image
+        run: >-
+          docker build
+          --file ops/deployment/Dockerfile.web
+          --tag airank-web:ci .
+
+      - name: Verify non-root image identities and backend imports
+        run: |
+          test "$(docker image inspect airank-backend:ci --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect airank-web:ci --format '{{.Config.User}}')" = "101"
+          docker run --rm --entrypoint python3 airank-backend:ci -c \
+            'import apps.api.main, apps.runtime_health, airank_worker.main, airank_scheduler.main'
+          docker run --rm --entrypoint python3 airank-backend:ci -c \
+            'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()'
+          docker run --rm --add-host api:127.0.0.1 --entrypoint nginx airank-web:ci -t
+
+      - name: Audit Python packages inside the production image
+        run: >-
+          docker run --rm --user root --entrypoint /bin/sh airank-backend:ci -ec
+          'python3 -m pip install --quiet pip-audit==2.9.0 &&
+          python3 -m pip_audit --progress-spinner off'
+
+      - name: Scan final image operating systems
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+            image --scanners vuln --pkg-types os --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 airank-backend:ci
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+            image --scanners vuln --pkg-types os --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 airank-web:ci
 
   marketing-site:
     runs-on: ubuntu-latest

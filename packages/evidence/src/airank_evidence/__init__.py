@@ -24,10 +24,14 @@ from .object_storage import (
     FilesystemObjectStorage,
     ObjectStorage,
     ObjectStorageError,
+    READINESS_OBJECT_KEY,
+    READINESS_OBJECT_PAYLOAD,
     S3CompatibleObjectStorage,
     StoredObject,
     build_object_storage_from_env,
+    provision_object_storage_readiness,
     sha256_bytes,
+    verify_object_storage_readiness,
 )
 from .provider import MockAnswerProvider, ProviderPayloadError
 from .report import (
@@ -88,6 +92,8 @@ __all__ = [
     "FilesystemObjectStorage",
     "ObjectStorageError",
     "ObjectStorage",
+    "READINESS_OBJECT_KEY",
+    "READINESS_OBJECT_PAYLOAD",
     "METRIC_FORMULAS",
     "REPORT_EVIDENCE_PACKET_VERSION",
     "SOURCE_GOVERNANCE_VERSION",
@@ -117,7 +123,9 @@ __all__ = [
     "generate_gap_from_citations",
     "current_source_classification",
     "normalize_source_host",
+    "provision_object_storage_readiness",
     "render_report_html",
     "render_scorecard_csv",
     "verify_report_evidence_packet",
+    "verify_object_storage_readiness",
 ]

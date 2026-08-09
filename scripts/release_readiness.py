@@ -487,8 +487,16 @@ def release_checks(
         remote_ref_check("gitee"),
         command_check("diff check", "git diff --check"),
         tracked_runtime_artifact_check(),
+        command_check(
+            "production startup preflight",
+            "python3 scripts/production_preflight.py --role release",
+        ),
         api_auth_configuration_check(),
         production_object_storage_configuration_check(),
+        command_check(
+            "object storage write-read probe",
+            "python3 scripts/probe_object_storage.py",
+        ),
         runtime_version_check(),
         command_check("contract tests", "python3 -m pytest tests/contracts -q", remove_database_urls=True),
         command_check(
@@ -535,6 +543,11 @@ def release_checks(
             env=real_mysql_env,
         ),
         command_check("alembic real mysql", "cd apps/api && python3 -m alembic upgrade head", env=real_mysql_env),
+        command_check(
+            "release tenant binding",
+            "python3 scripts/check_tenant_binding.py",
+            env=real_mysql_env,
+        ),
         provider_model_lifecycle_check(db_url),
         capability_check(require_optional_capabilities=require_optional_capabilities),
     ]

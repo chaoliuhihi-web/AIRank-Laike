@@ -13,6 +13,10 @@ from uuid import uuid4
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+READINESS_OBJECT_KEY = "_airank/system/readiness/object-storage-v1.txt"
+READINESS_OBJECT_PAYLOAD = b"AIRank object storage readiness probe v1\n"
+DEFAULT_S3_TIMEOUT_SECONDS = 10.0
+MAXIMUM_S3_TIMEOUT_SECONDS = 300.0
 
 
 class ObjectStorageError(RuntimeError):
@@ -76,6 +80,33 @@ def validate_expected_sha256(expected_sha256: str | None, actual_sha256: str) ->
         raise ObjectStorageError("expected SHA-256 must be 64 lowercase hexadecimal characters")
     if normalized != actual_sha256:
         raise ObjectStorageError("object SHA-256 does not match expected evidence hash")
+
+
+def parse_s3_timeout_seconds(source: Mapping[str, str]) -> float:
+    raw_value = source.get("AIRANK_S3_TIMEOUT_SECONDS", str(DEFAULT_S3_TIMEOUT_SECONDS)).strip()
+    try:
+        timeout = float(raw_value)
+    except ValueError as exc:
+        raise ObjectStorageError("AIRANK_S3_TIMEOUT_SECONDS must be a number between 1 and 300") from exc
+    if timeout < 1 or timeout > MAXIMUM_S3_TIMEOUT_SECONDS:
+        raise ObjectStorageError("AIRANK_S3_TIMEOUT_SECONDS must be a number between 1 and 300")
+    return timeout
+
+
+def provision_object_storage_readiness(storage: ObjectStorage) -> StoredObject:
+    stored = storage.put_bytes(
+        READINESS_OBJECT_PAYLOAD,
+        key=READINESS_OBJECT_KEY,
+        content_type="text/plain",
+    )
+    if storage.get_bytes(READINESS_OBJECT_KEY) != READINESS_OBJECT_PAYLOAD:
+        raise ObjectStorageError("object storage readiness write-read verification failed")
+    return stored
+
+
+def verify_object_storage_readiness(storage: ObjectStorage) -> None:
+    if storage.get_bytes(READINESS_OBJECT_KEY) != READINESS_OBJECT_PAYLOAD:
+        raise ObjectStorageError("object storage readiness sentinel verification failed")
 
 
 class FilesystemObjectStorage:
@@ -311,6 +342,7 @@ def build_object_storage_from_env(
         secret_key = source.get("AIRANK_S3_SECRET_ACCESS_KEY", "").strip() or None
         if bool(access_key) != bool(secret_key):
             raise ObjectStorageError("both S3 access key and secret key must be configured together")
+        timeout_seconds = parse_s3_timeout_seconds(source)
         s3_client = boto3.client(
             "s3",
             endpoint_url=endpoint,
@@ -322,6 +354,8 @@ def build_object_storage_from_env(
                 signature_version="s3v4",
                 s3={"addressing_style": source.get("AIRANK_S3_ADDRESSING_STYLE", "path")},
                 retries={"max_attempts": 3, "mode": "standard"},
+                connect_timeout=timeout_seconds,
+                read_timeout=timeout_seconds,
             ),
         )
     return S3CompatibleObjectStorage(client=s3_client, bucket=bucket)

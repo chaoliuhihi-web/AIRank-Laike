@@ -8,8 +8,11 @@ import pytest
 from airank_evidence import (
     FilesystemObjectStorage,
     ObjectStorageError,
+    READINESS_OBJECT_KEY,
     S3CompatibleObjectStorage,
     build_object_storage_from_env,
+    provision_object_storage_readiness,
+    verify_object_storage_readiness,
 )
 
 
@@ -96,6 +99,23 @@ def test_s3_storage_is_idempotent_and_rejects_key_collisions() -> None:
     assert client.objects == {}
 
 
+def test_storage_readiness_sentinel_is_idempotent_and_verified() -> None:
+    client = FakeS3Client()
+    storage = S3CompatibleObjectStorage(client=client, bucket="airank-evidence")
+
+    first = provision_object_storage_readiness(storage)
+    second = provision_object_storage_readiness(storage)
+    verify_object_storage_readiness(storage)
+
+    assert first == second
+    assert first.key == READINESS_OBJECT_KEY
+    assert client.put_count == 1
+
+    client.objects[("airank-evidence", READINESS_OBJECT_KEY)]["body"] = b"tampered"
+    with pytest.raises(ObjectStorageError, match="sentinel verification failed"):
+        verify_object_storage_readiness(storage)
+
+
 def test_s3_factory_requires_https_unless_http_is_explicitly_allowed() -> None:
     client = FakeS3Client()
     base_env = {
@@ -112,6 +132,50 @@ def test_s3_factory_requires_https_unless_http_is_explicitly_allowed() -> None:
         s3_client=client,
     )
     assert isinstance(storage, S3CompatibleObjectStorage)
+
+
+def test_s3_factory_applies_bounded_network_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import boto3
+
+    captured: dict[str, object] = {}
+
+    def fake_client(service_name: str, **kwargs):
+        captured["service_name"] = service_name
+        captured.update(kwargs)
+        return FakeS3Client()
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    storage = build_object_storage_from_env(
+        {
+            "AIRANK_OBJECT_STORAGE_DRIVER": "s3",
+            "AIRANK_S3_BUCKET": "airank-evidence",
+            "AIRANK_S3_ENDPOINT_URL": "https://objects.example.com",
+            "AIRANK_S3_TIMEOUT_SECONDS": "7.5",
+        }
+    )
+
+    assert isinstance(storage, S3CompatibleObjectStorage)
+    assert captured["service_name"] == "s3"
+    config = captured["config"]
+    assert config.connect_timeout == 7.5
+    assert config.read_timeout == 7.5
+
+
+@pytest.mark.parametrize("timeout", ["0", "301", "not-a-number"])
+def test_s3_factory_rejects_unsafe_network_timeouts(monkeypatch: pytest.MonkeyPatch, timeout: str) -> None:
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: FakeS3Client())
+
+    with pytest.raises(ObjectStorageError, match="AIRANK_S3_TIMEOUT_SECONDS"):
+        build_object_storage_from_env(
+            {
+                "AIRANK_OBJECT_STORAGE_DRIVER": "s3",
+                "AIRANK_S3_BUCKET": "airank-evidence",
+                "AIRANK_S3_ENDPOINT_URL": "https://objects.example.com",
+                "AIRANK_S3_TIMEOUT_SECONDS": timeout,
+            }
+        )
 
 
 @pytest.mark.parametrize("operation", ["put", "get", "delete"])

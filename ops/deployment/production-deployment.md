@@ -253,171 +253,190 @@ curl -I https://airank.net.cn/
 - 404 页面存在。
 - HTTPS 正常，HTTP 自动跳转 HTTPS。
 
-## 9. 完整 SaaS 系统部署
+## 9. 完整 SaaS 生产拓扑
 
-完整 AIRank 系统包含：
+生产只使用 `ops/deployment/compose.production.yml` 或与其等价的 Kubernetes
+编排，不使用 `vite preview`、开发 MySQL、文件系统证据存储或仓库内明文
+`.env`。编排包含五个相互独立的进程：
 
 ```text
-apps/web      控制台前端
-apps/api      FastAPI 产品 API
-apps/worker   扫描、归因、内容、报告等异步任务
-apps/scheduler 到期 T0/T+7/T+14/T+30 复测调度和终态报告触发
-MySQL         业务数据库
-对象存储       快照、证据包、报告文件
+migrate → Alembic 单次迁移
+api     → FastAPI，同一镜像双进程
+worker  → 扫描、证据、内容、发布任务
+scheduler → T0/T+7/T+14/T+30 和治理任务调度
+web     → 非 root Nginx 静态控制台和同源 API 反向代理
 ```
 
-当前完整 SaaS 必须通过 release gate 后才能声明可上线：
+MySQL、S3/MinIO、Yudao 和 TLS 终止层必须由生产基础设施提供，Compose
+不会偷偷启动弱口令数据库或本地对象存储。API、Worker、Scheduler 均先运行
+`scripts/production_preflight.py`；任何 dev/mock/local、明文传输、占位密钥、
+未轮换泄露凭证、DeepSeek 临下架模型或错误权限配置都会拒绝启动。
+
+Web 容器只绑定 `127.0.0.1:8080`；公网 TLS 终止层必须追加 HSTS、证书续期
+监控和真实客户端 IP 限流。容器内 Nginx 负责 CSP、点击劫持、MIME 嗅探和
+同源 API 代理，但不能替代公网 WAF/限流。
+
+## 10. 构建不可变镜像
+
+构建机必须处于干净、已评审的 commit：
+
+```bash
+git status --short
+release_commit=$(git rev-parse HEAD)
+test -n "$release_commit"
+
+docker build \
+  --build-arg AIRANK_BUILD_COMMIT="$release_commit" \
+  --file ops/deployment/Dockerfile.backend \
+  --tag registry.example.cn/airank/backend:"$release_commit" .
+
+docker build \
+  --file ops/deployment/Dockerfile.web \
+  --tag registry.example.cn/airank/web:"$release_commit" .
+```
+
+后端镜像使用 `requirements-prod.lock` 的精确依赖版本；升级依赖必须先重新跑
+全量门禁并更新锁文件。两个镜像必须完成漏洞扫描（Python 包由 `pip-audit`，
+最终 OS 层由 Trivy）、生成 SBOM、签名并推送。部署时只接受 registry
+返回的 `image@sha256:...`，不接受 `latest` 或可变 tag：
+
+```bash
+export AIRANK_BACKEND_IMAGE='registry.example.cn/airank/backend@sha256:实际摘要'
+export AIRANK_WEB_IMAGE='registry.example.cn/airank/web@sha256:实际摘要'
+```
+
+后端镜像以 UID/GID `10001` 运行，包含 Playwright Chromium，但浏览器登录
+profile 仍须通过加密卷受控注入；profile 不进入镜像、Git 或构建缓存。
+
+## 11. 生产配置与密钥
+
+以 `ops/deployment/env.production.example` 为字段清单。实际值只由云 Secret
+Manager、Vault 或部署平台 Secret 注入；若临时使用 `.env.production`，文件
+权限必须为 `0600`，部署完成后按组织策略销毁。不要从
+`ops/deployment/env.example` 复制开发密码。
+
+强制边界包括：
+
+- `AIRANK_ENV=production`、`AIRANK_AUTH_MODE=yudao`、认证强制开启。
+- Yudao tenant-id 必须通过 `airank_tenant_bindings` 显式映射到 AIRank tenant；
+  生产使用 `AIRANK_TENANT_RESOLUTION_MODE=database`，不允许默认租户兜底。
+- 首个客户租户的 `AIRANK_RELEASE_TENANT_ID` 与
+  `AIRANK_RELEASE_YUDAO_TENANT_ID` 必须唯一对应一条 active 绑定；严格门禁会查询
+  数据库确认，不能使用 `tenant_demo`。
+- 运行账号只授予业务 DML；迁移使用独立 `AIRANK_MIGRATION_DATABASE_URL`。
+- MySQL URL 开启证书、证书链和主机名校验。
+- S3/MinIO 仅 HTTPS，证据桶开启版本控制、服务端加密和保留策略；
+  `AIRANK_S3_TIMEOUT_SECONDS` 必须设在 1–300 秒内（建议 10 秒），连接与读取
+  共用该超时，并在 SDK 层执行标准退避重试。
+- AES-GCM 与 HMAC keyring 使用两组不同的 32 字节随机材料。
+- 曾出现在聊天、日志、工单中的凭证全部轮换后，才允许设置
+  `AIRANK_COMPROMISED_CREDENTIALS_ROTATED=true`。
+- Provider API 与 Consumer Browser 样本分别标记证据等级；要声明 Consumer
+  Browser 能力，必须另行通过浏览器 L3 门禁。
+- DeepSeek v3.2 不允许作为新生产发布目标；先完成替代模型 L3、迁移计划和审批。
+- `AIRANK_PUBLISH_ALLOWED_HOSTS` 只列实际客户发布域名，默认发布状态为
+  `draft` 或 `pending`。
+
+构建并推送镜像后，通过与正式服务相同的容器环境做无副作用配置检查：
+
+```bash
+docker compose \
+  --file ops/deployment/compose.production.yml \
+  run --rm --no-deps api \
+  python3 scripts/production_preflight.py --role release
+```
+
+脚本只输出检查名称、blocker 和 warning，不输出 Token、Provider Key 或
+keyring 材料。
+
+在启动服务前，显式授权一次生产 S3 写读探测。该探测只创建一个固定内容、
+幂等且不可变的系统哨兵，不删除或修改客户证据：
+
+```bash
+AIRANK_RELEASE_RUN_STORAGE_PROBE=true \
+  docker compose \
+  --file ops/deployment/compose.production.yml \
+  run --rm --no-deps api \
+  python3 scripts/probe_object_storage.py
+```
+
+输出 `status=pass` 后才能继续；输出不包含 S3 凭证。
+
+## 12. 数据库备份、迁移和启动
+
+迁移前在云数据库创建一致性快照并完成恢复抽检，把不可变备份任务号写入
+`AIRANK_DATABASE_BACKUP_RECEIPT`。没有备份回执，迁移容器会失败关闭。
+
+确认生产配置后启动：
+
+```bash
+docker compose \
+  --file ops/deployment/compose.production.yml \
+  config --quiet
+
+docker compose \
+  --file ops/deployment/compose.production.yml \
+  up --detach
+```
+
+Compose 先等待迁移成功，再启动 API/Worker/Scheduler；Web 只有在 API
+`/api/v1/ready` 返回 200 后才进入服务。检查：
+
+```bash
+docker compose --file ops/deployment/compose.production.yml ps
+curl --fail https://console.airank.example.cn/api/v1/health
+curl --fail https://console.airank.example.cn/api/v1/ready
+curl --fail https://console.airank.example.cn/api/v1/version
+```
+
+`/health` 只证明进程存活；`/ready` 同时检查生产配置、数据库连通、Alembic
+版本并真实读取发布阶段写入的 S3 哨兵，部署探针必须使用 `/ready`。Worker 与
+Scheduler 会在各自主循环内原子更新 `/tmp/airank-health/*.json`；Compose
+分别按 600 秒和 120 秒新鲜度检查，不能只凭“进程还在”判定健康。
+
+## 13. 严格上线门禁
+
+生产变更窗口前，在与生产等价的隔离数据库运行：
 
 ```bash
 python3 scripts/release_readiness.py \
   --database-url "$AIRANK_RELEASE_DATABASE_URL" \
-  --require-optional-capabilities \
-  --require-browser-providers
+  --require-browser-providers \
+  --report /tmp/airank-release-readiness.md
 ```
 
-API 基础部署命令：
+只有报告首部 `Result: PASS` 才能进入流量。若本次销售范围承诺 Xinghe 可选
+增强能力，再追加 `--require-optional-capabilities`；未采购的可选能力应保持
+`disabled`，不能配置假 endpoint 让门禁误判。
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install -r apps/api/requirements-dev.txt 'uvicorn[standard]'
-```
+发布后还要完成：
 
-准备数据库：
+1. 真实 Yudao 用户登录、租户隔离和权限拒绝验证。
+2. 四平台重复采样，逐样本检查回答、引用、request-id、时间、模型和证据等级。
+3. 真实客户 WordPress/HTTP 的首次发布、更新、撤回和回执核验。
+4. 两名不同人员完成一次结果未知发布对账。
+5. 导出客户报告并从任一指标下钻到原始样本。
+6. 建立 T+7/T+14/T+30 观察窗口；时间未到必须显示 pending。
 
-```bash
-mysql -uroot -p < ops/deployment/mysql-bootstrap.sql
-export AIRANK_DATABASE_URL='mysql+pymysql://airank:airank_dev_password@127.0.0.1:3306/airank_laike?charset=utf8mb4'
-cd apps/api
-python3 -m alembic upgrade head
-```
+## 14. 回滚和灾难恢复
 
-启动 API：
+应用回滚只切换到上一份已签名镜像 digest。迁移均应保持向后兼容；已有新
+版本写入后，不直接对生产库执行 Alembic downgrade。需要数据回滚时：
 
-```bash
-cd /path/to/AIRank-Laike
-. .venv/bin/activate
-python3 -m uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
-```
+1. 停止入口流量、Scheduler 和 Worker，记录队列水位与 operation guard 状态。
+2. 从预迁移快照恢复到新数据库实例，不覆盖原生产实例。
+3. 对恢复库运行 `alembic current`、证据 hash 审计和关键数量核对。
+4. 使用上一版镜像连接恢复库，先跑 `/ready` 和只读验收。
+5. 经双人批准后切换连接，保留原实例供审计。
 
-健康检查：
+发布、凭证轮换等外部副作用处于 `external_started/outcome_unknown` 时，不自动
+重试；必须进入对账流程。完整凭证轮换见
+[Provider Credential Vault 运维手册](../../docs/operations/provider-credential-vault.md)。
 
-```bash
-curl http://127.0.0.1:8000/api/v1/health
-curl http://127.0.0.1:8000/api/v1/version
-```
+## 15. 当前不可伪造的外部门禁
 
-控制台前端：
-
-```bash
-cd apps/web
-npm ci
-npm run build
-npm run preview -- --port 5173
-```
-
-生产环境需要把 `apps/web/dist` 交给 Nginx/CDN，并把 `/api/v1/*` 反向代理到 `apps/api`。
-
-## 10. 环境变量
-
-基础环境变量参考：
-
-```text
-ops/deployment/env.example
-```
-
-生产必须替换：
-
-```text
-AIRANK_ENV=production
-AIRANK_DATABASE_URL=生产 MySQL 连接串
-AIRANK_OBJECT_STORAGE_DRIVER=s3 或 minio
-AIRANK_S3_ENDPOINT_URL=生产 HTTPS 对象存储地址（云厂商默认端点可留空）
-AIRANK_S3_BUCKET=生产证据桶
-AIRANK_S3_REGION=对象存储区域
-AIRANK_S3_ACCESS_KEY_ID=从 Secret 注入
-AIRANK_S3_SECRET_ACCESS_KEY=从 Secret 注入
-AIRANK_S3_ALLOW_HTTP=false
-AIRANK_AUTH_MODE=yudao
-AIRANK_API_AUTH_ENFORCEMENT=required
-AIRANK_SKILL_ADMIN_PERMISSION=airank:skill:admin
-YUDAO_BASE_URL=生产 yudao 地址
-YUDAO_BEARER_TOKEN=生产 token
-XINGHE_CAPABILITY_MODE=adapter
-```
-
-生产运行时门禁为 Python 3.11+，Node 20.19+ 或 22.12+；CI 使用 Python
-3.11 与 Node 22。低于该版本即使本地构建偶然成功，也不视为可上线。
-
-真实生产密钥只允许放在部署平台、CI/CD Secret、systemd EnvironmentFile 或容器 secret 中，不允许提交到 Git。
-
-租户级 Provider 凭证还必须配置独立的 AES-GCM/HMAC keyring，并按 add → activate → rotate rows → remove 的顺序轮换；直接移除仍被活动记录引用的 key id 会使路由失败关闭。完整步骤见 [Provider Credential Vault 运维手册](../../docs/operations/provider-credential-vault.md)。
-
-## 11. 发布和回滚
-
-发布前记录当前 commit：
-
-```bash
-git rev-parse HEAD
-```
-
-推荐打 tag：
-
-```bash
-git tag -a web-$(date +%Y%m%d-%H%M) -m "AIRank web release"
-git push origin --tags
-git push gitee --tags
-```
-
-回滚官网：
-
-- Vercel/Netlify：在平台控制台选择上一个成功 deployment 回滚。
-- Nginx：保留上一版 `/var/www/airank-frontend` 目录快照，失败时切回并 reload Nginx。
-
-Nginx 快照示例：
-
-```bash
-sudo cp -a /var/www/airank-frontend /var/www/airank-frontend.backup.$(date +%Y%m%d%H%M)
-```
-
-回滚 API：
-
-- 先回滚应用版本。
-- 数据库迁移如果涉及破坏性变更，必须按迁移说明执行，不允许临时手动删表改表。
-- 回滚后重新检查 `/api/v1/health`、核心页面和线索提交。
-
-## 12. 交付给第三方的最短说明
-
-可以直接发给部署人员：
-
-```text
-代码地址：
-GitHub: https://github.com/chaoliuhihi-web/AIRank-Laike
-Gitee: https://gitee.com/xinghetech/AIRank-Laike
-
-当前先部署官网目录：
-AIRank素材/Web宣传/airank-design-grade-frontend
-
-推荐部署平台：
-Vercel 或 Netlify
-
-构建配置：
-Root/Base Directory: AIRank素材/Web宣传/airank-design-grade-frontend
-Install Command: npm install
-Build Command: npm run check && npm run routes
-Output/Publish Directory: .
-
-必须配置邮件环境变量：
-SMTP_HOST
-SMTP_PORT
-SMTP_SECURE
-SMTP_USER
-SMTP_PASS
-SMTP_FROM
-LEAD_EMAIL_TO=airank@xinghetech.cn
-ALLOWED_ORIGINS=https://airank.net.cn,https://www.airank.net.cn
-
-上线后检查：
-首页、产品、解决方案、资源、定价、免费体检页面都能打开；
-免费体检表单提交后 airank@xinghetech.cn 能收到邮件。
-```
+仓库代码通过不能替代以下生产证据：最终域名和证书、Yudao 生产租户、托管
+MySQL/S3、四平台当前有效凭证与额度、Kimi 泄露凭证轮换、DeepSeek 替代模型
+额度、Consumer Browser 登录态、真实客户发布账号、双人对账人员以及实际经过
+的 T+7/T+14/T+30 时间窗口。任一缺失都应在上线报告中保持
+`blocked/partial/disabled`，不得用本地成功或 mock 改写为完成。

@@ -1,0 +1,37 @@
+FROM python:3.11.15-slim-bookworm@sha256:d29f48a31a8b408ed19272ca1e7b10ebae13b240a27e862d3d4217c528e2e0c3
+
+ARG AIRANK_BUILD_COMMIT
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PYTHONPATH=/app:/app/apps/worker:/app/apps/scheduler:/app/packages/crawler-lite/src:/app/packages/domain/src:/app/packages/evidence/src:/app/packages/outbound-security/src:/app/packages/provider-gateway/src:/app/packages/score/src:/app/packages/skills/src:/app/packages/xinghe-adapter/src
+
+RUN groupadd --system --gid 10001 airank \
+    && useradd --system --uid 10001 --gid airank --home-dir /var/lib/airank --create-home airank
+
+WORKDIR /app
+
+COPY apps/api/requirements-prod.lock /tmp/requirements-prod.lock
+RUN python -m pip install --upgrade pip==26.2.1 setuptools==84.0.0 \
+    && python -m pip install --requirement /tmp/requirements-prod.lock \
+    && python -m playwright install --with-deps chromium \
+    && chmod -R a=rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/* /tmp/requirements-prod.lock
+
+COPY --chown=airank:airank apps /app/apps
+COPY --chown=airank:airank packages /app/packages
+COPY --chown=airank:airank scripts /app/scripts
+
+ENV AIRANK_BUILD_COMMIT=${AIRANK_BUILD_COMMIT}
+
+RUN mkdir -p /var/lib/airank/browser-profiles /var/lib/airank/browser-captures \
+    && chown -R airank:airank /var/lib/airank
+
+USER 10001:10001
+
+EXPOSE 8000
+
+CMD ["python3", "-m", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*", "--no-access-log"]

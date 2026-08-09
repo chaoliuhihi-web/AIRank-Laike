@@ -76,6 +76,7 @@ def test_provider_route_admin_lists_only_public_operational_state(monkeypatch) -
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["routes"][0]["request_count_24h"] == 3
+    assert body["data"]["routes"][0]["control_scope"] == "platform_global"
     assert body["data"]["routes"][0]["lifecycle_status"] == "unmanaged"
     assert body["data"]["routes"][0]["release_gate_status"] == "pass"
     assert "api_key" not in response.text
@@ -113,13 +114,14 @@ def test_provider_route_admin_updates_with_version_and_reason(monkeypatch) -> No
             "priority_override": 50,
             "expected_version": 0,
             "reason": "raise healthy route priority",
+            "confirm_platform_impact": True,
         },
     )
 
     assert response.status_code == 200
     assert response.json()["data"]["control_version"] == 1
     validate_response("provider_route_control_response.schema.json", response.json())
-    assert calls[0]["changed_by"] == "dev_only_provider_admin"
+    assert calls[0]["changed_by"] == "dev_only_provider_platform_admin"
     assert calls[0]["expected_version"] == 0
 
 
@@ -142,6 +144,7 @@ def test_provider_route_admin_rejects_stale_version_and_inline_secret(monkeypatc
             "enabled": True,
             "expected_version": 0,
             "reason": "stale operator update",
+            "confirm_platform_impact": True,
         },
     )
     unsafe = client.put(
@@ -150,6 +153,7 @@ def test_provider_route_admin_rejects_stale_version_and_inline_secret(monkeypatc
             "enabled": True,
             "expected_version": 0,
             "reason": "must reject inline credential",
+            "confirm_platform_impact": True,
             "api_key": "must-not-be-accepted",
         },
     )
@@ -157,3 +161,70 @@ def test_provider_route_admin_rejects_stale_version_and_inline_secret(monkeypatc
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "PROVIDER_ROUTE_CONTROL_CONFLICT"
     assert unsafe.status_code == 422
+
+
+def test_provider_route_write_requires_platform_permission_not_tenant_provider_admin(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_provider_admin")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:admin")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "tenant-provider-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    response = client.put(
+        "/api/v1/admin/provider-routes/qianwen/qianwen:default",
+        headers={
+            "tenant-id": "tenant_provider_admin",
+            "Authorization": f"Bearer {token}",
+        },
+        json={
+            "enabled": True,
+            "priority_override": None,
+            "expected_version": 0,
+            "reason": "must not modify global route",
+            "confirm_platform_impact": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["details"]["required_permission"] == (
+        "airank:provider:platform-admin"
+    )
+
+
+def test_provider_namespace_wildcard_cannot_modify_platform_global_route(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
+    monkeypatch.setenv("AIRANK_DEFAULT_TENANT_ID", "tenant_provider_admin")
+    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:*")
+    api_main._DEV_AUTH_SESSIONS.clear()
+    client = TestClient(api_main.app)
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"username": "namespace-admin", "password": "local", "yudao_tenant_id": "1"},
+    ).json()["data"]["access_token"]
+
+    response = client.put(
+        "/api/v1/admin/provider-routes/qianwen/qianwen:default",
+        headers={
+            "tenant-id": "tenant_provider_admin",
+            "Authorization": f"Bearer {token}",
+        },
+        json={
+            "enabled": True,
+            "expected_version": 0,
+            "reason": "namespace wildcard is tenant scoped",
+            "confirm_platform_impact": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"

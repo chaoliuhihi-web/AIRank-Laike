@@ -185,6 +185,107 @@ def test_required_yudao_auth_revalidates_permission_info(monkeypatch: Any) -> No
     assert calls[0]["headers"]["tenant-id"] == "8"
 
 
+def test_production_yudao_login_uses_active_database_tenant_binding(
+    monkeypatch: Any,
+) -> None:
+    def fake_request_external_json(url: str, **_kwargs: Any) -> dict[str, Any]:
+        if url.endswith("/login"):
+            return {"code": 0, "data": {"accessToken": "tenant-bound-token"}}
+        return {
+            "code": 0,
+            "data": {"user": {"id": 88, "username": "tenant-admin"}},
+        }
+
+    monkeypatch.setenv("AIRANK_ENV", "production")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "yudao")
+    monkeypatch.setenv("AIRANK_TENANT_RESOLUTION_MODE", "database")
+    monkeypatch.setattr(api_main, "request_external_json", fake_request_external_json)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_airank_tenant_id",
+        lambda yudao_tenant_id: "tenant_customer_a"
+        if yudao_tenant_id == "1008"
+        else None,
+    )
+
+    response = TestClient(api_main.app).post(
+        "/api/v1/auth/login",
+        json={
+            "username": "tenant-admin",
+            "password": "secret",
+            "yudao_tenant_id": "1008",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["tenant_id"] == "tenant_customer_a"
+
+
+def test_production_yudao_auth_rejects_cross_tenant_header_after_binding_lookup(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("AIRANK_ENV", "production")
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "yudao")
+    monkeypatch.setenv("AIRANK_TENANT_RESOLUTION_MODE", "database")
+    monkeypatch.setattr(
+        api_main,
+        "validate_yudao_request_token",
+        lambda _token, _tenant: (api_main.AuthUser(user_id="88"), ()),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "resolve_airank_tenant_id",
+        lambda _yudao_tenant_id: "tenant_customer_a",
+    )
+    client = TestClient(api_main.app)
+    headers = {
+        "X-Yudao-Tenant-Id": "1008",
+        "Authorization": "Bearer tenant-bound-token",
+    }
+
+    forbidden = client.get(
+        "/api/v1/console/overview",
+        headers={**headers, "tenant-id": "tenant_customer_b"},
+    )
+    allowed = client.get(
+        "/api/v1/console/overview",
+        headers={**headers, "tenant-id": "tenant_customer_a"},
+    )
+
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "TENANT_MISMATCH"
+    assert allowed.status_code == 200
+
+
+def test_production_tenant_directory_outage_fails_closed(monkeypatch: Any) -> None:
+    monkeypatch.setenv("AIRANK_ENV", "production")
+    monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
+    monkeypatch.setenv("AIRANK_AUTH_MODE", "yudao")
+    monkeypatch.setattr(
+        api_main,
+        "validate_yudao_request_token",
+        lambda _token, _tenant: (api_main.AuthUser(user_id="88"), ()),
+    )
+
+    def unavailable(_yudao_tenant_id: str) -> str:
+        raise api_main.TenantDirectoryUnavailable("database unavailable")
+
+    monkeypatch.setattr(api_main, "resolve_airank_tenant_id", unavailable)
+
+    response = TestClient(api_main.app).get(
+        "/api/v1/console/overview",
+        headers={
+            "tenant-id": "tenant_customer_a",
+            "X-Yudao-Tenant-Id": "1008",
+            "Authorization": "Bearer tenant-bound-token",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AUTH_TENANT_DIRECTORY_UNAVAILABLE"
+
+
 def test_skill_admin_endpoint_uses_trusted_permissions_and_rejects_spoofing(monkeypatch: Any) -> None:
     monkeypatch.setenv("AIRANK_API_AUTH_ENFORCEMENT", "required")
     monkeypatch.setenv("AIRANK_AUTH_MODE", "dev_only")
@@ -270,7 +371,10 @@ def test_provider_route_admin_uses_trusted_permissions_and_rejects_spoofing(monk
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "AUTH_PERMISSION_FORBIDDEN"
 
-    monkeypatch.setenv("AIRANK_DEV_PERMISSIONS", "airank:provider:admin")
+    monkeypatch.setenv(
+        "AIRANK_DEV_PERMISSIONS",
+        "airank:provider:admin,airank:provider:platform-admin",
+    )
     admin_token = client.post(
         "/api/v1/auth/login",
         json={"username": "provider-admin", "password": "local", "yudao_tenant_id": "1"},

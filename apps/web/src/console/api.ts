@@ -1824,6 +1824,7 @@ export type ProviderReadiness = {
 };
 
 export type ProviderRouteStatus = {
+  control_scope: "platform_global";
   provider: string;
   label: string;
   route_id: string;
@@ -2020,6 +2021,7 @@ export type ProviderRouteControlInput = {
   priorityOverride: number | null;
   expectedVersion: number;
   reason: string;
+  confirmPlatformImpact: true;
 };
 
 export type ProviderCredentialVerification = {
@@ -4433,6 +4435,7 @@ export async function updateProviderRoute(
         priority_override: input.priorityOverride,
         expected_version: input.expectedVersion,
         reason: input.reason,
+        confirm_platform_impact: input.confirmPlatformImpact,
       }),
     },
   );

@@ -6886,6 +6886,9 @@ function SettingsPage() {
       notify({ title: "优先级无效", desc: "请输入 -10000 到 10000 之间的整数，留空则使用环境配置优先级。", tone: "warning" });
       return;
     }
+    if (!window.confirm(`这是平台全局路由变更，会影响所有租户。确认应用 ${route.label} · ${route.route_id} 的新状态？`)) {
+      return;
+    }
     setUpdatingRoute(key);
     try {
       await updateProviderRoute(route, {
@@ -6893,6 +6896,7 @@ function SettingsPage() {
         priorityOverride,
         expectedVersion: route.control_version,
         reason,
+        confirmPlatformImpact: true,
       });
       await loadProviderRoutes();
       notify({ title: "路由控制已生效", desc: `${route.label} · ${route.route_id} 已热更新并记录审计事件。`, tone: "success" });
@@ -7354,7 +7358,7 @@ function SettingsPage() {
         <div className="provider-route-control-head">
           <div>
             <h2>Provider 路由控制</h2>
-            <p>显示运行时已配置路由和 24 小时真实调用指标。所有变更需理由和版本校验；服务端禁止停用最后一路。</p>
+            <p>显示运行时已配置路由和 24 小时真实调用指标。这里是平台全局控制面，不是租户级设置；写操作要求独立的平台管理员权限、显式确认、理由和版本校验，服务端禁止停用最后一路。</p>
           </div>
           <Badge tone={routeLoadError ? "danger" : "success"}>{routeLoadError ? "blocked" : `${providerRoutes.length} routes`}</Badge>
         </div>
@@ -7375,6 +7379,7 @@ function SettingsPage() {
                     <tr key={key}>
                       <td>
                         <strong>{route.label} · {route.route_id}</strong>
+                        <small>{route.control_scope}</small>
                         <small>{route.model} · {route.endpoint_host} · {route.request_kind}</small>
                         <small>fp {route.configuration_fingerprint.slice(0, 12)}… · v{route.control_version}</small>
                       </td>

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
+from functools import lru_cache
 import json
+import logging
 import os
+import re
 import threading
+import time
 from typing import Annotated, Any, Callable, Literal, Mapping, Optional, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -22,7 +26,12 @@ from starlette.concurrency import run_in_threadpool
 
 from airank_domain import govern_question
 from airank_domain.measurement import PromptCohortType, sha256_text, stable_prompt_version_id
-from airank_evidence import ObjectStorageError, StoredObject, build_object_storage_from_env
+from airank_evidence import (
+    ObjectStorageError,
+    StoredObject,
+    build_object_storage_from_env,
+    verify_object_storage_readiness,
+)
 from airank_provider_gateway import PROVIDER_MANIFESTS, ProviderGatewayError
 from airank_score import QUALITY_CONTRACT_VERSION
 from airank_skills import (
@@ -33,6 +42,7 @@ from airank_skills import (
     run_skill,
     trust_allows_skill,
 )
+from scripts.production_preflight import validate_production_environment
 
 try:
     from .provider_scan import (
@@ -89,6 +99,8 @@ API_PREFIX = "/api/v1"
 API_VERSION = "v1"
 SERVICE_NAME = "airank-api"
 TRACE_HEADER = "X-AIRank-Trace-Id"
+TRACE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+REQUEST_LOGGER = logging.getLogger("airank.api.request")
 _DEV_AUTH_SESSIONS: dict[str, dict[str, Any]] = {}
 _DEV_AUTH_SESSIONS_LOCK = threading.Lock()
 
@@ -108,6 +120,7 @@ ERROR_REGISTRY: dict[str, tuple[int, str]] = {
     "AUTH_TOKEN_INVALID": (401, "Authentication token is invalid"),
     "AUTH_LOGIN_FAILED": (401, "Login credentials are invalid"),
     "AUTH_YUDAO_UNAVAILABLE": (503, "Yudao authentication is unavailable"),
+    "AUTH_TENANT_DIRECTORY_UNAVAILABLE": (503, "Tenant directory is unavailable"),
     "AUTH_PERMISSION_FORBIDDEN": (403, "Required permission is missing"),
     "TENANT_MISMATCH": (403, "Tenant does not match the token"),
     "TENANT_FORBIDDEN": (403, "Tenant access is forbidden"),
@@ -934,6 +947,25 @@ class HealthResponse(BaseModel):
     meta: ResponseMeta
 
 
+class ReadinessComponent(BaseModel):
+    name: str
+    status: Literal["ready", "blocked"]
+    reason_code: Optional[str] = None
+
+
+class ReadinessStatus(BaseModel):
+    status: Literal["ready", "blocked"]
+    service: str
+    api_version: str
+    expected_schema_revision: str
+    components: list[ReadinessComponent]
+
+
+class ReadinessResponse(BaseModel):
+    data: ReadinessStatus
+    meta: ResponseMeta
+
+
 class VersionResponse(BaseModel):
     data: VersionInfo
     meta: ResponseMeta
@@ -1045,6 +1077,7 @@ class ProviderReadinessResponse(BaseModel):
 
 
 class ProviderRouteStatus(BaseModel):
+    control_scope: Literal["platform_global"] = "platform_global"
     provider: str
     label: str
     route_id: str
@@ -1241,9 +1274,11 @@ class ProviderRouteControlRequest(BaseModel):
     priority_override: Optional[int] = Field(default=None, ge=-10_000, le=10_000)
     expected_version: int = Field(ge=0)
     reason: str = Field(min_length=3, max_length=500)
+    confirm_platform_impact: Literal[True]
 
 
 class ProviderRouteControlData(BaseModel):
+    control_scope: Literal["platform_global"] = "platform_global"
     provider: str
     route_id: str
     enabled: bool
@@ -5358,10 +5393,13 @@ def run_brand_check(tenant_id: str, payload: BrandCheckRequest) -> BrandCheckDat
 
 app = FastAPI(title="AIRank API", version="0.1.0")
 
+EXPECTED_SCHEMA_REVISION = "20260809_0046"
+
 
 def build_trace_id(trace_id: Optional[str]) -> str:
-    if trace_id:
-        return trace_id
+    normalized = str(trace_id or "").strip()
+    if TRACE_ID_RE.fullmatch(normalized):
+        return normalized
     return f"trc_{uuid4().hex[:16]}"
 
 
@@ -5375,6 +5413,51 @@ def get_auth_mode() -> str:
 
 def get_airank_default_tenant_id() -> str:
     return os.getenv("AIRANK_DEFAULT_TENANT_ID", "tenant_demo").strip() or "tenant_demo"
+
+
+class TenantDirectoryUnavailable(RuntimeError):
+    pass
+
+
+def tenant_resolution_mode() -> str:
+    configured = os.getenv("AIRANK_TENANT_RESOLUTION_MODE", "").strip().lower()
+    if configured:
+        return configured
+    return "database" if os.getenv("AIRANK_ENV", "local").strip().lower() == "production" else "default"
+
+
+@lru_cache(maxsize=4)
+def tenant_directory_engine(database_url: str):
+    return create_engine(database_url, pool_pre_ping=True)
+
+
+def resolve_airank_tenant_id(yudao_tenant_id: str) -> Optional[str]:
+    mode = tenant_resolution_mode()
+    if mode == "default":
+        return get_airank_default_tenant_id()
+    if mode != "database":
+        raise TenantDirectoryUnavailable("unsupported tenant resolution mode")
+    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
+    if not database_url:
+        raise TenantDirectoryUnavailable("tenant directory database is not configured")
+    try:
+        with tenant_directory_engine(database_url).connect() as connection:
+            tenant_id = connection.execute(
+                text(
+                    """
+                    SELECT tenant_id
+                    FROM airank_tenant_bindings
+                    WHERE yudao_tenant_id=:yudao_tenant_id
+                      AND status='active'
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    """
+                ),
+                {"yudao_tenant_id": yudao_tenant_id},
+            ).scalar_one_or_none()
+    except Exception as exc:
+        raise TenantDirectoryUnavailable("tenant directory lookup failed") from exc
+    return str(tenant_id) if tenant_id else None
 
 
 def get_auth_timeout_seconds() -> float:
@@ -5466,6 +5549,16 @@ def provider_admin_permission() -> str:
     )
 
 
+def provider_platform_admin_permission() -> str:
+    return (
+        os.getenv(
+            "AIRANK_PROVIDER_PLATFORM_ADMIN_PERMISSION",
+            "airank:provider:platform-admin",
+        ).strip()
+        or "airank:provider:platform-admin"
+    )
+
+
 def permission_allows(granted: tuple[str, ...], required: str) -> bool:
     namespace = required.rsplit(":", 1)[0]
     return bool({required, "*", "*:*:*", f"{namespace}:*"}.intersection(granted))
@@ -5495,6 +5588,18 @@ def require_provider_admin(permission_header: Optional[str]) -> None:
         )
 
 
+def require_provider_platform_admin(permission_header: Optional[str]) -> None:
+    if not auth_enforcement_required():
+        return
+    granted = tuple(item.strip() for item in (permission_header or "").split(",") if item.strip())
+    required = provider_platform_admin_permission()
+    if not {required, "*", "*:*:*"}.intersection(granted):
+        raise StarletteHTTPException(
+            status_code=403,
+            detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"required_permission": required}},
+        )
+
+
 def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLoginResponse:
     token = f"dev_only_{uuid4().hex}"
     expires_in = 3600
@@ -5508,6 +5613,7 @@ def build_dev_only_auth_response(payload: AuthLoginRequest, trace_id: Optional[s
                 for item in os.getenv(
                     "AIRANK_DEV_PERMISSIONS",
                     f"{skill_admin_permission()},{provider_admin_permission()},"
+                    f"{provider_platform_admin_permission()},"
                     f"{os.getenv('AIRANK_REVIEW_ADMIN_PERMISSION', 'airank:review:admin')},"
                     f"{os.getenv('AIRANK_DELIVERY_ADMIN_PERMISSION', 'airank:delivery:admin')}",
                 ).split(",")
@@ -5581,12 +5687,25 @@ def yudao_login(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLogin
             detail={"code": "AUTH_TOKEN_INVALID", "details": {"source": "yudao"}},
         )
 
+    try:
+        tenant_id = resolve_airank_tenant_id(payload.yudao_tenant_id)
+    except TenantDirectoryUnavailable as exc:
+        raise StarletteHTTPException(
+            status_code=503,
+            detail={"code": "AUTH_TENANT_DIRECTORY_UNAVAILABLE"},
+        ) from exc
+    if tenant_id is None:
+        raise StarletteHTTPException(
+            status_code=403,
+            detail={"code": "TENANT_FORBIDDEN"},
+        )
+
     return AuthLoginResponse(
         data=AuthLoginData(
             access_token=token,
             token_type="Bearer",
             expires_in=extract_yudao_expires_in(login_payload),
-            tenant_id=get_airank_default_tenant_id(),
+            tenant_id=tenant_id,
             yudao_tenant_id=payload.yudao_tenant_id,
             user=extract_yudao_user(permission_payload, payload.username),
             dev_only=False,
@@ -5598,7 +5717,9 @@ def yudao_login(payload: AuthLoginRequest, trace_id: Optional[str]) -> AuthLogin
 def get_request_trace_id(request: Request) -> str:
     trace_id = request.headers.get(TRACE_HEADER)
     if trace_id:
-        return trace_id
+        normalized_trace_id = build_trace_id(trace_id)
+        request.state.trace_id = normalized_trace_id
+        return normalized_trace_id
 
     existing_trace_id = getattr(request.state, "trace_id", None)
     if isinstance(existing_trace_id, str) and existing_trace_id:
@@ -5777,6 +5898,7 @@ async def enforce_api_authentication(request: Request, call_next):
     public_paths = {
         f"{API_PREFIX}/auth/login",
         f"{API_PREFIX}/health",
+        f"{API_PREFIX}/ready",
         f"{API_PREFIX}/version",
         "/openapi.json",
         "/docs",
@@ -5807,20 +5929,85 @@ async def enforce_api_authentication(request: Request, call_next):
         inject_trusted_header(request, "X-AIRank-User-Id", str(session["user_id"]))
         inject_trusted_header(request, "X-Yudao-Tenant-Id", str(session["yudao_tenant_id"]))
         inject_trusted_header(request, "X-AIRank-Permissions", ",".join(session.get("permissions", ())))
+        request.state.airank_tenant_id = tenant_id
         return await call_next(request)
 
-    if tenant_id != get_airank_default_tenant_id():
-        return build_error_response(request, "TENANT_MISMATCH")
     yudao_tenant_id = request.headers.get("x-yudao-tenant-id", "").strip()
     if not yudao_tenant_id:
         return build_error_response(request, "AUTH_TOKEN_INVALID", details={"reason": "X-Yudao-Tenant-Id header is required"})
     identity = await run_in_threadpool(validate_yudao_request_token, token, yudao_tenant_id)
     if identity is None:
         return build_error_response(request, "AUTH_TOKEN_INVALID")
+    try:
+        resolved_tenant_id = await run_in_threadpool(
+            resolve_airank_tenant_id, yudao_tenant_id
+        )
+    except TenantDirectoryUnavailable:
+        return build_error_response(request, "AUTH_TENANT_DIRECTORY_UNAVAILABLE")
+    if resolved_tenant_id is None:
+        return build_error_response(request, "TENANT_FORBIDDEN")
+    if tenant_id != resolved_tenant_id:
+        return build_error_response(request, "TENANT_MISMATCH")
     user, permissions = identity
     inject_trusted_header(request, "X-AIRank-User-Id", user.user_id)
     inject_trusted_header(request, "X-AIRank-Permissions", ",".join(permissions))
+    request.state.airank_tenant_id = resolved_tenant_id
     return await call_next(request)
+
+
+@app.middleware("http")
+async def emit_structured_request_log(request: Request, call_next):
+    started_at = time.perf_counter()
+    trace_id = get_request_trace_id(request)
+    inject_trusted_header(request, TRACE_HEADER, trace_id)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        route = request.scope.get("route")
+        route_template = getattr(route, "path", None) or "unmatched"
+        REQUEST_LOGGER.error(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "level": "error",
+                    "trace_id": trace_id,
+                    "tenant_id": getattr(request.state, "airank_tenant_id", None),
+                    "component": "apps.api",
+                    "operation": f"{request.method} {route_template}",
+                    "event": "api_request_failed",
+                    "status_code": 500,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "error_type": type(exc).__name__,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        raise
+    response.headers[TRACE_HEADER] = trace_id
+    route = request.scope.get("route")
+    route_template = getattr(route, "path", None) or "unmatched"
+    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    level = logging.ERROR if response.status_code >= 500 else logging.INFO
+    REQUEST_LOGGER.log(
+        level,
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "level": logging.getLevelName(level).lower(),
+                "trace_id": trace_id,
+                "tenant_id": getattr(request.state, "airank_tenant_id", None),
+                "component": "apps.api",
+                "operation": f"{request.method} {route_template}",
+                "event": "api_request_completed",
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
+    return response
 
 
 @app.get(f"{API_PREFIX}/health", response_model=HealthResponse)
@@ -5828,6 +6015,86 @@ def get_health(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER
     return HealthResponse(
         data=HealthStatus(status="ok", service=SERVICE_NAME, api_version=API_VERSION),
         meta=build_meta(trace_id),
+    )
+
+
+def build_runtime_readiness() -> ReadinessStatus:
+    components: list[ReadinessComponent] = []
+    preflight = validate_production_environment(role="api")
+    components.append(
+        ReadinessComponent(
+            name="production_configuration",
+            status="ready" if preflight.ready else "blocked",
+            reason_code=None if preflight.ready else "PRODUCTION_PREFLIGHT_BLOCKED",
+        )
+    )
+
+    database_url = str(os.getenv("AIRANK_DATABASE_URL") or "").strip()
+    database_ready = False
+    schema_ready = False
+    if database_url:
+        try:
+            engine = tenant_directory_engine(database_url)
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1")).scalar_one()
+                current_revision = str(
+                    connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                )
+            database_ready = True
+            schema_ready = current_revision == EXPECTED_SCHEMA_REVISION
+        except Exception:
+            database_ready = False
+            schema_ready = False
+    components.append(
+        ReadinessComponent(
+            name="database_connectivity",
+            status="ready" if database_ready else "blocked",
+            reason_code=None if database_ready else "DATABASE_UNAVAILABLE",
+        )
+    )
+    components.append(
+        ReadinessComponent(
+            name="schema_revision",
+            status="ready" if schema_ready else "blocked",
+            reason_code=None if schema_ready else "SCHEMA_REVISION_MISMATCH",
+        )
+    )
+
+    storage_ready = False
+    try:
+        storage = build_object_storage_from_env()
+        storage_ready = storage.driver == "s3"
+        if storage_ready:
+            verify_object_storage_readiness(storage)
+    except ObjectStorageError:
+        storage_ready = False
+    components.append(
+        ReadinessComponent(
+            name="object_storage_connectivity",
+            status="ready" if storage_ready else "blocked",
+            reason_code=None if storage_ready else "OBJECT_STORAGE_UNAVAILABLE",
+        )
+    )
+    ready = all(component.status == "ready" for component in components)
+    return ReadinessStatus(
+        status="ready" if ready else "blocked",
+        service=SERVICE_NAME,
+        api_version=API_VERSION,
+        expected_schema_revision=EXPECTED_SCHEMA_REVISION,
+        components=components,
+    )
+
+
+@app.get(
+    f"{API_PREFIX}/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+)
+def get_readiness(trace_id: Optional[str] = Header(default=None, alias=TRACE_HEADER)) -> Any:
+    response = ReadinessResponse(data=build_runtime_readiness(), meta=build_meta(trace_id))
+    return JSONResponse(
+        status_code=200 if response.data.status == "ready" else 503,
+        content=response.model_dump(mode="json"),
     )
 
 
@@ -6004,7 +6271,7 @@ def update_provider_route(
     permissions: Optional[str] = Header(default=None, alias="X-AIRank-Permissions"),
     actor_user_id: Optional[str] = Header(default=None, alias="X-AIRank-User-Id"),
 ) -> ProviderRouteControlResponse:
-    require_provider_admin(permissions)
+    require_provider_platform_admin(permissions)
     if provider not in PROVIDER_MANIFESTS:
         raise StarletteHTTPException(
             status_code=404,
@@ -6017,7 +6284,7 @@ def update_provider_route(
                 status_code=403,
                 detail={"code": "AUTH_PERMISSION_FORBIDDEN", "details": {"reason": "trusted actor missing"}},
             )
-        actor = "dev_only_provider_admin"
+        actor = "dev_only_provider_platform_admin"
     operations = build_provider_route_operations()
     try:
         result = operations.set_route_control(

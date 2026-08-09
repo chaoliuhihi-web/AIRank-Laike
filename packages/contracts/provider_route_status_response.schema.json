@@ -17,8 +17,9 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["provider", "label", "route_id", "endpoint_host", "model", "request_kind", "configured", "enabled", "base_priority", "effective_priority", "control_version", "configuration_fingerprint", "lifecycle_status", "execution_min_days_to_sunset", "release_min_days_to_sunset", "execution_gate_status", "release_gate_status", "lifecycle_reason", "migration_release_eligible", "request_count_24h", "success_count_24h", "failure_count_24h", "usage_event_count_24h", "exact_usage_count_24h", "estimated_usage_count_24h", "unknown_usage_count_24h", "known_cost_event_count_24h", "unknown_cost_event_count_24h", "cost_coverage_rate_24h", "aggregate_cost_precision_24h"],
+            "required": ["control_scope", "provider", "label", "route_id", "endpoint_host", "model", "request_kind", "configured", "enabled", "base_priority", "effective_priority", "control_version", "configuration_fingerprint", "lifecycle_status", "execution_min_days_to_sunset", "release_min_days_to_sunset", "execution_gate_status", "release_gate_status", "lifecycle_reason", "migration_release_eligible", "request_count_24h", "success_count_24h", "failure_count_24h", "usage_event_count_24h", "exact_usage_count_24h", "estimated_usage_count_24h", "unknown_usage_count_24h", "known_cost_event_count_24h", "unknown_cost_event_count_24h", "cost_coverage_rate_24h", "aggregate_cost_precision_24h"],
             "properties": {
+              "control_scope": { "const": "platform_global" },
               "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
               "label": { "type": "string", "minLength": 1 },
               "route_id": { "type": "string", "minLength": 1 },

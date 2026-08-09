@@ -123,5 +123,7 @@ scripts/               开发和运维辅助脚本
 - 能力评估：`docs/architecture/capability-assessment.md`
 - MySQL 建库方案：`docs/architecture/mysql-schema-plan.md`
 - 建库脚本：`ops/deployment/mysql-bootstrap.sql`
-- 环境变量样例：`ops/deployment/env.example`
+- 本地环境变量样例：`ops/deployment/env.example`
+- 生产部署包：`ops/deployment/compose.production.yml`、`ops/deployment/env.production.example`
+- 生产启动前门禁：`scripts/production_preflight.py`
 - 详细开发计划：`docs/handoff/development-plan.md`

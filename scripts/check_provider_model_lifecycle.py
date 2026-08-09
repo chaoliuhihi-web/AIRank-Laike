@@ -26,9 +26,9 @@ def main() -> int:
         or os.getenv("DATABASE_URL")
         or ""
     ).strip()
-    tenant_id = os.getenv("AIRANK_RELEASE_TENANT_ID", "tenant_demo").strip() or "tenant_demo"
-    if not database_url:
-        print(json.dumps({"tenant_id": tenant_id, "routes": [], "blockers": ["release database URL is missing"]}))
+    tenant_id = os.getenv("AIRANK_RELEASE_TENANT_ID", "").strip()
+    if not database_url or not tenant_id or tenant_id == "tenant_demo":
+        print(json.dumps({"tenant_id": tenant_id, "routes": [], "blockers": ["release database URL or real release tenant id is missing"]}))
         return 1
     try:
         records = MySQLProviderModelLifecycle(database_url).list_release_gates(tenant_id)

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airank.local/contracts/readiness_response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data", "meta"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "service", "api_version", "expected_schema_revision", "components"],
+      "properties": {
+        "status": {"enum": ["ready", "blocked"]},
+        "service": {"type": "string", "minLength": 1},
+        "api_version": {"type": "string", "minLength": 1},
+        "expected_schema_revision": {"type": "string", "pattern": "^[0-9]{8}_[0-9]{4}$"},
+        "components": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "status"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "status": {"enum": ["ready", "blocked"]},
+              "reason_code": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "request_id"],
+      "properties": {
+        "trace_id": {"type": "string", "minLength": 1},
+        "request_id": {"type": "string", "pattern": "^req_[0-9a-f]{16}$"}
+      }
+    }
+  }
+}

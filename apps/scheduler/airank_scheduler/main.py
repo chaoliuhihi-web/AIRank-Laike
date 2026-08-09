@@ -7,6 +7,7 @@ import time
 from typing import Mapping
 
 from apps.api.retest_routes import CompleteRetestRequest, MySQLRetestRepository
+from apps.runtime_health import write_process_heartbeat
 
 from .knowledge_sync import MySQLKnowledgeSyncScheduler
 from .opportunity_action_escalation import MySQLOpportunityActionEscalationScheduler
@@ -165,6 +166,7 @@ def main() -> int:
         return 0
 
     retest_repository = MySQLRetestRepository(database_url)
+    write_process_heartbeat("scheduler.json", component="scheduler", identity=scheduler_id)
     while True:
         finalized: list[dict[str, object]] = []
         for ready in scheduler.ready_to_finalize(limit=args.limit):
@@ -236,6 +238,7 @@ def main() -> int:
                 sort_keys=True,
             )
         )
+        write_process_heartbeat("scheduler.json", component="scheduler", identity=scheduler_id)
         if args.once:
             return 0
         time.sleep(args.poll_seconds)

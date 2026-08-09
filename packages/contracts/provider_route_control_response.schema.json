@@ -9,8 +9,9 @@
     "data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "route_id", "enabled", "priority_override", "control_version", "updated_by", "reason", "updated_at"],
+      "required": ["control_scope", "provider", "route_id", "enabled", "priority_override", "control_version", "updated_by", "reason", "updated_at"],
       "properties": {
+        "control_scope": { "const": "platform_global" },
         "provider": { "type": "string", "enum": ["doubao", "qianwen", "kimi", "deepseek"] },
         "route_id": { "type": "string", "minLength": 1 },
         "enabled": { "type": "boolean" },

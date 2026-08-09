@@ -23,7 +23,7 @@ def test_provider_credential_vault_has_encrypted_storage_and_no_plaintext_column
     assert "SecretStr" in implementation
     assert "confirm_billable: Literal[True]" in implementation
     assert "credential_revoked_and_ciphertext_scrubbed" in implementation
-    assert "cryptography>=49.0.0,<50.0.0" in requirements
+    assert "cryptography>=50.0.0,<51.0.0" in requirements
 
 
 def test_provider_credential_contracts_never_expose_envelope_fields() -> None:

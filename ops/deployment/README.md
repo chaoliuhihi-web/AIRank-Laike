@@ -5,6 +5,13 @@
 生产部署和交付给第三方的步骤见：
 
 - `ops/deployment/production-deployment.md`
+- `ops/deployment/compose.production.yml`
+- `ops/deployment/env.production.example`
+- `ops/deployment/Dockerfile.backend`
+- `ops/deployment/Dockerfile.web`
+
+生产配置在任何服务启动前由 `scripts/production_preflight.py` 失败关闭；
+`/api/v1/health` 是存活探针，`/api/v1/ready` 才是部署就绪探针。
 
 第一版目标：
 

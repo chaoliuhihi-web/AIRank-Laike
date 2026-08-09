@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Mapping
 
 from airank_evidence import ObjectStorageError, build_object_storage_from_env
+from apps.runtime_health import write_process_heartbeat
 
 from .citation_capture import (
     CitationCaptureWorkerError,
@@ -247,6 +248,7 @@ def main() -> int:
     processed_count = 0
     failed_count = 0
     job_limit = 1 if args.once else args.max_jobs
+    write_process_heartbeat("worker.json", component="worker", identity=worker_id)
     while True:
         receipt = None
         scan_result = None
@@ -530,6 +532,7 @@ def main() -> int:
                 return 1 if failed_count else 0
         if job_limit is not None and processed_count >= job_limit:
             return 1 if failed_count else 0
+        write_process_heartbeat("worker.json", component="worker", identity=worker_id)
         time.sleep(poll_seconds)
 
 
