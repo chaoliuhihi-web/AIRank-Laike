@@ -7791,6 +7791,7 @@ body[data-page="pricing"] .pricing-hero-ui{display:none!important}
 
 /* Product hero: generated glass art supplies depth, DOM supplies crisp labels. */
 body[data-page="product"] .product-hero-v2 .hero__inner{grid-template-columns:minmax(0,.82fr) minmax(600px,1.18fr)!important;min-height:720px!important;gap:42px!important}
+body[data-page="product"] .product-hero-v2 .hero__copy{position:relative!important;z-index:5!important}
 body[data-page="product"] .product-hero-v2 .hero__visual{width:112%!important;max-width:790px!important;margin-left:-5%!important}
 body[data-page="product"] .trust-console--product{
   position:relative!important;
@@ -7805,10 +7806,10 @@ body[data-page="product"] .trust-console--product{
 }
 body[data-page="product"] .trust-console--product .trust-console__backdrop{
   position:absolute!important;
-  inset:-3% -9%!important;
+  inset:-3%!important;
   z-index:-2!important;
-  width:118%!important;
-  height:108%!important;
+  width:106%!important;
+  height:106%!important;
   object-fit:cover!important;
   object-position:center!important;
   opacity:.96!important;
@@ -7827,7 +7828,7 @@ body[data-page="product"] .trust-console--product:before{
   filter:blur(54px);
 }
 body[data-page="product"] .trust-console--product:after{display:none!important;content:none!important}
-body[data-page="product"] .product-hero-v2 .hero__copy>p{max-width:410px!important}
+body[data-page="product"] .product-hero-v2 .hero__copy>p{max-width:370px!important}
 body[data-page="product"] .trust-console--product .trust-console__top{
   position:absolute!important;
   top:5%!important;
