@@ -4705,7 +4705,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
     }
   };
 
-  const confirmQuestion = async (row: BuyerQuestion) => {
+  const reviewQuestion = async (row: BuyerQuestion, action: "confirmed" | "archived") => {
     if (!project.id) return;
     setReviewingQuestionId(row.question_id);
     setReviewError(null);
@@ -4713,12 +4713,14 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
       await reviewBuyerQuestion(
         project.id,
         row.question_id,
-        "confirmed",
-        "控制台人工确认：问题意图、Cohort 与目标客户匹配。",
+        action,
+        action === "confirmed"
+          ? "控制台人工确认：问题意图、Cohort 与目标客户匹配。"
+          : "控制台人工归档：问题不再进入后续扫描，历史证据继续保留。",
       );
       await loadQuestions();
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "问题确认失败");
+      setReviewError(error instanceof Error ? error.message : action === "confirmed" ? "问题确认失败" : "问题归档失败");
     } finally {
       setReviewingQuestionId(null);
     }
@@ -4811,7 +4813,7 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
               <textarea value={seedQuestions} onChange={(event) => setSeedQuestions(event.target.value)} placeholder="企业应该如何选择 GEO 监测服务商？&#10;AIRank 是否支持样本级证据追溯？" />
             </label>
             <label>产品 / 服务词<input value={productTerms} onChange={(event) => setProductTerms(event.target.value)} placeholder="GEO 监测平台，AI 可见度诊断" /></label>
-            <label>竞品实体<input value={competitorNames} onChange={(event) => setCompetitorNames(event.target.value)} placeholder="竞品甲，竞品乙" /></label>
+            <label>竞品实体（填写即覆盖项目旧竞品）<input value={competitorNames} onChange={(event) => setCompetitorNames(event.target.value)} placeholder="竞品甲，竞品乙" /></label>
             <label>服务区域<input value={regions} onChange={(event) => setRegions(event.target.value)} placeholder="北京，上海" /></label>
             <div className="question-compiler-actions">
               <label className="question-template-toggle">
@@ -4868,8 +4870,10 @@ function QuestionTable({ showTabs, onNavigate }: { showTabs: boolean; onNavigate
                     <td>
                       <Badge tone={row.status === "confirmed" ? "success" : row.status === "archived" ? "muted" : "warning"}>{questionStatusLabels[row.status]}</Badge>
                       {row.status === "suggested" ? (
-                        <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void confirmQuestion(row)}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
-                      ) : <small>{row.reviewed_by ? "已由项目成员确认" : "已可进入对应测试类型"}</small>}
+                        <button className="question-review-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "confirmed")}>{reviewingQuestionId === row.question_id ? "提交中…" : "确认纳入监测"}</button>
+                      ) : row.status === "confirmed" ? (
+                        <button className="question-review-button question-archive-button" type="button" disabled={reviewingQuestionId === row.question_id} onClick={() => void reviewQuestion(row, "archived")}>{reviewingQuestionId === row.question_id ? "提交中…" : "归档并移出后续扫描"}</button>
+                      ) : <small>已移出后续扫描，历史扫描与问题版本继续保留</small>}
                     </td>
                   </tr>
                 ))}

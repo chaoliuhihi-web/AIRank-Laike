@@ -152,6 +152,83 @@ def test_question_map_rejects_short_seed_as_validation_error_instead_of_500() ->
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
+def test_explicit_question_map_competitors_replace_stale_project_competitors() -> None:
+    client = TestClient(app)
+    tenant_id = f"tenant_qscope_{uuid4().hex[:10]}"
+    project_id = client.post(
+        "/api/v1/projects",
+        headers=_headers(tenant_id, "trc_qscope_project"),
+        json={"website_url": "https://intel-aipc.example", "brand_name_hint": "Intel AI PC"},
+    ).json()["data"]["project_id"]
+    stale = client.post(
+        f"/api/v1/projects/{project_id}/competitors",
+        headers=_headers(tenant_id, "trc_qscope_stale_competitor"),
+        json={"name": "火山引擎", "status": "suggested", "source": "hermes_discovered"},
+    )
+    assert stale.status_code == 201, stale.text
+
+    compiled = client.post(
+        f"/api/v1/projects/{project_id}/question-maps/compile",
+        headers=_headers(tenant_id, "trc_qscope_compile"),
+        json={
+            "product_terms": ["商用 AI PC"],
+            "competitor_names": ["AMD Ryzen AI"],
+            "include_template_candidates": True,
+            "persist": False,
+            "created_by": "reviewer_qscope",
+        },
+    )
+
+    assert compiled.status_code == 201, compiled.text
+    question_texts = [item["question_text"] for item in compiled.json()["data"]["questions"]]
+    assert any("AMD Ryzen AI" in item for item in question_texts)
+    assert all("火山引擎" not in item for item in question_texts)
+
+
+def test_confirmed_question_can_be_archived_without_deleting_history() -> None:
+    client = TestClient(app)
+    tenant_id = f"tenant_qarchive_{uuid4().hex[:10]}"
+    project_id = client.post(
+        "/api/v1/projects",
+        headers=_headers(tenant_id, "trc_qarchive_project"),
+        json={"website_url": "https://archive-question.example", "brand_name_hint": "ArchiveBrand"},
+    ).json()["data"]["project_id"]
+    compiled = client.post(
+        f"/api/v1/projects/{project_id}/question-maps/compile",
+        headers=_headers(tenant_id, "trc_qarchive_compile"),
+        json={
+            "seed_questions": ["企业如何选择商用 AI PC？"],
+            "include_template_candidates": False,
+            "persist": True,
+            "created_by": "reviewer_qarchive",
+        },
+    ).json()["data"]
+    question_id = compiled["questions"][0]["question_id"]
+    confirmed = client.patch(
+        f"/api/v1/projects/{project_id}/buyer-questions/{question_id}/review",
+        headers=_headers(tenant_id, "trc_qarchive_confirm"),
+        json={"action": "confirmed", "reviewed_by": "reviewer_qarchive", "review_note": "确认进入基线。"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+
+    archived = client.patch(
+        f"/api/v1/projects/{project_id}/buyer-questions/{question_id}/review",
+        headers=_headers(tenant_id, "trc_qarchive_archive"),
+        json={"action": "archived", "reviewed_by": "reviewer_qarchive", "review_note": "从新基线移出。"},
+    )
+
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["data"]["previous_status"] == "confirmed"
+    assert archived.json()["data"]["status"] == "archived"
+    questions = client.get(
+        f"/api/v1/projects/{project_id}/buyer-questions",
+        headers=_headers(tenant_id, "trc_qarchive_questions"),
+    ).json()["data"]
+    question = next(item for item in questions if item["question_id"] == question_id)
+    assert question["status"] == "archived"
+    assert question["question_version_id"]
+
+
 def test_observation_batch_is_immutable_pii_safe_and_compiles_as_attested_query() -> None:
     client = TestClient(app)
     tenant_id = f"tenant_qobs_{uuid4().hex[:10]}"

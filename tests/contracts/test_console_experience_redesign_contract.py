@@ -101,3 +101,11 @@ def test_multiline_seed_questions_are_not_split_on_in_sentence_punctuation() -> 
 
     assert "const seeds = seedQuestions" in app
     assert ".split(/\\r?\\n/)" in app
+
+
+def test_customer_can_archive_confirmed_questions_without_deleting_history() -> None:
+    app = read("apps/web/src/App.tsx")
+
+    assert 'reviewQuestion(row, "archived")' in app
+    assert "归档并移出后续扫描" in app
+    assert "历史扫描与问题版本继续保留" in app

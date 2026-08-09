@@ -593,7 +593,10 @@ class InMemoryQuestionGovernanceRepository:
         ]
         company_names = unique_normalized([project.company_name or project.brand_name, *payload.company_names])
         products = unique_normalized([*project.products, *payload.product_terms])
-        competitors = unique_normalized([*project_competitors, *payload.competitor_names])
+        # An explicit list defines the scope for this map. Falling back to the
+        # project list is useful for an empty form, but merging both silently
+        # carries stale competitors into a new brand/profile baseline.
+        competitors = unique_normalized(payload.competitor_names or project_competitors)
         observed_questions: list[ObservedQuestionSeed] = []
         for batch_id in payload.observation_batch_ids:
             batch = self.observation_batches.get((tenant_id, batch_id))
@@ -1111,7 +1114,9 @@ class MySQLQuestionGovernanceRepository:
             brand_name = str(project["brand_name"] or project["name"])
             companies = unique_normalized([str(project["name"]), *payload.company_names])
             products = unique_normalized([*_json_list(project["products_services_json"]), *payload.product_terms])
-            competitors = unique_normalized([*[str(item) for item in project_competitors], *payload.competitor_names])
+            competitors = unique_normalized(
+                payload.competitor_names or [str(item) for item in project_competitors]
+            )
             observed_questions = self._load_observed_questions(
                 conn,
                 tenant_id,
