@@ -119,3 +119,15 @@ def test_scan_summary_and_question_gaps_are_scoped_to_current_profile() -> None:
     assert '{hasCurrentProfileEvidence && <section className="metric-grid">' in checkup
     assert "hasCurrentProfileEvidence && message ? message" in checkup
     assert 'row.status !== "archived" && (row.coverage_status === "gap"' in app
+
+
+def test_customer_can_create_a_real_blind_baseline_from_scan_page() -> None:
+    app = read("apps/web/src/App.tsx")
+    api = read("apps/web/src/console/api.ts")
+    checkup = app.split("function CheckupPage", 1)[1].split("function pageAuditTone", 1)[0]
+
+    assert "createScanRun" in checkup
+    assert "创建并开始真实基线" in checkup
+    assert 'question.status === "confirmed" && question.cohort_type === "blind"' in checkup
+    assert 'collectorSurfaces: ["api"]' in checkup
+    assert 'question_scope: { mode: "selected", question_ids: input.questionIds }' in api

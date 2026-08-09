@@ -6602,6 +6602,118 @@ button:disabled {
   margin: 18px 0;
 }
 
+.scan-launch-card {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 22px;
+}
+
+.scan-launch-heading,
+.scan-launch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.scan-launch-heading h2 {
+  margin: 4px 0 6px;
+  color: var(--console-ink);
+  font-size: 20px;
+}
+
+.scan-launch-heading p,
+.scan-launch-actions small {
+  margin: 0;
+  color: var(--console-muted);
+}
+
+.scan-launch-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 16px;
+}
+
+.scan-launch-controls fieldset {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scan-launch-controls legend {
+  grid-column: 1 / -1;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.scan-launch-controls fieldset label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+}
+
+.scan-launch-controls fieldset label[data-disabled="true"] {
+  opacity: 0.55;
+}
+
+.scan-launch-controls fieldset span,
+.scan-launch-question-list span {
+  display: grid;
+  gap: 3px;
+}
+
+.scan-launch-controls fieldset small {
+  color: var(--console-muted);
+}
+
+.scan-repetitions {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.scan-repetitions select {
+  min-height: 42px;
+}
+
+.scan-launch-question-list {
+  display: grid;
+  gap: 8px;
+}
+
+.scan-launch-question-list span {
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f8fb;
+}
+
+.scan-launch-question-list strong {
+  color: var(--console-primary);
+}
+
+@media (max-width: 900px) {
+  .scan-launch-controls,
+  .scan-launch-controls fieldset {
+    grid-template-columns: 1fr;
+  }
+
+  .scan-launch-heading,
+  .scan-launch-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .scan-primary-action,
 .technical-details {
   margin-top: 18px;

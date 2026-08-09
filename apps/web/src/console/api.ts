@@ -2299,6 +2299,17 @@ export type ScanRun = {
   updated_at: string;
 };
 
+export type ScanRunCreateInput = {
+  projectId: string;
+  name: string;
+  runType: "baseline" | "retest" | "manual";
+  cohortType: "blind" | "assisted" | "comparison" | "fact_verification";
+  repetitions: number;
+  collectorSurfaces: Array<"api" | "web" | "app" | "manual_import">;
+  providerScope: string[];
+  questionIds: string[];
+};
+
 export type ScanTask = {
   task_id: string;
   run_id: string;
@@ -4159,6 +4170,27 @@ export async function createExplainerContent(
 
 export function fetchScanRuns(projectId: string, signal?: AbortSignal): Promise<ScanRun[]> {
   return fetchData(`/api/v1/projects/${projectId}/scan-runs`, "trc_web_scan_runs", signal);
+}
+
+export async function createScanRun(input: ScanRunCreateInput): Promise<ScanRun> {
+  const response = await fetch("/api/v1/scan-runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildApiHeaders("trc_web_scan_create") },
+    body: JSON.stringify({
+      project_id: input.projectId,
+      name: input.name,
+      run_type: input.runType,
+      cohort_type: input.cohortType,
+      repetitions: input.repetitions,
+      collector_surfaces: input.collectorSurfaces,
+      provider_scope: input.providerScope,
+      question_scope: { mode: "selected", question_ids: input.questionIds },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, `Scan run request failed with ${response.status}`));
+  }
+  return ((await response.json()) as { data: ScanRun }).data;
 }
 
 export function fetchScanTasks(runId: string, signal?: AbortSignal): Promise<ScanTask[]> {

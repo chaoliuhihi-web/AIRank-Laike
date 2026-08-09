@@ -82,6 +82,7 @@ import {
   createKnowledgeSyncPolicy,
   createPublishPackage,
   createPublishMutation,
+  createScanRun,
   createComparisonContent,
   createExplainerContent,
   createGovernedContent,
@@ -1425,22 +1426,35 @@ function NextActionsRail({ onNavigate, blocked = false }: { onNavigate: (path: s
 
 function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { project, dataStatus, metricCards, message } = useConsoleOverview();
+  const { notify } = useActionFeedback();
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [runs, setRuns] = useState<ScanRun[]>([]);
   const [tasks, setTasks] = useState<ScanTask[]>([]);
+  const [questions, setQuestions] = useState<BuyerQuestion[]>([]);
+  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
+  const [repetitions, setRepetitions] = useState(3);
+  const [creatingRun, setCreatingRun] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const providersInitialized = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const [nextReadiness, nextRuns, profile] = await Promise.all([
+        const [nextReadiness, nextRuns, profile, nextQuestions] = await Promise.all([
           fetchProviderReadiness(controller.signal),
           project.id ? fetchScanRuns(project.id, controller.signal) : Promise.resolve([]),
           project.id ? fetchProjectProfile(project.id, controller.signal) : Promise.resolve(null),
+          project.id ? fetchBuyerQuestions(project.id, controller.signal) : Promise.resolve([]),
         ]);
         if (controller.signal.aborted) return;
         setReadiness(nextReadiness);
+        setQuestions(nextQuestions);
+        if (!providersInitialized.current) {
+          setSelectedProviders(nextReadiness.providers.filter((item) => item.status === "ready").map((item) => item.provider));
+          providersInitialized.current = true;
+        }
         const currentRuns = profile ? scanRunsForProfile(nextRuns, profile) : [];
         setRuns(currentRuns);
         const latest = currentRuns[0];
@@ -1460,6 +1474,9 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   const latest = runs[0] ?? null;
   const hasCurrentProfileEvidence = latest !== null && dataStatus === "provider_evidence";
+  const eligibleBlindQuestions = questions.filter((question) => question.status === "confirmed" && question.cohort_type === "blind");
+  const readyProviderIds = new Set(readiness?.providers.filter((item) => item.status === "ready").map((item) => item.provider) ?? []);
+  const selectedReadyProviders = selectedProviders.filter((provider) => readyProviderIds.has(provider));
   const completedCount = tasks.filter((task) => task.status === "completed").length;
   const failedCount = tasks.filter((task) => task.status === "failed" || task.status === "skipped").length;
   const runningCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
@@ -1470,6 +1487,65 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   };
   const unmentionedCount = metricNumber("valid_unmentioned_count") ?? metricNumber("normal_unmentioned_count");
 
+  useEffect(() => {
+    if (!project.id || !latest || (latest.status !== "queued" && latest.status !== "running")) return;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const [nextRuns, profile, nextTasks] = await Promise.all([
+          fetchScanRuns(project.id),
+          fetchProjectProfile(project.id),
+          fetchScanTasks(latest.run_id),
+        ]);
+        if (disposed) return;
+        setRuns(scanRunsForProfile(nextRuns, profile));
+        setTasks(nextTasks);
+      } catch {
+        // Keep the last verified state; the next poll or a page reload can recover.
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 4000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [latest?.run_id, latest?.status, project.id]);
+
+  const toggleScanProvider = (provider: string) => {
+    setSelectedProviders((current) => current.includes(provider)
+      ? current.filter((item) => item !== provider)
+      : [...current, provider]);
+  };
+
+  const startBaseline = async () => {
+    if (!project.id || eligibleBlindQuestions.length === 0 || selectedReadyProviders.length === 0) return;
+    setCreatingRun(true);
+    setCreateError(null);
+    try {
+      const created = await createScanRun({
+        projectId: project.id,
+        name: `${project.name} · T0 盲测基线`,
+        runType: "baseline",
+        cohortType: "blind",
+        repetitions,
+        collectorSurfaces: ["api"],
+        providerScope: selectedReadyProviders,
+        questionIds: eligibleBlindQuestions.map((question) => question.question_id),
+      });
+      setRuns((current) => [created, ...current.filter((run) => run.run_id !== created.run_id)]);
+      setTasks(await fetchScanTasks(created.run_id));
+      notify({
+        title: "真实基线已进入队列",
+        desc: `${eligibleBlindQuestions.length} 个盲测问题 × ${selectedReadyProviders.length} 个平台 × ${repetitions} 次独立采样。`,
+        tone: "success",
+      });
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : "真实扫描创建失败");
+    } finally {
+      setCreatingRun(false);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -1479,6 +1555,31 @@ function CheckupPage({ onNavigate }: { onNavigate: (path: string) => void }) {
       />
       {loadError && <DataStateCard title="扫描状态暂时不可用" desc={`${loadError} 当前不展示示例进度或推测结果。`} tone="danger" />}
       {!loadError && !readiness && <DataStateCard title="正在读取扫描状态" desc="读取已保存的 Provider 健康与真实任务，不会因打开页面重复发起计费探测。" tone="primary" />}
+      {readiness && !latest && (
+        <section className="airank-console-card scan-launch-card" aria-label="创建真实盲测基线">
+          <div className="scan-launch-heading">
+            <div><span className="section-kicker">T0 基线</span><h2>创建真实盲测扫描</h2><p>仅使用已确认的盲测问题和已通过 L3 门禁的平台；每次采样使用独立会话。</p></div>
+            <Badge tone={eligibleBlindQuestions.length > 0 ? "success" : "warning"}>{eligibleBlindQuestions.length} 个已确认盲测问题</Badge>
+          </div>
+          <div className="scan-launch-controls">
+            <fieldset>
+              <legend>本轮平台</legend>
+              {readiness.providers.map((item) => (
+                <label key={item.provider} data-disabled={item.status !== "ready"}>
+                  <input type="checkbox" checked={selectedProviders.includes(item.provider)} disabled={item.status !== "ready"} onChange={() => toggleScanProvider(item.provider)} />
+                  <span><strong>{item.label}</strong><small>{item.status === "ready" ? `${item.model || "当前模型"} · 已通过门禁` : item.reason || "本轮不可用"}</small></span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="scan-repetitions">每问题独立采样次数<select value={repetitions} onChange={(event) => setRepetitions(Number(event.target.value))}><option value={3}>3 次（推荐）</option><option value={5}>5 次</option></select></label>
+          </div>
+          <div className="scan-launch-question-list">
+            {eligibleBlindQuestions.map((question, index) => <span key={question.question_id}><strong>{index + 1}</strong>{question.question_text}</span>)}
+          </div>
+          {createError && <DataStateCard title="真实扫描创建失败" desc={createError} tone="danger" />}
+          <div className="scan-launch-actions"><small>计划任务：{eligibleBlindQuestions.length * selectedReadyProviders.length * repetitions} 个；失败、阻塞和正常未提及都会保留并分别统计。</small><button className="airank-console-primary-button" type="button" disabled={creatingRun || eligibleBlindQuestions.length === 0 || selectedReadyProviders.length === 0} onClick={() => void startBaseline()}>{creatingRun ? "正在创建…" : "创建并开始真实基线"}</button></div>
+        </section>
+      )}
       {readiness && (
       <section className="provider-grid">
         {readiness.providers.map((item) => {
