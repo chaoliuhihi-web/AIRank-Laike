@@ -66,7 +66,11 @@ server {
         try_files $uri =404;
     }
 
-    location = /index.html { return 301 https://airank.net.cn/; }
+    location = /index.html {
+        if ($request_uri ~ ^/index\.html(?:\?.*)?$) {
+            return 301 https://airank.net.cn/;
+        }
+    }
     location ~ ^/(product|solutions|cases|resources|pricing|diagnosis|about|terms|privacy|login|thank-you)\.html$ {
         return 301 https://airank.net.cn/$1/;
     }
