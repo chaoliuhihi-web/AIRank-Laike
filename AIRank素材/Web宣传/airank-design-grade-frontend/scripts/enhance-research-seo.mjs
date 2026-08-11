@@ -159,6 +159,7 @@ const topicSection = `<!-- research-topics:start --><section class="section sect
 for (const file of ['resources.html', path.join('resources', 'index.html')]) {
   const target = path.join(root, file);
   let html = fs.readFileSync(target, 'utf8');
+  html = html.replace(/\/assets\/css\/styles\.v20260517\.css\?v=[^"]+/, '/assets/css/styles.v20260517.css?v=20260811-geo-9');
   html = html.replace(/<!-- research-topics:start -->[\s\S]*?<!-- research-topics:end -->/g, '');
   html = html.replace('<section class="section section--white" id="research-library">', `${topicSection}<section class="section section--white" id="research-library">`);
   const hubSchema = [
