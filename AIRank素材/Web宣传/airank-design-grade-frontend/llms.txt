@@ -1,0 +1,53 @@
+# AIRank 来客
+
+> AIRank 是北京智界问道科技有限公司维护的企业级 AI 搜索增长产品，围绕买家问题、多平台回答、引用来源、可信事实、页面行动和持续复测建立可验证工作流。
+
+## Canonical facts
+
+- Official site: https://airank.net.cn/
+- Product: https://airank.net.cn/product/
+- Solutions: https://airank.net.cn/solutions/
+- Research methodology: https://airank.net.cn/research/methodology/
+- Company: https://airank.net.cn/about/
+- Contact: 400-110-8776
+
+## Research topics
+
+- [AI 可见性观测与可比基线](https://airank.net.cn/research/ai-observability/): 用问题、平台、终端、时间与原始回答建立统一观测单元，区分真实变化、平台变化与随机波动。
+- [AI 引用来源与主张证据研究](https://airank.net.cn/research/citation-evidence/): 区分来源出现、内容吸收和主张支持，把回答、引用页面、证据片段与企业事实连接成可追溯链路。
+- [企业可信事实与答案资产工程](https://airank.net.cn/research/enterprise-facts/): 把官网、产品、案例和报告转化为有来源、有版本、有审核边界、可持续更新的企业事实。
+- [官网可提取性与语义结构工程](https://airank.net.cn/research/ai-extractability/): 让正文、实体、证据与页面结构在不依赖截图和复杂脚本的情况下被搜索引擎和 AI 系统准确理解。
+- [多模型采样稳定性与成本治理](https://airank.net.cn/research/model-governance/): 从 Provider 健康、任务路由、失败质量、配额成本和协议版本保障持续观测的可用性与可审计性。
+- [企业 GEO 治理与业务闭环](https://airank.net.cn/research/enterprise-geo/): 把监测、归因、事实建设、页面行动、发布复测和线索承接纳入同一个可验收的企业流程。
+
+## Research articles
+
+- [AI 可见性不是一次搜索：企业如何建立多平台可比基线](https://airank.net.cn/resources/ai-observability-baseline/): 统一问题、平台、终端、时间与证据快照，建立可复查的观测基线。
+- [从被引用到被相信：AI 引用来源与主张核验方法](https://airank.net.cn/resources/citation-evidence-engineering/): 区分来源出现、内容吸收与主张支持，建立可追溯证据链。
+- [企业知识库为何不能直接变成 AI 可信答案](https://airank.net.cn/resources/enterprise-fact-assets/): 从文档集合走向有来源、有版本、有审核边界的事实资产。
+- [官网可提取性工程：让 AI 准确理解页面，不是堆关键词](https://airank.net.cn/resources/ai-extractability-engineering/): 从抓取、正文、实体、证据与 Schema 检查机器可读性。
+- [多模型采样治理：稳定性、质量、成本与审计如何统一](https://airank.net.cn/resources/model-sampling-governance/): 治理提供方健康、任务路由、失败质量、配额成本与审计证据。
+- [买家问题地图：为什么品牌词不是 AI 可见性研究的起点](https://airank.net.cn/resources/buyer-question-map/): 企业真正要回答的不是“AI 知不知道我”，而是买家在认知、比较、选型和采购阶段提问时，品牌能否进入候选答案。
+- [重复采样与置信边界：如何避免把 AI 随机波动当成增长](https://airank.net.cn/resources/repeated-sampling-confidence/): 生成式回答存在波动，企业需要用重复采样、失败记录和完整性说明，区分真实变化、平台变化与随机噪声。
+- [同一 AI 的 Web 与 App 为什么要分开监测](https://airank.net.cn/resources/web-app-platform-differences/): 终端界面、账号状态、检索链路和引用展示可能不同，把 Web 与 App 混成一个指标会掩盖真实差异。
+- [AI 信源生态：为什么只优化企业官网远远不够](https://airank.net.cn/resources/source-ecosystem-strategy/): AI 回答可能同时吸收官网、媒体、文档、社区、行业机构和聚合页面。品牌需要治理的是完整证据生态，而不是单一域名。
+- [主张—证据矩阵：把品牌宣传语变成可核验事实](https://airank.net.cn/resources/claim-evidence-matrix/): “领先、专业、智能”无法被精确核验。企业需要将宣传语拆成原子主张，并为每条主张绑定来源、边界和审核状态。
+- [引用广度与内容吸收深度：企业应该优化哪个指标](https://airank.net.cn/resources/citation-absorption-depth/): 被列为来源和真正影响答案是两件事。企业需要同时观察来源覆盖与内容吸收，避免用引用数量掩盖低质量影响。
+- [品牌实体图谱：解决 AI 对公司、产品与能力关系的误解](https://airank.net.cn/resources/brand-entity-graph/): 品牌简称、公司主体、产品线、旧名称和行业术语混在一起时，AI 很容易错指。实体图谱先把“谁和谁是什么关系”说清楚。
+- [答案资产工厂：如何规模化生产内容又不牺牲可信度](https://airank.net.cn/resources/answer-asset-production/): 企业需要的不是批量生成文章，而是把买家问题、可信事实、证据和发布复测组合成可持续生产的答案资产。
+- [事实新鲜度治理：如何防止 AI 持续传播过期企业信息](https://airank.net.cn/resources/fact-freshness-governance/): 价格、产品能力、认证、客户和服务区域会变化。没有有效期与变更影响分析的知识库，迟早会把旧事实继续发布出去。
+- [Schema 与语义结构：哪些标记真正帮助 AI 理解企业官网](https://airank.net.cn/resources/schema-semantic-structure/): 结构化数据的价值是消除实体与页面类型歧义，不是堆叠越多越好，更不能声明页面正文没有展示的内容。
+- [关键文字为什么必须留在 DOM：官网图片与网页控件的正确分工](https://airank.net.cn/resources/dom-over-image-content/): 视觉效果可以用高质量图片承载，但标题、参数、步骤、结论和按钮如果只存在于截图中，会同时损害清晰度、移动端、无障碍和机器提取。
+- [抓取与渲染边界：为什么用户看得到，AI 不一定读得到](https://airank.net.cn/resources/crawler-rendering-boundaries/): 浏览器可以运行复杂脚本，但不同搜索与 AI 抓取系统的渲染能力、等待时间和资源策略不同。关键内容不应依赖脆弱的客户端链路。
+- [Provider 健康与路由：如何保证多平台监测不被静默降级](https://airank.net.cn/resources/provider-health-routing/): 端点返回成功不代表目标平台采样成功。健康检查必须覆盖鉴权、模型、搜索、引用和响应质量，并禁止正式研究跨平台伪装。
+- [每个有效样本的真实成本：别只比较模型调用单价](https://airank.net.cn/resources/valid-sample-cost/): 低价端点如果失败率高、缺少引用或需要大量人工核验，最终成本可能更高。企业应按有效样本和可交付证据计算成本。
+- [模型协议与版本审计：平台变化后趋势还能不能继续比较](https://airank.net.cn/resources/model-protocol-audit/): 模型名称、搜索入口、引用字段和默认行为会变化。没有协议版本审计，历史趋势可能把系统变化误判为品牌变化。
+- [AI 可见性与 SEO 有什么不同，又为什么必须协同](https://airank.net.cn/resources/ai-visibility-vs-seo/): SEO 关注页面在搜索结果中的发现与点击，AI 可见性还关注答案如何理解实体、选择来源、组合主张和呈现品牌。
+- [企业 AI 搜索增长 30/60/90 天路线图](https://airank.net.cn/resources/geo-30-60-90-roadmap/): AI 搜索增长不是先批量发文。一个可验收的项目应先建立基线，再建设事实和页面，最后复测与制度化。
+- [市场、产品、销售、技术如何共同治理 AI 品牌答案](https://airank.net.cn/resources/cross-team-governance/): AI 回答涉及产品事实、品牌表达、客户证据、网页技术和模型运行，任何单一部门都无法独立完成。
+- [管理层真正需要的 AI 可见性看板，不是更多图表](https://airank.net.cn/resources/executive-evidence-dashboard/): 管理层需要知道风险、机会、行动和证据，而不是被几十个缺少口径的指标淹没。
+- [从 AI 可见到销售线索：中间还缺哪几层能力](https://airank.net.cn/resources/visibility-to-lead-conversion/): 品牌被 AI 提及并不会自动产生线索。企业还需要可信落地页、明确行动、线索承接和跨系统证据，才能连接业务结果。
+
+## Usage boundary
+
+AIRank does not guarantee placement, ranking, citation, traffic, or revenue on third-party AI platforms. Public research articles do not use private customer data unless explicitly stated and authorized.

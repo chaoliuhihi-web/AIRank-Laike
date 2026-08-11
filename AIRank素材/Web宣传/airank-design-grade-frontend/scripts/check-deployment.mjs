@@ -8,6 +8,10 @@ const required = [
   'package-lock.json',
   'vercel.json',
   'netlify.toml',
+  'nginx.conf.example',
+  'feed.xml',
+  'llms.txt',
+  '3fe8059d55375a079a5e2f013a7a3f0e.txt',
   'api/leads.js',
   'netlify/functions/leads.js',
   'server/lead-core.js'

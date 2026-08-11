@@ -1,28 +1,89 @@
 server {
-  listen 80;
-  server_name airank.net.cn www.airank.net.cn;
-  root /var/www/airank-frontend;
-  index index.html;
+    listen 80;
+    server_name airank.net.cn www.airank.net.cn;
 
-  add_header X-Frame-Options "SAMEORIGIN" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-  add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    location ^~ /.well-known/acme-challenge/ {
+        root /home/www1/airank.net.cn/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
 
-  location /assets/ {
-    expires 365d;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
-    try_files $uri =404;
-  }
+    location / {
+        return 301 https://airank.net.cn$request_uri;
+    }
+}
 
-  location ~* \.html$ {
-    expires -1;
-    add_header Cache-Control "public, max-age=0, must-revalidate" always;
-  }
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name www.airank.net.cn;
 
-  location / {
-    try_files $uri $uri/ $uri.html /404.html;
-  }
+    ssl_certificate /etc/letsencrypt/live/airank.net.cn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/airank.net.cn/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
-  error_page 404 /404.html;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    return 301 https://airank.net.cn$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name airank.net.cn;
+
+    root /home/www1/airank.net.cn/current;
+    index index.html;
+    charset utf-8;
+
+    access_log /www/wwwlogs/airank.net.cn.log;
+    error_log /www/wwwlogs/airank.net.cn.error.log;
+
+    ssl_certificate /etc/letsencrypt/live/airank.net.cn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/airank.net.cn/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:AIRankSSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; upgrade-insecure-requests" always;
+
+    location /assets/ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    location ~ ^/(feed\.xml|sitemap\.xml|robots\.txt|llms\.txt)$ {
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600" always;
+        try_files $uri =404;
+    }
+
+    location = /index.html { return 301 https://airank.net.cn/; }
+    location ~ ^/(product|solutions|cases|resources|pricing|diagnosis|about|terms|privacy|login|thank-you)\.html$ {
+        return 301 https://airank.net.cn/$1/;
+    }
+    location = /trial.html { return 301 https://airank.net.cn/diagnosis/; }
+    location = /checkup.html { return 301 https://airank.net.cn/diagnosis/; }
+
+    location = /api/leads {
+        default_type application/json;
+        return 503 '{"ok":false,"error":"lead_service_unavailable"}';
+    }
+
+    location ~ /\. { deny all; }
+
+    location / {
+        try_files $uri $uri/ $uri.html =404;
+    }
+
+    error_page 404 /404.html;
+    location = /404.html { internal; }
 }

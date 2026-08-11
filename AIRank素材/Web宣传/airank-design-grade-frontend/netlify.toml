@@ -44,6 +44,26 @@
   from = "/checkup.html"
   to = "/diagnosis/"
   status = 301
+[[redirects]]
+  from = "/about.html"
+  to = "/about/"
+  status = 301
+[[redirects]]
+  from = "/terms.html"
+  to = "/terms/"
+  status = 301
+[[redirects]]
+  from = "/privacy.html"
+  to = "/privacy/"
+  status = 301
+[[redirects]]
+  from = "/login.html"
+  to = "/login/"
+  status = 301
+[[redirects]]
+  from = "/thank-you.html"
+  to = "/thank-you/"
+  status = 301
 
 [[headers]]
   for = "/*"

@@ -126,6 +126,26 @@
       "source": "/about.html",
       "destination": "/about/",
       "permanent": true
+    },
+    {
+      "source": "/terms.html",
+      "destination": "/terms/",
+      "permanent": true
+    },
+    {
+      "source": "/privacy.html",
+      "destination": "/privacy/",
+      "permanent": true
+    },
+    {
+      "source": "/login.html",
+      "destination": "/login/",
+      "permanent": true
+    },
+    {
+      "source": "/thank-you.html",
+      "destination": "/thank-you/",
+      "permanent": true
     }
   ]
 }

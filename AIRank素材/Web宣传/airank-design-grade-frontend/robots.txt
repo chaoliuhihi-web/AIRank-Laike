@@ -1,10 +1,21 @@
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
 User-agent: *
 Allow: /
-Disallow: /pages/
-Disallow: /design-system/
-Disallow: /login/
-Disallow: /thank-you/
-Disallow: /404.html
-Disallow: /trial.html
-Disallow: /checkup.html
+Disallow: /api/
+
 Sitemap: https://airank.net.cn/sitemap.xml
+Host: airank.net.cn
